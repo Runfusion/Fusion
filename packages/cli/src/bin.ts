@@ -15,6 +15,7 @@ Usage:
 Options:
   --port, -p <port>          Dashboard port (default: 4040)
   --engine                   Enable AI engine (auto-specify + execute tasks)
+  --no-open                  Don't auto-open the browser
   --help, -h                 Show this help
 
 Columns: triage, todo, in-progress, in-review, done
@@ -41,7 +42,8 @@ async function main() {
         const pi = portIdx !== -1 ? portIdx : portIdxShort;
         const port = pi !== -1 ? parseInt(args[pi + 1], 10) : 4040;
         const engine = args.includes("--engine");
-        await runDashboard(port, { engine });
+        const open = !args.includes("--no-open");
+        await runDashboard(port, { engine, open });
         break;
       }
 

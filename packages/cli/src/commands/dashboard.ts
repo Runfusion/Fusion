@@ -1,8 +1,23 @@
+import { exec } from "child_process";
 import { TaskStore } from "@hai/core";
 import { createServer } from "@hai/dashboard";
 import { TriageProcessor, TaskExecutor, Scheduler } from "@hai/engine";
 
-export async function runDashboard(port: number, opts: { engine?: boolean } = {}) {
+function openBrowser(url: string): void {
+  try {
+    const cmd =
+      process.platform === "darwin"
+        ? `open "${url}"`
+        : process.platform === "win32"
+          ? `start "" "${url}"`
+          : `xdg-open "${url}"`;
+    exec(cmd, () => {});
+  } catch {
+    // Silently ignore — e.g., headless environments
+  }
+}
+
+export async function runDashboard(port: number, opts: { engine?: boolean; open?: boolean } = {}) {
   const cwd = process.cwd();
   const store = new TaskStore(cwd);
   await store.init();
@@ -56,5 +71,9 @@ export async function runDashboard(port: number, opts: { engine?: boolean } = {}
     }
     console.log(`  Press Ctrl+C to stop`);
     console.log();
+
+    if (opts.open !== false) {
+      openBrowser(`http://localhost:${port}`);
+    }
   });
 }
