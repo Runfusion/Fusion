@@ -1,0 +1,28 @@
+{
+  "name": "@hai/dashboard",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "vite build && tsc",
+    "build:client": "vite build",
+    "dev:client": "vite",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hai/core": "workspace:*",
+    "express": "^5.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}
