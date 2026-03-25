@@ -1,12 +1,33 @@
 export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done"] as const;
 export type Column = (typeof COLUMNS)[number];
 
+export type TaskStatus = "idle" | "specifying" | "blocked" | "queued" | "executing" | "complete";
+
+export const STATUS_LABELS: Record<TaskStatus, string> = {
+  idle: "Idle",
+  specifying: "Specifying…",
+  blocked: "Blocked",
+  queued: "Queued",
+  executing: "Executing…",
+  complete: "Complete",
+};
+
+export const STATUS_COLORS: Record<TaskStatus, string> = {
+  idle: "var(--text-dim)",
+  specifying: "var(--triage)",
+  blocked: "#f85149",
+  queued: "var(--todo)",
+  executing: "var(--in-progress)",
+  complete: "var(--in-review)",
+};
+
 export interface Task {
   id: string;
   title: string;
   description: string;
   column: Column;
   dependencies: string[];
+  status?: TaskStatus;
   worktree?: string;
   createdAt: string;
   updatedAt: string;
