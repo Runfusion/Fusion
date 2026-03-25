@@ -90,7 +90,7 @@ export function TaskDetailModal({
           </button>
         </div>
         <div className="detail-body">
-          <h2 className="detail-title">{task.title}</h2>
+          <h2 className="detail-title">{task.title || task.id}</h2>
           <div className="detail-meta">
             Created {new Date(task.createdAt).toLocaleDateString()} · Updated{" "}
             {new Date(task.updatedAt).toLocaleDateString()}
