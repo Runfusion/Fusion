@@ -42,7 +42,8 @@ async function main() {
         const pi = portIdx !== -1 ? portIdx : portIdxShort;
         const port = pi !== -1 ? parseInt(args[pi + 1], 10) : 4040;
         const engine = args.includes("--engine");
-        await runDashboard(port, { engine });
+        const open = !args.includes("--no-open");
+        await runDashboard(port, { engine, open });
         break;
       }
 
