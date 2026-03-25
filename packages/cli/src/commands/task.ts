@@ -61,7 +61,8 @@ export async function runTaskList() {
     console.log(`  ${dot} ${label} (${colTasks.length})`);
     for (const t of colTasks) {
       const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
-      console.log(`    ${t.id}  ${t.title}${deps}`);
+      const label = t.title || t.description.slice(0, 60) + (t.description.length > 60 ? "…" : "");
+      console.log(`    ${t.id}  ${label}${deps}`);
     }
     console.log();
   }
