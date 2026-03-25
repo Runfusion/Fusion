@@ -2,17 +2,21 @@ import { useState, useCallback } from "react";
 import type { Task, TaskDetail, Column as ColumnType } from "@hai/core";
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS } from "@hai/core";
 import { TaskCard } from "./TaskCard";
+import { WorktreeGroup } from "./WorktreeGroup";
+import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
 
 interface ColumnProps {
   column: ColumnType;
   tasks: Task[];
+  allTasks: Task[];
+  maxConcurrent: number;
   onMoveTask: (id: string, column: ColumnType) => Promise<Task>;
   onOpenDetail: (task: TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
 }
 
-export function Column({ column, tasks, onMoveTask, onOpenDetail, addToast }: ColumnProps) {
+export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -56,7 +60,25 @@ export function Column({ column, tasks, onMoveTask, onOpenDetail, addToast }: Co
       </div>
       <p className="column-desc">{COLUMN_DESCRIPTIONS[column]}</p>
       <div className="column-body">
-        {tasks.length === 0 ? (
+        {column === "in-progress" ? (
+          (() => {
+            const groups = groupByWorktree(tasks, allTasks, maxConcurrent);
+            return groups.length === 0 ? (
+              <div className="empty-column">No tasks</div>
+            ) : (
+              groups.map((group) => (
+                <WorktreeGroup
+                  key={group.label}
+                  label={group.label}
+                  activeTasks={group.activeTasks}
+                  queuedTasks={group.queuedTasks}
+                  onOpenDetail={onOpenDetail}
+                  addToast={addToast}
+                />
+              ))
+            );
+          })()
+        ) : tasks.length === 0 ? (
           <div className="empty-column">No tasks</div>
         ) : (
           tasks.map((task) => (
