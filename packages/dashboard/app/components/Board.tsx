@@ -12,9 +12,10 @@ interface BoardProps {
   isCreating: boolean;
   onCancelCreate: () => void;
   onCreateTask: (input: TaskCreateInput) => Promise<Task>;
+  onNewTask: () => void;
 }
 
-export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask }: BoardProps) {
+export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask }: BoardProps) {
   return (
     <main className="board" id="board">
       {COLUMNS.map((col) => (
@@ -27,7 +28,7 @@ export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast
           onMoveTask={onMoveTask}
           onOpenDetail={onOpenDetail}
           addToast={addToast}
-          {...(col === "todo" ? { isCreating, onCancelCreate, onCreateTask } : {})}
+          {...(col === "triage" ? { isCreating, onCancelCreate, onCreateTask, onNewTask } : {})}
         />
       ))}
     </main>

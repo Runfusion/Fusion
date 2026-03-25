@@ -18,9 +18,10 @@ interface ColumnProps {
   isCreating?: boolean;
   onCancelCreate?: () => void;
   onCreateTask?: (input: TaskCreateInput) => Promise<Task>;
+  onNewTask?: () => void;
 }
 
-export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask }: ColumnProps) {
+export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -61,10 +62,15 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
         <div className={`column-dot dot-${column}`} />
         <h2>{COLUMN_LABELS[column]}</h2>
         <span className="column-count">{tasks.length}</span>
+        {onNewTask && (
+          <button className="btn btn-primary btn-sm" onClick={onNewTask}>
+            + New Task
+          </button>
+        )}
       </div>
       <p className="column-desc">{COLUMN_DESCRIPTIONS[column]}</p>
       <div className="column-body">
-        {column === "todo" && isCreating && onCancelCreate && onCreateTask && (
+        {column === "triage" && isCreating && onCancelCreate && onCreateTask && (
           <InlineCreateCard
             tasks={allTasks}
             onSubmit={onCreateTask}

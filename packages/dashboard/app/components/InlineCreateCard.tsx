@@ -35,7 +35,7 @@ export function InlineCreateCard({ tasks, onSubmit, onCancel, addToast }: Inline
         try {
           const task = await onSubmit({
             description: description.trim(),
-            column: "todo",
+            column: "triage",
             dependencies: dependencies.length ? dependencies : undefined,
           });
           addToast(`Created ${task.id}`, "success");

@@ -26,7 +26,7 @@ function AppInner() {
 
   const handleCreateTask = useCallback(
     async (input: TaskCreateInput): Promise<Task> => {
-      const task = await createTask({ ...input, column: "todo" });
+      const task = await createTask({ ...input, column: "triage" });
       setIsCreating(false);
       return task;
     },
@@ -41,7 +41,7 @@ function AppInner() {
 
   return (
     <>
-      <Header onNewTask={handleCreateOpen} />
+      <Header />
       <Board
         tasks={tasks}
         maxConcurrent={maxConcurrent}
@@ -51,6 +51,7 @@ function AppInner() {
         isCreating={isCreating}
         onCancelCreate={handleCancelCreate}
         onCreateTask={handleCreateTask}
+        onNewTask={handleCreateOpen}
       />
       {detailTask && (
         <TaskDetailModal
