@@ -1,4 +1,4 @@
-import type { Task, TaskDetail, Column as ColumnType } from "@hai/core";
+import type { Task, TaskDetail, TaskCreateInput, Column as ColumnType } from "@hai/core";
 import { COLUMNS } from "@hai/core";
 import { Column } from "./Column";
 import type { ToastType } from "../hooks/useToast";
@@ -9,9 +9,12 @@ interface BoardProps {
   onMoveTask: (id: string, column: ColumnType) => Promise<Task>;
   onOpenDetail: (task: TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
+  isCreating: boolean;
+  onCancelCreate: () => void;
+  onCreateTask: (input: TaskCreateInput) => Promise<Task>;
 }
 
-export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast }: BoardProps) {
+export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask }: BoardProps) {
   return (
     <main className="board" id="board">
       {COLUMNS.map((col) => (
@@ -24,6 +27,7 @@ export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast
           onMoveTask={onMoveTask}
           onOpenDetail={onOpenDetail}
           addToast={addToast}
+          {...(col === "todo" ? { isCreating, onCancelCreate, onCreateTask } : {})}
         />
       ))}
     </main>

@@ -1,8 +1,9 @@
 import { useState, useCallback } from "react";
-import type { Task, TaskDetail, Column as ColumnType } from "@hai/core";
+import type { Task, TaskDetail, TaskCreateInput, Column as ColumnType } from "@hai/core";
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS } from "@hai/core";
 import { TaskCard } from "./TaskCard";
 import { WorktreeGroup } from "./WorktreeGroup";
+import { InlineCreateCard } from "./InlineCreateCard";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
 
@@ -14,9 +15,12 @@ interface ColumnProps {
   onMoveTask: (id: string, column: ColumnType) => Promise<Task>;
   onOpenDetail: (task: TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
+  isCreating?: boolean;
+  onCancelCreate?: () => void;
+  onCreateTask?: (input: TaskCreateInput) => Promise<Task>;
 }
 
-export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast }: ColumnProps) {
+export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -60,6 +64,14 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
       </div>
       <p className="column-desc">{COLUMN_DESCRIPTIONS[column]}</p>
       <div className="column-body">
+        {column === "todo" && isCreating && onCancelCreate && onCreateTask && (
+          <InlineCreateCard
+            tasks={allTasks}
+            onSubmit={onCreateTask}
+            onCancel={onCancelCreate}
+            addToast={addToast}
+          />
+        )}
         {column === "in-progress" ? (
           (() => {
             const groups = groupByWorktree(tasks, allTasks, maxConcurrent);

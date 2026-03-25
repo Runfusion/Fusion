@@ -475,6 +475,104 @@ html, body {
   color: var(--todo);
 }
 
+/* === Inline Create Card === */
+.inline-create-card {
+  background: var(--card);
+  border: 1px solid var(--todo);
+  border-left: 3px solid var(--todo);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inline-create-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.inline-create-input::placeholder {
+  color: var(--text-dim);
+}
+
+.inline-create-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-create-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.dep-trigger-wrap {
+  position: relative;
+}
+
+.dep-trigger {
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.dep-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 220px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 50;
+  box-shadow: var(--shadow);
+}
+
+.dep-dropdown-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.dep-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.dep-dropdown-item:hover {
+  background: var(--card-hover);
+}
+.dep-dropdown-item.selected {
+  background: rgba(88,166,255,0.15);
+}
+
+.dep-dropdown-id {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.dep-dropdown-title {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* === Empty state === */
 .empty-column {
   display: flex;

@@ -1,16 +1,15 @@
 import { useState, useCallback, useEffect } from "react";
-import type { TaskDetail } from "@hai/core";
+import type { TaskDetail, TaskCreateInput, Task } from "@hai/core";
 import { fetchConfig } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
-import { CreateTaskModal } from "./components/CreateTaskModal";
 import { TaskDetailModal } from "./components/TaskDetailModal";
 import { ToastContainer } from "./components/ToastContainer";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
 
 function AppInner() {
-  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const { tasks, createTask, moveTask, deleteTask, mergeTask } = useTasks();
@@ -22,8 +21,17 @@ function AppInner() {
   }, []);
   const { toasts, addToast, removeToast } = useToast();
 
-  const handleCreateOpen = useCallback(() => setCreateModalOpen(true), []);
-  const handleCreateClose = useCallback(() => setCreateModalOpen(false), []);
+  const handleCreateOpen = useCallback(() => setIsCreating(true), []);
+  const handleCancelCreate = useCallback(() => setIsCreating(false), []);
+
+  const handleCreateTask = useCallback(
+    async (input: TaskCreateInput): Promise<Task> => {
+      const task = await createTask({ ...input, column: "todo" });
+      setIsCreating(false);
+      return task;
+    },
+    [createTask],
+  );
 
   const handleDetailOpen = useCallback((task: TaskDetail) => {
     setDetailTask(task);
@@ -40,14 +48,10 @@ function AppInner() {
         onMoveTask={moveTask}
         onOpenDetail={handleDetailOpen}
         addToast={addToast}
+        isCreating={isCreating}
+        onCancelCreate={handleCancelCreate}
+        onCreateTask={handleCreateTask}
       />
-      {createModalOpen && (
-        <CreateTaskModal
-          onClose={handleCreateClose}
-          onCreateTask={createTask}
-          addToast={addToast}
-        />
-      )}
       {detailTask && (
         <TaskDetailModal
           task={detailTask}
