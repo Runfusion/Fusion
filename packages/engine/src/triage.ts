@@ -96,7 +96,7 @@ export class TriageProcessor {
     if (this.processing.has(task.id)) return;
     this.processing.add(task.id);
 
-    console.log(`[triage] Specifying ${task.id}: ${task.title}`);
+    console.log(`[triage] Specifying ${task.id}: ${task.title || task.id}`);
     this.options.onSpecifyStart?.(task);
 
 
@@ -143,8 +143,8 @@ function buildSpecificationPrompt(task: TaskDetail, promptPath: string): string 
 
 ## Task
 - **ID:** ${task.id}
-- **Title:** ${task.title}
-${task.description ? `- **Description:** ${task.description}` : ""}
+- **Title:** ${task.title || task.id}
+- **Description:** ${task.description}
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}
 
 ## Current rough prompt

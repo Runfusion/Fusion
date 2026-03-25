@@ -89,7 +89,7 @@ export class Scheduler {
 
         // Dependencies met — move to in-progress
         console.log(
-          `[scheduler] Starting ${task.id}: ${task.title} (deps satisfied)`,
+          `[scheduler] Starting ${task.id}: ${task.title || task.id} (deps satisfied)`,
         );
         await this.store.moveTask(task.id, "in-progress");
         this.options.onSchedule?.(task);

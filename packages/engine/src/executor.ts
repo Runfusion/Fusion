@@ -72,7 +72,7 @@ export class TaskExecutor {
     if (this.executing.has(task.id)) return;
     this.executing.add(task.id);
 
-    console.log(`[executor] Starting ${task.id}: ${task.title}`);
+    console.log(`[executor] Starting ${task.id}: ${task.title || task.id}`);
 
     try {
       // Check dependencies
@@ -210,7 +210,7 @@ function buildExecutionPrompt(task: TaskDetail): string {
 
 ## Task Info
 - **ID:** ${task.id}
-- **Title:** ${task.title}
+- **Title:** ${task.title || task.id}
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}
 
 ## PROMPT.md
