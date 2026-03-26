@@ -282,7 +282,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; blockedBy?: string | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[] },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
@@ -291,6 +291,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (updates.title !== undefined) task.title = updates.title;
       if (updates.description !== undefined) task.description = updates.description;
       if (updates.worktree !== undefined) task.worktree = updates.worktree;
+      if (updates.dependencies !== undefined) task.dependencies = updates.dependencies;
       if (updates.status === null) {
         task.status = undefined;
       } else if (updates.status !== undefined) {

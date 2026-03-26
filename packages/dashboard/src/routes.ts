@@ -194,11 +194,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // Update task
   router.patch("/tasks/:id", async (req, res) => {
     try {
-      const { title, description, prompt } = req.body;
+      const { title, description, prompt, dependencies } = req.body;
       const task = await store.updateTask(req.params.id, {
         title,
         description,
         prompt,
+        dependencies,
       });
       res.json(task);
     } catch (err: any) {

@@ -74,6 +74,7 @@ function AppInner() {
       {detailTask && (
         <TaskDetailModal
           task={detailTask}
+          tasks={tasks}
           onClose={handleDetailClose}
           onMoveTask={moveTask}
           onDeleteTask={deleteTask}

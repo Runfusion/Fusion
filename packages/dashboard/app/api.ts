@@ -37,6 +37,13 @@ export function createTask(input: TaskCreateInput): Promise<Task> {
   });
 }
 
+export function updateTask(id: string, updates: { title?: string; description?: string; prompt?: string; dependencies?: string[] }): Promise<Task> {
+  return api<Task>(`/tasks/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
 export function moveTask(id: string, column: Column): Promise<Task> {
   return api<Task>(`/tasks/${id}/move`, {
     method: "POST",

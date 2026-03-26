@@ -199,6 +199,55 @@ describe("POST /tasks/:id/retry", () => {
   });
 });
 
+describe("PATCH /tasks/:id", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("forwards dependencies to store.updateTask", async () => {
+    const updatedTask = { ...FAKE_TASK_DETAIL, dependencies: ["HAI-002"] };
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/HAI-001", JSON.stringify({ dependencies: ["HAI-002"] }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("HAI-001", {
+      title: undefined,
+      description: undefined,
+      prompt: undefined,
+      dependencies: ["HAI-002"],
+    });
+    expect(res.body.dependencies).toEqual(["HAI-002"]);
+  });
+
+  it("forwards title and description without dependencies", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, title: "New" });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/HAI-001", JSON.stringify({ title: "New" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("HAI-001", {
+      title: "New",
+      description: undefined,
+      prompt: undefined,
+      dependencies: undefined,
+    });
+  });
+});
+
 describe("Attachment routes", () => {
   const FAKE_ATTACHMENT: TaskAttachment = {
     filename: "1234-screenshot.png",

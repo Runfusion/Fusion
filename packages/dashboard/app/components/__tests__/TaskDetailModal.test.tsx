@@ -6,6 +6,7 @@ import type { TaskDetail, Column, MergeResult, Task } from "@hai/core";
 vi.mock("../../api", () => ({
   uploadAttachment: vi.fn(),
   deleteAttachment: vi.fn(),
+  updateTask: vi.fn().mockResolvedValue({}),
 }));
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
@@ -391,6 +392,95 @@ describe("TaskDetailModal", () => {
         expect(mockUpload).toHaveBeenCalledWith("HAI-099", imageFile);
         expect(addToast).toHaveBeenCalledWith("Screenshot attached", "success");
       });
+    });
+  });
+
+  it("renders (no dependencies) when dependencies is empty", () => {
+    render(
+      <TaskDetailModal
+        task={makeTask({ dependencies: [] })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("(no dependencies)")).toBeTruthy();
+  });
+
+  it("renders dependency list when dependencies exist", () => {
+    render(
+      <TaskDetailModal
+        task={makeTask({ dependencies: ["HAI-001", "HAI-002"] })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("HAI-001")).toBeTruthy();
+    expect(screen.getByText("HAI-002")).toBeTruthy();
+    expect(screen.queryByText("(no dependencies)")).toBeNull();
+  });
+
+  it("can add a dependency via the dropdown", async () => {
+    const { updateTask } = await import("../../api");
+    const allTasks: Task[] = [
+      { id: "HAI-001", description: "Dep 1", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      { id: "HAI-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+    ];
+
+    render(
+      <TaskDetailModal
+        task={makeTask({ dependencies: [] })}
+        tasks={allTasks}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Add Dependency"));
+    // Should show HAI-001 in the dropdown but not HAI-099 (self is excluded)
+    const dropdown = document.querySelector(".dep-dropdown")!;
+    expect(dropdown).toBeTruthy();
+    expect(dropdown.textContent).toContain("HAI-001");
+    expect(dropdown.querySelectorAll(".dep-dropdown-item")).toHaveLength(1);
+
+    fireEvent.click(screen.getByText("HAI-001"));
+
+    await waitFor(() => {
+      expect(updateTask).toHaveBeenCalledWith("HAI-099", { dependencies: ["HAI-001"] });
+    });
+  });
+
+  it("can remove a dependency", async () => {
+    const { updateTask } = await import("../../api");
+
+    render(
+      <TaskDetailModal
+        task={makeTask({ dependencies: ["HAI-001", "HAI-002"] })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        addToast={noop}
+      />,
+    );
+
+    const removeButtons = screen.getAllByTitle(/Remove dependency/);
+    fireEvent.click(removeButtons[0]); // Remove HAI-001
+
+    await waitFor(() => {
+      expect(updateTask).toHaveBeenCalledWith("HAI-099", { dependencies: ["HAI-002"] });
+    });
+  });
     });
   });
 

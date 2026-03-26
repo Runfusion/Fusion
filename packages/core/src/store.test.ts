@@ -348,4 +348,41 @@ describe("TaskStore", () => {
       expect(result.log).toHaveLength(initialLogCount + 10);
     });
   });
+
+  describe("updateTask — dependencies", () => {
+    it("adds dependencies to a task with none", async () => {
+      const task = await createTestTask();
+      expect(task.dependencies).toEqual([]);
+
+      const updated = await store.updateTask(task.id, { dependencies: ["HAI-001", "HAI-002"] });
+      expect(updated.dependencies).toEqual(["HAI-001", "HAI-002"]);
+
+      // Verify persistence
+      const fetched = await store.getTask(task.id);
+      expect(fetched.dependencies).toEqual(["HAI-001", "HAI-002"]);
+    });
+
+    it("replaces existing dependencies", async () => {
+      const task = await store.createTask({ description: "Dep task", dependencies: ["HAI-001"] });
+      expect(task.dependencies).toEqual(["HAI-001"]);
+
+      const updated = await store.updateTask(task.id, { dependencies: ["HAI-002", "HAI-003"] });
+      expect(updated.dependencies).toEqual(["HAI-002", "HAI-003"]);
+    });
+
+    it("clears dependencies with empty array", async () => {
+      const task = await store.createTask({ description: "Dep task", dependencies: ["HAI-001"] });
+      expect(task.dependencies).toEqual(["HAI-001"]);
+
+      const updated = await store.updateTask(task.id, { dependencies: [] });
+      expect(updated.dependencies).toEqual([]);
+    });
+
+    it("leaves dependencies unchanged when not provided", async () => {
+      const task = await store.createTask({ description: "Dep task", dependencies: ["HAI-001"] });
+
+      const updated = await store.updateTask(task.id, { title: "New title" });
+      expect(updated.dependencies).toEqual(["HAI-001"]);
+    });
+  });
 });

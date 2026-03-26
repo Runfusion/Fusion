@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, TaskAttachment, Column, MergeResult } from "@hai/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@hai/core";
-import { uploadAttachment, deleteAttachment } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask } from "../api";
 import type { ToastType } from "../hooks/useToast";
 
 function formatTimestamp(iso: string): string {
@@ -29,6 +29,7 @@ function formatBytes(bytes: number): string {
 
 interface TaskDetailModalProps {
   task: TaskDetail;
+  tasks?: Task[];
   onClose: () => void;
   onMoveTask: (id: string, column: Column) => Promise<Task>;
   onDeleteTask: (id: string) => Promise<Task>;
@@ -37,8 +38,13 @@ interface TaskDetailModalProps {
   addToast: (message: string, type?: ToastType) => void;
 }
 
+function truncate(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
 export function TaskDetailModal({
   task,
+  tasks = [],
   onClose,
   onMoveTask,
   onDeleteTask,
@@ -48,6 +54,8 @@ export function TaskDetailModal({
 }: TaskDetailModalProps) {
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
+  const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
+  const [showDepDropdown, setShowDepDropdown] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -181,6 +189,30 @@ export function TaskDetailModal({
     }
   }, [task.id, addToast]);
 
+  const handleAddDep = useCallback(async (depId: string) => {
+    const newDeps = [...dependencies, depId];
+    setDependencies(newDeps);
+    try {
+      await updateTask(task.id, { dependencies: newDeps });
+    } catch (err: any) {
+      setDependencies(dependencies);
+      addToast(err.message, "error");
+    }
+  }, [task.id, dependencies, addToast]);
+
+  const handleRemoveDep = useCallback(async (depId: string) => {
+    const newDeps = dependencies.filter((d) => d !== depId);
+    setDependencies(newDeps);
+    try {
+      await updateTask(task.id, { dependencies: newDeps });
+    } catch (err: any) {
+      setDependencies(dependencies);
+      addToast(err.message, "error");
+    }
+  }, [task.id, dependencies, addToast]);
+
+  const availableTasks = tasks.filter((t) => t.id !== task.id && !dependencies.includes(t.id));
+
   const transitions = VALID_TRANSITIONS[task.column] || [];
 
   return (
@@ -286,16 +318,66 @@ export function TaskDetailModal({
               {uploading ? "Uploading…" : "Attach Screenshot"}
             </button>
           </div>
-          {task.dependencies && task.dependencies.length > 0 && (
-            <div className="detail-deps">
-              <h4>Dependencies</h4>
+          <div className="detail-deps">
+            <h4>Dependencies</h4>
+            {dependencies.length > 0 ? (
               <ul className="detail-dep-list">
-                {task.dependencies.map((dep) => (
-                  <li key={dep}>{dep}</li>
+                {dependencies.map((dep) => (
+                  <li key={dep}>
+                    {dep}
+                    <button
+                      className="dep-remove-btn"
+                      onClick={() => handleRemoveDep(dep)}
+                      title={`Remove dependency ${dep}`}
+                      style={{
+                        marginLeft: "6px",
+                        background: "none",
+                        border: "none",
+                        color: "var(--text-secondary, #888)",
+                        cursor: "pointer",
+                        fontSize: "14px",
+                        padding: "0 4px",
+                      }}
+                    >
+                      ×
+                    </button>
+                  </li>
                 ))}
               </ul>
+            ) : (
+              <div style={{ opacity: 0.5, marginBottom: "8px" }}>(no dependencies)</div>
+            )}
+            <div className="dep-trigger-wrap" style={{ position: "relative" }}>
+              <button
+                type="button"
+                className="btn btn-sm dep-trigger"
+                onClick={() => setShowDepDropdown((v) => !v)}
+              >
+                Add Dependency
+              </button>
+              {showDepDropdown && (
+                <div className="dep-dropdown">
+                  {availableTasks.length === 0 ? (
+                    <div className="dep-dropdown-empty">No available tasks</div>
+                  ) : (
+                    availableTasks.map((t) => (
+                      <div
+                        key={t.id}
+                        className="dep-dropdown-item"
+                        onClick={() => {
+                          handleAddDep(t.id);
+                          setShowDepDropdown(false);
+                        }}
+                      >
+                        <span className="dep-dropdown-id">{t.id}</span>
+                        <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
-          )}
+          </div>
           <div className="detail-section detail-activity">
             <h4>Activity</h4>
             {task.log && task.log.length > 0 ? (
