@@ -493,7 +493,7 @@ describe("TriageProcessor agent log persistence", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-001", "Read", "tool");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-001", "Read", "tool", "foo.ts");
   });
 
   it("still fires onAgentText callback alongside logging", async () => {

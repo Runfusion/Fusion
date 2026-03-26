@@ -10,36 +10,12 @@ import { reviewStep } from "./reviewer.js";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { AgentSemaphore } from "./concurrency.js";
 import type { WorktreePool } from "./worktree-pool.js";
+import { AgentLogger } from "./agent-logger.js";
+
+// Re-export for backward compatibility (tests import from executor.ts)
+export { summarizeToolArgs } from "./agent-logger.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
-
-/**
- * Produce a short human-readable summary from tool arguments.
- * Returns `undefined` for unknown tools or when no meaningful arg is found.
- */
-export function summarizeToolArgs(name: string, args?: Record<string, unknown>): string | undefined {
-  if (!args) return undefined;
-  const lowerName = name.toLowerCase();
-
-  if (lowerName === "bash") {
-    const cmd = args.command;
-    if (typeof cmd === "string") {
-      return cmd.length > 80 ? cmd.slice(0, 80) + "…" : cmd;
-    }
-  }
-
-  if (lowerName === "read" || lowerName === "edit" || lowerName === "write") {
-    const p = args.path;
-    if (typeof p === "string") return p;
-  }
-
-  // Fallback: return first string-valued arg if short enough
-  for (const val of Object.values(args)) {
-    if (typeof val === "string" && val.length <= 80) return val;
-  }
-
-  return undefined;
-}
 
 // ── Tool parameter schemas (module-level for reuse in ToolDefinition generics) ──
 
@@ -344,30 +320,12 @@ export class TaskExecutor {
         this.createReviewStepTool(task.id, worktreePath, detail.prompt),
       ];
 
-      // ── Agent log buffering ──────────────────────────────────────────
-      // Buffer text deltas and flush to disk periodically to avoid
-      // excessive I/O from many small writes.
-      let textBuffer = "";
-      let flushTimer: ReturnType<typeof setTimeout> | null = null;
-      const FLUSH_INTERVAL_MS = 500;
-      const FLUSH_SIZE_BYTES = 1024;
-
-      const flushTextBuffer = async () => {
-        if (textBuffer.length === 0) return;
-        const chunk = textBuffer;
-        textBuffer = "";
-        try {
-          await this.store.appendAgentLog(task.id, chunk, "text");
-        } catch { /* best-effort persistence */ }
-      };
-
-      const scheduleFlush = () => {
-        if (flushTimer) return;
-        flushTimer = setTimeout(async () => {
-          flushTimer = null;
-          await flushTextBuffer();
-        }, FLUSH_INTERVAL_MS);
-      };
+      const agentLogger = new AgentLogger({
+        store: this.store,
+        taskId: task.id,
+        onAgentText: this.options.onAgentText,
+        onAgentTool: this.options.onAgentTool,
+      });
 
       const agentWork = async () => {
         const { session } = await createHaiAgent({
@@ -375,24 +333,8 @@ export class TaskExecutor {
           systemPrompt: EXECUTOR_SYSTEM_PROMPT,
           tools: "coding",
           customTools,
-          onText: (delta) => {
-            this.options.onAgentText?.(task.id, delta);
-            textBuffer += delta;
-            if (textBuffer.length >= FLUSH_SIZE_BYTES) {
-              if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-              flushTextBuffer();
-            } else {
-              scheduleFlush();
-            }
-          },
-          onToolStart: (name, args) => {
-            this.options.onAgentTool?.(task.id, name);
-            // Flush any pending text before recording the tool entry
-            if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-            flushTextBuffer();
-            const detail = summarizeToolArgs(name, args);
-            this.store.appendAgentLog(task.id, name, "tool", detail).catch(() => {});
-          },
+          onText: agentLogger.onText,
+          onToolStart: agentLogger.onToolStart,
         });
 
         try {
@@ -410,9 +352,7 @@ export class TaskExecutor {
             this.options.onComplete?.(task);
           }
         } finally {
-          // Flush remaining buffered text before disposing the session
-          if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-          await flushTextBuffer();
+          await agentLogger.flush();
           session.dispose();
         }
       };

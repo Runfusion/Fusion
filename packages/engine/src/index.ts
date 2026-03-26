@@ -1,3 +1,4 @@
+export { AgentLogger, type AgentLoggerOptions, summarizeToolArgs } from "./agent-logger.js";
 export { AgentSemaphore } from "./concurrency.js";
 export { TriageProcessor, type TriageProcessorOptions } from "./triage.js";
 export { TaskExecutor, type TaskExecutorOptions } from "./executor.js";

@@ -242,7 +242,7 @@ describe("aiMergeTask — agent log persistence", () => {
 
     await aiMergeTask(store, "/tmp/root", "HAI-050");
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-050", "Bash", "tool");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-050", "Bash", "tool", "git status");
   });
 
   it("still fires onAgentText callback alongside logging", async () => {

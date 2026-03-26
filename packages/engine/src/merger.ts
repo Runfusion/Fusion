@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import type { TaskStore, Task, MergeResult } from "@hai/core";
 import { createHaiAgent } from "./pi.js";
 import type { WorktreePool } from "./worktree-pool.js";
+import { AgentLogger } from "./agent-logger.js";
 
 const MERGE_SYSTEM_PROMPT = `You are a merge agent for "hai", an AI-orchestrated task board.
 
@@ -185,49 +186,24 @@ export async function aiMergeTask(
     `[merger] ${taskId}: ${hasConflicts ? "resolving conflicts + " : ""}writing commit message`,
   );
 
-  // ── Agent log buffering ──────────────────────────────────────────
-  let textBuffer = "";
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-  const FLUSH_INTERVAL_MS = 500;
-  const FLUSH_SIZE_BYTES = 1024;
-
-  const flushTextBuffer = async () => {
-    if (textBuffer.length === 0) return;
-    const chunk = textBuffer;
-    textBuffer = "";
-    try {
-      await store.appendAgentLog(taskId, chunk, "text");
-    } catch { /* best-effort persistence */ }
-  };
-
-  const scheduleFlush = () => {
-    if (flushTimer) return;
-    flushTimer = setTimeout(async () => {
-      flushTimer = null;
-      await flushTextBuffer();
-    }, FLUSH_INTERVAL_MS);
-  };
+  const agentLogger = new AgentLogger({
+    store,
+    taskId,
+    // Merger callbacks don't include taskId — wrap to match AgentLogger signature
+    onAgentText: options.onAgentText
+      ? (_id, delta) => options.onAgentText!(delta)
+      : undefined,
+    onAgentTool: options.onAgentTool
+      ? (_id, name) => options.onAgentTool!(name)
+      : undefined,
+  });
 
   const { session } = await createHaiAgent({
     cwd: rootDir,
     systemPrompt: MERGE_SYSTEM_PROMPT,
     tools: "coding",
-    onText: (delta) => {
-      options.onAgentText?.(delta);
-      textBuffer += delta;
-      if (textBuffer.length >= FLUSH_SIZE_BYTES) {
-        if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-        flushTextBuffer();
-      } else {
-        scheduleFlush();
-      }
-    },
-    onToolStart: (name, _args) => {
-      options.onAgentTool?.(name);
-      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-      flushTextBuffer();
-      store.appendAgentLog(taskId, name, "tool").catch(() => {});
-    },
+    onText: agentLogger.onText,
+    onToolStart: agentLogger.onToolStart,
   });
 
   try {
@@ -258,8 +234,7 @@ export async function aiMergeTask(
     } catch { /* */ }
     throw new Error(`AI merge failed for ${taskId}: ${err.message}`);
   } finally {
-    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-    await flushTextBuffer();
+    await agentLogger.flush();
     session.dispose();
   }
 
