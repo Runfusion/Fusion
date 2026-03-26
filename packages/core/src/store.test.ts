@@ -90,19 +90,17 @@ describe("TaskStore", () => {
   // ── Defensive parsing test ───────────────────────────────────────
 
   describe("defensive JSON parsing", () => {
-    it("recovers from corrupted task.json with trailing duplicate content", async () => {
+    it("throws on corrupted task.json with trailing duplicate content (atomic writes prevent this)", async () => {
       const task = await createTestTask();
       const taskJsonPath = join(rootDir, ".hai", "tasks", task.id, "task.json");
 
-      // Corrupt the file: append duplicate trailing content (like HAI-015)
+      // Corrupt the file: append duplicate trailing content
       const validJson = await readFile(taskJsonPath, "utf-8");
       const corrupted = validJson + validJson.slice(validJson.length / 2);
       await writeFile(taskJsonPath, corrupted);
 
-      // getTask should recover
-      const recovered = await store.getTask(task.id);
-      expect(recovered.id).toBe(task.id);
-      expect(recovered.description).toBe("Test task");
+      // With atomic writes, corruption indicates a real bug — should throw
+      await expect(store.getTask(task.id)).rejects.toThrow("Failed to parse task.json");
     });
 
     it("throws a clear error when JSON is completely unrecoverable", async () => {
@@ -133,6 +131,36 @@ describe("TaskStore", () => {
 
       // Verify no .tmp files
       const files = await readdir(dir);
+      expect(files.filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
+    });
+  });
+
+  // ── Atomic config writes ──────────────────────────────────────────
+
+  describe("atomic config writes", () => {
+    it("produces valid config.json with unique sequential IDs after 5 parallel createTask calls", async () => {
+      const promises = Array.from({ length: 5 }, (_, i) =>
+        store.createTask({ description: `Concurrent task ${i}` }),
+      );
+      const tasks = await Promise.all(promises);
+
+      // All IDs should be unique
+      const ids = tasks.map((t) => t.id);
+      expect(new Set(ids).size).toBe(5);
+
+      // IDs should be sequential (HAI-001 through HAI-005)
+      const sortedIds = [...ids].sort();
+      expect(sortedIds).toEqual(["HAI-001", "HAI-002", "HAI-003", "HAI-004", "HAI-005"]);
+
+      // config.json should be valid JSON with nextId = 6
+      const configPath = join(rootDir, ".hai", "config.json");
+      const raw = await readFile(configPath, "utf-8");
+      const config = JSON.parse(raw);
+      expect(config.nextId).toBe(6);
+
+      // No .tmp files left behind
+      const haiDir = join(rootDir, ".hai");
+      const files = await readdir(haiDir);
       expect(files.filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
     });
   });

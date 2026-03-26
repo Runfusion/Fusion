@@ -10,27 +10,12 @@ async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T
   return data as T;
 }
 
-/**
- * Retry wrapper for API calls that may fail due to transient server errors
- * (e.g. 500s caused by concurrent file writes racing with reads).
- * Retries once after a short delay before giving up.
- */
-async function withRetry<T>(fn: () => Promise<T>, { retries = 1, delayMs = 200 } = {}): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (retries <= 0) throw err;
-    await new Promise((r) => setTimeout(r, delayMs));
-    return withRetry(fn, { retries: retries - 1, delayMs });
-  }
-}
-
 export function fetchTasks(): Promise<Task[]> {
   return api<Task[]>("/tasks");
 }
 
 export function fetchTaskDetail(id: string): Promise<TaskDetail> {
-  return withRetry(() => api<TaskDetail>(`/tasks/${id}`));
+  return api<TaskDetail>(`/tasks/${id}`);
 }
 
 export function createTask(input: TaskCreateInput): Promise<Task> {
