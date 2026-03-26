@@ -883,10 +883,10 @@ describe("summarizeToolArgs", () => {
     expect(summarizeToolArgs("bash", { command: "echo hello" })).toBe("echo hello");
   });
 
-  it("truncates long bash commands to 80 chars", () => {
+  it("returns long bash commands in full without truncation", () => {
     const longCmd = "a".repeat(100);
     const result = summarizeToolArgs("Bash", { command: longCmd });
-    expect(result).toBe("a".repeat(80) + "…");
+    expect(result).toBe(longCmd);
   });
 
   it("returns path for read/edit/write tools", () => {

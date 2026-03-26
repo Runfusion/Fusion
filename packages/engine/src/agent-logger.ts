@@ -6,7 +6,8 @@ const FLUSH_SIZE_BYTES = 1024;
 const FLUSH_INTERVAL_MS = 500;
 
 /**
- * Produce a short human-readable summary from tool arguments.
+ * Produce a human-readable summary from tool arguments.
+ * Returns the full argument value without truncation.
  * Returns `undefined` for unknown tools or when no meaningful arg is found.
  */
 export function summarizeToolArgs(name: string, args?: Record<string, unknown>): string | undefined {
@@ -15,9 +16,7 @@ export function summarizeToolArgs(name: string, args?: Record<string, unknown>):
 
   if (lowerName === "bash") {
     const cmd = args.command;
-    if (typeof cmd === "string") {
-      return cmd.length > 80 ? cmd.slice(0, 80) + "…" : cmd;
-    }
+    if (typeof cmd === "string") return cmd;
   }
 
   if (lowerName === "read" || lowerName === "edit" || lowerName === "write") {
@@ -25,9 +24,9 @@ export function summarizeToolArgs(name: string, args?: Record<string, unknown>):
     if (typeof p === "string") return p;
   }
 
-  // Fallback: return first string-valued arg if short enough
+  // Fallback: return first string-valued arg
   for (const val of Object.values(args)) {
-    if (typeof val === "string" && val.length <= 80) return val;
+    if (typeof val === "string") return val;
   }
 
   return undefined;

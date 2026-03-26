@@ -10,10 +10,15 @@ describe("summarizeToolArgs", () => {
     expect(summarizeToolArgs("bash", { command: "echo hello" })).toBe("echo hello");
   });
 
-  it("truncates long bash commands at 80 chars", () => {
-    const longCmd = "a".repeat(100);
+  it("returns long bash commands in full without truncation", () => {
+    const longCmd = "a".repeat(200);
     const result = summarizeToolArgs("Bash", { command: longCmd });
-    expect(result).toBe("a".repeat(80) + "…");
+    expect(result).toBe(longCmd);
+  });
+
+  it("returns long string-valued fallback args without truncation", () => {
+    const longVal = "x".repeat(200);
+    expect(summarizeToolArgs("unknown_tool", { description: longVal })).toBe(longVal);
   });
 
   it("returns file path for Read/Edit/Write", () => {
