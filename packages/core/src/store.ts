@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, rename } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import type { Task, TaskDetail, TaskCreateInput, BoardConfig, Column, MergeResult, Settings } from "./types.js";
@@ -102,6 +102,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
   }
 
+  /**
+   * Atomically write a task.json file by writing to a temp file first,
+   * then renaming it into place. The rename is atomic on POSIX filesystems,
+   * preventing partial writes from corrupting the file on crash/kill.
+   */
+  private async atomicWriteTaskJson(dir: string, task: Task): Promise<void> {
+    const taskJsonPath = join(dir, "task.json");
+    const tmpPath = join(dir, "task.json.tmp");
+    this.suppressWatcher(taskJsonPath);
+    await writeFile(tmpPath, JSON.stringify(task, null, 2));
+    await rename(tmpPath, taskJsonPath);
+  }
+
   async getSettings(): Promise<Settings> {
     const config = await this.readConfig();
     return { ...DEFAULT_SETTINGS, ...config.settings };
@@ -159,9 +172,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const dir = this.taskDir(id);
     await mkdir(dir, { recursive: true });
-    const taskJsonPath = join(dir, "task.json");
-    this.suppressWatcher(taskJsonPath);
-    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+    await this.atomicWriteTaskJson(dir, task);
 
     // Update cache if watcher is active
     if (this.watcher) this.taskCache.set(id, { ...task });
@@ -231,9 +242,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.worktree = undefined;
       }
 
-      const taskJsonPath = join(dir, "task.json");
-      this.suppressWatcher(taskJsonPath);
-      await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+      await this.atomicWriteTaskJson(dir, task);
 
       // Update cache if watcher is active
       if (this.watcher) this.taskCache.set(id, { ...task });
@@ -261,9 +270,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
       task.updatedAt = new Date().toISOString();
 
-      const taskJsonPath = join(dir, "task.json");
-      this.suppressWatcher(taskJsonPath);
-      await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+      await this.atomicWriteTaskJson(dir, task);
 
       // Update cache if watcher is active
       if (this.watcher) this.taskCache.set(id, { ...task });
@@ -321,9 +328,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         action: `Step ${stepIndex} (${task.steps[stepIndex].name}) → ${status}`,
       });
 
-      const taskJsonPath = join(dir, "task.json");
-      this.suppressWatcher(taskJsonPath);
-      await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+      await this.atomicWriteTaskJson(dir, task);
       if (this.watcher) this.taskCache.set(id, { ...task });
 
       this.emit("task:updated", task);
@@ -346,9 +351,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       });
       task.updatedAt = new Date().toISOString();
 
-      const taskJsonPath = join(dir, "task.json");
-      this.suppressWatcher(taskJsonPath);
-      await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+      await this.atomicWriteTaskJson(dir, task);
       if (this.watcher) this.taskCache.set(id, { ...task });
 
       this.emit("task:updated", task);
@@ -532,9 +535,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     task.status = undefined;
     task.updatedAt = new Date().toISOString();
 
-    const taskJsonPath = join(dir, "task.json");
-    this.suppressWatcher(taskJsonPath);
-    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+    await this.atomicWriteTaskJson(dir, task);
 
     // Update cache if watcher is active
     if (this.watcher) this.taskCache.set(task.id, { ...task });
