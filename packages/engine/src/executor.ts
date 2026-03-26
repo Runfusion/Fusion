@@ -194,6 +194,22 @@ export class TaskExecutor {
       if (!isResume) {
         await this.store.updateTask(task.id, { worktree: worktreePath });
         await this.store.logEntry(task.id, `Worktree created at ${worktreePath}`);
+
+        // Run worktree init command if configured
+        const settings = await this.store.getSettings();
+        if (settings.worktreeInitCommand) {
+          try {
+            execSync(settings.worktreeInitCommand, {
+              cwd: worktreePath,
+              stdio: "pipe",
+              timeout: 120_000,
+            });
+            await this.store.logEntry(task.id, "Worktree init command completed", settings.worktreeInitCommand);
+          } catch (err: any) {
+            const message = err.stderr?.toString() || err.message || "Unknown error";
+            await this.store.logEntry(task.id, `Worktree init command failed: ${message}`);
+          }
+        }
       }
 
       this.options.onStart?.(task, worktreePath);

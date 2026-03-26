@@ -19,6 +19,7 @@ vi.mock("node:fs", () => ({
 
 import { TaskExecutor } from "./executor.js";
 import { createHaiAgent } from "./pi.js";
+import { execSync } from "node:child_process";
 
 const mockedCreateHaiAgent = vi.mocked(createHaiAgent);
 
@@ -49,6 +50,14 @@ function createMockStore() {
     moveTask: vi.fn().mockResolvedValue({}),
     logEntry: vi.fn().mockResolvedValue(undefined),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+    getSettings: vi.fn().mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: undefined,
+    }),
     updateStep: vi.fn().mockResolvedValue({}),
   } as any;
 }
@@ -163,5 +172,141 @@ describe("TaskExecutor with semaphore", () => {
 
     expect(maxConcurrent).toBe(1);
     expect(sem.activeCount).toBe(0);
+  });
+});
+
+const mockedExecSync = vi.mocked(execSync);
+const { existsSync: mockedExistsSyncRaw } = await import("node:fs");
+const mockedExistsSync = vi.mocked(mockedExistsSyncRaw);
+
+describe("TaskExecutor worktreeInitCommand", () => {
+  const makeTask = (id = "HAI-010") => ({
+    id,
+    title: "Test",
+    description: "Test",
+    column: "in-progress" as const,
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: worktree does NOT exist (new worktree)
+    mockedExistsSync.mockReturnValue(false);
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+  });
+
+  it("runs worktreeInitCommand in new worktree when configured", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: "pnpm install",
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute(makeTask());
+
+    // execSync is called for worktree creation + init command
+    const initCall = mockedExecSync.mock.calls.find(
+      (call) => call[0] === "pnpm install",
+    );
+    expect(initCall).toBeDefined();
+    expect(initCall![1]).toMatchObject({
+      cwd: expect.stringContaining("HAI-010"),
+      timeout: 120_000,
+    });
+
+    // Should log success
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "HAI-010",
+      "Worktree init command completed",
+      "pnpm install",
+    );
+  });
+
+  it("does NOT run init command when worktreeInitCommand is not set", async () => {
+    const store = createMockStore();
+    // getSettings returns default (no worktreeInitCommand)
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute(makeTask());
+
+    // Only worktree creation calls to execSync, no "pnpm install" etc.
+    const initCall = mockedExecSync.mock.calls.find(
+      (call) => typeof call[0] === "string" && !call[0].startsWith("git"),
+    );
+    expect(initCall).toBeUndefined();
+  });
+
+  it("catches init command failure and logs without aborting", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: "npm run setup",
+    });
+
+    // Make the init command fail (but not git worktree commands)
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (cmd === "npm run setup") {
+        const err: any = new Error("command failed");
+        err.stderr = Buffer.from("setup script error");
+        throw err;
+      }
+      return Buffer.from("");
+    });
+
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    await executor.execute(makeTask());
+
+    // Should log the failure
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "HAI-010",
+      expect.stringContaining("Worktree init command failed"),
+    );
+
+    // Should NOT have called onError (task continues)
+    expect(onError).not.toHaveBeenCalled();
+
+    // Agent should still have been created
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+  });
+
+  it("does NOT run init command on worktree resume", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: "pnpm install",
+    });
+
+    // Worktree already exists (resume)
+    mockedExistsSync.mockReturnValue(true);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute(makeTask());
+
+    // getSettings should NOT have been called (skipped entire !isResume block)
+    expect(store.getSettings).not.toHaveBeenCalled();
   });
 });
