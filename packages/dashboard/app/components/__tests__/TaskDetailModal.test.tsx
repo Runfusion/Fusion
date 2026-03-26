@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { TaskDetailModal } from "../TaskDetailModal";
 import type { TaskDetail, Column, MergeResult, Task } from "@hai/core";
+
+vi.mock("../../api", () => ({
+  uploadAttachment: vi.fn(),
+  deleteAttachment: vi.fn(),
+}));
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
@@ -213,6 +218,180 @@ describe("TaskDetailModal", () => {
       />,
     );
     expect(withoutTitle.querySelector(".detail-id")?.textContent).toBe("HAI-099");
+  });
+
+  describe("paste image upload", () => {
+    it("uploads an image when pasting clipboard image data", async () => {
+      const { uploadAttachment } = await import("../../api");
+      const mockUpload = vi.mocked(uploadAttachment);
+      const mockAttachment = {
+        filename: "abc123.png",
+        originalName: "image.png",
+        size: 1024,
+        mimeType: "image/png",
+        createdAt: "2026-01-01T00:00:00Z",
+      };
+      mockUpload.mockResolvedValueOnce(mockAttachment);
+      const addToast = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={addToast}
+        />,
+      );
+
+      const imageFile = new File(["fake-image"], "image.png", { type: "image/png" });
+      const pasteEvent = new Event("paste", { bubbles: true }) as any;
+      pasteEvent.clipboardData = {
+        items: [
+          {
+            type: "image/png",
+            getAsFile: () => imageFile,
+          },
+        ],
+      };
+
+      await act(async () => {
+        document.dispatchEvent(pasteEvent);
+      });
+
+      await waitFor(() => {
+        expect(mockUpload).toHaveBeenCalledWith("HAI-099", imageFile);
+        expect(addToast).toHaveBeenCalledWith("Screenshot attached", "success");
+      });
+    });
+
+    it("does not intercept paste events without image data", async () => {
+      const { uploadAttachment } = await import("../../api");
+      const mockUpload = vi.mocked(uploadAttachment);
+      mockUpload.mockClear();
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const pasteEvent = new Event("paste", { bubbles: true }) as any;
+      pasteEvent.clipboardData = {
+        items: [
+          {
+            type: "text/plain",
+            getAsFile: () => null,
+          },
+        ],
+      };
+
+      await act(async () => {
+        document.dispatchEvent(pasteEvent);
+      });
+
+      expect(mockUpload).not.toHaveBeenCalled();
+    });
+
+    it("shows uploading state during paste upload", async () => {
+      const { uploadAttachment } = await import("../../api");
+      const mockUpload = vi.mocked(uploadAttachment);
+      let resolveUpload!: (value: any) => void;
+      mockUpload.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveUpload = resolve;
+        }),
+      );
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const imageFile = new File(["fake"], "shot.png", { type: "image/png" });
+      const pasteEvent = new Event("paste", { bubbles: true }) as any;
+      pasteEvent.clipboardData = {
+        items: [{ type: "image/png", getAsFile: () => imageFile }],
+      };
+
+      act(() => {
+        document.dispatchEvent(pasteEvent);
+      });
+
+      // While uploading, button should show "Uploading…"
+      await waitFor(() => {
+        expect(screen.getByText("Uploading…")).toBeTruthy();
+      });
+
+      await act(async () => {
+        resolveUpload({
+          filename: "x.png",
+          originalName: "shot.png",
+          size: 100,
+          mimeType: "image/png",
+          createdAt: "2026-01-01T00:00:00Z",
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Attach Screenshot")).toBeTruthy();
+      });
+    });
+  });
+
+  describe("drag and drop image upload", () => {
+    it("uploads an image when dropped onto the modal", async () => {
+      const { uploadAttachment } = await import("../../api");
+      const mockUpload = vi.mocked(uploadAttachment);
+      const mockAttachment = {
+        filename: "drop123.png",
+        originalName: "dropped.png",
+        size: 2048,
+        mimeType: "image/png",
+        createdAt: "2026-01-01T00:00:00Z",
+      };
+      mockUpload.mockResolvedValueOnce(mockAttachment);
+      const addToast = vi.fn();
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={addToast}
+        />,
+      );
+
+      const modal = container.querySelector(".modal.modal-lg")!;
+      const imageFile = new File(["fake-image"], "dropped.png", { type: "image/png" });
+
+      await act(async () => {
+        fireEvent.drop(modal, {
+          dataTransfer: {
+            files: [imageFile],
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(mockUpload).toHaveBeenCalledWith("HAI-099", imageFile);
+        expect(addToast).toHaveBeenCalledWith("Screenshot attached", "success");
+      });
+    });
   });
 
   it("activity list does not have nested scroll constraints", () => {

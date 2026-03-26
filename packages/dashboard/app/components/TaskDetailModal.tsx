@@ -115,9 +115,7 @@ export function TaskDetailModal({
     }
   }, [task.id, onRetryTask, onClose, addToast]);
 
-  const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const uploadFile = useCallback(async (file: File) => {
     setUploading(true);
     try {
       const attachment = await uploadAttachment(task.id, file);
@@ -127,9 +125,51 @@ export function TaskDetailModal({
       addToast(err.message, "error");
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }, [task.id, addToast]);
+
+  const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await uploadFile(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, [uploadFile]);
+
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            uploadFile(file);
+            return;
+          }
+        }
+      }
+    };
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [uploadFile]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const files = e.dataTransfer.files;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type.startsWith("image/")) {
+        uploadFile(file);
+        return;
+      }
+    }
+  }, [uploadFile]);
 
   const handleDeleteAttachment = useCallback(async (filename: string) => {
     try {
@@ -145,7 +185,7 @@ export function TaskDetailModal({
 
   return (
     <div className="modal-overlay open" onClick={handleOverlayClick}>
-      <div className="modal modal-lg">
+      <div className="modal modal-lg" onDragOver={handleDragOver} onDrop={handleDrop}>
         <div className="modal-header">
           <div className="detail-title-row">
             <span className="detail-id">{task.id}</span>
