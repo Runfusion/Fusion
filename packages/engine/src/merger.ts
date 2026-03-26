@@ -185,12 +185,49 @@ export async function aiMergeTask(
     `[merger] ${taskId}: ${hasConflicts ? "resolving conflicts + " : ""}writing commit message`,
   );
 
+  // ── Agent log buffering ──────────────────────────────────────────
+  let textBuffer = "";
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  const FLUSH_INTERVAL_MS = 500;
+  const FLUSH_SIZE_BYTES = 1024;
+
+  const flushTextBuffer = async () => {
+    if (textBuffer.length === 0) return;
+    const chunk = textBuffer;
+    textBuffer = "";
+    try {
+      await store.appendAgentLog(taskId, chunk, "text");
+    } catch { /* best-effort persistence */ }
+  };
+
+  const scheduleFlush = () => {
+    if (flushTimer) return;
+    flushTimer = setTimeout(async () => {
+      flushTimer = null;
+      await flushTextBuffer();
+    }, FLUSH_INTERVAL_MS);
+  };
+
   const { session } = await createHaiAgent({
     cwd: rootDir,
     systemPrompt: MERGE_SYSTEM_PROMPT,
     tools: "coding",
-    onText: (delta) => options.onAgentText?.(delta),
-    onToolStart: (name, _args) => options.onAgentTool?.(name),
+    onText: (delta) => {
+      options.onAgentText?.(delta);
+      textBuffer += delta;
+      if (textBuffer.length >= FLUSH_SIZE_BYTES) {
+        if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+        flushTextBuffer();
+      } else {
+        scheduleFlush();
+      }
+    },
+    onToolStart: (name, _args) => {
+      options.onAgentTool?.(name);
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      flushTextBuffer();
+      store.appendAgentLog(taskId, name, "tool").catch(() => {});
+    },
   });
 
   try {
@@ -221,6 +258,8 @@ export async function aiMergeTask(
     } catch { /* */ }
     throw new Error(`AI merge failed for ${taskId}: ${err.message}`);
   } finally {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    await flushTextBuffer();
     session.dispose();
   }
 

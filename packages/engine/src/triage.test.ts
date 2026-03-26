@@ -30,6 +30,7 @@ function createMockStore(tasks: any[] = []) {
     }),
     updateTask: vi.fn().mockResolvedValue({}),
     moveTask: vi.fn().mockResolvedValue({}),
+    appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getSettings: vi.fn().mockResolvedValue({
       maxConcurrent: 2,
       maxWorktrees: 4,
@@ -418,5 +419,115 @@ describe("TriageProcessor deleted task handling", () => {
     // If processing Set was cleaned up, updateTask will be called again for "specifying"
     expect(store.updateTask).toHaveBeenCalledWith("HAI-099", { status: "specifying" });
     expect(mockedCreateHaiAgent).toHaveBeenCalled();
+  });
+});
+
+describe("TriageProcessor agent log persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("logs text deltas to store.appendAgentLog", async () => {
+    const store = createMockStore();
+    let capturedOnText: ((delta: string) => void) | undefined;
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOnText = opts.onText;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Simulate text deltas from the agent
+            capturedOnText?.("Hello ");
+            capturedOnText?.("world");
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const triage = new TriageProcessor(store, "/tmp/test", {});
+    await triage.specifyTask({
+      id: "HAI-001",
+      title: "Test",
+      description: "Test",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Text buffer is flushed in finally block
+    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-001", "Hello world", "text");
+  });
+
+  it("logs tool invocations to store.appendAgentLog", async () => {
+    const store = createMockStore();
+    let capturedOnToolStart: ((name: string, args: any) => void) | undefined;
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOnToolStart = opts.onToolStart;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            capturedOnToolStart?.("Read", { path: "foo.ts" });
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const triage = new TriageProcessor(store, "/tmp/test", {});
+    await triage.specifyTask({
+      id: "HAI-001",
+      title: "Test",
+      description: "Test",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-001", "Read", "tool");
+  });
+
+  it("still fires onAgentText callback alongside logging", async () => {
+    const store = createMockStore();
+    const onAgentText = vi.fn();
+    let capturedOnText: ((delta: string) => void) | undefined;
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOnText = opts.onText;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            capturedOnText?.("hi");
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const triage = new TriageProcessor(store, "/tmp/test", { onAgentText });
+    await triage.specifyTask({
+      id: "HAI-001",
+      title: "Test",
+      description: "Test",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(onAgentText).toHaveBeenCalledWith("HAI-001", "hi");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-001", "hi", "text");
   });
 });

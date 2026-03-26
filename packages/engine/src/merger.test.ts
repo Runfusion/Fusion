@@ -45,6 +45,7 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     updateTask: vi.fn().mockResolvedValue(baseTask),
     moveTask: vi.fn().mockResolvedValue(baseTask),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
     emit: vi.fn(),
     on: vi.fn(),
@@ -181,5 +182,94 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
     const result = await aiMergeTask(store, "/tmp/root", "HAI-050");
     expect(result.worktreeRemoved).toBe(false);
     expect(result.merged).toBe(true);
+  });
+});
+
+describe("aiMergeTask — agent log persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    setupHappyPathExecSync();
+  });
+
+  it("logs text deltas to store.appendAgentLog", async () => {
+    let capturedOnText: ((delta: string) => void) | undefined;
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOnText = opts.onText;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            capturedOnText?.("Hello ");
+            capturedOnText?.("merge");
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const worktreePath = "/tmp/root/.worktrees/HAI-050";
+    const store = createMockStore(
+      { id: "HAI-050", worktree: worktreePath },
+      [{ id: "HAI-050", worktree: worktreePath, column: "in-review" } as Task],
+    );
+
+    await aiMergeTask(store, "/tmp/root", "HAI-050");
+
+    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-050", "Hello merge", "text");
+  });
+
+  it("logs tool invocations to store.appendAgentLog", async () => {
+    let capturedOnToolStart: ((name: string, args: any) => void) | undefined;
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOnToolStart = opts.onToolStart;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            capturedOnToolStart?.("Bash", { command: "git status" });
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const worktreePath = "/tmp/root/.worktrees/HAI-050";
+    const store = createMockStore(
+      { id: "HAI-050", worktree: worktreePath },
+      [{ id: "HAI-050", worktree: worktreePath, column: "in-review" } as Task],
+    );
+
+    await aiMergeTask(store, "/tmp/root", "HAI-050");
+
+    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-050", "Bash", "tool");
+  });
+
+  it("still fires onAgentText callback alongside logging", async () => {
+    const onAgentText = vi.fn();
+    let capturedOnText: ((delta: string) => void) | undefined;
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOnText = opts.onText;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            capturedOnText?.("hi");
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const worktreePath = "/tmp/root/.worktrees/HAI-050";
+    const store = createMockStore(
+      { id: "HAI-050", worktree: worktreePath },
+      [{ id: "HAI-050", worktree: worktreePath, column: "in-review" } as Task],
+    );
+
+    await aiMergeTask(store, "/tmp/root", "HAI-050", { onAgentText });
+
+    expect(onAgentText).toHaveBeenCalledWith("hi");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("HAI-050", "hi", "text");
   });
 });

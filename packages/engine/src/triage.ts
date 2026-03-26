@@ -251,14 +251,50 @@ export class TriageProcessor {
       const promptPath = `.hai/tasks/${task.id}/PROMPT.md`;
 
       const agentWork = async () => {
+        // ── Agent log buffering ──────────────────────────────────────────
+        let textBuffer = "";
+        let flushTimer: ReturnType<typeof setTimeout> | null = null;
+        const FLUSH_INTERVAL_MS = 500;
+        const FLUSH_SIZE_BYTES = 1024;
+
+        const flushTextBuffer = async () => {
+          if (textBuffer.length === 0) return;
+          const chunk = textBuffer;
+          textBuffer = "";
+          try {
+            await this.store.appendAgentLog(task.id, chunk, "text");
+          } catch { /* best-effort persistence */ }
+        };
+
+        const scheduleFlush = () => {
+          if (flushTimer) return;
+          flushTimer = setTimeout(async () => {
+            flushTimer = null;
+            await flushTextBuffer();
+          }, FLUSH_INTERVAL_MS);
+        };
+
         const { session } = await createHaiAgent({
           cwd: this.rootDir,
           systemPrompt: TRIAGE_SYSTEM_PROMPT,
           tools: "coding",
           customTools: this.createTriageTools(),
-          onText: (delta) => this.options.onAgentText?.(task.id, delta),
-          onToolStart: (name, _args) =>
-            console.log(`[triage] ${task.id} tool: ${name}`),
+          onText: (delta) => {
+            this.options.onAgentText?.(task.id, delta);
+            textBuffer += delta;
+            if (textBuffer.length >= FLUSH_SIZE_BYTES) {
+              if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+              flushTextBuffer();
+            } else {
+              scheduleFlush();
+            }
+          },
+          onToolStart: (name, _args) => {
+            console.log(`[triage] ${task.id} tool: ${name}`);
+            if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+            flushTextBuffer();
+            this.store.appendAgentLog(task.id, name, "tool").catch(() => {});
+          },
         });
 
         try {
@@ -290,6 +326,8 @@ export class TriageProcessor {
             this.options.onSpecifyComplete?.(task);
           }
         } finally {
+          if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+          await flushTextBuffer();
           session.dispose();
         }
       };
