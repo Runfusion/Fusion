@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { runDashboard } from "./commands/dashboard.js";
-import { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow } from "./commands/task.js";
+import { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach } from "./commands/task.js";
 
 const HELP = `
 hai — AI-orchestrated task board
@@ -15,6 +15,7 @@ Usage:
   hai task update <id> <step> <status> Update step status (pending|in-progress|done|skipped)
   hai task log <id> <message>          Add a log entry
   hai task merge <id>                  Merge an in-review task and close it
+  hai task attach <id> <file>          Attach a screenshot image to a task
 
 Options:
   --port, -p <port>          Dashboard port (default: 4040)
@@ -98,6 +99,15 @@ async function main() {
             const id = args[2];
             if (!id) { console.error("Usage: hai task merge <id>"); process.exit(1); }
             await runTaskMerge(id);
+            break;
+          }
+          case "attach": {
+            const id = args[2], file = args[3];
+            if (!id || !file) {
+              console.error("Usage: hai task attach <id> <file>");
+              process.exit(1);
+            }
+            await runTaskAttach(id, file);
             break;
           }
           default:

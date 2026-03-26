@@ -169,6 +169,49 @@ export async function runTaskMerge(id: string) {
   }
 }
 
+const MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+export async function runTaskAttach(id: string, filePath: string) {
+  const { readFile } = await import("node:fs/promises");
+  const { basename, extname } = await import("node:path");
+  const { resolve } = await import("node:path");
+
+  const resolvedPath = resolve(filePath);
+  const filename = basename(resolvedPath);
+  const ext = extname(filename).toLowerCase();
+  const mimeType = MIME_TYPES[ext];
+
+  if (!mimeType) {
+    console.error(`Unsupported file type: ${ext}`);
+    console.error(`Supported: ${Object.keys(MIME_TYPES).join(", ")}`);
+    process.exit(1);
+  }
+
+  let content: Buffer;
+  try {
+    content = await readFile(resolvedPath);
+  } catch {
+    console.error(`Cannot read file: ${filePath}`);
+    process.exit(1);
+  }
+
+  const store = await getStore();
+  const attachment = await store.addAttachment(id, filename, content, mimeType);
+
+  const sizeKB = (attachment.size / 1024).toFixed(1);
+  console.log();
+  console.log(`  ✓ Attached to ${id}: ${attachment.originalName}`);
+  console.log(`    File: ${attachment.filename} (${sizeKB} KB)`);
+  console.log(`    Path: .hai/tasks/${id}/attachments/${attachment.filename}`);
+  console.log();
+}
+
 export async function runTaskMove(id: string, column: string) {
   if (!COLUMNS.includes(column as Column)) {
     console.error(`Invalid column: ${column}`);
