@@ -1,3 +1,5 @@
+import { Settings } from "lucide-react";
+
 interface HeaderProps {
   onOpenSettings?: () => void;
 }
@@ -11,7 +13,7 @@ export function Header({ onOpenSettings }: HeaderProps) {
       </div>
       <div className="header-actions">
         <button className="btn-icon" onClick={onOpenSettings} title="Settings">
-          ⚙
+          <Settings size={16} />
         </button>
       </div>
     </header>

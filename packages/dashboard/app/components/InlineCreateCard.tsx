@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { Link } from "lucide-react";
 import type { Task, TaskCreateInput } from "@hai/core";
 import type { ToastType } from "../hooks/useToast";
 
@@ -77,7 +78,7 @@ export function InlineCreateCard({ tasks, onSubmit, onCancel, addToast }: Inline
             className="btn btn-sm dep-trigger"
             onClick={() => setShowDeps((v) => !v)}
           >
-            ⛓{dependencies.length > 0 ? ` ${dependencies.length} deps` : " Deps"}
+            <Link size={12} style={{ verticalAlign: 'middle' }} />{dependencies.length > 0 ? ` ${dependencies.length} deps` : " Deps"}
           </button>
           {showDeps && (
             <div className="dep-dropdown">

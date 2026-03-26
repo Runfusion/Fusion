@@ -1,4 +1,5 @@
 import type { Task, TaskDetail } from "@hai/core";
+import { ClipboardList, GitBranch } from "lucide-react";
 import { TaskCard } from "./TaskCard";
 import type { ToastType } from "../hooks/useToast";
 
@@ -21,7 +22,7 @@ export function WorktreeGroup({
     <div className="worktree-group">
       <div className="worktree-group-header">
         <span className="worktree-icon">
-          {label === "Up Next" || label === "Unassigned" ? "📋" : "🌿"}
+          {label === "Up Next" || label === "Unassigned" ? <ClipboardList size={14} /> : <GitBranch size={14} />}
         </span>
         <span className="worktree-label">{label}</span>
       </div>

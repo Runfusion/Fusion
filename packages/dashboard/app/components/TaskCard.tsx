@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { Link, Clock } from "lucide-react";
 import type { Task, TaskDetail, Column } from "@hai/core";
 import { fetchTaskDetail } from "../api";
 import type { ToastType } from "../hooks/useToast";
@@ -80,10 +81,10 @@ export function TaskCard({ task, queued, onOpenDetail, addToast }: TaskCardProps
         <div className="card-meta">
           {task.dependencies && task.dependencies.length > 0 && (
             <span className="card-dep-badge">
-              ⛓ {task.dependencies.length} dep{task.dependencies.length > 1 ? "s" : ""}
+              <Link size={12} style={{ verticalAlign: 'middle' }} /> {task.dependencies.length} dep{task.dependencies.length > 1 ? "s" : ""}
             </span>
           )}
-          {queued && <span className="queued-badge">⏳ Queued</span>}
+          {queued && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: 'middle' }} /> Queued</span>}
         </div>
       )}
     </div>

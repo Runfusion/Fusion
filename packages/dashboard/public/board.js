@@ -59,7 +59,7 @@
   function cardHTML(task) {
     const deps =
       task.dependencies && task.dependencies.length
-        ? `<div class="card-meta"><span class="card-dep-badge">⛓ ${task.dependencies.length} dep${task.dependencies.length > 1 ? "s" : ""}</span></div>`
+        ? `<div class="card-meta"><span class="card-dep-badge">${task.dependencies.length} dep${task.dependencies.length > 1 ? "s" : ""}</span></div>`
         : "";
     return `<div class="card" data-id="${task.id}" draggable="true">
       <span class="card-id">${task.id}</span>
