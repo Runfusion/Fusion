@@ -14,16 +14,24 @@ hai is an AI-orchestrated task board. Tasks flow through columns:
 
 ```bash
 hai task create "description of what needs to be done"
+hai task create "button is misaligned" --attach screenshot.png
+hai task create "server crash" --attach error.log --attach trace.txt
 ```
 
 Creates a task in **triage**. The AI triage agent will specify it into a full
 PROMPT.md with steps, file scope, review level, and acceptance criteria, then
 move it to **todo**.
 
+Options:
+- `--attach <file>` — attach files (images, logs, configs). Repeatable.
+  Images are sent to the triage agent for visual context.
+  Files are stored in `.hai/tasks/HAI-XXX/attachments/`.
+
 Tips:
 - Be descriptive — the triage agent uses this to write the spec
 - Include the problem AND desired outcome when possible
 - For bugs, describe the current behavior and expected behavior
+- Attach screenshots for UI bugs — the AI can see them
 - No need to specify how to fix it — the triage agent figures that out
 
 ### List tasks
@@ -105,6 +113,9 @@ hai task create "the login page is slow"
 # Specific — triage agent will structure it
 hai task create "Add rate limiting to POST /api/tasks. Use a token bucket algorithm with 100 req/min per IP. Return 429 with Retry-After header when exceeded."
 
-# Bug report
-hai task create "hai task show truncates description to 60 chars. Should show the full text."
+# Bug report with screenshot
+hai task create "button is misaligned on mobile" --attach screenshot.png
+
+# Bug report with logs
+hai task create "server crashes on startup" --attach crash.log
 ```
