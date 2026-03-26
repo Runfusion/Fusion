@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { TaskStore, Task, TaskDetail, StepStatus } from "@hai/core";
 import { findWorktreeUser } from "./merger.js";
+import { generateWorktreeName } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createHaiAgent } from "./pi.js";
 import { reviewStep } from "./reviewer.js";
@@ -180,6 +181,47 @@ export class TaskExecutor {
    * 3. Otherwise, create a fresh worktree via `git worktree add` and run the
    *    `worktreeInitCommand` if configured.
    */
+  private resolveDependencyWorktree(task: Task, allTasks: Task[]): string | null {
+    if (task.dependencies.length === 0) return null;
+
+    for (const depId of task.dependencies) {
+      const dep = allTasks.find((t) => t.id === depId);
+      if (
+        dep &&
+        dep.worktree &&
+        (dep.column === "done" || dep.column === "in-review") &&
+        existsSync(dep.worktree)
+      ) {
+        return dep.worktree;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Reuse an existing worktree directory from a dependency task.
+   * Instead of creating a new worktree with `git worktree add`, this creates
+   * a new branch in the existing worktree via `git checkout -b`. The worktree
+   * directory (and its build caches) are preserved.
+   */
+  private reuseWorktree(branch: string, worktreePath: string): void {
+    execSync(`git checkout -b "${branch}"`, {
+      cwd: worktreePath,
+      stdio: "pipe",
+    });
+    console.log(`[executor] Reused worktree at ${worktreePath}, created branch ${branch}`);
+  }
+
+  /**
+   * Execute a task in an isolated git worktree.
+   *
+   * **Worktree assignment:** New worktrees get humanized random names
+   * (e.g., `.worktrees/swift-falcon/`) via `generateWorktreeName()` rather
+   * than being named after the task ID. This decouples directory names from
+   * tasks, enabling worktree reuse across dependency chains. When resuming
+   * a task that already has `task.worktree` set, the existing path is used
+   * as-is. Branches remain task-scoped (`hai/{task-id}`).
+   */
   async execute(task: Task): Promise<void> {
     if (this.executing.has(task.id)) return;
     this.executing.add(task.id);
@@ -243,7 +285,9 @@ export class TaskExecutor {
           }
         }
       } else {
-        // Resume: worktree already exists, just ensure git worktree is registered
+        worktreePath = task.worktree || join(this.rootDir, ".worktrees", generateWorktreeName(this.rootDir));
+        isResume = existsSync(worktreePath);
+        isReuse = false;
         this.createWorktree(branchName, worktreePath);
       }
 

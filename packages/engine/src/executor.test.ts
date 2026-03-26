@@ -11,6 +11,9 @@ vi.mock("./reviewer.js", () => ({
 vi.mock("./merger.js", () => ({
   findWorktreeUser: vi.fn().mockResolvedValue(null),
 }));
+vi.mock("./worktree-names.js", () => ({
+  generateWorktreeName: vi.fn().mockReturnValue("swift-falcon"),
+}));
 
 // Mock node modules used by executor
 vi.mock("node:child_process", () => ({
@@ -232,7 +235,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
     );
     expect(initCall).toBeDefined();
     expect(initCall![1]).toMatchObject({
-      cwd: expect.stringContaining("HAI-010"),
+      cwd: expect.stringContaining(".worktrees/"),
       timeout: 120_000,
     });
 

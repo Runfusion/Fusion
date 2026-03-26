@@ -468,7 +468,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
 
       const branch = `hai/${id.toLowerCase()}`;
-      const worktreePath = task.worktree || join(this.rootDir, ".worktrees", id);
+      const worktreePath = task.worktree;
       const result: MergeResult = {
         task,
         branch,
@@ -519,7 +519,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
 
       // 3. Remove worktree
-      if (existsSync(worktreePath)) {
+      if (worktreePath && existsSync(worktreePath)) {
         try {
           execSync(`git worktree remove "${worktreePath}" --force`, {
             cwd: this.rootDir,

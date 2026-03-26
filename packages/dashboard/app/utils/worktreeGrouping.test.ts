@@ -21,24 +21,30 @@ describe("getWorktreeLabel", () => {
     expect(getWorktreeLabel(".worktrees/HAI-001")).toBe("HAI-001");
     expect(getWorktreeLabel("/path/to/hai/hai-001")).toBe("hai-001");
   });
+
+  it("extracts humanized worktree names", () => {
+    expect(getWorktreeLabel(".worktrees/swirly-monkey")).toBe("swirly-monkey");
+    expect(getWorktreeLabel("/tmp/project/.worktrees/quiet-falcon")).toBe("quiet-falcon");
+    expect(getWorktreeLabel(".worktrees/bright-orchid-2")).toBe("bright-orchid-2");
+  });
 });
 
 describe("groupByWorktree", () => {
   it("groups active in-progress tasks by worktree", () => {
-    const t1 = makeTask({ id: "HAI-001", worktree: ".worktrees/HAI-001" });
-    const t2 = makeTask({ id: "HAI-002", worktree: ".worktrees/HAI-002" });
+    const t1 = makeTask({ id: "HAI-001", worktree: ".worktrees/swift-falcon" });
+    const t2 = makeTask({ id: "HAI-002", worktree: ".worktrees/quiet-robin" });
 
     const groups = groupByWorktree([t1, t2], [t1, t2], 2);
 
     expect(groups).toHaveLength(2);
-    expect(groups[0].label).toBe("HAI-001");
+    expect(groups[0].label).toBe("swift-falcon");
     expect(groups[0].activeTasks).toEqual([t1]);
-    expect(groups[1].label).toBe("HAI-002");
+    expect(groups[1].label).toBe("quiet-robin");
     expect(groups[1].activeTasks).toEqual([t2]);
   });
 
   it("places queued tasks only in the Up Next group, never in worktree groups", () => {
-    const active = makeTask({ id: "HAI-001", worktree: ".worktrees/HAI-001" });
+    const active = makeTask({ id: "HAI-001", worktree: ".worktrees/swift-falcon" });
     const queued = makeTask({
       id: "HAI-002",
       column: "todo",
@@ -48,7 +54,7 @@ describe("groupByWorktree", () => {
     const groups = groupByWorktree([active], [active, queued], 2);
 
     // Worktree group should have no queued tasks
-    const worktreeGroup = groups.find((g) => g.label === "HAI-001");
+    const worktreeGroup = groups.find((g) => g.label === "swift-falcon");
     expect(worktreeGroup).toBeDefined();
     expect(worktreeGroup!.queuedTasks).toEqual([]);
 
@@ -60,7 +66,7 @@ describe("groupByWorktree", () => {
   });
 
   it("does not create Up Next group when there are no eligible queued tasks", () => {
-    const active = makeTask({ id: "HAI-001", worktree: ".worktrees/HAI-001" });
+    const active = makeTask({ id: "HAI-001", worktree: ".worktrees/swift-falcon" });
 
     const groups = groupByWorktree([active], [active], 2);
 
@@ -68,7 +74,7 @@ describe("groupByWorktree", () => {
   });
 
   it("does not create Up Next when queued tasks have unsatisfied dependencies", () => {
-    const active = makeTask({ id: "HAI-001", worktree: ".worktrees/HAI-001" });
+    const active = makeTask({ id: "HAI-001", worktree: ".worktrees/swift-falcon" });
     const blocked = makeTask({
       id: "HAI-002",
       column: "todo",
@@ -81,7 +87,7 @@ describe("groupByWorktree", () => {
   });
 
   it("respects maxConcurrent limit on queued tasks shown", () => {
-    const active = makeTask({ id: "HAI-001", worktree: ".worktrees/HAI-001" });
+    const active = makeTask({ id: "HAI-001", worktree: ".worktrees/swift-falcon" });
     const q1 = makeTask({ id: "HAI-010", column: "todo" });
     const q2 = makeTask({ id: "HAI-011", column: "todo" });
     const q3 = makeTask({ id: "HAI-012", column: "todo" });
