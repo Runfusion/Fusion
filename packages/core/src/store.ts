@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, rename } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import type { Task, TaskDetail, TaskCreateInput, BoardConfig, Column, MergeResult, Settings } from "./types.js";
@@ -29,6 +29,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   /** Debounce interval in ms */
   private debounceMs = 150;
+  /** Per-task promise chain for serializing writes */
+  private taskLocks: Map<string, Promise<void>> = new Map();
 
   constructor(private rootDir: string) {
     super();
@@ -42,6 +44,74 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (!existsSync(this.configPath)) {
       await this.writeConfig({ nextId: 1 });
     }
+  }
+
+  /**
+   * Serialize all mutations to a given task's task.json by chaining promises
+   * per task ID. Concurrent callers for the same ID will queue behind each other.
+   */
+  private withTaskLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.taskLocks.get(id) ?? Promise.resolve();
+    let resolve: () => void;
+    const next = new Promise<void>((r) => { resolve = r; });
+    this.taskLocks.set(id, next);
+
+    return prev.then(async () => {
+      try {
+        return await fn();
+      } finally {
+        if (this.taskLocks.get(id) === next) {
+          this.taskLocks.delete(id);
+        }
+        resolve!();
+      }
+    });
+  }
+
+  /**
+   * Safely read and parse a task.json file. On `SyntaxError`, attempts to
+   * recover by truncating the content at the last valid `}` and re-parsing.
+   * Logs a warning to stderr when truncation-repair is used.
+   */
+  private async safeReadTaskJson(dir: string): Promise<Task> {
+    const filePath = join(dir, "task.json");
+    const raw = await readFile(filePath, "utf-8");
+    try {
+      return JSON.parse(raw) as Task;
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+
+      // Attempt recovery: try truncating at each '}' from the end until valid
+      let pos = raw.length;
+      while ((pos = raw.lastIndexOf("}", pos - 1)) > 0) {
+        try {
+          const task = JSON.parse(raw.slice(0, pos + 1)) as Task;
+          console.warn(
+            `[hai] Warning: repaired corrupted task.json at ${filePath} (truncated ${raw.length - pos - 1} trailing bytes)`,
+          );
+          return task;
+        } catch {
+          // Try next position
+        }
+      }
+
+      throw new Error(
+        `Failed to parse task.json at ${filePath}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Atomically write a task.json file by writing to a temp file first,
+   * then renaming it into place. The rename is atomic on POSIX filesystems,
+   * preventing partial writes from corrupting the file on crash/kill.
+   */
+  private async atomicWriteTaskJson(dir: string, task: Task): Promise<void> {
+    const taskJsonPath = join(dir, "task.json");
+    const tmpPath = join(dir, "task.json.tmp");
+    this.suppressWatcher(taskJsonPath);
+    await writeFile(tmpPath, JSON.stringify(task, null, 2));
+    await rename(tmpPath, taskJsonPath);
   }
 
   async getSettings(): Promise<Settings> {
@@ -101,9 +171,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const dir = this.taskDir(id);
     await mkdir(dir, { recursive: true });
-    const taskJsonPath = join(dir, "task.json");
-    this.suppressWatcher(taskJsonPath);
-    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+    await this.atomicWriteTaskJson(dir, task);
 
     // Update cache if watcher is active
     if (this.watcher) this.taskCache.set(id, { ...task });
@@ -120,8 +188,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async getTask(id: string): Promise<TaskDetail> {
     const dir = this.taskDir(id);
-    const data = await readFile(join(dir, "task.json"), "utf-8");
-    const task = JSON.parse(data) as Task;
+    const task = await this.safeReadTaskJson(dir);
 
     let prompt = "";
     const promptPath = join(dir, "PROMPT.md");
@@ -141,11 +208,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     for (const entry of entries) {
       if (entry.isDirectory() && entry.name.startsWith("HAI-")) {
         try {
-          const data = await readFile(
-            join(this.tasksDir, entry.name, "task.json"),
-            "utf-8",
-          );
-          tasks.push(JSON.parse(data));
+          tasks.push(await this.safeReadTaskJson(join(this.tasksDir, entry.name)));
         } catch {
           // skip invalid task dirs
         }
@@ -156,70 +219,68 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   async moveTask(id: string, toColumn: Column): Promise<Task> {
-    const dir = this.taskDir(id);
-    const data = await readFile(join(dir, "task.json"), "utf-8");
-    const task = JSON.parse(data) as Task;
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.safeReadTaskJson(dir);
 
-    const validTargets = VALID_TRANSITIONS[task.column];
-    if (!validTargets.includes(toColumn)) {
-      throw new Error(
-        `Invalid transition: '${task.column}' → '${toColumn}'. ` +
-          `Valid targets: ${validTargets.join(", ") || "none"}`,
-      );
-    }
+      const validTargets = VALID_TRANSITIONS[task.column];
+      if (!validTargets.includes(toColumn)) {
+        throw new Error(
+          `Invalid transition: '${task.column}' → '${toColumn}'. ` +
+            `Valid targets: ${validTargets.join(", ") || "none"}`,
+        );
+      }
 
-    const fromColumn = task.column;
-    task.column = toColumn;
-    task.updatedAt = new Date().toISOString();
+      const fromColumn = task.column;
+      task.column = toColumn;
+      task.updatedAt = new Date().toISOString();
 
-    // Clear transient fields when moving to done (matches moveToDone behavior)
-    if (toColumn === "done") {
-      task.status = undefined;
-      task.worktree = undefined;
-    }
+      // Clear transient fields when moving to done (matches moveToDone behavior)
+      if (toColumn === "done") {
+        task.status = undefined;
+        task.worktree = undefined;
+      }
 
-    const taskJsonPath = join(dir, "task.json");
-    this.suppressWatcher(taskJsonPath);
-    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+      await this.atomicWriteTaskJson(dir, task);
 
-    // Update cache if watcher is active
-    if (this.watcher) this.taskCache.set(id, { ...task });
+      // Update cache if watcher is active
+      if (this.watcher) this.taskCache.set(id, { ...task });
 
-    this.emit("task:moved", { task, from: fromColumn, to: toColumn });
-    return task;
+      this.emit("task:moved", { task, from: fromColumn, to: toColumn });
+      return task;
+    });
   }
 
   async updateTask(
     id: string,
     updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null },
   ): Promise<Task> {
-    const dir = this.taskDir(id);
-    const data = await readFile(join(dir, "task.json"), "utf-8");
-    const task = JSON.parse(data) as Task;
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.safeReadTaskJson(dir);
 
-    if (updates.title !== undefined) task.title = updates.title;
-    if (updates.description !== undefined) task.description = updates.description;
-    if (updates.worktree !== undefined) task.worktree = updates.worktree;
-    if (updates.status === null) {
-      task.status = undefined;
-    } else if (updates.status !== undefined) {
-      task.status = updates.status;
-    }
-    task.updatedAt = new Date().toISOString();
+      if (updates.title !== undefined) task.title = updates.title;
+      if (updates.description !== undefined) task.description = updates.description;
+      if (updates.worktree !== undefined) task.worktree = updates.worktree;
+      if (updates.status === null) {
+        task.status = undefined;
+      } else if (updates.status !== undefined) {
+        task.status = updates.status;
+      }
+      task.updatedAt = new Date().toISOString();
 
-    const taskJsonPath = join(dir, "task.json");
-    this.suppressWatcher(taskJsonPath);
-    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+      await this.atomicWriteTaskJson(dir, task);
 
-    // Update cache if watcher is active
-    if (this.watcher) this.taskCache.set(id, { ...task });
+      // Update cache if watcher is active
+      if (this.watcher) this.taskCache.set(id, { ...task });
 
-    if (updates.prompt !== undefined) {
-      await writeFile(join(dir, "PROMPT.md"), updates.prompt);
-    }
+      if (updates.prompt !== undefined) {
+        await writeFile(join(dir, "PROMPT.md"), updates.prompt);
+      }
 
-    this.emit("task:updated", task);
-    return task;
+      this.emit("task:updated", task);
+      return task;
+    });
   }
 
   /**
@@ -230,73 +291,71 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     stepIndex: number,
     status: import("./types.js").StepStatus,
   ): Promise<Task> {
-    const dir = this.taskDir(id);
-    const data = await readFile(join(dir, "task.json"), "utf-8");
-    const task = JSON.parse(data) as Task;
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.safeReadTaskJson(dir);
 
-    // Auto-initialize steps from PROMPT.md if empty
-    if (task.steps.length === 0) {
-      task.steps = await this.parseStepsFromPrompt(id);
-    }
-
-    if (stepIndex < 0 || stepIndex >= task.steps.length) {
-      throw new Error(
-        `Step ${stepIndex} out of range (task has ${task.steps.length} steps)`,
-      );
-    }
-
-    task.steps[stepIndex].status = status;
-    task.updatedAt = new Date().toISOString();
-
-    // Advance currentStep to first non-done step
-    if (status === "done") {
-      while (
-        task.currentStep < task.steps.length &&
-        task.steps[task.currentStep].status === "done"
-      ) {
-        task.currentStep++;
+      // Auto-initialize steps from PROMPT.md if empty
+      if (task.steps.length === 0) {
+        task.steps = await this.parseStepsFromPrompt(id);
       }
-    } else if (status === "in-progress") {
-      task.currentStep = stepIndex;
-    }
 
-    // Log it
-    task.log.push({
-      timestamp: task.updatedAt,
-      action: `Step ${stepIndex} (${task.steps[stepIndex].name}) → ${status}`,
+      if (stepIndex < 0 || stepIndex >= task.steps.length) {
+        throw new Error(
+          `Step ${stepIndex} out of range (task has ${task.steps.length} steps)`,
+        );
+      }
+
+      task.steps[stepIndex].status = status;
+      task.updatedAt = new Date().toISOString();
+
+      // Advance currentStep to first non-done step
+      if (status === "done") {
+        while (
+          task.currentStep < task.steps.length &&
+          task.steps[task.currentStep].status === "done"
+        ) {
+          task.currentStep++;
+        }
+      } else if (status === "in-progress") {
+        task.currentStep = stepIndex;
+      }
+
+      // Log it
+      task.log.push({
+        timestamp: task.updatedAt,
+        action: `Step ${stepIndex} (${task.steps[stepIndex].name}) → ${status}`,
+      });
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.watcher) this.taskCache.set(id, { ...task });
+
+      this.emit("task:updated", task);
+      return task;
     });
-
-    const taskJsonPath = join(dir, "task.json");
-    this.suppressWatcher(taskJsonPath);
-    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
-    if (this.watcher) this.taskCache.set(id, { ...task });
-
-    this.emit("task:updated", task);
-    return task;
   }
 
   /**
    * Add a log entry to a task.
    */
   async logEntry(id: string, action: string, outcome?: string): Promise<Task> {
-    const dir = this.taskDir(id);
-    const data = await readFile(join(dir, "task.json"), "utf-8");
-    const task = JSON.parse(data) as Task;
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.safeReadTaskJson(dir);
 
-    task.log.push({
-      timestamp: new Date().toISOString(),
-      action,
-      outcome,
+      task.log.push({
+        timestamp: new Date().toISOString(),
+        action,
+        outcome,
+      });
+      task.updatedAt = new Date().toISOString();
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.watcher) this.taskCache.set(id, { ...task });
+
+      this.emit("task:updated", task);
+      return task;
     });
-    task.updatedAt = new Date().toISOString();
-
-    const taskJsonPath = join(dir, "task.json");
-    this.suppressWatcher(taskJsonPath);
-    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
-    if (this.watcher) this.taskCache.set(id, { ...task });
-
-    this.emit("task:updated", task);
-    return task;
   }
 
   /**
@@ -347,21 +406,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   async deleteTask(id: string): Promise<Task> {
-    const dir = this.taskDir(id);
-    const data = await readFile(join(dir, "task.json"), "utf-8");
-    const task = JSON.parse(data) as Task;
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.safeReadTaskJson(dir);
 
-    const taskJsonPath = join(dir, "task.json");
-    this.suppressWatcher(taskJsonPath);
+      const taskJsonPath = join(dir, "task.json");
+      this.suppressWatcher(taskJsonPath);
 
-    // Remove from cache if watcher is active
-    if (this.watcher) this.taskCache.delete(id);
+      // Remove from cache if watcher is active
+      if (this.watcher) this.taskCache.delete(id);
 
-    const { rm } = await import("node:fs/promises");
-    await rm(dir, { recursive: true });
+      const { rm } = await import("node:fs/promises");
+      await rm(dir, { recursive: true });
 
-    this.emit("task:deleted", task);
-    return task;
+      this.emit("task:deleted", task);
+      return task;
+    });
   }
 
   /**
@@ -369,102 +429,103 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * clean up the worktree, and move the task to done.
    */
   async mergeTask(id: string): Promise<MergeResult> {
-    const dir = this.taskDir(id);
-    const data = await readFile(join(dir, "task.json"), "utf-8");
-    const task = JSON.parse(data) as Task;
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.safeReadTaskJson(dir);
 
-    if (task.column !== "in-review") {
-      throw new Error(
-        `Cannot merge ${id}: task is in '${task.column}', must be in 'in-review'`,
-      );
-    }
-
-    const branch = `hai/${id.toLowerCase()}`;
-    const worktreePath = task.worktree || join(this.rootDir, ".worktrees", id);
-    const result: MergeResult = {
-      task,
-      branch,
-      merged: false,
-      worktreeRemoved: false,
-      branchDeleted: false,
-    };
-
-    // 1. Check the branch exists
-    try {
-      execSync(`git rev-parse --verify "${branch}"`, {
-        cwd: this.rootDir,
-        stdio: "pipe",
-      });
-    } catch {
-      // No branch — might have been manually merged. Just move to done.
-      result.error = `Branch '${branch}' not found — moving to done without merge`;
-      await this.moveToDone(task, dir);
-      result.task = { ...task, column: "done" };
-      this.emit("task:merged", result);
-      return result;
-    }
-
-    // 2. Merge the branch
-    try {
-      execSync(`git merge "${branch}" --no-edit`, {
-        cwd: this.rootDir,
-        stdio: "pipe",
-      });
-      result.merged = true;
-    } catch (err: any) {
-      // Merge conflict — abort and report
-      try {
-        execSync("git merge --abort", { cwd: this.rootDir, stdio: "pipe" });
-      } catch {
-        // already clean
+      if (task.column !== "in-review") {
+        throw new Error(
+          `Cannot merge ${id}: task is in '${task.column}', must be in 'in-review'`,
+        );
       }
-      throw new Error(
-        `Merge conflict merging '${branch}'. Resolve manually:\n` +
-          `  cd ${this.rootDir}\n` +
-          `  git merge ${branch}\n` +
-          `  # resolve conflicts, then: hai task move ${id} done`,
-      );
-    }
 
-    // 3. Remove worktree
-    if (existsSync(worktreePath)) {
+      const branch = `hai/${id.toLowerCase()}`;
+      const worktreePath = task.worktree || join(this.rootDir, ".worktrees", id);
+      const result: MergeResult = {
+        task,
+        branch,
+        merged: false,
+        worktreeRemoved: false,
+        branchDeleted: false,
+      };
+
+      // 1. Check the branch exists
       try {
-        execSync(`git worktree remove "${worktreePath}" --force`, {
+        execSync(`git rev-parse --verify "${branch}"`, {
           cwd: this.rootDir,
           stdio: "pipe",
         });
-        result.worktreeRemoved = true;
       } catch {
-        // Non-fatal — worktree may already be gone
+        // No branch — might have been manually merged. Just move to done.
+        result.error = `Branch '${branch}' not found — moving to done without merge`;
+        await this.moveToDone(task, dir);
+        result.task = { ...task, column: "done" };
+        this.emit("task:merged", result);
+        return result;
       }
-    }
 
-    // 4. Delete the branch
-    try {
-      execSync(`git branch -d "${branch}"`, {
-        cwd: this.rootDir,
-        stdio: "pipe",
-      });
-      result.branchDeleted = true;
-    } catch {
-      // Branch might not be fully merged in some edge cases; try force
+      // 2. Merge the branch
       try {
-        execSync(`git branch -D "${branch}"`, {
+        execSync(`git merge "${branch}" --no-edit`, {
+          cwd: this.rootDir,
+          stdio: "pipe",
+        });
+        result.merged = true;
+      } catch (err: any) {
+        // Merge conflict — abort and report
+        try {
+          execSync("git merge --abort", { cwd: this.rootDir, stdio: "pipe" });
+        } catch {
+          // already clean
+        }
+        throw new Error(
+          `Merge conflict merging '${branch}'. Resolve manually:\n` +
+            `  cd ${this.rootDir}\n` +
+            `  git merge ${branch}\n` +
+            `  # resolve conflicts, then: hai task move ${id} done`,
+        );
+      }
+
+      // 3. Remove worktree
+      if (existsSync(worktreePath)) {
+        try {
+          execSync(`git worktree remove "${worktreePath}" --force`, {
+            cwd: this.rootDir,
+            stdio: "pipe",
+          });
+          result.worktreeRemoved = true;
+        } catch {
+          // Non-fatal — worktree may already be gone
+        }
+      }
+
+      // 4. Delete the branch
+      try {
+        execSync(`git branch -d "${branch}"`, {
           cwd: this.rootDir,
           stdio: "pipe",
         });
         result.branchDeleted = true;
       } catch {
-        // Non-fatal
+        // Branch might not be fully merged in some edge cases; try force
+        try {
+          execSync(`git branch -D "${branch}"`, {
+            cwd: this.rootDir,
+            stdio: "pipe",
+          });
+          result.branchDeleted = true;
+        } catch {
+          // Non-fatal
+        }
       }
-    }
 
-    // 5. Move task to done
-    await this.moveToDone(task, dir);
-    result.task = { ...task, column: "done" };
+      // 5. Move task to done
+      await this.moveToDone(task, dir);
+      result.task = { ...task, column: "done" };
 
-    this.emit("task:merged", result);
-    return result;
+      this.emit("task:merged", result);
+      return result;
+    });
   }
 
   private async moveToDone(task: Task, dir: string): Promise<void> {
@@ -473,9 +534,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     task.status = undefined;
     task.updatedAt = new Date().toISOString();
 
-    const taskJsonPath = join(dir, "task.json");
-    this.suppressWatcher(taskJsonPath);
-    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+    await this.atomicWriteTaskJson(dir, task);
 
     // Update cache if watcher is active
     if (this.watcher) this.taskCache.set(task.id, { ...task });
@@ -594,8 +653,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     let task: Task;
     try {
-      const data = await readFile(filePath, "utf-8");
-      task = JSON.parse(data) as Task;
+      const taskDir = join(this.tasksDir, taskId);
+      task = await this.safeReadTaskJson(taskDir);
     } catch {
       return; // File not readable or invalid JSON
     }
