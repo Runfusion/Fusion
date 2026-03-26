@@ -9,7 +9,7 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
-  const [form, setForm] = useState<Settings>({ maxConcurrent: 2, pollIntervalMs: 15000 });
+  const [form, setForm] = useState<Settings>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -74,6 +74,20 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
                   setForm((f) => ({ ...f, maxConcurrent: Number(e.target.value) }))
                 }
               />
+            </div>
+            <div className="form-group">
+              <label htmlFor="maxWorktrees">Max Worktrees</label>
+              <input
+                id="maxWorktrees"
+                type="number"
+                min={1}
+                max={20}
+                value={form.maxWorktrees}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, maxWorktrees: Number(e.target.value) }))
+                }
+              />
+              <small>Limits total git worktrees including in-review tasks</small>
             </div>
             <div className="form-group">
               <label htmlFor="pollIntervalMs">Poll Interval (ms)</label>

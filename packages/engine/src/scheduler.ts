@@ -3,6 +3,8 @@ import { resolveDependencyOrder, type TaskStore, type Task } from "@hai/core";
 export interface SchedulerOptions {
   /** Max concurrent in-progress tasks. Default: 2 */
   maxConcurrent?: number;
+  /** Max total worktrees (in-progress + in-review with worktree). Default: 4 */
+  maxWorktrees?: number;
   /** Milliseconds between scheduling polls. Default: 15000 */
   pollIntervalMs?: number;
   /** Called when scheduler starts a task */
@@ -36,7 +38,7 @@ export class Scheduler {
     this.pollInterval = setInterval(() => this.schedule(), interval);
     this.schedule();
     console.log(
-      `[scheduler] Started (max concurrent: ${this.options.maxConcurrent ?? 2})`,
+      `[scheduler] Started (max concurrent: ${this.options.maxConcurrent ?? 2}, max worktrees: ${this.options.maxWorktrees ?? 4})`,
     );
   }
 
@@ -56,9 +58,27 @@ export class Scheduler {
     try {
       const tasks = await this.store.listTasks();
       const maxConcurrent = this.options.maxConcurrent ?? 2;
+      const maxWorktrees = this.options.maxWorktrees ?? 4;
+
+      // Count all tasks with active worktrees (in-progress or in-review with worktree set)
+      const activeWorktrees = tasks.filter(
+        (t) =>
+          t.column === "in-progress" ||
+          (t.column === "in-review" && t.worktree),
+      ).length;
+
+      if (activeWorktrees >= maxWorktrees) {
+        console.log(
+          `[scheduler] Worktree limit reached (${activeWorktrees}/${maxWorktrees})`,
+        );
+        return;
+      }
 
       const inProgress = tasks.filter((t) => t.column === "in-progress");
-      const available = maxConcurrent - inProgress.length;
+      const available = Math.min(
+        maxConcurrent - inProgress.length,
+        maxWorktrees - activeWorktrees,
+      );
       if (available <= 0) return;
 
       const todo = tasks.filter((t) => t.column === "todo");

@@ -49,8 +49,11 @@ export async function runDashboard(port: number, opts: { engine?: boolean; open?
       onError: (t, e) => console.log(`[engine] ✗ ${t.id}: ${e.message}`),
     });
 
+    const settings = await store.getSettings();
+
     const scheduler = new Scheduler(store, {
-      maxConcurrent: 2,
+      maxConcurrent: settings.maxConcurrent,
+      maxWorktrees: settings.maxWorktrees,
       onSchedule: (t) => console.log(`[engine] Scheduled ${t.id}`),
       onBlocked: (t, deps) => console.log(`[engine] ${t.id} blocked by ${deps.join(", ")}`),
     });

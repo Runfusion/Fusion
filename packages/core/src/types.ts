@@ -43,11 +43,13 @@ export interface TaskCreateInput {
 
 export interface Settings {
   maxConcurrent: number;
+  maxWorktrees: number;
   pollIntervalMs: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   maxConcurrent: 2,
+  maxWorktrees: 4,
   pollIntervalMs: 15000,
 };
 

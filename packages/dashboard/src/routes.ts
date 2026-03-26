@@ -10,9 +10,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.get("/config", async (_req, res) => {
     try {
       const settings = await store.getSettings();
-      res.json({ maxConcurrent: settings.maxConcurrent ?? options?.maxConcurrent ?? 2 });
+      res.json({
+        maxConcurrent: settings.maxConcurrent ?? options?.maxConcurrent ?? 2,
+        maxWorktrees: settings.maxWorktrees ?? 4,
+      });
     } catch {
-      res.json({ maxConcurrent: options?.maxConcurrent ?? 2 });
+      res.json({ maxConcurrent: options?.maxConcurrent ?? 2, maxWorktrees: 4 });
     }
   });
 
