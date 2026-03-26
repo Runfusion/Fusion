@@ -527,6 +527,81 @@ html, body {
   font-family: "SF Mono", Monaco, Consolas, monospace;
 }
 
+/* === Activity Timeline === */
+.detail-activity {
+  margin-top: 20px;
+}
+
+.detail-activity-list {
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.detail-activity-list::-webkit-scrollbar { width: 4px; }
+.detail-activity-list::-webkit-scrollbar-track { background: transparent; }
+.detail-activity-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+.detail-log-entry {
+  padding: 8px 0 8px 14px;
+  border-left: 2px solid var(--border);
+  position: relative;
+}
+
+.detail-log-entry::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 13px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.detail-log-entry:first-child::before {
+  background: var(--todo);
+}
+
+.detail-log-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-log-timestamp {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.detail-log-action {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.detail-log-outcome {
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-left: 3px solid var(--border);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detail-log-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 12px 0;
+}
+
 /* === Toasts === */
 .toast-container {
   position: fixed;
