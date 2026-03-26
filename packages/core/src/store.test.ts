@@ -90,19 +90,17 @@ describe("TaskStore", () => {
   // ── Defensive parsing test ───────────────────────────────────────
 
   describe("defensive JSON parsing", () => {
-    it("recovers from corrupted task.json with trailing duplicate content", async () => {
+    it("throws on corrupted task.json with trailing duplicate content (atomic writes prevent this)", async () => {
       const task = await createTestTask();
       const taskJsonPath = join(rootDir, ".hai", "tasks", task.id, "task.json");
 
-      // Corrupt the file: append duplicate trailing content (like HAI-015)
+      // Corrupt the file: append duplicate trailing content
       const validJson = await readFile(taskJsonPath, "utf-8");
       const corrupted = validJson + validJson.slice(validJson.length / 2);
       await writeFile(taskJsonPath, corrupted);
 
-      // getTask should recover
-      const recovered = await store.getTask(task.id);
-      expect(recovered.id).toBe(task.id);
-      expect(recovered.description).toBe("Test task");
+      // With atomic writes, corruption indicates a real bug — should throw
+      await expect(store.getTask(task.id)).rejects.toThrow("Failed to parse task.json");
     });
 
     it("throws a clear error when JSON is completely unrecoverable", async () => {

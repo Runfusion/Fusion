@@ -91,32 +91,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
-   * Safely read and parse a task.json file. On `SyntaxError`, attempts to
-   * recover by truncating the content at the last valid `}` and re-parsing.
-   * Logs a warning to stderr when truncation-repair is used.
+   * Read and parse a task.json file. Throws immediately on invalid JSON —
+   * atomic writes (write-to-temp-then-rename) prevent partial-write
+   * corruption, so a `SyntaxError` indicates a real bug rather than a race.
    */
-  private async safeReadTaskJson(dir: string): Promise<Task> {
+  private async readTaskJson(dir: string): Promise<Task> {
     const filePath = join(dir, "task.json");
     const raw = await readFile(filePath, "utf-8");
     try {
       return JSON.parse(raw) as Task;
     } catch (err) {
-      if (!(err instanceof SyntaxError)) throw err;
-
-      // Attempt recovery: try truncating at each '}' from the end until valid
-      let pos = raw.length;
-      while ((pos = raw.lastIndexOf("}", pos - 1)) > 0) {
-        try {
-          const task = JSON.parse(raw.slice(0, pos + 1)) as Task;
-          console.warn(
-            `[hai] Warning: repaired corrupted task.json at ${filePath} (truncated ${raw.length - pos - 1} trailing bytes)`,
-          );
-          return task;
-        } catch {
-          // Try next position
-        }
-      }
-
       throw new Error(
         `Failed to parse task.json at ${filePath}: ${(err as Error).message}`,
       );
@@ -232,7 +216,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    */
   async getTask(id: string): Promise<TaskDetail> {
     const dir = this.taskDir(id);
-    const task = await this.safeReadTaskJson(dir);
+    const task = await this.readTaskJson(dir);
 
     let prompt = "";
     const promptPath = join(dir, "PROMPT.md");
@@ -252,7 +236,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     for (const entry of entries) {
       if (entry.isDirectory() && entry.name.startsWith("HAI-")) {
         try {
-          tasks.push(await this.safeReadTaskJson(join(this.tasksDir, entry.name)));
+          tasks.push(await this.readTaskJson(join(this.tasksDir, entry.name)));
         } catch {
           // skip invalid task dirs
         }
@@ -265,7 +249,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async moveTask(id: string, toColumn: Column): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
-      const task = await this.safeReadTaskJson(dir);
+      const task = await this.readTaskJson(dir);
 
       const validTargets = VALID_TRANSITIONS[task.column];
       if (!validTargets.includes(toColumn)) {
@@ -301,7 +285,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
-      const task = await this.safeReadTaskJson(dir);
+      const task = await this.readTaskJson(dir);
 
       if (updates.title !== undefined) task.title = updates.title;
       if (updates.description !== undefined) task.description = updates.description;
@@ -337,7 +321,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
-      const task = await this.safeReadTaskJson(dir);
+      const task = await this.readTaskJson(dir);
 
       // Auto-initialize steps from PROMPT.md if empty
       if (task.steps.length === 0) {
@@ -385,7 +369,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async logEntry(id: string, action: string, outcome?: string): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
-      const task = await this.safeReadTaskJson(dir);
+      const task = await this.readTaskJson(dir);
 
       task.log.push({
         timestamp: new Date().toISOString(),
@@ -452,7 +436,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async deleteTask(id: string): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
-      const task = await this.safeReadTaskJson(dir);
+      const task = await this.readTaskJson(dir);
 
       const taskJsonPath = join(dir, "task.json");
       this.suppressWatcher(taskJsonPath);
@@ -475,7 +459,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async mergeTask(id: string): Promise<MergeResult> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
-      const task = await this.safeReadTaskJson(dir);
+      const task = await this.readTaskJson(dir);
 
       if (task.column !== "in-review") {
         throw new Error(
@@ -698,7 +682,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     let task: Task;
     try {
       const taskDir = join(this.tasksDir, taskId);
-      task = await this.safeReadTaskJson(taskDir);
+      task = await this.readTaskJson(taskDir);
     } catch {
       return; // File not readable or invalid JSON
     }
