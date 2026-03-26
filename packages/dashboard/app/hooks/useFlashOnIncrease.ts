@@ -6,10 +6,10 @@ import { useRef, useState, useEffect } from "react";
  *
  * - Does NOT flash on initial render (only on subsequent increases).
  * - Does NOT flash when count decreases or stays the same.
- * - Resets after `duration` ms (default 700ms).
+ * - Resets after `duration` ms (default 1400ms).
  * - Cleans up timers on unmount.
  */
-export function useFlashOnIncrease(count: number, duration = 700): boolean {
+export function useFlashOnIncrease(count: number, duration = 1400): boolean {
   const prevRef = useRef<number | null>(null);
   const [flashing, setFlashing] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -28,7 +28,7 @@ describe("useFlashOnIncrease", () => {
 
   it("resets flashing after duration", () => {
     const { result, rerender } = renderHook(
-      ({ count }) => useFlashOnIncrease(count, 700),
+      ({ count }) => useFlashOnIncrease(count, 1400),
       { initialProps: { count: 3 } },
     );
 
@@ -36,7 +36,7 @@ describe("useFlashOnIncrease", () => {
     expect(result.current).toBe(true);
 
     act(() => {
-      vi.advanceTimersByTime(700);
+      vi.advanceTimersByTime(1400);
     });
     expect(result.current).toBe(false);
   });

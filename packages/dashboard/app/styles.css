@@ -168,7 +168,7 @@ html, body {
 }
 
 .column-count.count-flash {
-  animation: count-flash-bg 700ms ease-out;
+  animation: count-flash-bg 1400ms ease-out;
 }
 
 .column-desc {
