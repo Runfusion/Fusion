@@ -43,6 +43,8 @@ export interface TaskCreateInput {
 }
 
 export interface Settings {
+  /** Maximum number of concurrent AI agents across all activity types
+   *  (triage specification, task execution, and merge operations). */
   maxConcurrent: number;
   maxWorktrees: number;
   pollIntervalMs: number;

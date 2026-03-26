@@ -1,4 +1,5 @@
 import { resolveDependencyOrder, type TaskStore, type Task } from "@hai/core";
+import type { AgentSemaphore } from "./concurrency.js";
 
 export interface SchedulerOptions {
   /** Max concurrent in-progress tasks. Default: 2 */
@@ -7,6 +8,13 @@ export interface SchedulerOptions {
   maxWorktrees?: number;
   /** Milliseconds between scheduling polls. Default: 15000 */
   pollIntervalMs?: number;
+  /**
+   * Shared concurrency semaphore. When provided, the scheduler uses
+   * `semaphore.availableCount` to avoid scheduling more tasks than the
+   * global concurrency limit allows (accounting for triage and merge
+   * agents that also hold slots).
+   */
+  semaphore?: AgentSemaphore;
   /** Called when scheduler starts a task */
   onSchedule?: (task: Task) => void;
   /** Called when a task is blocked by deps */
@@ -106,9 +114,19 @@ export class Scheduler {
       }
 
       const inProgress = tasks.filter((t) => t.column === "in-progress");
+
+      // When a semaphore is provided, factor in its available slots so we
+      // don't schedule more tasks than the global limit allows. Triage and
+      // merge agents also hold semaphore slots, so availableCount may be
+      // lower than what maxConcurrent - inProgress.length would suggest.
+      const semaphoreAvailable = this.options.semaphore
+        ? this.options.semaphore.availableCount
+        : Infinity;
+
       const available = Math.min(
         maxConcurrent - inProgress.length,
         maxWorktrees - activeWorktrees,
+        semaphoreAvailable,
       );
       if (available <= 0) return;
 

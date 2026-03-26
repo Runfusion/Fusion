@@ -1,5 +1,6 @@
 import type { TaskStore, Task, TaskDetail } from "@hai/core";
 import { createHaiAgent } from "./pi.js";
+import type { AgentSemaphore } from "./concurrency.js";
 
 const TRIAGE_SYSTEM_PROMPT = `You are a task specification agent for "hai", an AI-orchestrated task board.
 
@@ -133,6 +134,7 @@ Write the PROMPT.md directly using the write tool. Nothing else.`;
 
 export interface TriageProcessorOptions {
   pollIntervalMs?: number;
+  semaphore?: AgentSemaphore;
   onSpecifyStart?: (task: Task) => void;
   onSpecifyComplete?: (task: Task) => void;
   onSpecifyError?: (task: Task, error: Error) => void;
@@ -198,26 +200,34 @@ export class TriageProcessor {
       const detail = await this.store.getTask(task.id);
       const promptPath = `.hai/tasks/${task.id}/PROMPT.md`;
 
-      const { session } = await createHaiAgent({
-        cwd: this.rootDir,
-        systemPrompt: TRIAGE_SYSTEM_PROMPT,
-        tools: "coding",
-        onText: (delta) => this.options.onAgentText?.(task.id, delta),
-        onToolStart: (name) =>
-          console.log(`[triage] ${task.id} tool: ${name}`),
-      });
+      const agentWork = async () => {
+        const { session } = await createHaiAgent({
+          cwd: this.rootDir,
+          systemPrompt: TRIAGE_SYSTEM_PROMPT,
+          tools: "coding",
+          onText: (delta) => this.options.onAgentText?.(task.id, delta),
+          onToolStart: (name) =>
+            console.log(`[triage] ${task.id} tool: ${name}`),
+        });
 
-      try {
-        const agentPrompt = buildSpecificationPrompt(detail, promptPath);
-        await session.prompt(agentPrompt);
+        try {
+          const agentPrompt = buildSpecificationPrompt(detail, promptPath);
+          await session.prompt(agentPrompt);
 
-        // Move to todo
-        await this.store.updateTask(task.id, { status: null });
-        await this.store.moveTask(task.id, "todo");
-        console.log(`[triage] ✓ ${task.id} specified and moved to todo`);
-        this.options.onSpecifyComplete?.(task);
-      } finally {
-        session.dispose();
+          // Move to todo
+          await this.store.updateTask(task.id, { status: null });
+          await this.store.moveTask(task.id, "todo");
+          console.log(`[triage] ✓ ${task.id} specified and moved to todo`);
+          this.options.onSpecifyComplete?.(task);
+        } finally {
+          session.dispose();
+        }
+      };
+
+      if (this.options.semaphore) {
+        await this.options.semaphore.run(agentWork);
+      } else {
+        await agentWork();
       }
     } catch (err: any) {
       await this.store.updateTask(task.id, { status: null }).catch(() => {});

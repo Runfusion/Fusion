@@ -6,6 +6,7 @@ import { Type } from "@mariozechner/pi-ai";
 import { createHaiAgent } from "./pi.js";
 import { reviewStep } from "./reviewer.js";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { AgentSemaphore } from "./concurrency.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -79,6 +80,7 @@ echo "done" > .DONE
 \`\`\``;
 
 export interface TaskExecutorOptions {
+  semaphore?: AgentSemaphore;
   onStart?: (task: Task, worktreePath: string) => void;
   onComplete?: (task: Task) => void;
   onError?: (task: Task, error: Error) => void;
@@ -152,33 +154,41 @@ export class TaskExecutor {
         this.createReviewStepTool(task.id, worktreePath, detail.prompt),
       ];
 
-      const { session } = await createHaiAgent({
-        cwd: worktreePath,
-        systemPrompt: EXECUTOR_SYSTEM_PROMPT,
-        tools: "coding",
-        customTools,
-        onText: (delta) => this.options.onAgentText?.(task.id, delta),
-        onToolStart: (name) => this.options.onAgentTool?.(task.id, name),
-      });
+      const agentWork = async () => {
+        const { session } = await createHaiAgent({
+          cwd: worktreePath,
+          systemPrompt: EXECUTOR_SYSTEM_PROMPT,
+          tools: "coding",
+          customTools,
+          onText: (delta) => this.options.onAgentText?.(task.id, delta),
+          onToolStart: (name) => this.options.onAgentTool?.(task.id, name),
+        });
 
-      try {
-        const agentPrompt = buildExecutionPrompt(detail);
-        await session.prompt(agentPrompt);
+        try {
+          const agentPrompt = buildExecutionPrompt(detail);
+          await session.prompt(agentPrompt);
 
-        const doneCwd = join(worktreePath, ".DONE");
-        if (existsSync(doneCwd)) {
-          await this.store.logEntry(task.id, "Execution complete — .DONE created");
-          await this.store.moveTask(task.id, "in-review");
-          console.log(`[executor] ✓ ${task.id} completed → in-review`);
-          this.options.onComplete?.(task);
-        } else {
-          await this.store.logEntry(task.id, "Agent finished without .DONE — moved to in-review for inspection");
-          await this.store.moveTask(task.id, "in-review");
-          console.log(`[executor] ⚠ ${task.id} agent finished without .DONE → in-review`);
-          this.options.onComplete?.(task);
+          const doneCwd = join(worktreePath, ".DONE");
+          if (existsSync(doneCwd)) {
+            await this.store.logEntry(task.id, "Execution complete — .DONE created");
+            await this.store.moveTask(task.id, "in-review");
+            console.log(`[executor] ✓ ${task.id} completed → in-review`);
+            this.options.onComplete?.(task);
+          } else {
+            await this.store.logEntry(task.id, "Agent finished without .DONE — moved to in-review for inspection");
+            await this.store.moveTask(task.id, "in-review");
+            console.log(`[executor] ⚠ ${task.id} agent finished without .DONE → in-review`);
+            this.options.onComplete?.(task);
+          }
+        } finally {
+          session.dispose();
         }
-      } finally {
-        session.dispose();
+      };
+
+      if (this.options.semaphore) {
+        await this.options.semaphore.run(agentWork);
+      } else {
+        await agentWork();
       }
     } catch (err: any) {
       console.error(`[executor] ✗ ${task.id} execution failed:`, err.message);

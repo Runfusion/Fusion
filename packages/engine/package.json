@@ -7,7 +7,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@hai/core": "workspace:*",
@@ -15,6 +16,7 @@
     "@mariozechner/pi-ai": "^0.62.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.1"
   }
 }

@@ -1,7 +1,7 @@
 import { exec } from "node:child_process";
 import { TaskStore } from "@hai/core";
 import { createServer } from "@hai/dashboard";
-import { TriageProcessor, TaskExecutor, Scheduler, aiMergeTask } from "@hai/engine";
+import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, aiMergeTask } from "@hai/engine";
 
 function openBrowser(url: string): void {
   const cmd =
@@ -17,12 +17,31 @@ export async function runDashboard(port: number, opts: { engine?: boolean; open?
   await store.init();
   await store.watch();
 
-  // AI-powered merge handler (used by the web UI for manual merges)
-  const onMerge = (taskId: string) =>
+  // ── Shared concurrency semaphore ──────────────────────────────────
+  //
+  // Gates all agentic activities (triage, execution, merge) behind a
+  // single slot limit so they collectively respect settings.maxConcurrent.
+  // Created eagerly so the merge queue can reference it; the engine block
+  // below passes it to triage/executor/scheduler as well.
+  //
+  // The limit is read from a cached value that is refreshed from the store
+  // on each scheduler poll cycle (see engine block below). This avoids
+  // async I/O in the synchronous getter while still picking up live changes.
+  //
+  const initialSettings = await store.getSettings();
+  let cachedMaxConcurrent = initialSettings.maxConcurrent;
+  const semaphore = new AgentSemaphore(() => cachedMaxConcurrent);
+
+  // AI-powered merge handler (used by the web UI for manual merges).
+  // Wrapped with the shared semaphore so merges count toward the global
+  // concurrency limit alongside triage and execution agents.
+  const rawMerge = (taskId: string) =>
     aiMergeTask(store, cwd, taskId, {
       onAgentText: (delta) => process.stdout.write(delta),
       onAgentTool: (name) => console.log(`[merger] tool: ${name}`),
     });
+
+  const onMerge = (taskId: string) => semaphore.run(() => rawMerge(taskId));
 
   // ── Serialized auto-merge queue ─────────────────────────────────────
   //
@@ -111,12 +130,14 @@ export async function runDashboard(port: number, opts: { engine?: boolean; open?
   // Optionally start the AI engine
   if (opts.engine) {
     const triage = new TriageProcessor(store, cwd, {
+      semaphore,
       onSpecifyStart: (t) => console.log(`[engine] Specifying ${t.id}...`),
       onSpecifyComplete: (t) => console.log(`[engine] ✓ ${t.id} → todo`),
       onSpecifyError: (t, e) => console.log(`[engine] ✗ ${t.id}: ${e.message}`),
     });
 
     const executor = new TaskExecutor(store, cwd, {
+      semaphore,
       onStart: (t, p) => console.log(`[engine] Executing ${t.id} in ${p}`),
       onComplete: (t) => console.log(`[engine] ✓ ${t.id} → in-review`),
       onError: (t, e) => console.log(`[engine] ✗ ${t.id}: ${e.message}`),
@@ -125,6 +146,7 @@ export async function runDashboard(port: number, opts: { engine?: boolean; open?
     const settings = await store.getSettings();
 
     const scheduler = new Scheduler(store, {
+      semaphore,
       maxConcurrent: settings.maxConcurrent,
       maxWorktrees: settings.maxWorktrees,
       onSchedule: (t) => console.log(`[engine] Scheduled ${t.id}`),
@@ -154,6 +176,8 @@ export async function runDashboard(port: number, opts: { engine?: boolean; open?
     const mergeRetryInterval = setInterval(async () => {
       try {
         const currentSettings = await store.getSettings();
+        // Refresh the cached limit so the semaphore picks up live changes
+        cachedMaxConcurrent = currentSettings.maxConcurrent;
         if (!currentSettings.autoMerge) return;
         const tasks = await store.listTasks();
         for (const t of tasks) {
