@@ -15,7 +15,7 @@ export function InlineCreateCard({ tasks, onSubmit, onCancel, addToast }: Inline
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [showDeps, setShowDeps] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,13 +61,18 @@ export function InlineCreateCard({ tasks, onSubmit, onCancel, addToast }: Inline
 
   return (
     <div className="inline-create-card" ref={cardRef}>
-      <input
+      <textarea
         ref={inputRef}
-        type="text"
+        rows={1}
         className="inline-create-input"
         placeholder="What needs to be done?"
         value={description}
-        onChange={(e) => setDescription(e.target.value)}
+        onChange={(e) => {
+          setDescription(e.target.value);
+          const el = e.target;
+          el.style.height = "auto";
+          el.style.height = el.scrollHeight + "px";
+        }}
         onKeyDown={handleKeyDown}
         disabled={submitting}
       />

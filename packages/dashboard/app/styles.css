@@ -630,6 +630,9 @@ html, body {
   font-size: 13px;
   font-family: inherit;
   outline: none;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
 }
 .inline-create-input::placeholder {
   color: var(--text-dim);
