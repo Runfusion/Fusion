@@ -1,4 +1,6 @@
 import { useCallback, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, Column, MergeResult } from "@hai/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@hai/core";
 import type { ToastType } from "../hooks/useToast";
@@ -97,7 +99,15 @@ export function TaskDetailModal({
           </div>
           <div className="detail-section">
             <h4>PROMPT.md</h4>
-            <pre className="detail-prompt">{task.prompt || "(no prompt)"}</pre>
+            {task.prompt ? (
+              <div className="detail-prompt markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {task.prompt}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              <div className="detail-prompt">(no prompt)</div>
+            )}
           </div>
           {task.dependencies && task.dependencies.length > 0 && (
             <div className="detail-deps">
