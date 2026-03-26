@@ -5,6 +5,21 @@ import type { Task, TaskDetail, Column, MergeResult } from "@hai/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@hai/core";
 import type { ToastType } from "../hooks/useToast";
 
+function formatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString();
+}
+
 interface TaskDetailModalProps {
   task: TaskDetail;
   onClose: () => void;
@@ -121,6 +136,28 @@ export function TaskDetailModal({
               </ul>
             </div>
           )}
+          <div className="detail-section detail-activity">
+            <h4>Activity</h4>
+            {task.log && task.log.length > 0 ? (
+              <div className="detail-activity-list">
+                {[...task.log].reverse().map((entry, i) => (
+                  <div key={i} className="detail-log-entry">
+                    <div className="detail-log-header">
+                      <span className="detail-log-timestamp">
+                        {formatTimestamp(entry.timestamp)}
+                      </span>
+                      <span className="detail-log-action">{entry.action}</span>
+                    </div>
+                    {entry.outcome && (
+                      <div className="detail-log-outcome">{entry.outcome}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="detail-log-empty">(no activity)</div>
+            )}
+          </div>
         </div>
         <div className="modal-actions">
           <button className="btn btn-danger btn-sm" onClick={handleDelete}>
