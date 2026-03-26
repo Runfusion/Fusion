@@ -1,5 +1,5 @@
 import type { TaskStore, Task, TaskDetail, Settings } from "@hai/core";
-import { Type } from "@mariozechner/pi-ai";
+import { Type, type Static } from "@mariozechner/pi-ai";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { createHaiAgent } from "./pi.js";
 import type { AgentSemaphore } from "./concurrency.js";
@@ -271,6 +271,10 @@ export class TriageProcessor {
   private createTriageTools(): ToolDefinition[] {
     const store = this.store;
 
+    const taskGetParams = Type.Object({
+      id: Type.String({ description: "Task ID (e.g. HAI-001)" }),
+    });
+
     const taskList: ToolDefinition = {
       name: "task_list",
       label: "List Tasks",
@@ -305,10 +309,8 @@ export class TriageProcessor {
       description:
         "Get full details of a specific task including its PROMPT.md content. " +
         "Use to verify whether a similar task is actually a duplicate.",
-      parameters: Type.Object({
-        id: Type.String({ description: "Task ID (e.g. HAI-001)" }),
-      }),
-      execute: async (_callId, params) => {
+      parameters: taskGetParams,
+      execute: async (_callId: string, params: Static<typeof taskGetParams>) => {
         try {
           const task = await store.getTask(params.id);
           const parts = [
