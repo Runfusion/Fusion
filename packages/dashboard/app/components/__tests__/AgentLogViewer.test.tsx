@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { AgentLogViewer } from "../AgentLogViewer";
 import type { AgentLogEntry } from "@hai/core";
 
@@ -95,5 +95,61 @@ describe("AgentLogViewer", () => {
     const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
     const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
     expect(viewer.style.fontFamily).toBe("monospace");
+  });
+
+  it("auto-scrolls to the bottom by default when entries are present", () => {
+    const entries = [makeEntry({ text: "line 1" }), makeEntry({ text: "line 2" })];
+    const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+    const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
+    // After render with autoScroll=true, scrollTop should be set to scrollHeight
+    expect(viewer.scrollTop).toBe(viewer.scrollHeight);
+  });
+
+  it("disables auto-scroll when user scrolls up", () => {
+    const entries = [makeEntry({ text: "line 1" })];
+    const { container, rerender } = render(
+      <AgentLogViewer entries={entries} loading={false} />,
+    );
+    const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
+
+    // Simulate an initial scroll position then scroll up
+    Object.defineProperty(viewer, "scrollTop", { value: 100, writable: true, configurable: true });
+    fireEvent.scroll(viewer);
+
+    // Now scroll up (scrollTop decreases)
+    Object.defineProperty(viewer, "scrollTop", { value: 50, writable: true, configurable: true });
+    fireEvent.scroll(viewer);
+
+    // Re-render with new entries — auto-scroll should be disabled, so scrollTop stays
+    const newEntries = [...entries, makeEntry({ text: "line 2" })];
+    rerender(<AgentLogViewer entries={newEntries} loading={false} />);
+
+    // scrollTop should remain at 50, not jump to scrollHeight
+    expect(viewer.scrollTop).toBe(50);
+  });
+
+  it("re-enables auto-scroll when user scrolls down", () => {
+    const entries = [makeEntry({ text: "line 1" })];
+    const { container, rerender } = render(
+      <AgentLogViewer entries={entries} loading={false} />,
+    );
+    const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
+
+    // Scroll up first to disable auto-scroll
+    Object.defineProperty(viewer, "scrollTop", { value: 100, writable: true, configurable: true });
+    fireEvent.scroll(viewer);
+    Object.defineProperty(viewer, "scrollTop", { value: 50, writable: true, configurable: true });
+    fireEvent.scroll(viewer);
+
+    // Now scroll down (any amount) to re-enable
+    Object.defineProperty(viewer, "scrollTop", { value: 70, writable: true, configurable: true });
+    fireEvent.scroll(viewer);
+
+    // Re-render with new entries — auto-scroll should be re-enabled
+    const newEntries = [...entries, makeEntry({ text: "line 2" })];
+    rerender(<AgentLogViewer entries={newEntries} loading={false} />);
+
+    // scrollTop should jump to scrollHeight since auto-scroll is re-enabled
+    expect(viewer.scrollTop).toBe(viewer.scrollHeight);
   });
 });
