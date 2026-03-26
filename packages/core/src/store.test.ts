@@ -385,4 +385,19 @@ describe("TaskStore", () => {
       expect(updated.dependencies).toEqual(["HAI-001"]);
     });
   });
+
+  describe("updateTask — blockedBy", () => {
+    it("sets blockedBy to a string value", async () => {
+      const task = await store.createTask({ title: "Blocked task", description: "A task" });
+      const updated = await store.updateTask(task.id, { blockedBy: "HAI-999" });
+      expect(updated.blockedBy).toBe("HAI-999");
+    });
+
+    it("clears blockedBy when set to null", async () => {
+      const task = await store.createTask({ title: "Blocked task", description: "A task" });
+      await store.updateTask(task.id, { blockedBy: "HAI-999" });
+      const updated = await store.updateTask(task.id, { blockedBy: null });
+      expect(updated.blockedBy).toBeUndefined();
+    });
+  });
 });
