@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 
 import { runDashboard } from "./commands/dashboard.js";
-import { runTaskCreate, runTaskList, runTaskMove, runTaskMerge } from "./commands/task.js";
+import { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskDiscover, runTaskShow } from "./commands/task.js";
 
 const HELP = `
 hai — AI-orchestrated task board
 
 Usage:
-  hai dashboard              Start the board web UI
-  hai task create [desc]     Create a new task (goes to triage)
-  hai task list              List all tasks
-  hai task move <id> <col>   Move a task to a column
-  hai task merge <id>        Merge an in-review task and close it
+  hai dashboard                        Start the board web UI
+  hai task create [desc]               Create a new task (goes to triage)
+  hai task list                        List all tasks
+  hai task show <id>                   Show task details, steps, log
+  hai task move <id> <col>             Move a task to a column
+  hai task update <id> <step> <status> Update step status (pending|in-progress|done|skipped)
+  hai task log <id> <message>          Add a log entry
+  hai task discover <id> <what> <disp> Record a discovery
+  hai task merge <id>                  Merge an in-review task and close it
 
 Options:
   --port, -p <port>          Dashboard port (default: 4040)
@@ -69,12 +73,40 @@ async function main() {
             await runTaskMove(id, column);
             break;
           }
-          case "merge": {
+          case "show": {
             const id = args[2];
-            if (!id) {
-              console.error("Usage: hai task merge <id>");
+            if (!id) { console.error("Usage: hai task show <id>"); process.exit(1); }
+            await runTaskShow(id);
+            break;
+          }
+          case "update": {
+            const id = args[2], step = args[3], status = args[4];
+            if (!id || !step || !status) {
+              console.error("Usage: hai task update <id> <step> <status>");
+              console.error("Status: pending | in-progress | done | skipped");
               process.exit(1);
             }
+            await runTaskUpdate(id, step, status);
+            break;
+          }
+          case "log": {
+            const id = args[2], message = args.slice(3).join(" ");
+            if (!id || !message) { console.error("Usage: hai task log <id> <message>"); process.exit(1); }
+            await runTaskLog(id, message);
+            break;
+          }
+          case "discover": {
+            const id = args[2], what = args[3], disp = args[4], loc = args[5];
+            if (!id || !what || !disp) {
+              console.error("Usage: hai task discover <id> <discovery> <disposition> [location]");
+              process.exit(1);
+            }
+            await runTaskDiscover(id, what, disp, loc);
+            break;
+          }
+          case "merge": {
+            const id = args[2];
+            if (!id) { console.error("Usage: hai task merge <id>"); process.exit(1); }
             await runTaskMerge(id);
             break;
           }

@@ -1,6 +1,8 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, type Column, type MergeResult } from "@hai/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, type Column, type MergeResult, type StepStatus } from "@hai/core";
 import { aiMergeTask } from "@hai/engine";
 import { createInterface } from "node:readline/promises";
+
+const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
 async function getStore(): Promise<TaskStore> {
   const store = new TaskStore(process.cwd());
@@ -63,6 +65,96 @@ export async function runTaskList() {
       const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
       const label = t.title || t.description.slice(0, 60) + (t.description.length > 60 ? "…" : "");
       console.log(`    ${t.id}  ${label}${deps}`);
+    }
+    console.log();
+  }
+}
+
+export async function runTaskUpdate(id: string, stepStr: string, status: string) {
+  const stepIndex = parseInt(stepStr, 10);
+  if (isNaN(stepIndex)) {
+    console.error(`Invalid step number: ${stepStr}`);
+    process.exit(1);
+  }
+  if (!STEP_STATUSES.includes(status as StepStatus)) {
+    console.error(`Invalid status: ${status}`);
+    console.error(`Valid statuses: ${STEP_STATUSES.join(", ")}`);
+    process.exit(1);
+  }
+
+  const store = await getStore();
+  const task = await store.updateStep(id, stepIndex, status as StepStatus);
+
+  const step = task.steps[stepIndex];
+  console.log();
+  console.log(`  ✓ ${task.id} Step ${stepIndex} (${step.name}) → ${status}`);
+  console.log(`    Progress: ${task.steps.filter((s) => s.status === "done").length}/${task.steps.length} steps done`);
+  console.log();
+}
+
+export async function runTaskLog(id: string, message: string, outcome?: string) {
+  const store = await getStore();
+  await store.logEntry(id, message, outcome);
+
+  console.log();
+  console.log(`  ✓ ${id}: logged "${message}"`);
+  console.log();
+}
+
+export async function runTaskDiscover(id: string, discovery: string, disposition: string, location?: string) {
+  const store = await getStore();
+  await store.addDiscovery(id, discovery, disposition, location);
+
+  console.log();
+  console.log(`  ✓ ${id}: discovery recorded`);
+  console.log(`    ${discovery}`);
+  console.log(`    → ${disposition}`);
+  console.log();
+}
+
+export async function runTaskShow(id: string) {
+  const store = await getStore();
+  const task = await store.getTask(id);
+
+  console.log();
+  console.log(`  ${task.id}: ${task.title || task.description.slice(0, 60)}`);
+  console.log(`  Column: ${COLUMN_LABELS[task.column]}${task.size ? ` · Size: ${task.size}` : ""}${task.reviewLevel !== undefined ? ` · Review: ${task.reviewLevel}` : ""}`);
+  if (task.dependencies.length) {
+    console.log(`  Dependencies: ${task.dependencies.join(", ")}`);
+  }
+  console.log();
+
+  // Steps
+  if (task.steps.length > 0) {
+    console.log(`  Steps (${task.steps.filter((s) => s.status === "done").length}/${task.steps.length}):`);
+    for (let i = 0; i < task.steps.length; i++) {
+      const s = task.steps[i];
+      const icon = s.status === "done" ? "✓"
+        : s.status === "in-progress" ? "▸"
+        : s.status === "skipped" ? "–"
+        : " ";
+      const marker = i === task.currentStep && s.status !== "done" ? " ◀" : "";
+      console.log(`    [${icon}] ${i}: ${s.name}${marker}`);
+    }
+    console.log();
+  }
+
+  // Discoveries
+  if (task.discoveries.length > 0) {
+    console.log(`  Discoveries:`);
+    for (const d of task.discoveries) {
+      console.log(`    • ${d.discovery} → ${d.disposition}${d.location ? ` (${d.location})` : ""}`);
+    }
+    console.log();
+  }
+
+  // Recent log
+  if (task.log.length > 0) {
+    const recent = task.log.slice(-5);
+    console.log(`  Log (last ${recent.length}):`);
+    for (const l of recent) {
+      const ts = new Date(l.timestamp).toLocaleTimeString();
+      console.log(`    ${ts}  ${l.action}${l.outcome ? ` → ${l.outcome}` : ""}`);
     }
     console.log();
   }

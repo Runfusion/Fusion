@@ -1,6 +1,33 @@
 export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done"] as const;
 export type Column = (typeof COLUMNS)[number];
 
+export type StepStatus = "pending" | "in-progress" | "done" | "skipped";
+
+export interface TaskStep {
+  name: string;
+  status: StepStatus;
+}
+
+export interface TaskLogEntry {
+  timestamp: string;
+  action: string;
+  outcome?: string;
+}
+
+export interface TaskDiscovery {
+  discovery: string;
+  disposition: string;
+  location?: string;
+}
+
+export interface TaskReview {
+  id: number;
+  type: string;
+  step: number;
+  verdict: string;
+  notes?: string;
+}
+
 export interface Task {
   id: string;
   title?: string;
@@ -8,7 +35,13 @@ export interface Task {
   column: Column;
   dependencies: string[];
   worktree?: string;
-  status?: string;
+  steps: TaskStep[];
+  currentStep: number;
+  reviews: TaskReview[];
+  discoveries: TaskDiscovery[];
+  log: TaskLogEntry[];
+  size?: "S" | "M" | "L";
+  reviewLevel?: number;
   createdAt: string;
   updatedAt: string;
 }

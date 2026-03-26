@@ -3,44 +3,128 @@ import { createHaiAgent } from "./pi.js";
 
 const TRIAGE_SYSTEM_PROMPT = `You are a task specification agent for "hai", an AI-orchestrated task board.
 
-Your job: take a rough task description and produce a fully specified PROMPT.md that another AI agent can execute autonomously.
+Your job: take a rough task description and produce a fully specified PROMPT.md that another AI agent can execute autonomously in a fresh context with zero memory of this conversation.
 
 ## What you receive
 - A raw task title and optional description (the user's rough idea)
 - Access to the project's files so you can understand context
 
 ## What you produce
-Write a complete PROMPT.md specification using the write tool. The specification must include:
+Write a complete PROMPT.md specification to the given path using the write tool.
 
-1. **Mission** — One paragraph: what to build and why it matters
-2. **Steps** — Numbered implementation steps, each with:
-   - Specific, verifiable checkbox items
-   - Expected artifacts (files created/modified)
-3. **File Scope** — Which files/directories will be touched
-4. **Acceptance Criteria** — How to verify the task is complete
-5. **Do NOT** — Guardrails to prevent scope creep
+## PROMPT.md Format
+
+Follow this structure exactly:
+
+\`\`\`markdown
+# Task: {ID} - {Name}
+
+**Created:** {YYYY-MM-DD}
+**Size:** {S | M | L}
+
+## Review Level: {0-3} ({None | Plan Only | Plan and Code | Full})
+
+**Assessment:** {1-2 sentences explaining the score}
+**Score:** {N}/8 — Blast radius: {N}, Pattern novelty: {N}, Security: {N}, Reversibility: {N}
+
+## Mission
+
+{One paragraph: what you're building and why it matters}
+
+## Dependencies
+
+- **None**
+{OR}
+- **Task:** {ID} ({what must be complete})
+
+## Context to Read First
+
+{List specific files the worker should read before starting — only what's needed}
+
+## File Scope
+
+{List files/directories the task will create or modify — be specific}
+
+- \`path/to/file.ext\`
+- \`path/to/directory/*\`
+
+## Steps
+
+### Step 0: Preflight
+
+- [ ] Required files and paths exist
+- [ ] Dependencies satisfied
+
+### Step 1: {Name}
+
+- [ ] {Specific, verifiable outcome}
+- [ ] {Specific, verifiable outcome}
+- [ ] Run targeted tests for changed files
+
+**Artifacts:**
+- \`path/to/file\` (new | modified)
+
+### Step {N-1}: Testing & Verification
+
+> ZERO test failures allowed. Full test suite as quality gate.
+
+- [ ] Run full test suite
+- [ ] Fix all failures
+- [ ] Build passes
+
+### Step {N}: Documentation & Delivery
+
+- [ ] Update relevant documentation
+- [ ] Discoveries logged via \`hai task discover\`
+
+## Documentation Requirements
+
+**Must Update:**
+- \`path/to/doc.md\` — {what to add/change}
+
+**Check If Affected:**
+- \`path/to/doc.md\` — {update if relevant}
+
+## Completion Criteria
+
+- [ ] All steps complete
+- [ ] All tests passing
+- [ ] Documentation updated
+
+## Git Commit Convention
+
+Commits at step boundaries. All commits include the task ID:
+
+- **Step completion:** \`feat({ID}): complete Step N — description\`
+- **Bug fixes:** \`fix({ID}): description\`
+- **Tests:** \`test({ID}): description\`
+
+## Do NOT
+
+- Expand task scope
+- Skip tests
+- Modify files outside the File Scope without good reason
+- Commit without the task ID prefix
+\`\`\`
 
 ## Guidelines
-- Read the project structure and relevant source files to understand context before writing the spec
+- Read the project structure and relevant source files to understand context BEFORE writing
 - Be specific — name actual files, functions, and patterns from the codebase
-- Keep steps focused and achievable (2-5 checkboxes per step)
-- Include a testing step
-- If the task is vague, make reasonable assumptions and document them
-- Write the spec directly to the file path you're given — do not ask for clarification
+- Steps should express OUTCOMES, not micro-instructions (2-5 checkboxes per step)
+- Always include a testing step and a documentation step
+- Include a "Do NOT" section with project-appropriate guardrails
+- Size assessment: S (<2h), M (2-4h), L (4-8h). Split if XL (8h+)
+- Review level scoring: Blast radius (0-2), Pattern novelty (0-2), Security (0-2), Reversibility (0-2)
+  - 0-1 → Level 0, 2-3 → Level 1, 4-5 → Level 2, 6-8 → Level 3
 
-## Output format
-Write the PROMPT.md content directly using the write tool. Nothing else.`;
+## Output
+Write the PROMPT.md directly using the write tool. Nothing else.`;
 
 export interface TriageProcessorOptions {
-  /** Milliseconds between polls. Default: 10000 */
   pollIntervalMs?: number;
-  /** Called when a task starts being specified */
   onSpecifyStart?: (task: Task) => void;
-  /** Called when a task is successfully specified */
   onSpecifyComplete?: (task: Task) => void;
-  /** Called on specification failure */
   onSpecifyError?: (task: Task, error: Error) => void;
-  /** Called with agent text output */
   onAgentText?: (taskId: string, delta: string) => void;
 }
 
@@ -84,14 +168,6 @@ export class TriageProcessor {
       );
 
       for (const task of triageTasks) {
-        // Mark waiting tasks as queued
-        if (triageTasks.indexOf(task) > 0) {
-          await this.store.updateTask(task.id, { status: "queued" });
-        }
-      }
-
-      for (const task of triageTasks) {
-        // Process one at a time to avoid overwhelming the API
         await this.specifyTask(task);
       }
     } catch (err) {
@@ -103,17 +179,13 @@ export class TriageProcessor {
     if (this.processing.has(task.id)) return;
     this.processing.add(task.id);
 
-    console.log(`[triage] Specifying ${task.id}: ${task.title || task.id}`);
+    console.log(`[triage] Specifying ${task.id}: ${task.title || task.description.slice(0, 60)}`);
     this.options.onSpecifyStart?.(task);
 
-    await this.store.updateTask(task.id, { status: "planning" });
-
     try {
-      // Get the full task detail including current prompt
       const detail = await this.store.getTask(task.id);
       const promptPath = `.hai/tasks/${task.id}/PROMPT.md`;
 
-      // Create a pi agent session for specification
       const { session } = await createHaiAgent({
         cwd: this.rootDir,
         systemPrompt: TRIAGE_SYSTEM_PROMPT,
@@ -124,14 +196,8 @@ export class TriageProcessor {
       });
 
       try {
-        // Build the prompt for the agent
         const agentPrompt = buildSpecificationPrompt(detail, promptPath);
-
-        // Run the agent
         await session.prompt(agentPrompt);
-
-        // Clear status before moving to todo
-        await this.store.updateTask(task.id, { status: null });
 
         // Move to todo
         await this.store.moveTask(task.id, "todo");
@@ -154,19 +220,15 @@ function buildSpecificationPrompt(task: TaskDetail, promptPath: string): string 
 
 ## Task
 - **ID:** ${task.id}
-- **Title:** ${task.title || task.id}
+- **Title:** ${task.title || "(none)"}
 - **Description:** ${task.description}
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}
 
-## Current rough prompt
-\`\`\`
-${task.prompt}
-\`\`\`
-
 ## Instructions
-1. Read the project structure to understand context (look at package.json, source files, etc.)
-2. Write a complete PROMPT.md specification to \`${promptPath}\`
+1. Read the project structure to understand context (package.json, source files, etc.)
+2. Write a complete PROMPT.md specification to \`${promptPath}\` following the format in your system prompt
 3. The specification must be detailed enough for an autonomous AI agent to implement without asking questions
+4. Name actual files, functions, and patterns from the codebase — be specific
 
 Use the write tool to write the specification file.`;
 }

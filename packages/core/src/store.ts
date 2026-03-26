@@ -92,6 +92,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       description: input.description,
       column: input.column || "triage",
       dependencies: input.dependencies || [],
+      steps: [],
+      currentStep: 0,
+      reviews: [],
+      discoveries: [],
+      log: [{ timestamp: now, action: "Task created" }],
       createdAt: now,
       updatedAt: now,
     };
@@ -217,6 +222,132 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     this.emit("task:updated", task);
     return task;
+  }
+
+  /**
+   * Update a step's status. Automatically advances currentStep.
+   */
+  async updateStep(
+    id: string,
+    stepIndex: number,
+    status: import("./types.js").StepStatus,
+  ): Promise<Task> {
+    const dir = this.taskDir(id);
+    const data = await readFile(join(dir, "task.json"), "utf-8");
+    const task = JSON.parse(data) as Task;
+
+    // Auto-initialize steps from PROMPT.md if empty
+    if (task.steps.length === 0) {
+      task.steps = await this.parseStepsFromPrompt(id);
+    }
+
+    if (stepIndex < 0 || stepIndex >= task.steps.length) {
+      throw new Error(
+        `Step ${stepIndex} out of range (task has ${task.steps.length} steps)`,
+      );
+    }
+
+    task.steps[stepIndex].status = status;
+    task.updatedAt = new Date().toISOString();
+
+    // Advance currentStep to first non-done step
+    if (status === "done") {
+      while (
+        task.currentStep < task.steps.length &&
+        task.steps[task.currentStep].status === "done"
+      ) {
+        task.currentStep++;
+      }
+    } else if (status === "in-progress") {
+      task.currentStep = stepIndex;
+    }
+
+    // Log it
+    task.log.push({
+      timestamp: task.updatedAt,
+      action: `Step ${stepIndex} (${task.steps[stepIndex].name}) → ${status}`,
+    });
+
+    const taskJsonPath = join(dir, "task.json");
+    this.suppressWatcher(taskJsonPath);
+    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+    if (this.watcher) this.taskCache.set(id, { ...task });
+
+    this.emit("task:updated", task);
+    return task;
+  }
+
+  /**
+   * Add a log entry to a task.
+   */
+  async logEntry(id: string, action: string, outcome?: string): Promise<Task> {
+    const dir = this.taskDir(id);
+    const data = await readFile(join(dir, "task.json"), "utf-8");
+    const task = JSON.parse(data) as Task;
+
+    task.log.push({
+      timestamp: new Date().toISOString(),
+      action,
+      outcome,
+    });
+    task.updatedAt = new Date().toISOString();
+
+    const taskJsonPath = join(dir, "task.json");
+    this.suppressWatcher(taskJsonPath);
+    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+    if (this.watcher) this.taskCache.set(id, { ...task });
+
+    this.emit("task:updated", task);
+    return task;
+  }
+
+  /**
+   * Record a discovery (things found during execution that may affect future tasks).
+   */
+  async addDiscovery(
+    id: string,
+    discovery: string,
+    disposition: string,
+    location?: string,
+  ): Promise<Task> {
+    const dir = this.taskDir(id);
+    const data = await readFile(join(dir, "task.json"), "utf-8");
+    const task = JSON.parse(data) as Task;
+
+    task.discoveries.push({ discovery, disposition, location });
+    task.updatedAt = new Date().toISOString();
+
+    task.log.push({
+      timestamp: task.updatedAt,
+      action: `Discovery: ${discovery}`,
+      outcome: disposition,
+    });
+
+    const taskJsonPath = join(dir, "task.json");
+    this.suppressWatcher(taskJsonPath);
+    await writeFile(taskJsonPath, JSON.stringify(task, null, 2));
+    if (this.watcher) this.taskCache.set(id, { ...task });
+
+    this.emit("task:updated", task);
+    return task;
+  }
+
+  /**
+   * Sync steps from PROMPT.md into task.json (called when steps are empty).
+   */
+  async parseStepsFromPrompt(id: string): Promise<import("./types.js").TaskStep[]> {
+    const dir = this.taskDir(id);
+    const promptPath = join(dir, "PROMPT.md");
+    if (!existsSync(promptPath)) return [];
+
+    const content = await readFile(promptPath, "utf-8");
+    const steps: import("./types.js").TaskStep[] = [];
+    const stepRegex = /^###\s+Step\s+\d+[^:]*:\s*(.+)$/gm;
+    let match;
+    while ((match = stepRegex.exec(content)) !== null) {
+      steps.push({ name: match[1].trim(), status: "pending" });
+    }
+    return steps;
   }
 
   async deleteTask(id: string): Promise<Task> {
