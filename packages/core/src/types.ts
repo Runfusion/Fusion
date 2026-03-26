@@ -14,6 +14,14 @@ export interface TaskLogEntry {
   outcome?: string;
 }
 
+export interface TaskAttachment {
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+}
+
 export interface Task {
   id: string;
   title?: string;
@@ -24,6 +32,7 @@ export interface Task {
   steps: TaskStep[];
   currentStep: number;
   status?: string;
+  attachments?: TaskAttachment[];
   log: TaskLogEntry[];
   size?: "S" | "M" | "L";
   reviewLevel?: number;

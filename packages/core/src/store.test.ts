@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { TaskStore } from "./store.js";
 import { readFile, writeFile, mkdir, rm, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { Task } from "./types.js";
 
@@ -162,6 +162,85 @@ describe("TaskStore", () => {
       const haiDir = join(rootDir, ".hai");
       const files = await readdir(haiDir);
       expect(files.filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
+    });
+  });
+
+  // ── Attachment tests ──────────────────────────────────────────────
+
+  describe("attachments", () => {
+    const TINY_PNG = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+
+    it("adds an attachment and persists metadata in task.json", async () => {
+      const task = await createTestTask();
+      const attachment = await store.addAttachment(task.id, "screenshot.png", TINY_PNG, "image/png");
+
+      expect(attachment.originalName).toBe("screenshot.png");
+      expect(attachment.mimeType).toBe("image/png");
+      expect(attachment.size).toBe(TINY_PNG.length);
+      expect(attachment.filename).toMatch(/^\d+-screenshot\.png$/);
+
+      // Verify metadata persisted
+      const updated = await store.getTask(task.id);
+      expect(updated.attachments).toHaveLength(1);
+      expect(updated.attachments![0].filename).toBe(attachment.filename);
+
+      // Verify file on disk
+      const filePath = join(rootDir, ".hai", "tasks", task.id, "attachments", attachment.filename);
+      const content = await readFile(filePath);
+      expect(content).toEqual(TINY_PNG);
+    });
+
+    it("rejects non-image mime types", async () => {
+      const task = await createTestTask();
+      await expect(
+        store.addAttachment(task.id, "file.txt", Buffer.from("hello"), "text/plain"),
+      ).rejects.toThrow("Invalid mime type");
+    });
+
+    it("rejects oversized files", async () => {
+      const task = await createTestTask();
+      const bigBuffer = Buffer.alloc(6 * 1024 * 1024); // 6MB
+      await expect(
+        store.addAttachment(task.id, "big.png", bigBuffer, "image/png"),
+      ).rejects.toThrow("File too large");
+    });
+
+    it("gets attachment path and mime type", async () => {
+      const task = await createTestTask();
+      const attachment = await store.addAttachment(task.id, "shot.png", TINY_PNG, "image/png");
+
+      const result = await store.getAttachment(task.id, attachment.filename);
+      expect(result.mimeType).toBe("image/png");
+      expect(result.path).toContain(attachment.filename);
+    });
+
+    it("deletes an attachment from disk and metadata", async () => {
+      const task = await createTestTask();
+      const attachment = await store.addAttachment(task.id, "del.png", TINY_PNG, "image/png");
+
+      const updated = await store.deleteAttachment(task.id, attachment.filename);
+      expect(updated.attachments).toBeUndefined();
+
+      // Verify file removed from disk
+      const filePath = join(rootDir, ".hai", "tasks", task.id, "attachments", attachment.filename);
+      expect(existsSync(filePath)).toBe(false);
+    });
+
+    it("throws ENOENT when getting non-existent attachment", async () => {
+      const task = await createTestTask();
+      await expect(
+        store.getAttachment(task.id, "nonexistent.png"),
+      ).rejects.toThrow("not found");
+    });
+
+    it("throws ENOENT when deleting non-existent attachment", async () => {
+      const task = await createTestTask();
+      await expect(
+        store.deleteAttachment(task.id, "nonexistent.png"),
+      ).rejects.toThrow("not found");
     });
   });
 

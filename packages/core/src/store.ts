@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
-import { mkdir, readFile, writeFile, readdir, rename } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, rename, unlink } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, BoardConfig, Column, MergeResult, Settings } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, BoardConfig, Column, MergeResult, Settings } from "./types.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS } from "./types.js";
 
 export interface TaskStoreEvents {
@@ -707,6 +707,118 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.taskCache.set(taskId, { ...task });
       this.emit("task:updated", task);
     }
+  }
+
+  private static ALLOWED_MIME_TYPES = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+  ]);
+
+  private static MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024; // 5MB
+
+  async addAttachment(
+    id: string,
+    filename: string,
+    content: Buffer,
+    mimeType: string,
+  ): Promise<TaskAttachment> {
+    if (!TaskStore.ALLOWED_MIME_TYPES.has(mimeType)) {
+      throw new Error(
+        `Invalid mime type '${mimeType}'. Allowed: ${[...TaskStore.ALLOWED_MIME_TYPES].join(", ")}`,
+      );
+    }
+    if (content.length > TaskStore.MAX_ATTACHMENT_SIZE) {
+      throw new Error(
+        `File too large (${content.length} bytes). Maximum: ${TaskStore.MAX_ATTACHMENT_SIZE} bytes (5MB)`,
+      );
+    }
+
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const attachDir = join(dir, "attachments");
+      await mkdir(attachDir, { recursive: true });
+
+      // Sanitize filename: keep alphanumeric, dots, hyphens, underscores
+      const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const storedName = `${Date.now()}-${sanitized}`;
+      await writeFile(join(attachDir, storedName), content);
+
+      const attachment: TaskAttachment = {
+        filename: storedName,
+        originalName: filename,
+        mimeType,
+        size: content.length,
+        createdAt: new Date().toISOString(),
+      };
+
+      const task = await this.readTaskJson(dir);
+      if (!task.attachments) task.attachments = [];
+      task.attachments.push(attachment);
+      task.updatedAt = new Date().toISOString();
+      await this.atomicWriteTaskJson(dir, task);
+
+      if (this.watcher) this.taskCache.set(id, { ...task });
+      this.emit("task:updated", task);
+
+      return attachment;
+    });
+  }
+
+  async getAttachment(
+    id: string,
+    filename: string,
+  ): Promise<{ path: string; mimeType: string }> {
+    const dir = this.taskDir(id);
+    const task = await this.readTaskJson(dir);
+    const attachment = task.attachments?.find((a) => a.filename === filename);
+    if (!attachment) {
+      const err: NodeJS.ErrnoException = new Error(
+        `Attachment '${filename}' not found on task ${id}`,
+      );
+      err.code = "ENOENT";
+      throw err;
+    }
+    return {
+      path: join(dir, "attachments", filename),
+      mimeType: attachment.mimeType,
+    };
+  }
+
+  async deleteAttachment(id: string, filename: string): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+      const idx = task.attachments?.findIndex((a) => a.filename === filename) ?? -1;
+      if (idx === -1) {
+        const err: NodeJS.ErrnoException = new Error(
+          `Attachment '${filename}' not found on task ${id}`,
+        );
+        err.code = "ENOENT";
+        throw err;
+      }
+
+      // Remove file from disk
+      const filePath = join(dir, "attachments", filename);
+      try {
+        await unlink(filePath);
+      } catch {
+        // File may already be gone
+      }
+
+      task.attachments!.splice(idx, 1);
+      if (task.attachments!.length === 0) {
+        task.attachments = undefined;
+      }
+      task.updatedAt = new Date().toISOString();
+      await this.atomicWriteTaskJson(dir, task);
+
+      if (this.watcher) this.taskCache.set(id, { ...task });
+      this.emit("task:updated", task);
+
+      return task;
+    });
   }
 
   getRootDir(): string {
