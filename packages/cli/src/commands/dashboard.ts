@@ -156,6 +156,11 @@ export async function runDashboard(port: number, opts: { engine?: boolean; open?
     triage.start();
     scheduler.start();
 
+    // ── Startup sweep: resume orphaned in-progress tasks ──────────────
+    executor.resumeOrphaned().catch((err) =>
+      console.error("[engine] Failed to resume orphaned tasks:", err),
+    );
+
     // ── Startup sweep: enqueue any tasks already in "in-review" ───────
     if (settings.autoMerge) {
       const existing = await store.listTasks();

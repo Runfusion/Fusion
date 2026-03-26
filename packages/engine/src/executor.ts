@@ -106,6 +106,28 @@ export class TaskExecutor {
     });
   }
 
+  /**
+   * Resume orphaned in-progress tasks (e.g., after crash/restart).
+   * Call once after engine startup.
+   */
+  async resumeOrphaned(): Promise<void> {
+    const tasks = await this.store.listTasks();
+    const inProgress = tasks.filter(
+      (t) => t.column === "in-progress" && !this.executing.has(t.id),
+    );
+
+    if (inProgress.length === 0) return;
+
+    console.log(`[executor] Found ${inProgress.length} orphaned in-progress task(s)`);
+    for (const task of inProgress) {
+      console.log(`[executor] Resuming ${task.id}: ${task.title || task.description.slice(0, 60)}`);
+      await this.store.logEntry(task.id, "Resumed after engine restart");
+      this.execute(task).catch((err) =>
+        console.error(`[executor] Failed to resume ${task.id}:`, err),
+      );
+    }
+  }
+
   async execute(task: Task): Promise<void> {
     if (this.executing.has(task.id)) return;
     this.executing.add(task.id);
