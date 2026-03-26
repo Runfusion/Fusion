@@ -119,6 +119,12 @@ tests. Manual verification is NOT a test.
 - If the project has no test framework, the Testing step must include setting one up
   as part of this task (not just skipping tests)
 
+## Duplicate check
+Before writing a spec, read \`.hai/tasks/*/task.json\` to see existing tasks.
+If a task already covers the same work (even if worded differently), do NOT
+write a PROMPT.md. Instead, write a single line to the output file:
+\`DUPLICATE: {existing-task-id}\`
+
 ## Guidelines
 - Read the project structure and relevant source files to understand context BEFORE writing
 - Be specific — name actual files, functions, and patterns from the codebase
@@ -214,11 +220,25 @@ export class TriageProcessor {
           const agentPrompt = buildSpecificationPrompt(detail, promptPath);
           await session.prompt(agentPrompt);
 
-          // Move to todo
-          await this.store.updateTask(task.id, { status: null });
-          await this.store.moveTask(task.id, "todo");
-          console.log(`[triage] ✓ ${task.id} specified and moved to todo`);
-          this.options.onSpecifyComplete?.(task);
+          // Check if the agent flagged a duplicate
+          const { readFile } = await import("node:fs/promises");
+          const { join } = await import("node:path");
+          const written = await readFile(
+            join(this.rootDir, promptPath), "utf-8",
+          ).catch(() => "");
+          const dupMatch = written.match(/^DUPLICATE:\s*(HAI-\d+)/i);
+
+          if (dupMatch) {
+            const dupId = dupMatch[1];
+            console.log(`[triage] ${task.id} is a duplicate of ${dupId} — closing`);
+            await this.store.logEntry(task.id, `Duplicate of ${dupId} — closed`);
+            await this.store.deleteTask(task.id);
+          } else {
+            await this.store.updateTask(task.id, { status: null });
+            await this.store.moveTask(task.id, "todo");
+            console.log(`[triage] ✓ ${task.id} specified and moved to todo`);
+            this.options.onSpecifyComplete?.(task);
+          }
         } finally {
           session.dispose();
         }
