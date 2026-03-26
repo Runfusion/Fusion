@@ -9,7 +9,7 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
-  const [form, setForm] = useState<Settings>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000 });
+  const [form, setForm] = useState<Settings>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -101,6 +101,20 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
                   setForm((f) => ({ ...f, pollIntervalMs: Number(e.target.value) }))
                 }
               />
+            </div>
+            <div className="form-group">
+              <label htmlFor="groupOverlappingFiles" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <input
+                  id="groupOverlappingFiles"
+                  type="checkbox"
+                  checked={form.groupOverlappingFiles}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, groupOverlappingFiles: e.target.checked }))
+                  }
+                />
+                Serialize tasks with overlapping files
+              </label>
+              <small>When enabled, tasks that modify the same files are queued serially to avoid merge conflicts</small>
             </div>
           </div>
         )}

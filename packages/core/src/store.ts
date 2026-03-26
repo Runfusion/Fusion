@@ -317,6 +317,35 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return steps;
   }
 
+  /**
+   * Parse the `## File Scope` section from a task's PROMPT.md and extract
+   * backtick-quoted file paths. Glob patterns ending in `/*` are stored
+   * as directory prefixes for overlap comparison.
+   */
+  async parseFileScopeFromPrompt(id: string): Promise<string[]> {
+    const dir = this.taskDir(id);
+    const promptPath = join(dir, "PROMPT.md");
+    if (!existsSync(promptPath)) return [];
+
+    const content = await readFile(promptPath, "utf-8");
+
+    // Find the ## File Scope section
+    const fileScopeMatch = content.match(
+      /^##\s+File\s+Scope\s*\n([\s\S]*?)(?=\n##\s|\n#\s|$)/m,
+    );
+    if (!fileScopeMatch) return [];
+
+    const section = fileScopeMatch[1];
+    const paths: string[] = [];
+    const backtickRegex = /`([^`]+)`/g;
+    let match;
+    while ((match = backtickRegex.exec(section)) !== null) {
+      paths.push(match[1]);
+    }
+
+    return paths;
+  }
+
   async deleteTask(id: string): Promise<Task> {
     const dir = this.taskDir(id);
     const data = await readFile(join(dir, "task.json"), "utf-8");

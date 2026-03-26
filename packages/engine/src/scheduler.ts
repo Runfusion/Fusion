@@ -51,12 +51,43 @@ export class Scheduler {
     console.log("[scheduler] Stopped");
   }
 
+  /**
+   * Check whether two sets of file scope paths overlap.
+   * Paths overlap if they are identical, or if one is a directory prefix of the other.
+   * Glob patterns (ending with /*) are treated as directory prefixes.
+   */
+  private pathsOverlap(a: string[], b: string[]): boolean {
+    for (const pa of a) {
+      const prefixA = pa.endsWith("/*") ? pa.slice(0, -1) : null;
+      for (const pb of b) {
+        const prefixB = pb.endsWith("/*") ? pb.slice(0, -1) : null;
+
+        // Exact match (ignoring glob suffix)
+        const cleanA = prefixA ? pa.slice(0, -2) : pa;
+        const cleanB = prefixB ? pb.slice(0, -2) : pb;
+        if (cleanA === cleanB) return true;
+
+        // Check prefix overlap
+        if (prefixA && pb.startsWith(prefixA)) return true;
+        if (prefixB && pa.startsWith(prefixB)) return true;
+        if (prefixA && prefixB) {
+          if (prefixA.startsWith(prefixB) || prefixB.startsWith(prefixA)) return true;
+        }
+
+        // Exact file path match
+        if (pa === pb) return true;
+      }
+    }
+    return false;
+  }
+
   /** Run one scheduling pass. */
   async schedule(): Promise<void> {
     if (!this.running) return;
 
     try {
       const tasks = await this.store.listTasks();
+      const settings = await this.store.getSettings();
       const maxConcurrent = this.options.maxConcurrent ?? 2;
       const maxWorktrees = this.options.maxWorktrees ?? 4;
 
@@ -84,6 +115,15 @@ export class Scheduler {
       const todo = tasks.filter((t) => t.column === "todo");
       if (todo.length === 0) return;
 
+      // Pre-compute file scopes for in-progress tasks when overlap detection is enabled
+      const inProgressScopes = new Map<string, string[]>();
+      if (settings.groupOverlappingFiles) {
+        for (const t of inProgress) {
+          const scope = await this.store.parseFileScopeFromPrompt(t.id);
+          if (scope.length > 0) inProgressScopes.set(t.id, scope);
+        }
+      }
+
       // Resolve dependency order among todo tasks
       const ordered = resolveDependencyOrder(todo);
       let started = 0;
@@ -103,6 +143,26 @@ export class Scheduler {
           continue;
         }
 
+        // Check file scope overlap when enabled
+        if (settings.groupOverlappingFiles) {
+          const taskScope = await this.store.parseFileScopeFromPrompt(task.id);
+          if (taskScope.length > 0) {
+            let overlappingTaskId: string | null = null;
+            for (const [ipId, ipScope] of inProgressScopes) {
+              if (this.pathsOverlap(taskScope, ipScope)) {
+                overlappingTaskId = ipId;
+                break;
+              }
+            }
+            if (overlappingTaskId) {
+              console.log(
+                `[scheduler] Deferring ${task.id}: file overlap with ${overlappingTaskId}`,
+              );
+              continue;
+            }
+          }
+        }
+
         // Dependencies met — check concurrency
         if (started >= available) {
           continue;
@@ -116,6 +176,12 @@ export class Scheduler {
         await this.store.moveTask(task.id, "in-progress");
         this.options.onSchedule?.(task);
         started++;
+
+        // Track newly started task's file scope for overlap with remaining todo tasks
+        if (settings.groupOverlappingFiles) {
+          const scope = await this.store.parseFileScopeFromPrompt(task.id);
+          if (scope.length > 0) inProgressScopes.set(task.id, scope);
+        }
       }
     } catch (err) {
       console.error("[scheduler] Scheduling error:", err);

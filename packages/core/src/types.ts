@@ -23,6 +23,7 @@ export interface Task {
   worktree?: string;
   steps: TaskStep[];
   currentStep: number;
+  status?: string;
   log: TaskLogEntry[];
   size?: "S" | "M" | "L";
   reviewLevel?: number;
@@ -45,12 +46,14 @@ export interface Settings {
   maxConcurrent: number;
   maxWorktrees: number;
   pollIntervalMs: number;
+  groupOverlappingFiles: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   maxConcurrent: 2,
   maxWorktrees: 4,
   pollIntervalMs: 15000,
+  groupOverlappingFiles: false,
 };
 
 export interface BoardConfig {
