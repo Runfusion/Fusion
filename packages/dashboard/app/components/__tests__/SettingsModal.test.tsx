@@ -9,6 +9,7 @@ const defaultSettings: Settings = {
   pollIntervalMs: 15000,
   groupOverlappingFiles: false,
   autoMerge: false,
+  recycleWorktrees: false,
   worktreeInitCommand: "",
   testCommand: "",
   buildCommand: "",
@@ -75,6 +76,7 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Worktrees"));
     expect(screen.getByLabelText("Max Worktrees")).toBeTruthy();
     expect(screen.getByLabelText("Worktree Init Command")).toBeTruthy();
+    expect(screen.getByText("Recycle worktrees")).toBeTruthy();
 
     // Commands
     fireEvent.click(screen.getByText("Commands"));
@@ -84,6 +86,31 @@ describe("SettingsModal", () => {
     // Merge
     fireEvent.click(screen.getByText("Merge"));
     expect(screen.getByText("Auto-merge completed tasks")).toBeTruthy();
+  });
+
+  it("shows Recycle worktrees checkbox in Worktrees section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Worktrees"));
+    const checkbox = screen.getByLabelText("Recycle worktrees");
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.getAttribute("type")).toBe("checkbox");
+  });
+
+  it("toggling recycleWorktrees checkbox sends true in save payload", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Worktrees"));
+    const checkbox = screen.getByLabelText("Recycle worktrees");
+    fireEvent.click(checkbox);
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.recycleWorktrees).toBe(true);
   });
 
   it("groupOverlappingFiles input has type checkbox", async () => {

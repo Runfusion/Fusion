@@ -26,7 +26,7 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
-  const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false, autoMerge: false, worktreeInitCommand: "" });
+  const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false, autoMerge: false, recycleWorktrees: false, worktreeInitCommand: "" });
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<SectionId>(SETTINGS_SECTIONS[0].id);
 
@@ -149,6 +149,20 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
                 }
               />
               <small>Shell command to run in each new worktree after creation</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="recycleWorktrees" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <input
+                  id="recycleWorktrees"
+                  type="checkbox"
+                  checked={form.recycleWorktrees}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, recycleWorktrees: e.target.checked }))
+                  }
+                />
+                Recycle worktrees
+              </label>
+              <small>When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup</small>
             </div>
           </>
         );
