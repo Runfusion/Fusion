@@ -224,6 +224,8 @@ async function completeTask(
   taskId: string,
   result: MergeResult,
 ): Promise<void> {
+  // Clear transient status before moving to done
+  await store.updateTask(taskId, { status: null });
   // Use moveTask for proper event emission
   const task = await store.moveTask(taskId, "done");
   result.task = task;
