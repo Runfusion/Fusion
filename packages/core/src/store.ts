@@ -81,18 +81,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     } catch (err) {
       if (!(err instanceof SyntaxError)) throw err;
 
-      // Attempt recovery: find last '}' and truncate
-      const lastBrace = raw.lastIndexOf("}");
-      if (lastBrace > 0) {
-        const truncated = raw.slice(0, lastBrace + 1);
+      // Attempt recovery: try truncating at each '}' from the end until valid
+      let pos = raw.length;
+      while ((pos = raw.lastIndexOf("}", pos - 1)) > 0) {
         try {
-          const task = JSON.parse(truncated) as Task;
+          const task = JSON.parse(raw.slice(0, pos + 1)) as Task;
           console.warn(
-            `[hai] Warning: repaired corrupted task.json at ${filePath} (truncated ${raw.length - lastBrace - 1} trailing bytes)`,
+            `[hai] Warning: repaired corrupted task.json at ${filePath} (truncated ${raw.length - pos - 1} trailing bytes)`,
           );
           return task;
         } catch {
-          // Recovery also failed — fall through
+          // Try next position
         }
       }
 
