@@ -401,6 +401,42 @@ describe("TaskStore", () => {
     });
   });
 
+  // ── Task prefix tests ──────────────────────────────────────────
+
+  describe("taskPrefix setting", () => {
+    it("default prefix produces HAI-001 IDs", async () => {
+      const task = await store.createTask({ description: "Default prefix" });
+      expect(task.id).toBe("HAI-001");
+    });
+
+    it("custom prefix produces PROJ-001 IDs", async () => {
+      await store.updateSettings({ taskPrefix: "PROJ" });
+      const task = await store.createTask({ description: "Custom prefix" });
+      expect(task.id).toBe("PROJ-001");
+    });
+
+    it("prefix change mid-stream continues sequence", async () => {
+      const t1 = await store.createTask({ description: "First" });
+      const t2 = await store.createTask({ description: "Second" });
+      expect(t1.id).toBe("HAI-001");
+      expect(t2.id).toBe("HAI-002");
+
+      await store.updateSettings({ taskPrefix: "PROJ" });
+      const t3 = await store.createTask({ description: "Third" });
+      expect(t3.id).toBe("PROJ-003");
+    });
+
+    it("listTasks returns tasks regardless of prefix", async () => {
+      await store.createTask({ description: "HAI task" });
+      await store.updateSettings({ taskPrefix: "PROJ" });
+      await store.createTask({ description: "PROJ task" });
+
+      const tasks = await store.listTasks();
+      expect(tasks).toHaveLength(2);
+      expect(tasks.map((t) => t.id).sort()).toEqual(["HAI-001", "PROJ-002"]);
+    });
+  });
+
   describe("agent log persistence", () => {
     it("appendAgentLog creates agent.log and getAgentLogs reads it back", async () => {
       const task = await createTestTask();

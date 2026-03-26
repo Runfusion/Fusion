@@ -160,7 +160,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private async allocateId(): Promise<string> {
     return this.withConfigLock(async () => {
       const config = await this.readConfig();
-      const id = `HAI-${String(config.nextId).padStart(3, "0")}`;
+      const prefix = config.settings?.taskPrefix || "HAI";
+      const id = `${prefix}-${String(config.nextId).padStart(3, "0")}`;
       config.nextId++;
       await this.writeConfig(config);
       return id;
@@ -235,7 +236,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const tasks: Task[] = [];
 
     for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.startsWith("HAI-")) {
+      if (entry.isDirectory() && /^[A-Z]+-\d+$/.test(entry.name)) {
         try {
           tasks.push(await this.readTaskJson(join(this.tasksDir, entry.name)));
         } catch {
@@ -655,7 +656,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const taskId = normalizedParts[0];
     const file = normalizedParts[normalizedParts.length - 1];
     if (file !== "task.json") return;
-    if (!taskId.startsWith("HAI-")) return;
+    if (!/^[A-Z]+-\d+$/.test(taskId)) return;
 
     const fullPath = join(this.tasksDir, taskId, "task.json");
 

@@ -275,7 +275,7 @@ export class TriageProcessor {
           const written = await readFile(
             join(this.rootDir, promptPath), "utf-8",
           ).catch(() => "");
-          const dupMatch = written.match(/^DUPLICATE:\s*(HAI-\d+)/i);
+          const dupMatch = written.match(/^DUPLICATE:\s*([A-Z]+-\d+)/i);
 
           if (dupMatch) {
             const dupId = dupMatch[1];

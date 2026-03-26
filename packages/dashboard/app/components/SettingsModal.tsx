@@ -12,6 +12,7 @@ import type { ToastType } from "../hooks/useToast";
  *   2. Add a corresponding case in renderSectionFields()
  */
 const SETTINGS_SECTIONS = [
+  { id: "general", label: "General" },
   { id: "scheduling", label: "Scheduling" },
   { id: "worktrees", label: "Worktrees" },
   { id: "commands", label: "Commands" },
@@ -29,6 +30,7 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
   const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false, autoMerge: false, recycleWorktrees: false, worktreeInitCommand: "" });
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<SectionId>(SETTINGS_SECTIONS[0].id);
+  const [prefixError, setPrefixError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSettings()
@@ -58,10 +60,12 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
   );
 
   const handleSave = useCallback(async () => {
+    if (prefixError) return;
     try {
       const payload = {
         ...form,
         worktreeInitCommand: form.worktreeInitCommand?.trim() || undefined,
+        taskPrefix: form.taskPrefix?.trim() || undefined,
       };
       await updateSettings(payload);
       addToast("Settings saved", "success");
@@ -69,10 +73,36 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
     } catch (err: any) {
       addToast(err.message, "error");
     }
-  }, [form, onClose, addToast]);
+  }, [form, prefixError, onClose, addToast]);
 
   const renderSectionFields = () => {
     switch (activeSection) {
+      case "general":
+        return (
+          <>
+            <h4 className="settings-section-heading">General</h4>
+            <div className="form-group">
+              <label htmlFor="taskPrefix">Task Prefix</label>
+              <input
+                id="taskPrefix"
+                type="text"
+                placeholder="HAI"
+                value={form.taskPrefix || ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setForm((f) => ({ ...f, taskPrefix: val || undefined }));
+                  if (val && !/^[A-Z]{1,10}$/.test(val)) {
+                    setPrefixError("Prefix must be 1–10 uppercase letters");
+                  } else {
+                    setPrefixError(null);
+                  }
+                }}
+              />
+              {prefixError && <small className="field-error" style={{ color: "var(--color-error, #e74c3c)" }}>{prefixError}</small>}
+              {!prefixError && <small>Prefix for new task IDs (e.g. HAI, PROJ)</small>}
+            </div>
+          </>
+        );
       case "scheduling":
         return (
           <>

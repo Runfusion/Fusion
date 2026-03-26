@@ -87,6 +87,10 @@ export interface Settings {
    *  of being deleted. New tasks acquire a warm worktree from the pool,
    *  preserving build caches (node_modules, target/, dist/). Default: false. */
   recycleWorktrees?: boolean;
+  /** Prefix for generated task IDs (e.g. `"HAI"` produces `HAI-001`).
+   *  Defaults to `"HAI"`. Only affects new tasks — existing tasks retain
+   *  their original IDs. */
+  taskPrefix?: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -97,6 +101,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoMerge: false,
   worktreeInitCommand: undefined,
   recycleWorktrees: false,
+  taskPrefix: undefined,
 };
 
 export interface BoardConfig {
