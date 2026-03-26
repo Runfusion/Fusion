@@ -59,6 +59,10 @@ export interface Settings {
   pollIntervalMs: number;
   groupOverlappingFiles: boolean;
   autoMerge: boolean;
+  /** Custom test command for the project (e.g. "pnpm test") */
+  testCommand?: string;
+  /** Custom build command for the project (e.g. "pnpm build") */
+  buildCommand?: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
