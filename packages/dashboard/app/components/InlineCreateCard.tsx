@@ -31,6 +31,22 @@ export function InlineCreateCard({ tasks, onSubmit, onCancel, addToast }: Inline
     inputRef.current?.focus();
   }, []);
 
+  // Cancel when focus leaves the card entirely and there's no content
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    const handleFocusOut = (e: FocusEvent) => {
+      // relatedTarget is the element receiving focus — if it's inside the card, ignore
+      if (e.relatedTarget instanceof Node && card.contains(e.relatedTarget)) return;
+      // Only cancel if empty
+      if (description.trim() === "" && pendingImages.length === 0) {
+        onCancel();
+      }
+    };
+    card.addEventListener("focusout", handleFocusOut);
+    return () => card.removeEventListener("focusout", handleFocusOut);
+  }, [description, pendingImages, onCancel]);
+
   // Clean up object URLs on unmount to prevent memory leaks
   useEffect(() => {
     return () => {
