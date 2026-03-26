@@ -65,6 +65,7 @@ export interface SchedulerOptions {
 export class Scheduler {
   private running = false;
   private scheduling = false;
+  private wasWorktreeLimited = false;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -129,11 +130,16 @@ export class Scheduler {
       ).length;
 
       if (activeWorktrees >= maxWorktrees) {
-        console.log(
-          `[scheduler] Worktree limit reached (${activeWorktrees}/${maxWorktrees})`,
-        );
+        if (!this.wasWorktreeLimited) {
+          console.log(
+            `[scheduler] Worktree limit reached (${activeWorktrees}/${maxWorktrees})`,
+          );
+          this.wasWorktreeLimited = true;
+        }
         return;
       }
+
+      this.wasWorktreeLimited = false;
 
       const inProgress = tasks.filter((t) => t.column === "in-progress");
 

@@ -189,3 +189,88 @@ describe("Scheduler file-scope overlap", () => {
     expect(store.moveTask).toHaveBeenCalledWith("HAI-002", "in-progress");
   });
 });
+
+describe("Scheduler worktree limit logging", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function runSchedule(scheduler: Scheduler): Promise<void> {
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+  }
+
+  it("logs worktree limit on the first pass when maxed out", async () => {
+    const tasks = [
+      makeTask({ id: "HAI-001", column: "in-progress" }),
+      makeTask({ id: "HAI-002", column: "in-progress" }),
+    ];
+    const store = createMockStore(tasks);
+    const scheduler = new Scheduler(store, { maxWorktrees: 2 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runSchedule(scheduler);
+
+    expect(logSpy).toHaveBeenCalledWith(
+      "[scheduler] Worktree limit reached (2/2)",
+    );
+    logSpy.mockRestore();
+  });
+
+  it("does not log worktree limit on subsequent passes while still maxed", async () => {
+    const tasks = [
+      makeTask({ id: "HAI-001", column: "in-progress" }),
+      makeTask({ id: "HAI-002", column: "in-progress" }),
+    ];
+    const store = createMockStore(tasks);
+    const scheduler = new Scheduler(store, { maxWorktrees: 2 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runSchedule(scheduler);
+    await runSchedule(scheduler);
+    await runSchedule(scheduler);
+
+    const limitMessages = logSpy.mock.calls.filter(
+      (args) =>
+        typeof args[0] === "string" &&
+        args[0].includes("Worktree limit reached"),
+    );
+    expect(limitMessages).toHaveLength(1);
+    logSpy.mockRestore();
+  });
+
+  it("logs worktree limit again after worktrees free up and become maxed again", async () => {
+    const maxedTasks = [
+      makeTask({ id: "HAI-001", column: "in-progress" }),
+      makeTask({ id: "HAI-002", column: "in-progress" }),
+    ];
+    const freeTasks = [
+      makeTask({ id: "HAI-001", column: "in-progress" }),
+    ];
+
+    const store = createMockStore(maxedTasks);
+    const scheduler = new Scheduler(store, { maxWorktrees: 2, maxConcurrent: 2 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    // First pass: maxed out — should log
+    await runSchedule(scheduler);
+
+    // Second pass: slot freed — should not log limit
+    store.listTasks.mockResolvedValue(freeTasks);
+    await runSchedule(scheduler);
+
+    // Third pass: maxed out again — should log again
+    store.listTasks.mockResolvedValue(maxedTasks);
+    await runSchedule(scheduler);
+
+    const limitMessages = logSpy.mock.calls.filter(
+      (args) =>
+        typeof args[0] === "string" &&
+        args[0].includes("Worktree limit reached"),
+    );
+    expect(limitMessages).toHaveLength(2);
+    logSpy.mockRestore();
+  });
+});
