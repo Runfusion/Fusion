@@ -216,7 +216,11 @@ Download the latest binary from the [GitHub Releases](../../releases) page. Each
 
 ### Triggering a release
 
-To create a new release, tag a version and push the tag:
+Releases are automated via [changesets](https://github.com/changesets/changesets). See [RELEASING.md](./RELEASING.md) for the full workflow.
+
+In short: add a changeset with `pnpm changeset`, merge to main, then merge the auto-generated Version Packages PR to trigger a release.
+
+Manual fallback — tag a version and push:
 
 ```bash
 git tag v0.1.0

@@ -10,12 +10,20 @@
     "build": "pnpm -r build",
     "build:exe": "pnpm build && pnpm --filter hai build:exe",
     "build:exe:all": "pnpm build && pnpm --filter hai build:exe:all",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release:version": "changeset version"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "koffi", "protobufjs"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "koffi",
+      "protobufjs"
+    ]
   },
   "devDependencies": {
+    "@changesets/cli": "^2.30.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

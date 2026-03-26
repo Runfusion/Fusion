@@ -45,6 +45,21 @@ jobs:
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
+      - name: Extract version from tag
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Releasing version: ${VERSION}"
+
+      - name: Verify tag matches package version
+        run: |
+          PKG_VERSION=$(node -p "require('./packages/cli/package.json').version")
+          if [ "$RELEASE_VERSION" != "$PKG_VERSION" ]; then
+            echo "ERROR: Tag version ($RELEASE_VERSION) does not match packages/cli/package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "Version check passed: $RELEASE_VERSION"
+
       - name: Install dependencies
         run: pnpm install
 
