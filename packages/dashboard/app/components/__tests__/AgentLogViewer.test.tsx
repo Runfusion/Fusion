@@ -57,6 +57,39 @@ describe("AgentLogViewer", () => {
     expect(container.querySelectorAll(".agent-log-tool")).toHaveLength(1);
   });
 
+  it("renders tool entry detail when present", () => {
+    const entries = [
+      makeEntry({ text: "Bash", type: "tool", detail: "ls -la packages/" }),
+    ];
+    const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+    const detail = container.querySelector(".agent-log-tool-detail");
+    expect(detail).toBeTruthy();
+    expect(detail!.textContent).toContain("ls -la packages/");
+  });
+
+  it("does not render detail span when detail is absent", () => {
+    const entries = [
+      makeEntry({ text: "Bash", type: "tool" }),
+    ];
+    const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+    const detail = container.querySelector(".agent-log-tool-detail");
+    expect(detail).toBeNull();
+  });
+
+  it("renders long detail text without breaking layout", () => {
+    const longDetail = "a/very/long/path/".repeat(10) + "file.ts";
+    const entries = [
+      makeEntry({ text: "Read", type: "tool", detail: longDetail }),
+    ];
+    const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+    const detail = container.querySelector(".agent-log-tool-detail");
+    expect(detail).toBeTruthy();
+    expect(detail!.textContent).toContain(longDetail);
+    // Verify the tool div still renders correctly
+    const toolDiv = container.querySelector(".agent-log-tool");
+    expect(toolDiv).toBeTruthy();
+  });
+
   it("has a monospace font family", () => {
     const entries = [makeEntry()];
     const { container } = render(<AgentLogViewer entries={entries} loading={false} />);

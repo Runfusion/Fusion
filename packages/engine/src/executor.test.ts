@@ -794,3 +794,44 @@ describe("buildExecutionPrompt", () => {
     expect(agentPrompt).toContain("- **Build:** `npm run build`");
   });
 });
+
+// Import the summarizeToolArgs helper directly (not affected by mocks above)
+describe("summarizeToolArgs", () => {
+  // Dynamic import to avoid mock interference
+  let summarizeToolArgs: (name: string, args?: Record<string, unknown>) => string | undefined;
+
+  beforeEach(async () => {
+    const mod = await vi.importActual<typeof import("./executor.js")>("./executor.js");
+    summarizeToolArgs = mod.summarizeToolArgs;
+  });
+
+  it("returns command for bash tool", () => {
+    expect(summarizeToolArgs("Bash", { command: "ls -la" })).toBe("ls -la");
+    expect(summarizeToolArgs("bash", { command: "echo hello" })).toBe("echo hello");
+  });
+
+  it("truncates long bash commands to 80 chars", () => {
+    const longCmd = "a".repeat(100);
+    const result = summarizeToolArgs("Bash", { command: longCmd });
+    expect(result).toBe("a".repeat(80) + "…");
+  });
+
+  it("returns path for read/edit/write tools", () => {
+    expect(summarizeToolArgs("Read", { path: "src/types.ts" })).toBe("src/types.ts");
+    expect(summarizeToolArgs("edit", { path: "src/store.ts" })).toBe("src/store.ts");
+    expect(summarizeToolArgs("Write", { path: "out.txt", content: "data" })).toBe("out.txt");
+  });
+
+  it("returns first string arg for unknown tools", () => {
+    expect(summarizeToolArgs("task_update", { step: 1, status: "done" })).toBe("done");
+  });
+
+  it("returns undefined when no args provided", () => {
+    expect(summarizeToolArgs("Bash")).toBeUndefined();
+    expect(summarizeToolArgs("Bash", {})).toBeUndefined();
+  });
+
+  it("returns undefined when no string args found", () => {
+    expect(summarizeToolArgs("unknown", { count: 42, flag: true })).toBeUndefined();
+  });
+});

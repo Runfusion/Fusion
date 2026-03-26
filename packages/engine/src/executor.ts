@@ -13,6 +13,34 @@ import type { WorktreePool } from "./worktree-pool.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
+/**
+ * Produce a short human-readable summary from tool arguments.
+ * Returns `undefined` for unknown tools or when no meaningful arg is found.
+ */
+export function summarizeToolArgs(name: string, args?: Record<string, unknown>): string | undefined {
+  if (!args) return undefined;
+  const lowerName = name.toLowerCase();
+
+  if (lowerName === "bash") {
+    const cmd = args.command;
+    if (typeof cmd === "string") {
+      return cmd.length > 80 ? cmd.slice(0, 80) + "…" : cmd;
+    }
+  }
+
+  if (lowerName === "read" || lowerName === "edit" || lowerName === "write") {
+    const p = args.path;
+    if (typeof p === "string") return p;
+  }
+
+  // Fallback: return first string-valued arg if short enough
+  for (const val of Object.values(args)) {
+    if (typeof val === "string" && val.length <= 80) return val;
+  }
+
+  return undefined;
+}
+
 // ── Tool parameter schemas (module-level for reuse in ToolDefinition generics) ──
 
 const taskUpdateParams = Type.Object({
@@ -355,12 +383,13 @@ export class TaskExecutor {
               scheduleFlush();
             }
           },
-          onToolStart: (name) => {
+          onToolStart: (name, args) => {
             this.options.onAgentTool?.(task.id, name);
             // Flush any pending text before recording the tool entry
             if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
             flushTextBuffer();
-            this.store.appendAgentLog(task.id, name, "tool").catch(() => {});
+            const detail = summarizeToolArgs(name, args);
+            this.store.appendAgentLog(task.id, name, "tool", detail).catch(() => {});
           },
         });
 

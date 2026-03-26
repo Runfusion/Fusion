@@ -24,6 +24,8 @@ export interface AgentLogEntry {
   text: string;
   /** Whether this is a text delta or a tool invocation marker */
   type: "text" | "tool";
+  /** For tool entries: human-readable summary of tool args (e.g. file path, command) */
+  detail?: string;
 }
 
 export interface TaskAttachment {

@@ -472,6 +472,30 @@ describe("TaskStore", () => {
       expect(events[0].taskId).toBe(task.id);
     });
 
+    it("appendAgentLog writes detail when provided", async () => {
+      const task = await createTestTask();
+
+      await store.appendAgentLog(task.id, "Bash", "tool", "ls -la");
+      await store.appendAgentLog(task.id, "Read", "tool", "packages/core/src/types.ts");
+      await store.appendAgentLog(task.id, "some text", "text");
+
+      const logs = await store.getAgentLogs(task.id);
+      expect(logs).toHaveLength(3);
+      expect(logs[0].detail).toBe("ls -la");
+      expect(logs[1].detail).toBe("packages/core/src/types.ts");
+      expect(logs[2].detail).toBeUndefined();
+    });
+
+    it("appendAgentLog omits detail field when not provided", async () => {
+      const task = await createTestTask();
+
+      await store.appendAgentLog(task.id, "Bash", "tool");
+
+      const logs = await store.getAgentLogs(task.id);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).not.toHaveProperty("detail");
+    });
+
     it("handles multiple appends correctly (JSONL format)", async () => {
       const task = await createTestTask();
       for (let i = 0; i < 5; i++) {

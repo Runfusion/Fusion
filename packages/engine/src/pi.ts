@@ -28,7 +28,7 @@ export interface AgentOptions {
   tools?: "coding" | "readonly";
   customTools?: ToolDefinition[];
   onText?: (delta: string) => void;
-  onToolStart?: (name: string) => void;
+  onToolStart?: (name: string, args?: Record<string, unknown>) => void;
   onToolEnd?: (name: string, isError: boolean) => void;
 }
 
@@ -75,7 +75,7 @@ export async function createHaiAgent(options: AgentOptions): Promise<AgentResult
       options.onText?.(event.assistantMessageEvent.delta);
     }
     if (event.type === "tool_execution_start") {
-      options.onToolStart?.(event.toolName);
+      options.onToolStart?.(event.toolName, event.args as Record<string, unknown> | undefined);
     }
     if (event.type === "tool_execution_end") {
       options.onToolEnd?.(event.toolName, event.isError);

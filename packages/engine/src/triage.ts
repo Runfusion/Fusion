@@ -257,7 +257,7 @@ export class TriageProcessor {
           tools: "coding",
           customTools: this.createTriageTools(),
           onText: (delta) => this.options.onAgentText?.(task.id, delta),
-          onToolStart: (name) =>
+          onToolStart: (name, _args) =>
             console.log(`[triage] ${task.id} tool: ${name}`),
         });
 

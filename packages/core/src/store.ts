@@ -849,13 +849,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * @param taskId - The task ID (e.g. "HAI-001")
    * @param text - The text content (delta for "text", tool name for "tool")
    * @param type - Whether this is a "text" delta or a "tool" invocation marker
+   * @param detail - Optional human-readable summary of tool args (e.g. file path, command)
    */
-  async appendAgentLog(taskId: string, text: string, type: "text" | "tool"): Promise<void> {
+  async appendAgentLog(taskId: string, text: string, type: "text" | "tool", detail?: string): Promise<void> {
     const entry: AgentLogEntry = {
       timestamp: new Date().toISOString(),
       taskId,
       text,
       type,
+      ...(detail !== undefined && { detail }),
     };
     const dir = this.taskDir(taskId);
     const logPath = join(dir, "agent.log");

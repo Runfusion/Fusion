@@ -79,6 +79,18 @@ export function AgentLogViewer({ entries, loading }: AgentLogViewerProps) {
             }}
           >
             ⚡ {entry.text}
+            {entry.detail && (
+              <span
+                className="agent-log-tool-detail"
+                style={{
+                  color: "var(--text-muted, #888)",
+                  fontSize: "12px",
+                  marginLeft: "6px",
+                }}
+              >
+                — {entry.detail}
+              </span>
+            )}
           </div>
         ) : (
           <span key={i} className="agent-log-text">

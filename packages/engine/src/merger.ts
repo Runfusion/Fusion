@@ -190,7 +190,7 @@ export async function aiMergeTask(
     systemPrompt: MERGE_SYSTEM_PROMPT,
     tools: "coding",
     onText: (delta) => options.onAgentText?.(delta),
-    onToolStart: (name) => options.onAgentTool?.(name),
+    onToolStart: (name, _args) => options.onAgentTool?.(name),
   });
 
   try {
