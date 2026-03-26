@@ -238,6 +238,35 @@ html, body {
   color: var(--triage);
 }
 
+.card-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.card-progress-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.card-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.card-progress-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  flex-shrink: 0;
+}
+
 /* === Modals === */
 .modal-overlay {
   display: none;

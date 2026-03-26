@@ -77,6 +77,24 @@ export function TaskCard({ task, queued, onOpenDetail, addToast }: TaskCardProps
       <div className="card-title">
         {task.title || (task.description ? task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "") : task.id)}
       </div>
+      {task.steps.length > 0 && (() => {
+        const completedSteps = task.steps.filter(s => s.status === "done").length;
+        const totalSteps = task.steps.length;
+        return (
+          <div className="card-progress">
+            <div className="card-progress-bar">
+              <div
+                className="card-progress-fill"
+                style={{
+                  width: `${(completedSteps / totalSteps) * 100}%`,
+                  backgroundColor: COLUMN_TEXT_COLOR_MAP[task.column],
+                }}
+              />
+            </div>
+            <span className="card-progress-label">{completedSteps}/{totalSteps}</span>
+          </div>
+        );
+      })()}
       {((task.dependencies && task.dependencies.length > 0) || queued) && (
         <div className="card-meta">
           {task.dependencies && task.dependencies.length > 0 && (
