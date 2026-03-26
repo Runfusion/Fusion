@@ -149,10 +149,10 @@ export class Scheduler {
       for (const taskId of ordered) {
         const task = tasks.find((t) => t.id === taskId)!;
 
-        // Check all deps are satisfied (done or in-review)
+        // Check all deps are satisfied (must be done — merged to main)
         const unmetDeps = task.dependencies.filter((depId) => {
           const dep = tasks.find((t) => t.id === depId);
-          return dep && dep.column !== "done" && dep.column !== "in-review";
+          return dep && dep.column !== "done";
         });
 
         if (unmetDeps.length > 0) {
