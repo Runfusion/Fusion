@@ -24,8 +24,19 @@ export interface TaskCreateInput {
   dependencies?: string[];
 }
 
+export interface Settings {
+  maxConcurrent: number;
+  pollIntervalMs: number;
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  maxConcurrent: 2,
+  pollIntervalMs: 15000,
+};
+
 export interface BoardConfig {
   nextId: number;
+  settings?: Settings;
 }
 
 export interface MergeResult {

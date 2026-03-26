@@ -1,4 +1,4 @@
-import type { Task, TaskDetail, TaskCreateInput, Column, MergeResult } from "@hai/core";
+import type { Task, TaskDetail, TaskCreateInput, Column, MergeResult, Settings } from "@hai/core";
 
 async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -42,4 +42,15 @@ export function mergeTask(id: string): Promise<MergeResult> {
 
 export function fetchConfig(): Promise<{ maxConcurrent: number }> {
   return api<{ maxConcurrent: number }>("/config");
+}
+
+export function fetchSettings(): Promise<Settings> {
+  return api<Settings>("/settings");
+}
+
+export function updateSettings(settings: Partial<Settings>): Promise<Settings> {
+  return api<Settings>("/settings", {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
 }

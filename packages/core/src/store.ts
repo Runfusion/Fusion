@@ -3,8 +3,8 @@ import { execSync } from "node:child_process";
 import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, BoardConfig, Column, MergeResult } from "./types.js";
-import { VALID_TRANSITIONS } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, BoardConfig, Column, MergeResult, Settings } from "./types.js";
+import { VALID_TRANSITIONS, DEFAULT_SETTINGS } from "./types.js";
 
 export interface TaskStoreEvents {
   "task:created": [task: Task];
@@ -42,6 +42,20 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (!existsSync(this.configPath)) {
       await this.writeConfig({ nextId: 1 });
     }
+  }
+
+  async getSettings(): Promise<Settings> {
+    const config = await this.readConfig();
+    return { ...DEFAULT_SETTINGS, ...config.settings };
+  }
+
+  async updateSettings(patch: Partial<Settings>): Promise<Settings> {
+    const config = await this.readConfig();
+    const current = { ...DEFAULT_SETTINGS, ...config.settings };
+    const updated = { ...current, ...patch };
+    config.settings = updated;
+    await this.writeConfig(config);
+    return updated;
   }
 
   private async readConfig(): Promise<BoardConfig> {

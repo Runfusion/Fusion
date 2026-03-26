@@ -4,6 +4,7 @@ import { fetchConfig } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
 import { TaskDetailModal } from "./components/TaskDetailModal";
+import { SettingsModal } from "./components/SettingsModal";
 import { ToastContainer } from "./components/ToastContainer";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
@@ -11,6 +12,7 @@ import { ToastProvider, useToast } from "./hooks/useToast";
 function AppInner() {
   const [isCreating, setIsCreating] = useState(false);
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const { tasks, createTask, moveTask, deleteTask, mergeTask } = useTasks();
 
@@ -41,7 +43,7 @@ function AppInner() {
 
   return (
     <>
-      <Header />
+      <Header onOpenSettings={() => setSettingsOpen(true)} />
       <Board
         tasks={tasks}
         maxConcurrent={maxConcurrent}
@@ -62,6 +64,9 @@ function AppInner() {
           onMergeTask={mergeTask}
           addToast={addToast}
         />
+      )}
+      {settingsOpen && (
+        <SettingsModal onClose={() => setSettingsOpen(false)} addToast={addToast} />
       )}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>

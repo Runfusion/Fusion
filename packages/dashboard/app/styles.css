@@ -41,6 +41,22 @@ html, body {
 }
 
 .header-left { display: flex; align-items: baseline; gap: 8px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+
+.btn-icon {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  transition: color 0.15s, background 0.15s;
+}
+.btn-icon:hover {
+  color: var(--text);
+  background: var(--border);
+}
 .logo { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
 .logo-sub { font-size: 13px; color: var(--text-muted); font-weight: 400; }
 
@@ -308,6 +324,14 @@ html, body {
   border-color: var(--todo);
 }
 .form-group textarea { resize: vertical; }
+
+/* === Settings Form === */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+}
 
 /* === Detail Modal === */
 .detail-title-row { display: flex; align-items: center; gap: 10px; }
