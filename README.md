@@ -205,43 +205,24 @@ HAI_CLIENT_DIR=/path/to/client ./hai dashboard
 
 ## Releases
 
-Pre-built standalone binaries are published automatically via GitHub Actions.
+Packages are published to npm automatically via GitHub Actions and [changesets](https://github.com/changesets/changesets).
 
-### Downloading binaries
+### Installing from npm
 
-Download the latest binary from the [GitHub Releases](../../releases) page. Each release includes platform-specific binaries and SHA256 checksum files for verification.
-
-#### Supported platforms
-
-| Platform | Binary | Runner |
-|----------|--------|--------|
-| Linux x64 | `hai-linux-x64` | `ubuntu-latest` |
-| macOS arm64 (Apple Silicon) | `hai-darwin-arm64` | `macos-latest` |
-| macOS x64 (Intel) | `hai-darwin-x64` | `macos-13` |
-| Windows x64 | `hai-windows-x64.exe` | `windows-latest` |
-
-macOS and Windows binaries are **code-signed** to avoid OS security warnings (Gatekeeper/SmartScreen). See [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md) for setup details.
+```bash
+npm install -g hai
+```
 
 ### Triggering a release
 
 Releases are automated via [changesets](https://github.com/changesets/changesets). See [RELEASING.md](./RELEASING.md) for the full workflow.
 
-In short: add a changeset with `pnpm changeset`, merge to main, then merge the auto-generated Version Packages PR to trigger a release.
-
-Manual fallback — tag a version and push:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The release workflow will automatically build native binaries for all supported platforms and create a GitHub Release with all artifacts attached.
+In short: add a changeset with `pnpm changeset`, merge to main, then merge the auto-generated "Version Packages" PR. Once merged, the workflow automatically publishes all updated packages to npm.
 
 ### CI pipeline
 
-- **Pull requests & pushes to main** — runs tests, build, and verifies the standalone binary can be compiled (`.github/workflows/ci.yml`)
-- **Version tags (`v*`)** — builds the binary and publishes it as a GitHub Release (`.github/workflows/release.yml`)
-- **Manual testing** — maintainers can trigger `.github/workflows/test-release.yml` via the Actions tab to test the build pipeline without publishing
+- **Pull requests & pushes to main** — runs tests and build (`.github/workflows/ci.yml`)
+- **Push to main** — creates a version PR (if changesets exist) or publishes to npm (`.github/workflows/version.yml`)
 
 ## License
 

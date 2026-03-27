@@ -5,6 +5,10 @@
   "bin": {
     "hai": "./dist/bin.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "dev": "tsx src/bin.ts",
     "build": "tsc",

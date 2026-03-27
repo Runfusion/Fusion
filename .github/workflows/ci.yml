@@ -24,9 +24,6 @@ jobs:
           node-version: "22"
           cache: pnpm
 
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-
       - name: Install dependencies
         run: pnpm install
 
@@ -35,9 +32,3 @@ jobs:
 
       - name: Test
         run: pnpm test
-
-      - name: Build standalone binary
-        run: pnpm build:exe
-
-      - name: Verify binary exists
-        run: test -f packages/cli/dist/hai

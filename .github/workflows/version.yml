@@ -1,4 +1,14 @@
-name: Version Packages
+# Release workflow: npm publishing via changesets
+#
+# This workflow runs on every push to main and does one of two things:
+# 1. If there are pending changesets: creates/updates a "Version Packages" PR
+#    that bumps versions and updates changelogs.
+# 2. If there are no pending changesets (i.e., a version PR was just merged):
+#    builds all packages and publishes them to npm.
+#
+# Requires NPM_TOKEN secret for npm authentication.
+
+name: Version & Release
 
 on:
   push:
@@ -8,10 +18,11 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
 
 jobs:
-  version:
-    name: Version Packages
+  release:
+    name: Version or Publish
     runs-on: ubuntu-latest
 
     steps:
@@ -26,31 +37,19 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Create Release Pull Request or Tag
-        id: changesets
+      - name: Build
+        run: pnpm build
+
+      - name: Create Release Pull Request or Publish to npm
         uses: changesets/action@v1
         with:
           version: pnpm release:version
+          publish: pnpm -r publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push version tag
-        if: steps.changesets.outputs.hasChangesets == 'false'
-        run: |
-          VERSION=$(node -p "require('./packages/cli/package.json').version")
-          TAG="v${VERSION}"
-
-          # Check if tag already exists
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists, skipping"
-            exit 0
-          fi
-
-          git tag "$TAG"
-          git push origin "$TAG"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
