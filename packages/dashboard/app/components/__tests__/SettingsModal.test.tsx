@@ -21,9 +21,13 @@ vi.mock("../../api", () => ({
   fetchAuthStatus: vi.fn(() => Promise.resolve({ providers: [{ id: "anthropic", name: "Anthropic", authenticated: false }] })),
   loginProvider: vi.fn(() => Promise.resolve({ url: "https://auth.example.com/login" })),
   logoutProvider: vi.fn(() => Promise.resolve({ success: true })),
+  fetchModels: vi.fn(() => Promise.resolve([
+    { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
+    { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+  ])),
 }));
 
-import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider } from "../../api";
+import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels } from "../../api";
 
 const onClose = vi.fn();
 const addToast = vi.fn();
@@ -223,6 +227,80 @@ describe("SettingsModal", () => {
     const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.maxConcurrent).toBe(2);
     expect(payload.pollIntervalMs).toBe(15000);
+  });
+
+  it("shows Model in sidebar", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    expect(screen.getAllByText("Model").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows model selector with available models grouped by provider", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    expect(screen.getByLabelText("Default Model")).toBeTruthy();
+    expect(screen.getByText("Claude Sonnet 4.5")).toBeTruthy();
+    expect(screen.getByText("GPT-4o")).toBeTruthy();
+    expect(screen.getByText("Use default")).toBeTruthy();
+  });
+
+  it("selecting a model updates form with provider and model ID", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "anthropic/claude-sonnet-4-5" } });
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.defaultProvider).toBe("anthropic");
+    expect(payload.defaultModelId).toBe("claude-sonnet-4-5");
+  });
+
+  it("Use default option clears model selection", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "" } });
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.defaultProvider).toBeUndefined();
+    expect(payload.defaultModelId).toBeUndefined();
+  });
+
+  it("shows empty state when no models available", async () => {
+    (fetchModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    expect(screen.getByText("No models available. Configure authentication first.")).toBeTruthy();
   });
 
   it("shows Authentication in sidebar", async () => {

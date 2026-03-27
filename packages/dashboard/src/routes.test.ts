@@ -4,7 +4,7 @@ import http from "node:http";
 import { createApiRoutes } from "./routes.js";
 import type { TaskStore, TaskAttachment } from "@hai/core";
 import type { TaskDetail } from "@hai/core";
-import type { AuthStorageLike } from "./routes.js";
+import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
@@ -373,6 +373,75 @@ describe("Attachment routes", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("disk error");
+  });
+});
+
+// --- Models route tests ---
+
+function createMockModelRegistry(overrides: Partial<ModelRegistryLike> = {}): ModelRegistryLike {
+  return {
+    refresh: vi.fn(),
+    getAvailable: vi.fn().mockReturnValue([
+      { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic", reasoning: true, contextWindow: 200000 },
+      { id: "gpt-4o", name: "GPT-4o", provider: "openai", reasoning: false, contextWindow: 128000 },
+    ]),
+    ...overrides,
+  };
+}
+
+describe("GET /models", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp(modelRegistry?: ModelRegistryLike) {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { modelRegistry }));
+    return app;
+  }
+
+  it("returns available models from registry", async () => {
+    const modelRegistry = createMockModelRegistry();
+    const res = await GET(buildApp(modelRegistry), "/api/models");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+    ]);
+    expect(modelRegistry.refresh).toHaveBeenCalled();
+  });
+
+  it("returns empty array when no model registry is provided", async () => {
+    const res = await GET(buildApp(), "/api/models");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns empty array when registry has no available models", async () => {
+    const modelRegistry = createMockModelRegistry({
+      getAvailable: vi.fn().mockReturnValue([]),
+    });
+    const res = await GET(buildApp(modelRegistry), "/api/models");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns 500 when registry throws", async () => {
+    const modelRegistry = createMockModelRegistry({
+      getAvailable: vi.fn().mockImplementation(() => {
+        throw new Error("registry error");
+      }),
+    });
+    const res = await GET(buildApp(modelRegistry), "/api/models");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("registry error");
   });
 });
 

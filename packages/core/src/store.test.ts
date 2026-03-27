@@ -317,6 +317,21 @@ describe("TaskStore", () => {
 
   // ── Settings tests ────────────────────────────────────────────────
 
+  describe("model settings", () => {
+    it("persists defaultProvider and defaultModelId and returns them via getSettings", async () => {
+      await store.updateSettings({ defaultProvider: "anthropic", defaultModelId: "claude-sonnet-4-5" });
+      const settings = await store.getSettings();
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("default settings do not include model fields", async () => {
+      const settings = await store.getSettings();
+      expect(settings.defaultProvider).toBeUndefined();
+      expect(settings.defaultModelId).toBeUndefined();
+    });
+  });
+
   describe("worktreeInitCommand setting", () => {
     it("persists worktreeInitCommand and returns it via getSettings", async () => {
       await store.updateSettings({ worktreeInitCommand: "pnpm install" });

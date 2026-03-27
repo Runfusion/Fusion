@@ -349,6 +349,8 @@ export class TaskExecutor {
           customTools,
           onText: agentLogger.onText,
           onToolStart: agentLogger.onToolStart,
+          defaultProvider: settings.defaultProvider,
+          defaultModelId: settings.defaultModelId,
         });
 
         // Register session so the pause listener can terminate it

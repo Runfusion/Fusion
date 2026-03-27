@@ -270,6 +270,8 @@ export class TriageProcessor {
           customTools: this.createTriageTools(),
           onText: agentLogger.onText,
           onToolStart: agentLogger.onToolStart,
+          defaultProvider: settings.defaultProvider,
+          defaultModelId: settings.defaultModelId,
         });
 
         try {

@@ -99,6 +99,14 @@ export interface Settings {
    *  commit scope (e.g. `feat(HAI-001): ...`). When false, the scope is
    *  omitted (e.g. `feat: ...`). Default: true. */
   includeTaskIdInCommit?: boolean;
+  /** Default AI model provider name (e.g. `"anthropic"`, `"openai"`).
+   *  Must be set together with `defaultModelId`. When both are undefined,
+   *  the engine uses pi's automatic model resolution. */
+  defaultProvider?: string;
+  /** Default AI model ID within the provider (e.g. `"claude-sonnet-4-5"`).
+   *  Must be set together with `defaultProvider`. When both are undefined,
+   *  the engine uses pi's automatic model resolution. */
+  defaultModelId?: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -111,6 +119,8 @@ export const DEFAULT_SETTINGS: Settings = {
   recycleWorktrees: false,
   taskPrefix: undefined,
   includeTaskIdInCommit: true,
+  defaultProvider: undefined,
+  defaultModelId: undefined,
 };
 
 export interface BoardConfig {

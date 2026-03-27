@@ -30,6 +30,10 @@ export interface AgentOptions {
   onText?: (delta: string) => void;
   onToolStart?: (name: string, args?: Record<string, unknown>) => void;
   onToolEnd?: (name: string, isError: boolean) => void;
+  /** Default model provider (e.g. "anthropic"). Used with `defaultModelId` to select a specific model. */
+  defaultProvider?: string;
+  /** Default model ID within the provider (e.g. "claude-sonnet-4-5"). Used with `defaultProvider`. */
+  defaultModelId?: string;
 }
 
 /**
@@ -50,6 +54,11 @@ export async function createHaiAgent(options: AgentOptions): Promise<AgentResult
     retry: { enabled: true, maxRetries: 3 },
   });
 
+  // Resolve explicit model selection if provider and model ID are specified
+  const selectedModel = options.defaultProvider && options.defaultModelId
+    ? modelRegistry.find(options.defaultProvider, options.defaultModelId)
+    : undefined;
+
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
     settingsManager,
@@ -67,6 +76,7 @@ export async function createHaiAgent(options: AgentOptions): Promise<AgentResult
     customTools: options.customTools,
     sessionManager: SessionManager.inMemory(),
     settingsManager,
+    ...(selectedModel ? { model: selectedModel } : {}),
   });
 
   // Wire up event listeners

@@ -106,6 +106,22 @@ export function fetchAgentLogs(taskId: string): Promise<AgentLogEntry[]> {
   return api<AgentLogEntry[]>(`/tasks/${taskId}/logs`);
 }
 
+// --- Models API ---
+
+/** Available AI model info returned by the models endpoint */
+export interface ModelInfo {
+  provider: string;
+  id: string;
+  name: string;
+  reasoning: boolean;
+  contextWindow: number;
+}
+
+/** Fetch available AI models from the model registry */
+export function fetchModels(): Promise<ModelInfo[]> {
+  return api<ModelInfo[]>("/models");
+}
+
 // --- Auth API ---
 
 /** OAuth provider with current authentication status */

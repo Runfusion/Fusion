@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchTaskDetail, updateTask, fetchAuthStatus, loginProvider, logoutProvider } from "./api";
+import { fetchTaskDetail, updateTask, fetchAuthStatus, loginProvider, logoutProvider, fetchModels } from "./api";
 import type { Task, TaskDetail } from "@hai/core";
 
 const FAKE_DETAIL: TaskDetail = {
@@ -100,6 +100,34 @@ describe("updateTask", () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Not found" }));
 
     await expect(updateTask("HAI-001", { dependencies: [] })).rejects.toThrow("Not found");
+  });
+});
+
+describe("fetchModels", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("returns available models", async () => {
+    const models = [
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
+    ];
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, models));
+
+    const result = await fetchModels();
+
+    expect(result).toEqual(models);
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/models", {
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  it("throws on error", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Server error" }));
+
+    await expect(fetchModels()).rejects.toThrow("Server error");
   });
 });
 

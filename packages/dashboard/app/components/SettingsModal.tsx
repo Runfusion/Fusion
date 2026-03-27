@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Settings } from "@hai/core";
-import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider } from "../api";
-import type { AuthProvider } from "../api";
+import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels } from "../api";
+import type { AuthProvider, ModelInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
 
 /**
@@ -18,10 +18,12 @@ import type { ToastType } from "../hooks/useToast";
  *   - worktrees: Worktree limits, init commands, recycling
  *   - commands: Test and build command configuration
  *   - merge: Auto-merge settings
+ *   - model: Default AI model selection for agent sessions
  *   - authentication: OAuth provider status, login/logout (operates independently of Save)
  */
 const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
+  { id: "model", label: "Model" },
   { id: "scheduling", label: "Scheduling" },
   { id: "worktrees", label: "Worktrees" },
   { id: "commands", label: "Commands" },
@@ -48,6 +50,10 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Model state
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+
   useEffect(() => {
     fetchSettings()
       .then((s) => {
@@ -69,6 +75,16 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
       // Silently fail — auth may not be configured
     }
   }, []);
+
+  useEffect(() => {
+    if (activeSection === "model") {
+      setModelsLoading(true);
+      fetchModels()
+        .then((models) => setAvailableModels(models))
+        .catch(() => setAvailableModels([]))
+        .finally(() => setModelsLoading(false));
+    }
+  }, [activeSection]);
 
   useEffect(() => {
     if (activeSection === "authentication") {
@@ -186,6 +202,61 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
             </div>
           </>
         );
+      case "model": {
+        // Group models by provider
+        const modelsByProvider = availableModels.reduce<Record<string, ModelInfo[]>>((acc, m) => {
+          (acc[m.provider] ??= []).push(m);
+          return acc;
+        }, {});
+        const selectedValue = form.defaultProvider && form.defaultModelId
+          ? `${form.defaultProvider}/${form.defaultModelId}`
+          : "";
+        return (
+          <>
+            <h4 className="settings-section-heading">Model</h4>
+            {modelsLoading ? (
+              <div style={{ padding: "8px 0" }}>Loading available models…</div>
+            ) : availableModels.length === 0 ? (
+              <div style={{ padding: "8px 0", color: "var(--color-muted, #888)" }}>
+                No models available. Configure authentication first.
+              </div>
+            ) : (
+              <div className="form-group">
+                <label htmlFor="defaultModel">Default Model</label>
+                <select
+                  id="defaultModel"
+                  value={selectedValue}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (!val) {
+                      setForm((f) => ({ ...f, defaultProvider: undefined, defaultModelId: undefined }));
+                    } else {
+                      const slashIdx = val.indexOf("/");
+                      setForm((f) => ({
+                        ...f,
+                        defaultProvider: val.slice(0, slashIdx),
+                        defaultModelId: val.slice(slashIdx + 1),
+                      }));
+                    }
+                  }}
+                >
+                  <option value="">Use default</option>
+                  {Object.entries(modelsByProvider).map(([provider, models]) => (
+                    <optgroup key={provider} label={provider}>
+                      {models.map((m) => (
+                        <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <small>Select the AI model used for agent sessions. "Use default" lets the engine choose automatically.</small>
+              </div>
+            )}
+          </>
+        );
+      }
       case "scheduling":
         return (
           <>

@@ -6,6 +6,17 @@ import { COLUMNS } from "@hai/core";
 import type { ServerOptions } from "./server.js";
 
 /**
+ * Minimal interface matching pi-coding-agent's ModelRegistry API surface
+ * used by the models route. Avoids a direct dependency on the pi-coding-agent package.
+ */
+export interface ModelRegistryLike {
+  /** Reload models from disk to pick up changes. */
+  refresh(): void;
+  /** Get models that have auth configured. */
+  getAvailable(): Array<{ id: string; name: string; provider: string; reasoning: boolean; contextWindow: number }>;
+}
+
+/**
  * Minimal interface matching pi-coding-agent's AuthStorage API surface
  * used by the auth routes. Avoids a direct dependency on the pi-coding-agent package.
  */
@@ -64,6 +75,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.status(500).json({ error: err.message });
     }
   });
+
+  // Models
+  registerModelsRoute(router, options?.modelRegistry);
 
   // List all tasks
   router.get("/tasks", async (_req, res) => {
@@ -275,6 +289,33 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   registerAuthRoutes(router, options?.authStorage);
 
   return router;
+}
+
+/**
+ * Register the GET /api/models route.
+ * Returns available AI models from the ModelRegistry for the UI model selector.
+ * If no ModelRegistry is provided, returns an empty array.
+ */
+function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike): void {
+  router.get("/models", (_req, res) => {
+    try {
+      if (!modelRegistry) {
+        res.json([]);
+        return;
+      }
+      modelRegistry.refresh();
+      const models = modelRegistry.getAvailable().map((m) => ({
+        provider: m.provider,
+        id: m.id,
+        name: m.name,
+        reasoning: m.reasoning,
+        contextWindow: m.contextWindow,
+      }));
+      res.json(models);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 }
 
 /**

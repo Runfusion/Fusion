@@ -3,7 +3,7 @@ import { join, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { TaskStore, MergeResult } from "@hai/core";
-import type { AuthStorageLike } from "./routes.js";
+import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE } from "./sse.js";
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
@@ -17,6 +17,8 @@ export interface ServerOptions {
   maxConcurrent?: number;
   /** Optional AuthStorage instance for auth routes — if not provided, one is created internally */
   authStorage?: AuthStorageLike;
+  /** Optional ModelRegistry instance for the models API — if not provided, the endpoint returns an empty list */
+  modelRegistry?: ModelRegistryLike;
 }
 
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
