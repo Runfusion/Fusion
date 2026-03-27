@@ -87,12 +87,12 @@ Tasks live on disk in `.kb/tasks/` in the project root:
 
 ```
 .kb/
-├── config.json              # Board config + ID counter
-└── tasks/
-    └── KB-001/
-        ├── task.json        # Metadata (column, deps, timestamps)
-        ├── PROMPT.md        # Task specification
-        └── attachments/     # File attachments — images & text files (optional)
+  config.json              -- board config + ID counter
+  tasks/
+    KB-001/
+      task.json             -- metadata (column, deps, timestamps)
+      PROMPT.md             -- task specification
+      attachments/          -- file attachments (optional)
 ```
 
 ### Board UI
