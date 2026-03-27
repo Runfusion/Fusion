@@ -32,17 +32,19 @@ const SETTINGS_SECTIONS = [
   { id: "authentication", label: "Authentication" },
 ] as const;
 
-type SectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
+export type SectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 
 interface SettingsModalProps {
   onClose: () => void;
   addToast: (message: string, type?: ToastType) => void;
+  /** Optional section to show when the modal first opens. Defaults to "general". */
+  initialSection?: SectionId;
 }
 
-export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
+export function SettingsModal({ onClose, addToast, initialSection }: SettingsModalProps) {
   const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false, autoMerge: false, recycleWorktrees: false, includeTaskIdInCommit: true, worktreeInitCommand: "" });
   const [loading, setLoading] = useState(true);
-  const [activeSection, setActiveSection] = useState<SectionId>(SETTINGS_SECTIONS[0].id);
+  const [activeSection, setActiveSection] = useState<SectionId>(initialSection ?? SETTINGS_SECTIONS[0].id);
   const [prefixError, setPrefixError] = useState<string | null>(null);
 
   // Auth state (independent of the settings save flow)

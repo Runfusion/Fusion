@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect } from "react";
 import type { TaskDetail, TaskCreateInput, Task } from "@kb/core";
-import { fetchConfig, fetchSettings, updateSettings } from "./api";
+import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
 import { TaskDetailModal } from "./components/TaskDetailModal";
 import { SettingsModal } from "./components/SettingsModal";
+import type { SectionId } from "./components/SettingsModal";
 import { ToastContainer } from "./components/ToastContainer";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
@@ -13,6 +14,7 @@ function AppInner() {
   const [isCreating, setIsCreating] = useState(false);
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [autoMerge, setAutoMerge] = useState(false);
   const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask } = useTasks();
@@ -24,6 +26,14 @@ function AppInner() {
     fetchSettings()
       .then((s) => setAutoMerge(!!s.autoMerge))
       .catch(() => {/* keep default */});
+    fetchAuthStatus()
+      .then(({ providers }) => {
+        if (providers.length > 0 && providers.every((p) => !p.authenticated)) {
+          setSettingsOpen(true);
+          setSettingsInitialSection("authentication");
+        }
+      })
+      .catch(() => {/* fail silently — do not auto-open */});
   }, []);
   const { toasts, addToast, removeToast } = useToast();
 
@@ -84,7 +94,14 @@ function AppInner() {
         />
       )}
       {settingsOpen && (
-        <SettingsModal onClose={() => setSettingsOpen(false)} addToast={addToast} />
+        <SettingsModal
+          onClose={() => {
+            setSettingsOpen(false);
+            setSettingsInitialSection(undefined);
+          }}
+          addToast={addToast}
+          initialSection={settingsInitialSection}
+        />
       )}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>

@@ -502,4 +502,25 @@ describe("SettingsModal", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("opens to Authentication section when initialSection='authentication' is passed", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} initialSection="authentication" />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    // Authentication content should be visible immediately
+    expect(screen.getByText("Anthropic")).toBeTruthy();
+    // General content should NOT be visible
+    expect(screen.queryByLabelText("Task Prefix")).toBeNull();
+  });
+
+  it("defaults to General section when no initialSection is passed", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    // General content should be visible
+    expect(screen.getByLabelText("Task Prefix")).toBeTruthy();
+    // Authentication content should NOT be visible
+    expect(screen.queryByText("✗ Not authenticated")).toBeNull();
+  });
 });
