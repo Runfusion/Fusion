@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { THINKING_LEVELS } from "@kb/core";
 import type { Settings } from "@kb/core";
 import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels } from "../api";
 import type { AuthProvider, ModelInfo } from "../api";
@@ -254,6 +255,33 @@ export function SettingsModal({ onClose, addToast }: SettingsModalProps) {
                 <small>Select the AI model used for agent sessions. "Use default" lets the engine choose automatically.</small>
               </div>
             )}
+            {(() => {
+              const selectedModel = availableModels.find(
+                (m) => m.provider === form.defaultProvider && m.id === form.defaultModelId,
+              );
+              if (selectedModel && !selectedModel.reasoning) return null;
+              return (
+                <div className="form-group">
+                  <label htmlFor="defaultThinkingLevel">Thinking Effort</label>
+                  <select
+                    id="defaultThinkingLevel"
+                    value={form.defaultThinkingLevel || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setForm((f) => ({ ...f, defaultThinkingLevel: val || undefined } as any));
+                    }}
+                  >
+                    <option value="">Default</option>
+                    {THINKING_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {level.charAt(0).toUpperCase() + level.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                  <small>Controls how much reasoning effort the AI model uses. Higher levels produce better results but cost more.</small>
+                </div>
+              );
+            })()}
           </>
         );
       }

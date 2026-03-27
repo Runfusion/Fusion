@@ -436,6 +436,53 @@ describe("SettingsModal", () => {
     expect(elementsWithStyle.length).toBe(0);
   });
 
+  it("shows Thinking Effort dropdown with correct options in Model section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    const select = screen.getByLabelText("Thinking Effort") as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+
+    const options = Array.from(select.options).map((o) => o.textContent);
+    expect(options).toEqual(["Default", "Off", "Minimal", "Low", "Medium", "High"]);
+  });
+
+  it("changing Thinking Effort dropdown updates form and is included in save payload", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    const select = screen.getByLabelText("Thinking Effort") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "high" } });
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.defaultThinkingLevel).toBe("high");
+  });
+
+  it("Thinking Effort dropdown is hidden when selected model does not support reasoning", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      defaultProvider: "openai",
+      defaultModelId: "gpt-4o",
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    expect(screen.queryByLabelText("Thinking Effort")).toBeNull();
+  });
+
   it("shows loading state during login", async () => {
     // Make loginProvider hang
     (loginProvider as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));

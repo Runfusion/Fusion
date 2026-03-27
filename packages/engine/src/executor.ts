@@ -352,6 +352,7 @@ export class TaskExecutor {
           onToolStart: agentLogger.onToolStart,
           defaultProvider: settings.defaultProvider,
           defaultModelId: settings.defaultModelId,
+          defaultThinkingLevel: settings.defaultThinkingLevel,
         });
 
         // Register session so the pause listener can terminate it
@@ -542,6 +543,7 @@ export class TaskExecutor {
               onText: (delta) => options.onAgentText?.(taskId, delta),
               defaultProvider: settings.defaultProvider,
               defaultModelId: settings.defaultModelId,
+              defaultThinkingLevel: settings.defaultThinkingLevel,
             },
           );
 

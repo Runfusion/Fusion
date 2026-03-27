@@ -1,3 +1,7 @@
+/** Valid thinking effort levels for AI agent sessions, controlling the cost/quality tradeoff of reasoning. */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
 export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done"] as const;
 export type Column = (typeof COLUMNS)[number];
 
@@ -110,6 +114,11 @@ export interface Settings {
    *  Must be set together with `defaultProvider`. When both are undefined,
    *  the engine uses pi's automatic model resolution. */
   defaultModelId?: string;
+  /** Default thinking effort level for AI agent sessions.
+   *  Controls how much reasoning effort the model uses — higher levels
+   *  produce better results but cost more. When undefined, the engine
+   *  uses the model's default thinking level. */
+  defaultThinkingLevel?: ThinkingLevel;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -124,6 +133,7 @@ export const DEFAULT_SETTINGS: Settings = {
   includeTaskIdInCommit: true,
   defaultProvider: undefined,
   defaultModelId: undefined,
+  defaultThinkingLevel: undefined,
 };
 
 export interface BoardConfig {

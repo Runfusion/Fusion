@@ -273,6 +273,7 @@ export class TriageProcessor {
           onToolStart: agentLogger.onToolStart,
           defaultProvider: settings.defaultProvider,
           defaultModelId: settings.defaultModelId,
+          defaultThinkingLevel: settings.defaultThinkingLevel,
         });
 
         try {

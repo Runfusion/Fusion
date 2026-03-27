@@ -34,6 +34,8 @@ export interface AgentOptions {
   defaultProvider?: string;
   /** Default model ID within the provider (e.g. "claude-sonnet-4-5"). Used with `defaultProvider`. */
   defaultModelId?: string;
+  /** Default thinking effort level (e.g. "medium", "high"). When provided, sets the session's thinking level after creation. */
+  defaultThinkingLevel?: string;
 }
 
 /**
@@ -78,6 +80,11 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
     settingsManager,
     ...(selectedModel ? { model: selectedModel } : {}),
   });
+
+  // Apply thinking level if specified
+  if (options.defaultThinkingLevel) {
+    session.setThinkingLevel(options.defaultThinkingLevel as any);
+  }
 
   // Wire up event listeners
   session.subscribe((event) => {

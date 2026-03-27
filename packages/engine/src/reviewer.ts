@@ -115,6 +115,8 @@ export interface ReviewOptions {
   defaultProvider?: string;
   /** Default model ID within the provider (e.g. "claude-sonnet-4-5"). When set with `defaultProvider`, overrides the reviewer's model selection. */
   defaultModelId?: string;
+  /** Default thinking effort level for the reviewer agent session. */
+  defaultThinkingLevel?: string;
 }
 
 /**
@@ -143,6 +145,7 @@ export async function reviewStep(
     onText: (delta) => options.onText?.(delta),
     defaultProvider: options.defaultProvider,
     defaultModelId: options.defaultModelId,
+    defaultThinkingLevel: options.defaultThinkingLevel,
   });
 
   let reviewText = "";
