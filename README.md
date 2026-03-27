@@ -4,22 +4,28 @@ AI-orchestrated task board. Like Trello, but your tasks get specified, executed,
 
 ## Workflow
 
-```
-┌──────────┐    ┌──────────┐    ┌────────────┐    ┌───────────┐    ┌──────┐
-│  Triage  │───▶│   Todo   │───▶│ In Progress│───▶│ In Review │───▶│ Done │
-│          │    │          │    │            │    │           │    │      │
-│ raw idea │    │ AI spec'd│    │ AI working │    │ ready to  │    │merged│
-│          │    │ & ready  │    │ in worktree│    │   merge   │    │      │
-└──────────┘    └──────────┘    └────────────┘    └───────────┘    └──────┘
-    pi               ▲              pi                human
- specifies      deps gate        executes            reviews
+```mermaid
+graph LR
+    T[🟡 Triage] -->|AI specifies| TD[🔵 Todo]
+    TD -->|deps met| IP[🟣 In Progress]
+    IP -->|complete| IR[🟢 In Review]
+    IR -->|merged| D[⚫ Done]
+    IR -.->|needs work| IP
+
+    style T fill:#2d2006,stroke:#d29922,color:#d29922
+    style TD fill:#0d2044,stroke:#58a6ff,color:#58a6ff
+    style IP fill:#1a0d2e,stroke:#bc8cff,color:#bc8cff
+    style IR fill:#0d2d16,stroke:#3fb950,color:#3fb950
+    style D fill:#1a1a1a,stroke:#8b949e,color:#8b949e
 ```
 
-1. **Triage** — Throw rough ideas in. Pi picks them up and writes a proper task spec.
-2. **Todo** — Fully specified, ready to go. Scheduler moves them when deps are met.
-3. **In Progress** — Pi works the task in an isolated git worktree.
-4. **In Review** — Work is done. Merge the worktree and close. Toggle **Auto-merge** in the column header to automatically merge tasks as they arrive.
-5. **Done** — Shipped.
+| Column | What happens |
+|--------|-------------|
+| **Triage** | Throw rough ideas in. AI picks them up and writes a full task spec. |
+| **Todo** | Fully specified. Scheduler moves them when deps are met. |
+| **In Progress** | AI works the task in an isolated git worktree with cross-model code review. |
+| **In Review** | Work is done. Merge the worktree and close. Toggle **Auto-merge** to merge automatically. |
+| **Done** | Squash-merged to main. |
 
 Tasks with dependencies are processed sequentially. Independent tasks run in parallel.
 
