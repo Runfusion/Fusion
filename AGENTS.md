@@ -41,6 +41,15 @@ pnpm build         # build all packages
 
 Tests are required. Typechecks and manual verification are not substitutes for real tests with assertions.
 
+## CLI-to-Skills Sync
+
+When CLI commands, flags, or workflows change in `@dustinbyrne/kb`, update the corresponding skill docs:
+
+- `.agents/skills/kb-task/SKILL.md` — task creation, management, and tracking commands
+- `.agents/skills/kb-board/SKILL.md` — dashboard startup, AI engine, and configuration commands
+
+These skill files are what AI agents read to understand how to use the CLI. Stale skill docs cause agent errors. Always check them when modifying CLI behavior.
+
 ## Git
 
 - Commit messages: `feat(KB-XXX):`, `fix(KB-XXX):`, `test(KB-XXX):`
