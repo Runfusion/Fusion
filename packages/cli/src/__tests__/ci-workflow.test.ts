@@ -94,8 +94,9 @@ describe("Version & Release workflow (.github/workflows/version.yml)", () => {
     expect(content).toContain("pnpm -r publish");
   });
 
-  it("references NPM_TOKEN secret", () => {
-    expect(content).toContain("secrets.NPM_TOKEN");
+  it("uses OIDC publishing (no NPM_TOKEN secret)", () => {
+    expect(content).not.toContain("secrets.NPM_TOKEN");
+    expect(workflow.permissions["id-token"]).toBe("write");
   });
 
   it("has required permissions", () => {
