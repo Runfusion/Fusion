@@ -29,6 +29,9 @@ importers:
       '@hai/engine':
         specifier: workspace:*
         version: link:../engine
+      '@mariozechner/pi-coding-agent':
+        specifier: ^0.62.0
+        version: 0.62.0(ws@8.20.0)(zod@4.3.6)
     devDependencies:
       tsx:
         specifier: ^4.19.0

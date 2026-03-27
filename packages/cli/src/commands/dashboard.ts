@@ -2,6 +2,7 @@ import { exec } from "node:child_process";
 import { TaskStore } from "@hai/core";
 import { createServer } from "@hai/dashboard";
 import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask } from "@hai/engine";
+import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 
 function openBrowser(url: string): void {
   const cmd =
@@ -131,8 +132,16 @@ export async function runDashboard(port: number, opts: { engine?: boolean; open?
     } catch { /* ignore settings read errors */ }
   });
 
-  // Start the web server with AI merge wired in
-  const app = createServer(store, { onMerge });
+  // ── Auth & model wiring ────────────────────────────────────────────
+  // AuthStorage manages OAuth/API-key credentials (stored in ~/.pi/agent/auth.json).
+  // ModelRegistry discovers available models from configured providers.
+  // Passing these to createServer enables the dashboard's Authentication
+  // tab (login/logout) and Model selector.
+  const authStorage = AuthStorage.create();
+  const modelRegistry = new ModelRegistry(authStorage);
+
+  // Start the web server with AI merge, auth, and model registry wired in
+  const app = createServer(store, { onMerge, authStorage, modelRegistry });
 
   // Clean shutdown for file watcher when engine is not active
   if (!opts.engine) {

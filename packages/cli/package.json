@@ -16,7 +16,8 @@
   "dependencies": {
     "@hai/core": "workspace:*",
     "@hai/dashboard": "workspace:*",
-    "@hai/engine": "workspace:*"
+    "@hai/engine": "workspace:*",
+    "@mariozechner/pi-coding-agent": "^0.62.0"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
