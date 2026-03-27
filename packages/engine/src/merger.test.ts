@@ -369,7 +369,7 @@ describe("aiMergeTask — agent log persistence", () => {
 
     await aiMergeTask(store, "/tmp/root", "KB-050");
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-050", "Hello merge", "text");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-050", "Hello merge", "text", undefined, "merger");
   });
 
   it("logs tool invocations to store.appendAgentLog", async () => {
@@ -395,7 +395,7 @@ describe("aiMergeTask — agent log persistence", () => {
 
     await aiMergeTask(store, "/tmp/root", "KB-050");
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-050", "Bash", "tool", "git status");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-050", "Bash", "tool", "git status", "merger");
   });
 
   it("still fires onAgentText callback alongside logging", async () => {
@@ -423,6 +423,6 @@ describe("aiMergeTask — agent log persistence", () => {
     await aiMergeTask(store, "/tmp/root", "KB-050", { onAgentText });
 
     expect(onAgentText).toHaveBeenCalledWith("hi");
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-050", "hi", "text");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-050", "hi", "text", undefined, "merger");
   });
 });

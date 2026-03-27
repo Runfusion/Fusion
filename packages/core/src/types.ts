@@ -18,18 +18,27 @@ export interface TaskLogEntry {
   outcome?: string;
 }
 
-/** A single chunk of agent output (text delta or tool invocation) persisted to disk. */
+/** The set of agent roles that produce log entries. */
+export type AgentRole = "triage" | "executor" | "reviewer" | "merger";
+
+/** The discriminator for agent log entry types. */
+export type AgentLogType = "text" | "tool" | "thinking" | "tool_result" | "tool_error";
+
+/** A single chunk of agent output persisted to disk (JSONL in agent.log). */
 export interface AgentLogEntry {
-  /** ISO-8601 timestamp of when the entry was recorded */
+  /** ISO-8601 timestamp of when the entry was recorded. */
   timestamp: string;
-  /** The task this log entry belongs to */
+  /** The task this log entry belongs to. */
   taskId: string;
-  /** The text content (delta for "text", tool name for "tool") */
+  /** The text content (delta for "text"/"thinking", tool name for "tool"/"tool_result"/"tool_error"). */
   text: string;
-  /** Whether this is a text delta or a tool invocation marker */
-  type: "text" | "tool";
-  /** For tool entries: human-readable summary of tool args (e.g. file path, command) */
+  /** The kind of entry — text delta, tool invocation marker, thinking block, tool result, or tool error. */
+  type: AgentLogType;
+  /** For tool entries: human-readable summary of tool args (e.g. file path, command).
+   *  For tool_result/tool_error: summary of the result or error message. */
   detail?: string;
+  /** Which agent produced this entry. Absent in logs written before this field was added. */
+  agent?: AgentRole;
 }
 
 export interface TaskAttachment {

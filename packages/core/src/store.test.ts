@@ -610,6 +610,52 @@ describe("TaskStore", () => {
       expect(logs).toHaveLength(5);
       expect(logs[4].text).toBe("chunk 4");
     });
+
+    it("appendAgentLog persists and reads back the agent field", async () => {
+      const task = await createTestTask();
+
+      await store.appendAgentLog(task.id, "hello", "text", undefined, "executor");
+      await store.appendAgentLog(task.id, "Read", "tool", "file.ts", "triage");
+
+      const logs = await store.getAgentLogs(task.id);
+      expect(logs).toHaveLength(2);
+      expect(logs[0].agent).toBe("executor");
+      expect(logs[1].agent).toBe("triage");
+    });
+
+    it("appendAgentLog omits agent field when not provided", async () => {
+      const task = await createTestTask();
+
+      await store.appendAgentLog(task.id, "hello", "text");
+
+      const logs = await store.getAgentLogs(task.id);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).not.toHaveProperty("agent");
+    });
+
+    it("new type values (thinking, tool_result, tool_error) round-trip correctly", async () => {
+      const task = await createTestTask();
+
+      await store.appendAgentLog(task.id, "internal thought", "thinking", undefined, "executor");
+      await store.appendAgentLog(task.id, "Bash", "tool_result", "output summary", "executor");
+      await store.appendAgentLog(task.id, "Read", "tool_error", "file not found", "reviewer");
+
+      const logs = await store.getAgentLogs(task.id);
+      expect(logs).toHaveLength(3);
+
+      expect(logs[0].type).toBe("thinking");
+      expect(logs[0].text).toBe("internal thought");
+      expect(logs[0].agent).toBe("executor");
+
+      expect(logs[1].type).toBe("tool_result");
+      expect(logs[1].text).toBe("Bash");
+      expect(logs[1].detail).toBe("output summary");
+
+      expect(logs[2].type).toBe("tool_error");
+      expect(logs[2].text).toBe("Read");
+      expect(logs[2].detail).toBe("file not found");
+      expect(logs[2].agent).toBe("reviewer");
+    });
   });
 
   describe("columnMovedAt", () => {

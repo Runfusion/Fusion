@@ -338,6 +338,7 @@ export class TaskExecutor {
       const agentLogger = new AgentLogger({
         store: this.store,
         taskId: task.id,
+        agent: "executor",
         onAgentText: this.options.onAgentText,
         onAgentTool: this.options.onAgentTool,
       });
@@ -349,7 +350,9 @@ export class TaskExecutor {
           tools: "coding",
           customTools,
           onText: agentLogger.onText,
+          onThinking: agentLogger.onThinking,
           onToolStart: agentLogger.onToolStart,
+          onToolEnd: agentLogger.onToolEnd,
           defaultProvider: settings.defaultProvider,
           defaultModelId: settings.defaultModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,
@@ -544,6 +547,8 @@ export class TaskExecutor {
               defaultProvider: settings.defaultProvider,
               defaultModelId: settings.defaultModelId,
               defaultThinkingLevel: settings.defaultThinkingLevel,
+              store,
+              taskId,
             },
           );
 

@@ -528,7 +528,7 @@ describe("TriageProcessor agent log persistence", () => {
     });
 
     // Text buffer is flushed in finally block
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-001", "Hello world", "text");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-001", "Hello world", "text", undefined, "triage");
   });
 
   it("logs tool invocations to store.appendAgentLog", async () => {
@@ -561,7 +561,7 @@ describe("TriageProcessor agent log persistence", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-001", "Read", "tool", "foo.ts");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-001", "Read", "tool", "foo.ts", "triage");
   });
 
   it("still fires onAgentText callback alongside logging", async () => {
@@ -596,6 +596,6 @@ describe("TriageProcessor agent log persistence", () => {
     });
 
     expect(onAgentText).toHaveBeenCalledWith("KB-001", "hi");
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-001", "hi", "text");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-001", "hi", "text", undefined, "triage");
   });
 });

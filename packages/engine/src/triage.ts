@@ -256,6 +256,7 @@ export class TriageProcessor {
         const agentLogger = new AgentLogger({
           store: this.store,
           taskId: task.id,
+          agent: "triage",
           onAgentText: this.options.onAgentText
             ? (id, delta) => this.options.onAgentText!(id, delta)
             : undefined,
@@ -270,7 +271,9 @@ export class TriageProcessor {
           tools: "coding",
           customTools: this.createTriageTools(),
           onText: agentLogger.onText,
+          onThinking: agentLogger.onThinking,
           onToolStart: agentLogger.onToolStart,
+          onToolEnd: agentLogger.onToolEnd,
           defaultProvider: settings.defaultProvider,
           defaultModelId: settings.defaultModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,

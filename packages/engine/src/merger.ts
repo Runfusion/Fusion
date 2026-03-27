@@ -221,6 +221,7 @@ export async function aiMergeTask(
   const agentLogger = new AgentLogger({
     store,
     taskId,
+    agent: "merger",
     // Merger callbacks don't include taskId — wrap to match AgentLogger signature
     onAgentText: options.onAgentText
       ? (_id, delta) => options.onAgentText!(delta)
@@ -236,7 +237,9 @@ export async function aiMergeTask(
     systemPrompt: buildMergeSystemPrompt(includeTaskId),
     tools: "coding",
     onText: agentLogger.onText,
+    onThinking: agentLogger.onThinking,
     onToolStart: agentLogger.onToolStart,
+    onToolEnd: agentLogger.onToolEnd,
     defaultProvider: settings.defaultProvider,
     defaultModelId: settings.defaultModelId,
     defaultThinkingLevel: settings.defaultThinkingLevel,

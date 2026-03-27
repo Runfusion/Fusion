@@ -72,39 +72,135 @@ export function AgentLogViewer({ entries, loading }: AgentLogViewerProps) {
         wordBreak: "break-word",
       }}
     >
-      {entries.map((entry, i) =>
-        entry.type === "tool" ? (
-          <div
-            key={i}
-            className="agent-log-tool"
+      {entries.map((entry, i) => {
+        const agentBadge = entry.agent ? (
+          <span
+            className="agent-log-agent-badge"
             style={{
-              color: "var(--accent, #7c5cbf)",
-              margin: "4px 0",
-              padding: "2px 6px",
-              borderLeft: "3px solid var(--accent, #7c5cbf)",
-              background: "rgba(124, 92, 191, 0.08)",
+              color: "var(--text-muted, #888)",
+              fontSize: "11px",
+              marginRight: "6px",
+              fontWeight: 600,
+              textTransform: "uppercase" as const,
             }}
           >
-            ⚡ {entry.text}
-            {entry.detail && (
-              <span
-                className="agent-log-tool-detail"
-                style={{
-                  color: "var(--text-muted, #888)",
-                  fontSize: "12px",
-                  marginLeft: "6px",
-                }}
-              >
-                — {entry.detail}
-              </span>
-            )}
-          </div>
-        ) : (
-          <span key={i} className="agent-log-text">
-            {entry.text}
+            [{entry.agent}]
           </span>
-        ),
-      )}
+        ) : null;
+
+        if (entry.type === "tool") {
+          return (
+            <div
+              key={i}
+              className="agent-log-tool"
+              style={{
+                color: "var(--accent, #7c5cbf)",
+                margin: "4px 0",
+                padding: "2px 6px",
+                borderLeft: "3px solid var(--accent, #7c5cbf)",
+                background: "rgba(124, 92, 191, 0.08)",
+              }}
+            >
+              {agentBadge}⚡ {entry.text}
+              {entry.detail && (
+                <span
+                  className="agent-log-tool-detail"
+                  style={{
+                    color: "var(--text-muted, #888)",
+                    fontSize: "12px",
+                    marginLeft: "6px",
+                  }}
+                >
+                  — {entry.detail}
+                </span>
+              )}
+            </div>
+          );
+        }
+
+        if (entry.type === "thinking") {
+          return (
+            <span
+              key={i}
+              className="agent-log-thinking"
+              style={{
+                fontStyle: "italic",
+                color: "var(--text-muted, #888)",
+                opacity: 0.7,
+              }}
+            >
+              {agentBadge}{entry.text}
+            </span>
+          );
+        }
+
+        if (entry.type === "tool_result") {
+          return (
+            <div
+              key={i}
+              className="agent-log-tool-result"
+              style={{
+                color: "var(--success, #4caf50)",
+                margin: "2px 0",
+                padding: "2px 6px",
+                borderLeft: "3px solid var(--success, #4caf50)",
+                background: "rgba(76, 175, 80, 0.06)",
+                fontSize: "12px",
+              }}
+            >
+              {agentBadge}✓ {entry.text}
+              {entry.detail && (
+                <span
+                  className="agent-log-tool-detail"
+                  style={{
+                    color: "var(--text-muted, #888)",
+                    marginLeft: "6px",
+                  }}
+                >
+                  — {entry.detail}
+                </span>
+              )}
+            </div>
+          );
+        }
+
+        if (entry.type === "tool_error") {
+          return (
+            <div
+              key={i}
+              className="agent-log-tool-error"
+              style={{
+                color: "var(--error, #e53935)",
+                margin: "2px 0",
+                padding: "2px 6px",
+                borderLeft: "3px solid var(--error, #e53935)",
+                background: "rgba(229, 57, 53, 0.06)",
+                fontSize: "12px",
+              }}
+            >
+              {agentBadge}✗ {entry.text}
+              {entry.detail && (
+                <span
+                  className="agent-log-tool-detail"
+                  style={{
+                    color: "var(--text-muted, #888)",
+                    marginLeft: "6px",
+                  }}
+                >
+                  — {entry.detail}
+                </span>
+              )}
+            </div>
+          );
+        }
+
+        // Default: text entries
+        return (
+          <span key={i} className="agent-log-text">
+            {agentBadge}{entry.text}
+          </span>
+        );
+      })}
     </div>
   );
 }

@@ -8,7 +8,9 @@
  * - Verdict + feedback is returned to the worker
  */
 
+import type { TaskStore } from "@kb/core";
 import { createKbAgent } from "./pi.js";
+import { AgentLogger } from "./agent-logger.js";
 
 const REVIEWER_SYSTEM_PROMPT = `You are an independent code and plan reviewer.
 
@@ -117,6 +119,10 @@ export interface ReviewOptions {
   defaultModelId?: string;
   /** Default thinking effort level for the reviewer agent session. */
   defaultThinkingLevel?: string;
+  /** Task store for persisting agent log entries. When provided with `taskId`, enables full conversation logging. */
+  store?: TaskStore;
+  /** Task ID for agent log persistence. Required alongside `store`. */
+  taskId?: string;
 }
 
 /**
@@ -137,12 +143,27 @@ export async function reviewStep(
     taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline,
   );
 
+  // Create AgentLogger for reviewer if store is available
+  const agentLogger = options.store && options.taskId
+    ? new AgentLogger({
+        store: options.store,
+        taskId: options.taskId,
+        agent: "reviewer",
+        onAgentText: options.onText
+          ? (_id, delta) => options.onText!(delta)
+          : undefined,
+      })
+    : null;
+
   // Spawn a reviewer agent with read-only tools
   const { session } = await createKbAgent({
     cwd,
     systemPrompt: REVIEWER_SYSTEM_PROMPT,
     tools: "readonly",
-    onText: (delta) => options.onText?.(delta),
+    onText: agentLogger ? agentLogger.onText : (delta) => options.onText?.(delta),
+    onThinking: agentLogger?.onThinking,
+    onToolStart: agentLogger?.onToolStart,
+    onToolEnd: agentLogger?.onToolEnd,
     defaultProvider: options.defaultProvider,
     defaultModelId: options.defaultModelId,
     defaultThinkingLevel: options.defaultThinkingLevel,
@@ -150,7 +171,7 @@ export async function reviewStep(
 
   let reviewText = "";
 
-  // Capture the reviewer's full text output
+  // Capture the reviewer's full text output (still needed for verdict extraction)
   session.subscribe((event) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       reviewText += event.assistantMessageEvent.delta;
@@ -160,6 +181,7 @@ export async function reviewStep(
   try {
     await session.prompt(request);
   } finally {
+    if (agentLogger) await agentLogger.flush();
     session.dispose();
   }
 

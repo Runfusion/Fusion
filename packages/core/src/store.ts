@@ -882,17 +882,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * Also emits an `agent:log` event for live streaming.
    *
    * @param taskId - The task ID (e.g. "KB-001")
-   * @param text - The text content (delta for "text", tool name for "tool")
-   * @param type - Whether this is a "text" delta or a "tool" invocation marker
-   * @param detail - Optional human-readable summary of tool args (e.g. file path, command)
+   * @param text - The text content (delta for "text"/"thinking", tool name for "tool"/"tool_result"/"tool_error")
+   * @param type - The entry type discriminator
+   * @param detail - Optional human-readable summary (tool args, result summary, or error message)
+   * @param agent - Optional agent role that produced this entry
    */
-  async appendAgentLog(taskId: string, text: string, type: "text" | "tool", detail?: string): Promise<void> {
+  async appendAgentLog(
+    taskId: string,
+    text: string,
+    type: AgentLogEntry["type"],
+    detail?: string,
+    agent?: AgentLogEntry["agent"],
+  ): Promise<void> {
     const entry: AgentLogEntry = {
       timestamp: new Date().toISOString(),
       taskId,
       text,
       type,
       ...(detail !== undefined && { detail }),
+      ...(agent !== undefined && { agent }),
     };
     const dir = this.taskDir(taskId);
     const logPath = join(dir, "agent.log");

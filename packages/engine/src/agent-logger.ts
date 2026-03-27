@@ -1,4 +1,4 @@
-import type { TaskStore } from "@kb/core";
+import type { TaskStore, AgentRole } from "@kb/core";
 
 /** Default byte threshold before an automatic flush. */
 const FLUSH_SIZE_BYTES = 1024;
@@ -40,6 +40,8 @@ export interface AgentLoggerOptions {
   store: TaskStore;
   /** The task ID this logger is associated with. */
   taskId: string;
+  /** Which agent role is producing log entries (persisted on every entry). */
+  agent?: AgentRole;
   /** Optional callback invoked alongside text logging (e.g. for SSE streaming). */
   onAgentText?: (taskId: string, delta: string) => void;
   /** Optional callback invoked alongside tool logging (e.g. for SSE streaming). */
@@ -77,17 +79,21 @@ export interface AgentLoggerOptions {
  */
 export class AgentLogger {
   private textBuffer = "";
+  private thinkingBuffer = "";
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private thinkingFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly flushSizeBytes: number;
   private readonly flushIntervalMs: number;
   private readonly store: TaskStore;
   private readonly taskId: string;
+  private readonly agent?: AgentRole;
   private readonly externalTextCb?: (taskId: string, delta: string) => void;
   private readonly externalToolCb?: (taskId: string, toolName: string) => void;
 
   constructor(options: AgentLoggerOptions) {
     this.store = options.store;
     this.taskId = options.taskId;
+    this.agent = options.agent;
     this.externalTextCb = options.onAgentText;
     this.externalToolCb = options.onAgentTool;
     this.flushSizeBytes = options.flushSizeBytes ?? FLUSH_SIZE_BYTES;
@@ -96,6 +102,8 @@ export class AgentLogger {
     // Bind callbacks so they can be passed directly as function references
     this.onText = this.onText.bind(this);
     this.onToolStart = this.onToolStart.bind(this);
+    this.onThinking = this.onThinking.bind(this);
+    this.onToolEnd = this.onToolEnd.bind(this);
   }
 
   /**
@@ -114,25 +122,61 @@ export class AgentLogger {
   }
 
   /**
+   * Callback for thinking block deltas. Buffers and flushes thinking text
+   * as `type: "thinking"` entries, using the same size/timer pattern as `onText`.
+   */
+  onThinking(delta: string): void {
+    this.thinkingBuffer += delta;
+    if (this.thinkingBuffer.length >= this.flushSizeBytes) {
+      if (this.thinkingFlushTimer) { clearTimeout(this.thinkingFlushTimer); this.thinkingFlushTimer = null; }
+      this.flushThinkingBuffer();
+    } else {
+      this.scheduleThinkingFlush();
+    }
+  }
+
+  /**
    * Callback for tool invocation starts. Flushes pending text, then logs the
    * tool name with a detail summary. Compatible with `AgentOptions.onToolStart`.
    */
   onToolStart(name: string, args?: Record<string, unknown>): void {
     this.externalToolCb?.(this.taskId, name);
-    // Flush any pending text before recording the tool entry
+    // Flush any pending text/thinking before recording the tool entry
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
     this.flushTextBuffer();
+    if (this.thinkingFlushTimer) { clearTimeout(this.thinkingFlushTimer); this.thinkingFlushTimer = null; }
+    this.flushThinkingBuffer();
     const detail = summarizeToolArgs(name, args);
-    this.store.appendAgentLog(this.taskId, name, "tool", detail).catch(() => {});
+    this.store.appendAgentLog(this.taskId, name, "tool", detail, this.agent).catch(() => {});
   }
 
   /**
-   * Flush any remaining buffered text and clear the timer.
+   * Callback for tool execution completion. Logs as `type: "tool_result"` on success
+   * or `type: "tool_error"` on failure.
+   *
+   * @param name - The tool name
+   * @param isError - Whether the tool execution resulted in an error
+   * @param result - Optional result value (truncated for persistence)
+   */
+  onToolEnd(name: string, isError: boolean, result?: unknown): void {
+    const type = isError ? "tool_error" : "tool_result";
+    let detail: string | undefined;
+    if (result !== undefined && result !== null) {
+      const str = typeof result === "string" ? result : JSON.stringify(result);
+      detail = str.length > 500 ? str.slice(0, 500) + "…" : str;
+    }
+    this.store.appendAgentLog(this.taskId, name, type, detail, this.agent).catch(() => {});
+  }
+
+  /**
+   * Flush any remaining buffered text/thinking and clear timers.
    * Call this in a `finally` block before disposing the agent session.
    */
   async flush(): Promise<void> {
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
+    if (this.thinkingFlushTimer) { clearTimeout(this.thinkingFlushTimer); this.thinkingFlushTimer = null; }
     await this.flushTextBuffer();
+    await this.flushThinkingBuffer();
   }
 
   // ── Internal helpers ───────────────────────────────────────────────
@@ -141,7 +185,16 @@ export class AgentLogger {
     if (this.textBuffer.length === 0) return Promise.resolve();
     const chunk = this.textBuffer;
     this.textBuffer = "";
-    return this.store.appendAgentLog(this.taskId, chunk, "text").catch(() => {
+    return this.store.appendAgentLog(this.taskId, chunk, "text", undefined, this.agent).catch(() => {
+      /* best-effort persistence */
+    });
+  }
+
+  private flushThinkingBuffer(): Promise<void> {
+    if (this.thinkingBuffer.length === 0) return Promise.resolve();
+    const chunk = this.thinkingBuffer;
+    this.thinkingBuffer = "";
+    return this.store.appendAgentLog(this.taskId, chunk, "thinking", undefined, this.agent).catch(() => {
       /* best-effort persistence */
     });
   }
@@ -151,6 +204,14 @@ export class AgentLogger {
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null;
       this.flushTextBuffer();
+    }, this.flushIntervalMs);
+  }
+
+  private scheduleThinkingFlush(): void {
+    if (this.thinkingFlushTimer) return;
+    this.thinkingFlushTimer = setTimeout(() => {
+      this.thinkingFlushTimer = null;
+      this.flushThinkingBuffer();
     }, this.flushIntervalMs);
   }
 }

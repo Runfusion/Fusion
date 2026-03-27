@@ -28,8 +28,9 @@ export interface AgentOptions {
   tools?: "coding" | "readonly";
   customTools?: ToolDefinition[];
   onText?: (delta: string) => void;
+  onThinking?: (delta: string) => void;
   onToolStart?: (name: string, args?: Record<string, unknown>) => void;
-  onToolEnd?: (name: string, isError: boolean) => void;
+  onToolEnd?: (name: string, isError: boolean, result?: unknown) => void;
   /** Default model provider (e.g. "anthropic"). Used with `defaultModelId` to select a specific model. */
   defaultProvider?: string;
   /** Default model ID within the provider (e.g. "claude-sonnet-4-5"). Used with `defaultProvider`. */
@@ -88,14 +89,19 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
 
   // Wire up event listeners
   session.subscribe((event) => {
-    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-      options.onText?.(event.assistantMessageEvent.delta);
+    if (event.type === "message_update") {
+      const msgEvent = event.assistantMessageEvent;
+      if (msgEvent.type === "text_delta") {
+        options.onText?.(msgEvent.delta);
+      } else if (msgEvent.type === "thinking_delta") {
+        options.onThinking?.(msgEvent.delta);
+      }
     }
     if (event.type === "tool_execution_start") {
       options.onToolStart?.(event.toolName, event.args as Record<string, unknown> | undefined);
     }
     if (event.type === "tool_execution_end") {
-      options.onToolEnd?.(event.toolName, event.isError);
+      options.onToolEnd?.(event.toolName, event.isError, event.result);
     }
   });
 
