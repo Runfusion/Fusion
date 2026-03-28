@@ -551,6 +551,109 @@ describe("TriageProcessor globalPause", () => {
   });
 });
 
+describe("TriageProcessor immediate resume on unpause via settings:updated", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("calls poll() immediately when globalPause transitions from true to false", async () => {
+    const triageTask = {
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "triage" as const,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const store = createMockStore([triageTask]);
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      globalPause: false,
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const triage = new TriageProcessor(store, "/tmp/test");
+    (triage as any).running = true;
+
+    // Fire the settings:updated event: true → false
+    store._trigger("settings:updated", {
+      settings: { globalPause: false },
+      previous: { globalPause: true },
+    });
+
+    // poll() is async, give it time to process
+    await new Promise((r) => setTimeout(r, 50));
+
+    // poll() should have been called → triage task processed
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: "specifying" });
+  });
+
+  it("does NOT call poll() when globalPause stays false (false → false)", async () => {
+    const store = createMockStore([]);
+    const triage = new TriageProcessor(store, "/tmp/test");
+    (triage as any).running = true;
+
+    // Fire the settings:updated event: false → false
+    store._trigger("settings:updated", {
+      settings: { globalPause: false },
+      previous: { globalPause: false },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // poll() should NOT have been called
+    expect(store.listTasks).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call poll() when globalPause stays true (true → true)", async () => {
+    const store = createMockStore([]);
+    const triage = new TriageProcessor(store, "/tmp/test");
+    (triage as any).running = true;
+
+    // Fire the settings:updated event: true → true
+    store._trigger("settings:updated", {
+      settings: { globalPause: true },
+      previous: { globalPause: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // poll() should NOT have been called
+    expect(store.listTasks).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call poll() when processor is not running", async () => {
+    const store = createMockStore([]);
+    const triage = new TriageProcessor(store, "/tmp/test");
+    // running = false (default)
+
+    // Fire the settings:updated event: true → false
+    store._trigger("settings:updated", {
+      settings: { globalPause: false },
+      previous: { globalPause: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // poll() should NOT have been called since processor is not running
+    expect(store.listTasks).not.toHaveBeenCalled();
+  });
+});
+
 describe("buildSpecificationPrompt", () => {
   it("includes project commands when testCommand is set", () => {
     const task = createMockTaskDetail();

@@ -213,6 +213,21 @@ export class TriageProcessor {
         }
       }
     });
+
+    /**
+     * Immediate unpause resume: when `globalPause` transitions from `true`
+     * to `false`, trigger a triage poll right away instead of waiting for
+     * the next poll interval (up to 15 s). Only reacts to true→false
+     * transitions — no-ops on false→false and true→true.
+     *
+     * The re-entrance guard (`this.polling`) inside `poll()` safely drops
+     * the call if a poll-based pass is already in flight.
+     */
+    store.on("settings:updated", ({ settings, previous }) => {
+      if (previous.globalPause && !settings.globalPause && this.running) {
+        this.poll();
+      }
+    });
   }
 
   start(): void {

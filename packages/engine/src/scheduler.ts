@@ -83,7 +83,22 @@ export class Scheduler {
   constructor(
     private store: TaskStore,
     private options: SchedulerOptions = {},
-  ) {}
+  ) {
+    /**
+     * Immediate unpause resume: when `globalPause` transitions from `true`
+     * to `false`, trigger a scheduling pass right away instead of waiting
+     * for the next poll interval (up to 15 s). Only reacts to true→false
+     * transitions — no-ops on false→false and true→true.
+     *
+     * The re-entrance guard (`this.scheduling`) inside `schedule()` safely
+     * drops the call if a poll-based pass is already in flight.
+     */
+    this.store.on("settings:updated", ({ settings, previous }) => {
+      if (previous.globalPause && !settings.globalPause && this.running) {
+        this.schedule();
+      }
+    });
+  }
 
   start(): void {
     if (this.running) return;

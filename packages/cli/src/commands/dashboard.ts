@@ -224,6 +224,33 @@ export async function runDashboard(port: number, opts: { open?: boolean } = {}) 
       }
     }
 
+    // ── Immediate unpause: resume orphans + merge sweep ─────────────
+    // When globalPause transitions from true → false, immediately:
+    // 1. Refresh cachedMaxConcurrent so the semaphore picks up live changes
+    // 2. Resume orphaned in-progress tasks whose agents were killed by pause
+    // 3. Sweep the merge queue for in-review tasks that need merging
+    store.on("settings:updated", async ({ settings: s, previous: prev }) => {
+      if (prev.globalPause && !s.globalPause) {
+        console.log("[engine] Global unpause — resuming agentic activity");
+        cachedMaxConcurrent = s.maxConcurrent ?? cachedMaxConcurrent;
+
+        executor.resumeOrphaned().catch((err) =>
+          console.error("[engine] Failed to resume orphaned tasks on unpause:", err),
+        );
+
+        if (s.autoMerge) {
+          try {
+            const tasks = await store.listTasks();
+            for (const t of tasks) {
+              if (t.column === "in-review" && !t.paused) {
+                enqueueMerge(t.id);
+              }
+            }
+          } catch { /* ignore errors in unpause sweep */ }
+        }
+      }
+    });
+
     // ── Periodic retry: catch failed merges on each poll cycle ────────
     // Uses a setTimeout chain so the interval dynamically follows
     // settings.pollIntervalMs without requiring an engine restart.

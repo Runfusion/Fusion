@@ -237,6 +237,111 @@ describe("runDashboard — auto-merge pause exclusion", () => {
   });
 });
 
+describe("runDashboard — immediate resume on unpause", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@kb/core");
+    (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@kb/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
+  });
+
+  it("registers a settings:updated listener on the store", async () => {
+    await runDashboard(0, { open: false });
+
+    // The store.on should have been called with "settings:updated" at least once
+    const settingsUpdatedCalls = mockStore.on.mock.calls.filter(
+      (call: any[]) => call[0] === "settings:updated",
+    );
+    // At least 2 listeners: one for pause→true (merge kill), one for unpause
+    expect(settingsUpdatedCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("calls executor.resumeOrphaned() when globalPause transitions true → false", async () => {
+    const { TaskExecutor } = await import("@kb/engine");
+    const resumeOrphaned = vi.fn().mockResolvedValue(undefined);
+    (TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned };
+      },
+    );
+
+    await runDashboard(0, { open: false });
+
+    // Clear the startup call to resumeOrphaned
+    resumeOrphaned.mockClear();
+
+    // Trigger unpause event
+    mockStore.emit("settings:updated", {
+      settings: { globalPause: false, maxConcurrent: 1, autoMerge: false },
+      previous: { globalPause: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(resumeOrphaned).toHaveBeenCalled();
+  });
+
+  it("sweeps merge queue on unpause when autoMerge is enabled", async () => {
+    // Set up settings to return autoMerge: true for the drain queue check
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+      globalPause: false,
+    });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "KB-MQ1", column: "in-review", paused: false },
+      { id: "KB-MQ2", column: "in-review", paused: false },
+    ]);
+    // getTask is called inside drainMergeQueue to verify the task
+    mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
+      id,
+      column: "in-review",
+      paused: false,
+    }));
+
+    const { aiMergeTask } = await import("@kb/engine");
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+
+    await runDashboard(0, { open: false });
+
+    // Clear any calls from startup sweep
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockClear();
+
+    // Trigger unpause event with autoMerge enabled
+    mockStore.emit("settings:updated", {
+      settings: { globalPause: false, maxConcurrent: 1, autoMerge: true },
+      previous: { globalPause: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Both in-review tasks should be enqueued for merge
+    const mergedIds = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call: any[]) => call[2],
+    );
+    expect(mergedIds).toContain("KB-MQ1");
+    expect(mergedIds).toContain("KB-MQ2");
+  });
+});
+
 describe("runDashboard — port fallback on EADDRINUSE", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
 

@@ -18,7 +18,17 @@ function makeTask(overrides: Record<string, unknown> = {}) {
 }
 
 function createMockStore(tasks: any[] = []) {
+  const listeners = new Map<string, Function[]>();
   return {
+    on: vi.fn((event: string, fn: Function) => {
+      const existing = listeners.get(event) || [];
+      existing.push(fn);
+      listeners.set(event, existing);
+    }),
+    /** Trigger registered listeners for an event (test helper). */
+    _trigger(event: string, ...args: any[]) {
+      for (const fn of listeners.get(event) || []) fn(...args);
+    },
     listTasks: vi.fn().mockResolvedValue(tasks),
     getSettings: vi.fn().mockResolvedValue({
       maxConcurrent: 2,
@@ -879,6 +889,101 @@ describe("Scheduler globalPause", () => {
     );
     expect(pauseMessages).toHaveLength(1);
     logSpy.mockRestore();
+  });
+});
+
+describe("Scheduler immediate resume on unpause via settings:updated", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("calls schedule() immediately when globalPause transitions from true to false", async () => {
+    const tasks = [
+      makeTask({ id: "KB-001", column: "todo" }),
+    ];
+    const store = createMockStore(tasks);
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      globalPause: false,
+    });
+    const scheduler = new Scheduler(store, { maxConcurrent: 2 });
+    // Set running state without calling start() (avoids the initial schedule() call)
+    (scheduler as any).running = true;
+
+    // Fire the settings:updated event: true → false
+    store._trigger("settings:updated", {
+      settings: { globalPause: false },
+      previous: { globalPause: true },
+    });
+
+    // schedule() is async, give it time to process
+    await new Promise((r) => setTimeout(r, 50));
+
+    // schedule() should have been called → task moved to in-progress
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-progress");
+  });
+
+  it("does NOT call schedule() when globalPause stays false (false → false)", async () => {
+    const tasks = [
+      makeTask({ id: "KB-001", column: "todo" }),
+    ];
+    const store = createMockStore(tasks);
+    const scheduler = new Scheduler(store, { maxConcurrent: 2 });
+    (scheduler as any).running = true;
+
+    // Fire the settings:updated event: false → false
+    store._trigger("settings:updated", {
+      settings: { globalPause: false },
+      previous: { globalPause: false },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // schedule() should NOT have been called
+    expect(store.listTasks).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call schedule() when globalPause stays true (true → true)", async () => {
+    const tasks = [
+      makeTask({ id: "KB-001", column: "todo" }),
+    ];
+    const store = createMockStore(tasks);
+    const scheduler = new Scheduler(store, { maxConcurrent: 2 });
+    (scheduler as any).running = true;
+
+    // Fire the settings:updated event: true → true
+    store._trigger("settings:updated", {
+      settings: { globalPause: true },
+      previous: { globalPause: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // schedule() should NOT have been called
+    expect(store.listTasks).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call schedule() when scheduler is not running", async () => {
+    const store = createMockStore();
+    const scheduler = new Scheduler(store, { maxConcurrent: 2 });
+    // running = false (default)
+
+    // Fire the settings:updated event: true → false
+    store._trigger("settings:updated", {
+      settings: { globalPause: false },
+      previous: { globalPause: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // schedule() should NOT have been called since scheduler is not running
+    expect(store.listTasks).not.toHaveBeenCalled();
   });
 });
 
