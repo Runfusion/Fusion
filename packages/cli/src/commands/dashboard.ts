@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { TaskStore } from "@kb/core";
 import { createServer } from "@kb/dashboard";
-import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE } from "@kb/engine";
+import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees } from "@kb/engine";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 
 function openBrowser(url: string): void {
@@ -46,6 +46,28 @@ export async function runDashboard(port: number, opts: { open?: boolean } = {}) 
   // is off the pool simply stays empty.
   //
   const pool = new WorktreePool();
+
+  // ── Startup: rehydrate or clean up worktrees from previous runs ────
+  //
+  // When `recycleWorktrees` is true, scan the .worktrees/ directory for
+  // idle worktrees (not assigned to any active task) and load them into
+  // the pool so new tasks can reuse them instead of creating fresh ones.
+  //
+  // When `recycleWorktrees` is false, clean up orphaned worktrees left
+  // behind by previous engine runs to avoid disk waste.
+  //
+  if (initialSettings.recycleWorktrees) {
+    const idlePaths = await scanIdleWorktrees(cwd, store);
+    if (idlePaths.length > 0) {
+      pool.rehydrate(idlePaths);
+      console.log(`[engine] Rehydrated pool with ${idlePaths.length} idle worktree(s)`);
+    }
+  } else {
+    const cleaned = await cleanupOrphanedWorktrees(cwd, store);
+    if (cleaned > 0) {
+      console.log(`[engine] Cleaned up ${cleaned} orphaned worktree(s)`);
+    }
+  }
 
   // ── Usage limit pauser ──────────────────────────────────────────────
   //

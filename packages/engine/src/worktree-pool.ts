@@ -1,5 +1,7 @@
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import type { TaskStore } from "@kb/core";
 import { worktreePoolLog } from "./logger.js";
 
 /**
@@ -12,6 +14,14 @@ import { worktreePoolLog } from "./logger.js";
  * The pool only tracks *idle* worktrees — those not currently assigned to
  * any active task. The scheduler's `maxWorktrees` setting still governs
  * the total number of worktrees (active + idle).
+ *
+ * **Lifecycle across restarts:** The pool is in-memory only, but on engine
+ * startup it can be rehydrated from disk state via {@link rehydrate} and
+ * {@link scanIdleWorktrees}. When `recycleWorktrees` is true, the startup
+ * sequence scans the `.worktrees/` directory, identifies idle worktrees
+ * (those not assigned to any active task), and bulk-loads them into the
+ * pool. When `recycleWorktrees` is false, orphaned worktrees are cleaned
+ * up via {@link cleanupOrphanedWorktrees}.
  */
 export class WorktreePool {
   private idle = new Set<string>();
@@ -69,6 +79,24 @@ export class WorktreePool {
   }
 
   /**
+   * Bulk-load known idle worktree paths into the pool.
+   *
+   * Called at engine startup to restore the pool from disk state.
+   * Paths that no longer exist on disk are silently skipped.
+   *
+   * @param idlePaths — Absolute paths to idle worktree directories
+   */
+  rehydrate(idlePaths: string[]): void {
+    for (const path of idlePaths) {
+      if (existsSync(path)) {
+        this.idle.add(path);
+      } else {
+        worktreePoolLog.log(`Rehydrate skipped (not on disk): ${path}`);
+      }
+    }
+  }
+
+  /**
    * Prepare a recycled worktree for a new task.
    *
    * Resets the working tree to a clean state, then creates (or force-resets)
@@ -104,4 +132,84 @@ export class WorktreePool {
       stdio: "pipe",
     });
   }
+}
+
+/**
+ * Scan the `.worktrees/` directory to find idle worktrees that can be
+ * loaded into the pool on startup.
+ *
+ * A worktree is considered "idle" if it exists on disk under
+ * `<rootDir>/.worktrees/` but is NOT assigned (via `task.worktree`) to
+ * any non-done task.
+ *
+ * @param rootDir — Project root directory (parent of `.worktrees/`)
+ * @param store — Task store for listing tasks and their worktree assignments
+ * @returns Absolute paths of idle worktree directories
+ */
+export async function scanIdleWorktrees(rootDir: string, store: TaskStore): Promise<string[]> {
+  const worktreesDir = join(rootDir, ".worktrees");
+
+  if (!existsSync(worktreesDir)) {
+    return [];
+  }
+
+  // List all subdirectories under .worktrees/
+  let dirs: string[];
+  try {
+    const entries = readdirSync(worktreesDir, { withFileTypes: true });
+    dirs = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => join(worktreesDir, e.name));
+  } catch {
+    return [];
+  }
+
+  if (dirs.length === 0) {
+    return [];
+  }
+
+  // Find worktree paths assigned to non-done tasks (active worktrees)
+  const tasks = await store.listTasks();
+  const activeWorktrees = new Set<string>();
+  for (const task of tasks) {
+    if (task.worktree && task.column !== "done") {
+      activeWorktrees.add(task.worktree);
+    }
+  }
+
+  // Return worktrees on disk that are NOT active
+  return dirs.filter((dir) => !activeWorktrees.has(dir));
+}
+
+/**
+ * Clean up orphaned worktrees left behind from previous engine runs.
+ *
+ * Removes worktree directories under `<rootDir>/.worktrees/` that are NOT
+ * assigned to any non-done task. Used on startup when `recycleWorktrees`
+ * is false to avoid disk waste.
+ *
+ * Failures on individual worktree removals are logged but not fatal.
+ *
+ * @param rootDir — Project root directory (parent of `.worktrees/`)
+ * @param store — Task store for listing tasks and their worktree assignments
+ * @returns Number of worktrees cleaned up
+ */
+export async function cleanupOrphanedWorktrees(rootDir: string, store: TaskStore): Promise<number> {
+  const orphaned = await scanIdleWorktrees(rootDir, store);
+  let cleaned = 0;
+
+  for (const worktreePath of orphaned) {
+    try {
+      execSync(`git worktree remove "${worktreePath}" --force`, {
+        cwd: rootDir,
+        stdio: "pipe",
+      });
+      worktreePoolLog.log(`Cleaned up orphaned worktree: ${worktreePath}`);
+      cleaned++;
+    } catch (err: any) {
+      worktreePoolLog.log(`Failed to remove orphaned worktree ${worktreePath}: ${err.message}`);
+    }
+  }
+
+  return cleaned;
 }

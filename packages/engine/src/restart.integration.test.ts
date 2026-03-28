@@ -25,20 +25,23 @@ vi.mock("node:child_process", () => ({
 }));
 vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
+  readdirSync: vi.fn().mockReturnValue([]),
 }));
 
 import { TaskExecutor } from "./executor.js";
 import { TriageProcessor } from "./triage.js";
 import { Scheduler } from "./scheduler.js";
 import { aiMergeTask } from "./merger.js";
+import { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees } from "./worktree-pool.js";
 import { createKbAgent } from "./pi.js";
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import type { Task, TaskDetail, TaskStep, Column, Settings, StepStatus } from "@kb/core";
 
 const mockedCreateHaiAgent = vi.mocked(createKbAgent);
 const mockedExecSync = vi.mocked(execSync);
 const mockedExistsSync = vi.mocked(existsSync);
+const mockedReaddirSync = vi.mocked(readdirSync);
 
 // ── Mock helpers ──────────────────────────────────────────────────────────
 
@@ -699,5 +702,211 @@ describe("Crash scenario edge cases", () => {
     // Release our manual slot
     sem.release();
     expect(sem.activeCount).toBe(0);
+  });
+});
+
+// ── Worktree pool restart resilience tests ────────────────────────────────
+
+function makeDirEntry(name: string) {
+  return { name, isDirectory: () => true } as any;
+}
+
+describe("Worktree pool restart with recycleWorktrees=true", () => {
+  it("pool is rehydrated with idle worktrees from disk", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("swift-falcon"),
+      makeDirEntry("calm-river"),
+      makeDirEntry("bold-eagle"),
+    ] as any);
+    mockedExistsSync.mockReturnValue(true);
+
+    const store = createMockStore();
+    store.listTasks.mockResolvedValue([
+      makeTask("KB-100", "in-progress", { worktree: "/root/.worktrees/swift-falcon" }),
+      makeTask("KB-101", "done", { worktree: "/root/.worktrees/calm-river" }),
+    ]);
+
+    // Simulate startup rehydration
+    const pool = new WorktreePool();
+    const idlePaths = await scanIdleWorktrees("/root", store);
+    pool.rehydrate(idlePaths);
+
+    // swift-falcon → in-progress, not idle
+    // calm-river → done, idle
+    // bold-eagle → unassigned, idle
+    expect(pool.size).toBe(2);
+    expect(pool.has("/root/.worktrees/calm-river")).toBe(true);
+    expect(pool.has("/root/.worktrees/bold-eagle")).toBe(true);
+    expect(pool.has("/root/.worktrees/swift-falcon")).toBe(false);
+  });
+
+  it("executor acquires from rehydrated pool instead of creating new worktrees", async () => {
+    // Setup: rehydrate pool with one idle worktree
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("idle-wt"),
+    ] as any);
+
+    const store = createMockStore();
+    store.listTasks.mockResolvedValue([]);
+    store.getSettings.mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      recycleWorktrees: true,
+    });
+    store.getTask.mockResolvedValue(makeTaskDetail("KB-110", "in-progress"));
+
+    const pool = new WorktreePool();
+    const idlePaths = await scanIdleWorktrees("/root", store);
+    pool.rehydrate(idlePaths);
+    expect(pool.size).toBe(1);
+
+    // Now simulate executor acquiring from pool
+    // The pool path exists on disk, but the task's default path does not
+    mockedExistsSync.mockImplementation(
+      (p) => p === "/root/.worktrees/idle-wt",
+    );
+
+    mockAgentSuccess();
+
+    const executor = new TaskExecutor(store, "/root", { pool });
+    await executor.execute(makeTask("KB-110", "in-progress"));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Pool should be empty (worktree acquired)
+    expect(pool.size).toBe(0);
+
+    // No git worktree add calls (reused from pool)
+    const worktreeAddCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree add"),
+    );
+    expect(worktreeAddCalls).toHaveLength(0);
+
+    // Should log pool acquisition
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "KB-110",
+      expect.stringContaining("Acquired worktree from pool"),
+    );
+  });
+
+  it("worktrees assigned to in-progress tasks are preserved (not in pool)", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("active-wt"),
+      makeDirEntry("idle-wt"),
+    ] as any);
+    mockedExistsSync.mockReturnValue(true);
+
+    const store = createMockStore();
+    store.listTasks.mockResolvedValue([
+      makeTask("KB-120", "in-progress", { worktree: "/root/.worktrees/active-wt" }),
+    ]);
+
+    const pool = new WorktreePool();
+    const idlePaths = await scanIdleWorktrees("/root", store);
+    pool.rehydrate(idlePaths);
+
+    // Only idle-wt should be in pool (active-wt is assigned to in-progress task)
+    expect(pool.size).toBe(1);
+    expect(pool.has("/root/.worktrees/idle-wt")).toBe(true);
+    expect(pool.has("/root/.worktrees/active-wt")).toBe(false);
+  });
+
+  it("worktrees assigned to in-review tasks are preserved (not in pool)", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("review-wt"),
+    ] as any);
+    mockedExistsSync.mockReturnValue(true);
+
+    const store = createMockStore();
+    store.listTasks.mockResolvedValue([
+      makeTask("KB-121", "in-review", { worktree: "/root/.worktrees/review-wt" }),
+    ]);
+
+    const pool = new WorktreePool();
+    const idlePaths = await scanIdleWorktrees("/root", store);
+    pool.rehydrate(idlePaths);
+
+    // review-wt is assigned to in-review task — NOT idle
+    expect(pool.size).toBe(0);
+  });
+});
+
+describe("Worktree cleanup on restart with recycleWorktrees=false", () => {
+  it("orphaned worktrees are cleaned up via git worktree remove", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("orphan-1"),
+      makeDirEntry("orphan-2"),
+    ] as any);
+    mockedExistsSync.mockReturnValue(true);
+    mockedExecSync.mockReturnValue(Buffer.from(""));
+
+    const store = createMockStore();
+    store.listTasks.mockResolvedValue([]);
+
+    const cleaned = await cleanupOrphanedWorktrees("/root", store);
+
+    expect(cleaned).toBe(2);
+    const removeCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
+    );
+    expect(removeCalls).toHaveLength(2);
+  });
+
+  it("worktrees assigned to in-progress tasks are preserved during cleanup", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("active-wt"),
+      makeDirEntry("orphan-wt"),
+    ] as any);
+    mockedExistsSync.mockReturnValue(true);
+    mockedExecSync.mockReturnValue(Buffer.from(""));
+
+    const store = createMockStore();
+    store.listTasks.mockResolvedValue([
+      makeTask("KB-130", "in-progress", { worktree: "/root/.worktrees/active-wt" }),
+    ]);
+
+    const cleaned = await cleanupOrphanedWorktrees("/root", store);
+
+    expect(cleaned).toBe(1);
+    const removeCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
+    );
+    expect(removeCalls).toHaveLength(1);
+    expect(removeCalls[0][0]).toContain("orphan-wt");
+    expect(removeCalls[0][0]).not.toContain("active-wt");
+  });
+
+  it("worktrees assigned to in-review tasks are preserved during cleanup", async () => {
+    mockedReaddirSync.mockReturnValue([
+      makeDirEntry("review-wt"),
+    ] as any);
+    mockedExistsSync.mockReturnValue(true);
+
+    const store = createMockStore();
+    store.listTasks.mockResolvedValue([
+      makeTask("KB-131", "in-review", { worktree: "/root/.worktrees/review-wt" }),
+    ]);
+
+    const cleaned = await cleanupOrphanedWorktrees("/root", store);
+
+    // review-wt is assigned to in-review task — should NOT be removed
+    expect(cleaned).toBe(0);
+  });
+});
+
+describe("Edge case: worktree deleted between scan and acquire", () => {
+  it("acquire returns null when rehydrated worktree was deleted from disk", async () => {
+    const pool = new WorktreePool();
+
+    // Rehydrate succeeds (path exists at scan time)
+    mockedExistsSync.mockReturnValue(true);
+    pool.rehydrate(["/root/.worktrees/vanished-wt"]);
+    expect(pool.size).toBe(1);
+
+    // Between rehydrate and acquire, the directory is deleted
+    mockedExistsSync.mockReturnValue(false);
+
+    // acquire() checks existsSync and prunes the stale entry
+    const result = pool.acquire();
+    expect(result).toBeNull();
+    expect(pool.size).toBe(0);
   });
 });
