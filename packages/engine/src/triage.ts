@@ -1,11 +1,12 @@
 import type { TaskStore, Task, TaskDetail, TaskAttachment, Settings } from "@kb/core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { Type, type Static } from "@mariozechner/pi-ai";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition, AgentSession } from "@mariozechner/pi-coding-agent";
 import { createKbAgent } from "./pi.js";
+import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { PRIORITY_SPECIFY, type AgentSemaphore } from "./concurrency.js";
 import { AgentLogger } from "./agent-logger.js";
-import { triageLog } from "./logger.js";
+import { triageLog, reviewerLog } from "./logger.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
 
 const TRIAGE_SYSTEM_PROMPT = `You are a task specification agent for "kb", an AI-orchestrated task board.
@@ -152,8 +153,18 @@ commands, use those EXACT commands in the testing/verification steps and anywher
 the spec references running tests or builds. Do NOT guess or infer commands from
 package.json when explicit commands are provided.
 
+## Spec Review
+
+After writing the PROMPT.md, call \`review_spec()\` to get an independent quality review.
+
+- **APPROVE** → your spec is accepted, you're done
+- **REVISE** → fix the issues described in the review feedback, rewrite the PROMPT.md, and call \`review_spec()\` again. Repeat until approved.
+- **RETHINK** → your approach was fundamentally rejected. The conversation will rewind. Read the feedback carefully and take a completely different approach. Do NOT repeat the rejected strategy.
+
+You MUST call \`review_spec()\` after writing the PROMPT.md. Do not finish without getting an APPROVE verdict.
+
 ## Output
-Write the PROMPT.md directly using the write tool. Nothing else.`;
+Write the PROMPT.md directly using the write tool, then call \`review_spec()\` for review.`;
 
 export interface TriageProcessorOptions {
   pollIntervalMs?: number;
@@ -346,6 +357,19 @@ export class TriageProcessor {
     }
   }
 
+  /**
+   * Specify a triage task by spawning an AI agent to generate a PROMPT.md.
+   *
+   * After the agent writes the PROMPT.md, it calls `review_spec()` to spawn
+   * an independent reviewer agent that evaluates the specification quality.
+   * The review loop works as follows:
+   * - **APPROVE**: the spec is accepted and the task moves to `todo`
+   * - **REVISE**: the agent revises the spec and calls `review_spec()` again.
+   *   If the agent finishes without getting APPROVE, the task is NOT moved to
+   *   `todo` — a post-session gate checks the last verdict.
+   * - **RETHINK**: the conversation rewinds to a pre-specification checkpoint
+   *   and the agent starts over with a fundamentally different approach.
+   */
   async specifyTask(task: Task): Promise<void> {
     if (this.processing.has(task.id)) return;
     this.processing.add(task.id);
@@ -375,11 +399,25 @@ export class TriageProcessor {
           },
         });
 
+        // Mutable ref — populated after createKbAgent, tools access lazily via closure
+        const sessionRef: { current: AgentSession | null } = { current: null };
+        // Checkpoint for RETHINK rewind — captured lazily on first review_spec call
+        const checkpointRef: { current: string | null } = { current: null };
+        // Track the last spec review verdict for post-session enforcement
+        const specReviewVerdictRef: { current: ReviewVerdict | null } = { current: null };
+
+        const customTools = [
+          ...this.createTriageTools(),
+          this.createReviewSpecTool(
+            task.id, promptPath, sessionRef, checkpointRef, specReviewVerdictRef, settings,
+          ),
+        ];
+
         const { session } = await createKbAgent({
           cwd: this.rootDir,
           systemPrompt: TRIAGE_SYSTEM_PROMPT,
           tools: "coding",
-          customTools: this.createTriageTools(),
+          customTools,
           onText: agentLogger.onText,
           onThinking: agentLogger.onThinking,
           onToolStart: agentLogger.onToolStart,
@@ -388,6 +426,9 @@ export class TriageProcessor {
           defaultModelId: settings.defaultModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,
         });
+
+        // Make session available to review_spec tool (for RETHINK rewind)
+        sessionRef.current = session;
 
         // Register session so the global pause listener can terminate it
         this.activeSessions.set(task.id, session);
@@ -403,6 +444,15 @@ export class TriageProcessor {
 
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           checkSessionError(session);
+
+          // Post-session REVISE gate: if the last review_spec verdict was REVISE
+          // and the agent finished without getting APPROVE, don't move to todo.
+          if (specReviewVerdictRef.current === "REVISE") {
+            triageLog.log(`${task.id} spec review ended with REVISE — not moving to todo`);
+            await this.store.logEntry(task.id, "Spec review ended with REVISE verdict — specification not approved");
+            await this.store.updateTask(task.id, { status: null });
+            return;
+          }
 
           // Check if the agent flagged a duplicate
           const { readFile } = await import("node:fs/promises");
@@ -548,6 +598,146 @@ export class TriageProcessor {
     };
 
     return [taskList, taskGet];
+  }
+
+  /**
+   * Create the `review_spec` tool for the triage agent.
+   *
+   * Spawns an independent reviewer agent to evaluate the generated PROMPT.md.
+   * Verdict handling:
+   * - **APPROVE**: returns "APPROVE" — the triage agent's work is done.
+   * - **REVISE**: returns the review feedback. The triage agent must fix the
+   *   PROMPT.md and call `review_spec` again. A post-session gate in
+   *   `specifyTask()` prevents moving to `todo` if the last verdict is REVISE.
+   * - **RETHINK**: rewinds the conversation to a pre-specification checkpoint
+   *   using `session.navigateTree()`. Returns a re-prompt instructing the agent
+   *   to take a fundamentally different approach.
+   */
+  private createReviewSpecTool(
+    taskId: string,
+    promptPath: string,
+    sessionRef: { current: AgentSession | null },
+    checkpointRef: { current: string | null },
+    specReviewVerdictRef: { current: ReviewVerdict | null },
+    settings: { defaultProvider?: string; defaultModelId?: string; defaultThinkingLevel?: string },
+  ): ToolDefinition {
+    const store = this.store;
+    const rootDir = this.rootDir;
+    const options = this.options;
+
+    return {
+      name: "review_spec",
+      label: "Review Specification",
+      description:
+        "Spawn a reviewer agent to evaluate the generated PROMPT.md specification. " +
+        "Returns APPROVE, REVISE, RETHINK, or UNAVAILABLE. " +
+        "Call after writing the PROMPT.md.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        reviewerLog.log(`${taskId}: spec review requested`);
+        await store.logEntry(taskId, "Spec review requested");
+
+        // Capture checkpoint lazily on first call — at this point the session
+        // has already started and has a valid conversation state to rewind to.
+        if (!checkpointRef.current && sessionRef.current) {
+          checkpointRef.current = sessionRef.current.sessionManager.getLeafId() ?? null;
+        }
+
+        try {
+          // Read the generated PROMPT.md from disk
+          const { readFile } = await import("node:fs/promises");
+          const { join } = await import("node:path");
+          const promptContent = await readFile(
+            join(rootDir, promptPath), "utf-8",
+          ).catch(() => "");
+
+          if (!promptContent) {
+            return {
+              content: [{
+                type: "text" as const,
+                text: "UNAVAILABLE — PROMPT.md file not found or empty. Write the specification first, then call review_spec.",
+              }],
+              details: {},
+            };
+          }
+
+          const result = await reviewStep(
+            rootDir, taskId, 0, "Specification",
+            "spec", promptContent, undefined,
+            {
+              onText: (delta) => options.onAgentText?.(taskId, delta),
+              defaultProvider: settings.defaultProvider,
+              defaultModelId: settings.defaultModelId,
+              defaultThinkingLevel: settings.defaultThinkingLevel,
+              store,
+              taskId,
+            },
+          );
+
+          // Track verdict for post-session enforcement
+          specReviewVerdictRef.current = result.verdict;
+
+          await store.logEntry(
+            taskId,
+            `Spec review: ${result.verdict}`,
+            result.summary,
+          );
+          reviewerLog.log(`${taskId}: spec review → ${result.verdict}`);
+
+          let text: string;
+          switch (result.verdict) {
+            case "APPROVE":
+              text = "APPROVE";
+              break;
+            case "REVISE":
+              text = `REVISE — fix the issues below, rewrite the PROMPT.md, and call review_spec() again.\n\n${result.review}`;
+              break;
+            case "RETHINK": {
+              // Rewind conversation to pre-specification checkpoint
+              const checkpointId = checkpointRef.current;
+              if (checkpointId && sessionRef.current) {
+                try {
+                  await sessionRef.current.navigateTree(checkpointId, { summarize: false });
+                  triageLog.log(`${taskId}: RETHINK — session rewound to checkpoint ${checkpointId}`);
+                } catch {
+                  // Fallback to branchWithSummary
+                  try {
+                    sessionRef.current.sessionManager.branchWithSummary(
+                      checkpointId,
+                      `RETHINK: ${result.summary || "Approach rejected by reviewer"}`,
+                    );
+                    triageLog.log(`${taskId}: RETHINK — branched from checkpoint ${checkpointId}`);
+                  } catch (branchErr: any) {
+                    triageLog.error(`${taskId}: RETHINK session rewind failed: ${branchErr.message}`);
+                  }
+                }
+              } else {
+                triageLog.log(`${taskId}: RETHINK — no session checkpoint, skipping rewind`);
+              }
+
+              await store.logEntry(
+                taskId,
+                `RETHINK: spec rewound — session checkpoint ${checkpointId || "N/A"}`,
+                result.summary,
+              );
+              text = `RETHINK\n\nYour specification was rejected. Here is why:\n\n${result.review}\n\nTake a completely different approach to writing this specification. Do NOT repeat the rejected strategy.`;
+              break;
+            }
+            default:
+              text = "UNAVAILABLE — reviewer did not produce a usable verdict.";
+          }
+
+          return { content: [{ type: "text" as const, text }], details: {} };
+        } catch (err: any) {
+          reviewerLog.error(`${taskId}: spec review failed: ${err.message}`);
+          await store.logEntry(taskId, `Spec review failed: ${err.message}`);
+          return {
+            content: [{ type: "text" as const, text: `UNAVAILABLE — reviewer error: ${err.message}` }],
+            details: {},
+          };
+        }
+      },
+    };
   }
 }
 

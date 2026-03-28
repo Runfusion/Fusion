@@ -87,6 +87,32 @@ access to the codebase and can run commands to inspect code.
 - [Optional improvements, not blocking]
 \`\`\`
 
+## Spec Review Format
+
+\`\`\`markdown
+## Spec Review: [Task ID]
+
+### Verdict: [APPROVE | REVISE | RETHINK]
+
+### Summary
+[2-3 sentence assessment of the specification quality]
+
+### Issues Found
+1. **[Severity: critical/important/minor]** — [Description and suggested fix]
+
+### Criteria Assessment
+- **Mission clarity:** [Clear, unambiguous mission statement?]
+- **Step specificity:** [Steps have verifiable, concrete outcomes?]
+- **File scope accuracy:** [All affected files listed? No extras?]
+- **Dependency correctness:** [Dependencies exist and are appropriate?]
+- **Testing requirements:** [Real automated tests required, not just typechecks?]
+- **Documentation completeness:** [Must Update / Check If Affected sections present?]
+- **Sizing & review level:** [Size and review level appropriate for the work?]
+
+### Suggestions
+- [Optional improvements, not blocking]
+\`\`\`
+
 ## Plan Granularity
 
 When reviewing plans, assess whether the approach achieves the step's OUTCOMES —
@@ -103,7 +129,7 @@ Do NOT demand function-level implementation checklists.
 - Output your review as plain text (not to a file)
 `;
 
-export type ReviewType = "plan" | "code";
+export type ReviewType = "plan" | "code" | "spec";
 export type ReviewVerdict = "APPROVE" | "REVISE" | "RETHINK" | "UNAVAILABLE";
 
 export interface ReviewResult {
@@ -218,7 +244,19 @@ function buildReviewRequest(
     "",
   ];
 
-  if (reviewType === "plan") {
+  if (reviewType === "spec") {
+    parts.push(
+      "## What to review",
+      "Evaluate this PROMPT.md specification for completeness and quality.",
+      "Assess against the spec quality criteria: mission clarity, step specificity/verifiability,",
+      "file scope accuracy, dependency correctness, testing requirements, documentation completeness,",
+      "and appropriate sizing/review level.",
+      "",
+      "Read relevant source files to verify the spec references real files, functions, and patterns.",
+      "Check that steps have concrete, verifiable outcomes — not vague instructions.",
+      "Ensure testing requirements demand real automated tests with assertions.",
+    );
+  } else if (reviewType === "plan") {
     parts.push(
       "## What to review",
       `The worker is about to implement Step ${stepNumber} (${stepName}).`,

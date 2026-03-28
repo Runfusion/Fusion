@@ -5,14 +5,21 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AgentSemaphore } from "./concurrency.js";
 
-// Mock createKbAgent before importing TriageProcessor
+// Mock createKbAgent and reviewStep before importing TriageProcessor
 vi.mock("./pi.js", () => ({
   createKbAgent: vi.fn(),
 }));
 
+vi.mock("./reviewer.js", () => ({
+  reviewStep: vi.fn(),
+}));
+
 import { TriageProcessor, buildSpecificationPrompt, type AttachmentContent } from "./triage.js";
 import { createKbAgent } from "./pi.js";
+import { reviewStep } from "./reviewer.js";
 import type { TaskDetail } from "@kb/core";
+
+const mockedReviewStep = vi.mocked(reviewStep);
 
 const mockedCreateHaiAgent = vi.mocked(createKbAgent);
 
@@ -1927,5 +1934,348 @@ describe("TriageProcessor enginePaused agent termination", () => {
     expect(onError).not.toHaveBeenCalled();
     // Status should be cleared
     expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: null });
+  });
+});
+
+// ── Triage spec review loop tests ──────────────────────────────────
+
+describe("TriageProcessor review_spec tool", () => {
+  let tmpDir: string;
+
+  const makeTask = (id = "KB-001") => ({
+    id,
+    title: "Test",
+    description: "Test task",
+    column: "triage" as const,
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tmpDir = mkdtempSync(join(tmpdir(), "kb-triage-review-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function writePromptMd(rootDir: string, taskId: string, content: string) {
+    const dir = join(rootDir, ".kb", "tasks", taskId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "PROMPT.md"), content);
+  }
+
+  it("registers review_spec as a custom tool on createKbAgent calls", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+      },
+    } as any);
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledOnce();
+    const callArgs = mockedCreateHaiAgent.mock.calls[0][0];
+    const tools = callArgs.customTools as any[];
+    const reviewTool = tools.find((t: any) => t.name === "review_spec");
+    expect(reviewTool).toBeDefined();
+    expect(reviewTool.name).toBe("review_spec");
+    expect(reviewTool.description).toContain("reviewer");
+  });
+
+  it("system prompt contains instructions for calling review_spec", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+      },
+    } as any);
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    const callArgs = mockedCreateHaiAgent.mock.calls[0][0];
+    const systemPrompt = callArgs.systemPrompt as string;
+    expect(systemPrompt).toContain("review_spec()");
+    expect(systemPrompt).toContain("APPROVE");
+    expect(systemPrompt).toContain("REVISE");
+    expect(systemPrompt).toContain("RETHINK");
+  });
+
+  it("when reviewer returns APPROVE, task proceeds to todo normally", async () => {
+    const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Review Level: 0\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Simulate the agent calling review_spec
+            if (reviewSpecTool) {
+              await reviewSpecTool.execute("call-1", {});
+            }
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    mockedReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Good spec",
+      summary: "Looks good",
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    // Task should move to todo
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+  });
+
+  it("review_spec tool calls reviewStep with reviewType spec", async () => {
+    const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Review Level: 0\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reviewSpecTool) {
+              await reviewSpecTool.execute("call-1", {});
+            }
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    mockedReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Good spec",
+      summary: "Looks good",
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    expect(mockedReviewStep).toHaveBeenCalledTimes(1);
+    const reviewArgs = mockedReviewStep.mock.calls[0];
+    expect(reviewArgs[0]).toBe(tmpDir); // cwd = rootDir
+    expect(reviewArgs[1]).toBe("KB-001"); // taskId
+    expect(reviewArgs[2]).toBe(0); // stepNumber
+    expect(reviewArgs[3]).toBe("Specification"); // stepName
+    expect(reviewArgs[4]).toBe("spec"); // reviewType
+    expect(reviewArgs[5]).toBe(promptContent); // promptContent
+  });
+
+  it("logs review verdict via store.logEntry", async () => {
+    const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reviewSpecTool) {
+              await reviewSpecTool.execute("call-1", {});
+            }
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    mockedReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Good spec",
+      summary: "Looks good",
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    // Check logEntry calls for review-related entries
+    const logCalls = store.logEntry.mock.calls;
+    const reviewRequestLog = logCalls.find((c: any[]) => c[1] === "Spec review requested");
+    expect(reviewRequestLog).toBeDefined();
+
+    const verdictLog = logCalls.find((c: any[]) => c[1] === "Spec review: APPROVE");
+    expect(verdictLog).toBeDefined();
+    expect(verdictLog![2]).toBe("Looks good"); // summary as outcome
+  });
+
+  it("reviewer failure returns UNAVAILABLE to the agent", async () => {
+    const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    let reviewResult: any;
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reviewSpecTool) {
+              reviewResult = await reviewSpecTool.execute("call-1", {});
+            }
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    mockedReviewStep.mockRejectedValue(new Error("API connection failed"));
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    expect(reviewResult.content[0].text).toContain("UNAVAILABLE");
+    expect(reviewResult.content[0].text).toContain("API connection failed");
+  });
+
+  it("returns UNAVAILABLE when PROMPT.md file does not exist", async () => {
+    const store = createMockStore();
+
+    let reviewResult: any;
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reviewSpecTool) {
+              reviewResult = await reviewSpecTool.execute("call-1", {});
+            }
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    expect(reviewResult.content[0].text).toContain("UNAVAILABLE");
+    expect(reviewResult.content[0].text).toContain("not found or empty");
+  });
+
+  it("post-session REVISE gate prevents moving to todo when last verdict is REVISE", async () => {
+    const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Simulate the agent calling review_spec but getting REVISE and then stopping
+            if (reviewSpecTool) {
+              await reviewSpecTool.execute("call-1", {});
+            }
+            // Agent finishes without APPROVE
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    mockedReviewStep.mockResolvedValue({
+      verdict: "REVISE",
+      review: "Missing test requirements",
+      summary: "Spec needs work",
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    // Task should NOT move to todo
+    expect(store.moveTask).not.toHaveBeenCalled();
+    // Status should be cleared
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: null });
+    // Should log the REVISE gate
+    const logCalls = store.logEntry.mock.calls;
+    const reviseGateLog = logCalls.find((c: any[]) =>
+      typeof c[1] === "string" && c[1].includes("not approved"),
+    );
+    expect(reviseGateLog).toBeDefined();
+  });
+
+  it("REVISE tool response includes review feedback", async () => {
+    const store = createMockStore();
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    let reviewResult: any;
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reviewSpecTool) {
+              reviewResult = await reviewSpecTool.execute("call-1", {});
+            }
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    mockedReviewStep.mockResolvedValue({
+      verdict: "REVISE",
+      review: "Missing test requirements\n\nAdd real tests.",
+      summary: "Spec needs work",
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    expect(reviewResult.content[0].text).toContain("REVISE");
+    expect(reviewResult.content[0].text).toContain("Missing test requirements");
+    expect(reviewResult.content[0].text).toContain("call review_spec() again");
   });
 });

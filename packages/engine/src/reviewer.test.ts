@@ -80,6 +80,121 @@ describe("reviewStep — model settings threading", () => {
   });
 });
 
+describe("reviewStep — spec review type", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("extracts verdict correctly for spec reviews", async () => {
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("## Spec Review: KB-050\n\n### Verdict: APPROVE\n### Summary\nSpec looks complete and well-structured."),
+    );
+
+    const result = await reviewStep(
+      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec", "# Task: KB-050\n\n## Mission\nDo something",
+    );
+
+    expect(result.verdict).toBe("APPROVE");
+    expect(result.summary).toContain("well-structured");
+  });
+
+  it("extracts REVISE verdict for spec reviews", async () => {
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("## Spec Review: KB-050\n\n### Verdict: REVISE\n### Summary\nMissing test requirements."),
+    );
+
+    const result = await reviewStep(
+      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec", "# Task: KB-050",
+    );
+
+    expect(result.verdict).toBe("REVISE");
+  });
+
+  it("extracts RETHINK verdict for spec reviews", async () => {
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("## Spec Review: KB-050\n\n### Verdict: RETHINK\n### Summary\nFundamentally wrong approach."),
+    );
+
+    const result = await reviewStep(
+      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec", "# Task: KB-050",
+    );
+
+    expect(result.verdict).toBe("RETHINK");
+  });
+
+  it("calls createKbAgent with readonly tools and correct system prompt", async () => {
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nGood spec."),
+    );
+
+    await reviewStep(
+      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec", "# Task: KB-050",
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect(opts.tools).toBe("readonly");
+    expect(opts.systemPrompt).toContain("Spec Review Format");
+    expect(opts.systemPrompt).toContain("Mission clarity");
+  });
+
+  it("builds review request with spec-specific instructions", async () => {
+    let capturedPrompt = "";
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          capturedPrompt = prompt;
+        }),
+        subscribe: vi.fn().mockImplementation((cb: any) => {
+          cb({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    await reviewStep(
+      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec",
+      "# Task: KB-050\n\n## Mission\nDo something great",
+    );
+
+    expect(capturedPrompt).toContain("Evaluate this PROMPT.md specification");
+    expect(capturedPrompt).toContain("spec quality criteria");
+    expect(capturedPrompt).toContain("# Task: KB-050");
+    // Spec reviews should NOT contain git diff instructions
+    expect(capturedPrompt).not.toContain("git diff");
+  });
+
+  it("does not include git diff instructions for spec reviews", async () => {
+    let capturedPrompt = "";
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          capturedPrompt = prompt;
+        }),
+        subscribe: vi.fn().mockImplementation((cb: any) => {
+          cb({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    // Pass a baseline — should be ignored for spec reviews
+    await reviewStep(
+      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec",
+      "# Task: KB-050", "abc123",
+    );
+
+    expect(capturedPrompt).not.toContain("git diff");
+    expect(capturedPrompt).not.toContain("abc123");
+  });
+});
+
 describe("reviewStep — exhausted-retry error detection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
