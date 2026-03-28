@@ -11,10 +11,10 @@ import type { Column } from "@kb/core";
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "specifying"]);
 
 /** Mirrors the cardClass computation from TaskCard.tsx */
-function computeCardClass(opts: { dragging?: boolean; queued?: boolean; status?: string; column?: Column }): string {
-  const { dragging = false, queued = false, status, column = "todo" } = opts;
+function computeCardClass(opts: { dragging?: boolean; queued?: boolean; status?: string; column?: Column; engineStopped?: boolean }): string {
+  const { dragging = false, queued = false, status, column = "todo", engineStopped } = opts;
   const isFailed = status === "failed";
-  const isAgentActive = !queued && !isFailed && (column === "in-progress" || ACTIVE_STATUSES.has(status as string));
+  const isAgentActive = !engineStopped && !queued && !isFailed && (column === "in-progress" || ACTIVE_STATUSES.has(status as string));
   return `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}`;
 }
 
@@ -95,6 +95,35 @@ describe("TaskCard agent-active class", () => {
     const cls = computeCardClass({ column: "in-progress", status: "failed" });
     expect(cls).not.toContain("agent-active");
     expect(cls).toContain("failed");
+  });
+
+  // engineStopped tests
+
+  it("does NOT apply agent-active when engineStopped is true with active status", () => {
+    for (const status of ["planning", "researching", "executing", "finalizing", "merging", "specifying"]) {
+      const cls = computeCardClass({ status, engineStopped: true });
+      expect(cls).not.toContain("agent-active");
+    }
+  });
+
+  it("does NOT apply agent-active when engineStopped is true for in-progress column", () => {
+    const cls = computeCardClass({ column: "in-progress", engineStopped: true });
+    expect(cls).not.toContain("agent-active");
+  });
+
+  it("does NOT apply agent-active when engineStopped is true with active status and in-progress column", () => {
+    const cls = computeCardClass({ column: "in-progress", status: "executing", engineStopped: true });
+    expect(cls).not.toContain("agent-active");
+  });
+
+  it("applies agent-active when engineStopped is false with active status", () => {
+    const cls = computeCardClass({ status: "executing", engineStopped: false });
+    expect(cls).toContain("agent-active");
+  });
+
+  it("applies agent-active when engineStopped is undefined (backward compat)", () => {
+    const cls = computeCardClass({ status: "executing", engineStopped: undefined });
+    expect(cls).toContain("agent-active");
   });
 });
 

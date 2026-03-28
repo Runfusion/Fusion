@@ -27,6 +27,7 @@ function renderBoard() {
       onNewTask={noop}
       autoMerge={false}
       onToggleAutoMerge={noop}
+      engineStopped={false}
     />,
   );
 }

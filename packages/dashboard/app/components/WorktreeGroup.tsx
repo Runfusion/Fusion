@@ -9,6 +9,7 @@ interface WorktreeGroupProps {
   queuedTasks: Task[];
   onOpenDetail: (task: TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
+  engineStopped?: boolean;
 }
 
 export function WorktreeGroup({
@@ -17,6 +18,7 @@ export function WorktreeGroup({
   queuedTasks,
   onOpenDetail,
   addToast,
+  engineStopped,
 }: WorktreeGroupProps) {
   return (
     <div className="worktree-group">
@@ -27,7 +29,7 @@ export function WorktreeGroup({
         <span className="worktree-label">{label}</span>
       </div>
       {activeTasks.map((task) => (
-        <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} />
+        <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} engineStopped={engineStopped} />
       ))}
       {queuedTasks.map((task) => (
         <TaskCard
@@ -36,6 +38,7 @@ export function WorktreeGroup({
           queued
           onOpenDetail={onOpenDetail}
           addToast={addToast}
+          engineStopped={engineStopped}
         />
       ))}
     </div>
