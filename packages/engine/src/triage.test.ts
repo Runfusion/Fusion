@@ -1425,12 +1425,25 @@ describe("TriageProcessor dependency parsing", () => {
 `;
     await writePromptMd(tmpDir, "KB-001", promptContent);
 
-    mockedCreateHaiAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
-        dispose: vi.fn(),
-      },
-    } as any);
+    mockedReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Good",
+      summary: "Approved",
+    });
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reviewSpecTool) await reviewSpecTool.execute("call-1", {});
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
 
     const triage = new TriageProcessor(store, tmpDir);
     await triage.specifyTask(makeTask());
@@ -1469,12 +1482,25 @@ describe("TriageProcessor dependency parsing", () => {
 `;
     await writePromptMd(tmpDir, "KB-001", promptContent);
 
-    mockedCreateHaiAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
-        dispose: vi.fn(),
-      },
-    } as any);
+    mockedReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Good",
+      summary: "Approved",
+    });
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reviewSpecTool) await reviewSpecTool.execute("call-1", {});
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
 
     const triage = new TriageProcessor(store, tmpDir);
     await triage.specifyTask(makeTask());
@@ -1506,12 +1532,25 @@ describe("TriageProcessor dependency parsing", () => {
 `;
     await writePromptMd(tmpDir, "KB-001", promptContent);
 
-    mockedCreateHaiAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
-        dispose: vi.fn(),
-      },
-    } as any);
+    mockedReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Good",
+      summary: "Approved",
+    });
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reviewSpecTool) await reviewSpecTool.execute("call-1", {});
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
 
     const triage = new TriageProcessor(store, tmpDir);
     await triage.specifyTask(makeTask());
@@ -1822,29 +1861,58 @@ describe("TriageProcessor global pause agent kill", () => {
 });
 
 describe("TriageProcessor enginePaused soft pause (no agent termination)", () => {
+  let tmpDir: string;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    tmpDir = mkdtempSync(join(tmpdir(), "kb-triage-epause-"));
   });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function writePromptMd(rootDir: string, taskId: string, content: string) {
+    const dir = join(rootDir, ".kb", "tasks", taskId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "PROMPT.md"), content);
+  }
 
   it("does NOT terminate active triage sessions when enginePaused transitions false→true", async () => {
     const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
     const disposeFn = vi.fn();
 
-    mockedCreateHaiAgent.mockImplementation(async () => ({
-      session: {
-        prompt: vi.fn().mockImplementation(async () => {
-          // Trigger engine pause while the session is active
-          store._trigger("settings:updated", {
-            settings: { enginePaused: true },
-            previous: { enginePaused: false },
-          });
-          // Session continues normally — no error thrown
-        }),
-        dispose: disposeFn,
-      },
-    } as any));
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
 
-    const triage = new TriageProcessor(store, "/tmp/test");
+    mockedReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Good",
+      summary: "Approved",
+    });
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Trigger engine pause while the session is active
+            store._trigger("settings:updated", {
+              settings: { enginePaused: true },
+              previous: { enginePaused: false },
+            });
+            // Session continues normally — get APPROVE so task proceeds
+            if (reviewSpecTool) await reviewSpecTool.execute("call-1", {});
+          }),
+          dispose: disposeFn,
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
 
     await triage.specifyTask({
       id: "KB-001",
@@ -1868,21 +1936,37 @@ describe("TriageProcessor enginePaused soft pause (no agent termination)", () =>
 
   it("does NOT clear specifying status when enginePaused transitions false→true", async () => {
     const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
 
-    mockedCreateHaiAgent.mockImplementation(async () => ({
-      session: {
-        prompt: vi.fn().mockImplementation(async () => {
-          store._trigger("settings:updated", {
-            settings: { enginePaused: true },
-            previous: { enginePaused: false },
-          });
-          // Session continues normally
-        }),
-        dispose: vi.fn(),
-      },
-    } as any));
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
 
-    const triage = new TriageProcessor(store, "/tmp/test");
+    mockedReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Good",
+      summary: "Approved",
+    });
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            store._trigger("settings:updated", {
+              settings: { enginePaused: true },
+              previous: { enginePaused: false },
+            });
+            // Session continues normally — get APPROVE so task proceeds
+            if (reviewSpecTool) await reviewSpecTool.execute("call-1", {});
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
 
     await triage.specifyTask({
       id: "KB-001",
@@ -2242,5 +2326,166 @@ describe("TriageProcessor review_spec tool", () => {
     expect(reviewResult.content[0].text).toContain("REVISE");
     expect(reviewResult.content[0].text).toContain("Missing test requirements");
     expect(reviewResult.content[0].text).toContain("call review_spec() again");
+  });
+
+  it("post-session gate blocks when agent finishes without ever calling review_spec (verdict null)", async () => {
+    const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+      },
+    } as any);
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    // Task should NOT move to todo
+    expect(store.moveTask).not.toHaveBeenCalled();
+    // Status should be cleared
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: null });
+    // Should log that review_spec was never called
+    const logCalls = store.logEntry.mock.calls;
+    const gateLog = logCalls.find((c: any[]) =>
+      typeof c[1] === "string" && c[1].includes("review_spec was never called"),
+    );
+    expect(gateLog).toBeDefined();
+  });
+
+  it("post-session gate blocks when last verdict is RETHINK", async () => {
+    const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Agent calls review_spec, gets RETHINK, then finishes without APPROVE
+            if (reviewSpecTool) {
+              await reviewSpecTool.execute("call-1", {});
+            }
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          navigateTree: vi.fn().mockResolvedValue(undefined),
+        },
+      } as any;
+    });
+
+    mockedReviewStep.mockResolvedValue({
+      verdict: "RETHINK",
+      review: "Wrong approach entirely",
+      summary: "Rejected",
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    // Task should NOT move to todo
+    expect(store.moveTask).not.toHaveBeenCalled();
+    // Status should be cleared
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: null });
+    // Should log the RETHINK verdict
+    const logCalls = store.logEntry.mock.calls;
+    const gateLog = logCalls.find((c: any[]) =>
+      typeof c[1] === "string" && c[1].includes("verdict was RETHINK"),
+    );
+    expect(gateLog).toBeDefined();
+  });
+
+  it("post-session gate blocks when reviewer throws (verdict stays null)", async () => {
+    const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Agent calls review_spec but reviewer throws
+            if (reviewSpecTool) {
+              await reviewSpecTool.execute("call-1", {});
+            }
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    mockedReviewStep.mockRejectedValue(new Error("Reviewer API unavailable"));
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    // Task should NOT move to todo — verdict stays null because catch block doesn't set it
+    expect(store.moveTask).not.toHaveBeenCalled();
+    // Status should be cleared
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: null });
+    // Should log that review_spec was never called (verdict is null)
+    const logCalls = store.logEntry.mock.calls;
+    const gateLog = logCalls.find((c: any[]) =>
+      typeof c[1] === "string" && c[1].includes("review_spec was never called"),
+    );
+    expect(gateLog).toBeDefined();
+  });
+
+  it("post-session gate blocks when verdict is UNAVAILABLE", async () => {
+    const store = createMockStore();
+    store.parseDependenciesFromPrompt.mockResolvedValue([]);
+
+    const promptContent = "# Task: KB-001\n\n**Size:** S\n\n## Steps\n";
+    await writePromptMd(tmpDir, "KB-001", promptContent);
+
+    let reviewSpecTool: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      reviewSpecTool = opts.customTools?.find((t: any) => t.name === "review_spec");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            if (reviewSpecTool) {
+              await reviewSpecTool.execute("call-1", {});
+            }
+          }),
+          dispose: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      } as any;
+    });
+
+    mockedReviewStep.mockResolvedValue({
+      verdict: "UNAVAILABLE",
+      review: "",
+      summary: "Reviewer error",
+    });
+
+    const triage = new TriageProcessor(store, tmpDir);
+    await triage.specifyTask(makeTask());
+
+    // Task should NOT move to todo
+    expect(store.moveTask).not.toHaveBeenCalled();
+    // Status should be cleared
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: null });
+    // Should log the UNAVAILABLE verdict
+    const logCalls = store.logEntry.mock.calls;
+    const gateLog = logCalls.find((c: any[]) =>
+      typeof c[1] === "string" && c[1].includes("verdict was UNAVAILABLE"),
+    );
+    expect(gateLog).toBeDefined();
   });
 });

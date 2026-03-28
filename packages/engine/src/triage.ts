@@ -376,7 +376,7 @@ export class TriageProcessor {
    * - **APPROVE**: the spec is accepted and the task moves to `todo`
    * - **REVISE**: the agent revises the spec and calls `review_spec()` again.
    *   If the agent finishes without getting APPROVE, the task is NOT moved to
-   *   `todo` — a post-session gate checks the last verdict.
+   *   `todo` — a post-session gate requires an explicit APPROVE verdict.
    * - **RETHINK**: the conversation rewinds to a pre-specification checkpoint
    *   and the agent starts over with a fundamentally different approach.
    */
@@ -475,15 +475,21 @@ export class TriageProcessor {
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           checkSessionError(session);
 
-          // Post-session REVISE gate: if the last review_spec verdict was REVISE
-          // and the agent finished without getting APPROVE, don't move to todo.
-          if (specReviewVerdictRef.current === "REVISE") {
+          // Post-session APPROVE gate: only advance to todo when the spec
+          // reviewer explicitly approved.  Any other verdict (REVISE,
+          // RETHINK, UNAVAILABLE) or a missing review (null) keeps the task
+          // in triage so unreviewed / rejected specs never reach execution.
+          if (specReviewVerdictRef.current !== "APPROVE") {
+            const verdictDesc =
+              specReviewVerdictRef.current === null
+                ? "review_spec was never called"
+                : `verdict was ${specReviewVerdictRef.current}`;
             triageLog.log(
-              `${task.id} spec review ended with REVISE — not moving to todo`,
+              `${task.id} spec review not approved (${verdictDesc}) — not moving to todo`,
             );
             await this.store.logEntry(
               task.id,
-              "Spec review ended with REVISE verdict — specification not approved",
+              `Spec review not approved (${verdictDesc}) — specification not approved`,
             );
             await this.store.updateTask(task.id, { status: null });
             return;
