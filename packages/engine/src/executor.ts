@@ -40,10 +40,6 @@ const taskCreateParams = Type.Object({
   ),
 });
 
-const taskAddDepParams = Type.Object({
-  task_id: Type.String({ description: "The ID of the task to depend on (e.g. \"KB-001\")" }),
-});
-
 const reviewStepParams = Type.Object({
   step: Type.Number({ description: "Step number to review" }),
   type: Type.Union(
@@ -83,8 +79,6 @@ You have tools to report progress. The board updates in real-time.
 **Logging important actions:** \`task_log(message="what happened")\`
 
 **Out-of-scope work found during execution:** \`task_create(description="what needs doing")\`
-
-**Discovered a dependency:** \`task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first
 
 ## Cross-model review via review_step tool
 
@@ -358,7 +352,6 @@ export class TaskExecutor {
         this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stepCheckpoints),
         this.createTaskLogTool(task.id),
         this.createTaskCreateTool(),
-        this.createTaskAddDepTool(task.id),
         this.createTaskDoneTool(task.id, () => { taskDone = true; }),
         this.createReviewStepTool(task.id, worktreePath, detail.prompt, codeReviewVerdicts, sessionRef, stepCheckpoints),
       ];
@@ -540,73 +533,6 @@ export class TaskExecutor {
           content: [{
             type: "text" as const,
             text: `Created ${task.id}: ${params.description}${deps}`,
-          }],
-          details: {},
-        };
-      },
-    };
-  }
-
-  private createTaskAddDepTool(taskId: string): ToolDefinition {
-    const store = this.store;
-    return {
-      name: "task_add_dep",
-      label: "Add Dependency",
-      description:
-        "Declare a dependency on an existing task. Use when you discover " +
-        "mid-execution that another task must be completed first. " +
-        "The dependency is appended to this task's dependencies array.",
-      parameters: taskAddDepParams,
-      execute: async (_id: string, params: Static<typeof taskAddDepParams>) => {
-        const targetId = params.task_id;
-
-        // Prevent self-dependency
-        if (targetId === taskId) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: `Cannot add self-dependency: ${taskId} cannot depend on itself.`,
-            }],
-            details: {},
-          };
-        }
-
-        // Validate target task exists
-        try {
-          await store.getTask(targetId);
-        } catch {
-          return {
-            content: [{
-              type: "text" as const,
-              text: `Task ${targetId} not found. Cannot add dependency on a non-existent task.`,
-            }],
-            details: {},
-          };
-        }
-
-        // Read current task to get existing dependencies
-        const currentTask = await store.getTask(taskId);
-        const existing = currentTask.dependencies;
-
-        // Dedup check
-        if (existing.includes(targetId)) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: `${targetId} is already a dependency of ${taskId}. No changes made.`,
-            }],
-            details: {},
-          };
-        }
-
-        // Add the dependency
-        await store.updateTask(taskId, { dependencies: [...existing, targetId] });
-        await store.logEntry(taskId, `Added dependency on ${targetId}`);
-
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Added dependency: ${taskId} now depends on ${targetId}.`,
           }],
           details: {},
         };
