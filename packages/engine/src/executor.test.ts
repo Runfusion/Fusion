@@ -1316,6 +1316,142 @@ describe("TaskExecutor global pause behavior", () => {
   });
 });
 
+describe("TaskExecutor enginePaused agent termination", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("disposes all active sessions when enginePaused transitions false→true", async () => {
+    const store = createMockStore();
+    const disposeFn1 = vi.fn();
+    const disposeFn2 = vi.fn();
+    let callCount = 0;
+
+    mockedCreateHaiAgent.mockImplementation(async () => {
+      callCount++;
+      const dispose = callCount === 1 ? disposeFn1 : disposeFn2;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Fire engine pause when the second task starts
+            if (callCount === 2) {
+              store._trigger("settings:updated", {
+                settings: { enginePaused: true },
+                previous: { enginePaused: false },
+              });
+            }
+            throw new Error("Session terminated");
+          }),
+          dispose,
+        },
+      } as any;
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await Promise.all([
+      executor.execute({
+        id: "KB-001", title: "T1", description: "T", column: "in-progress",
+        dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      }),
+      executor.execute({
+        id: "KB-002", title: "T2", description: "T", column: "in-progress",
+        dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      }),
+    ]);
+
+    // Both tasks should be moved to todo (not marked as failed)
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("KB-002", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("KB-001", { status: "failed" });
+    expect(store.updateTask).not.toHaveBeenCalledWith("KB-002", { status: "failed" });
+  });
+
+  it("moves terminated tasks to todo (not failed)", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          store._trigger("settings:updated", {
+            settings: { enginePaused: true },
+            previous: { enginePaused: false },
+          });
+          throw new Error("Session terminated");
+        }),
+        dispose: vi.fn(),
+      },
+    } as any));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("KB-001", { status: "failed" });
+  });
+
+  it("takes no action when enginePaused stays false (false→false)", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          store._trigger("settings:updated", {
+            settings: { enginePaused: false },
+            previous: { enginePaused: false },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    // Should move to in-review (normal completion), not todo
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
+  });
+
+  it("takes no action when enginePaused stays true (true→true)", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          store._trigger("settings:updated", {
+            settings: { enginePaused: true },
+            previous: { enginePaused: true },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    // Should move to in-review (normal completion), not todo
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
+  });
+});
+
 // ── Code review verdict enforcement tests ────────────────────────────
 
 const mockedReviewStep = vi.mocked(mockedReviewStepFn);
