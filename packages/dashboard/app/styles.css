@@ -176,6 +176,8 @@ body {
   height: calc(100vh - 57px);
   overflow-x: auto;
   overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 50%;
   scrollbar-color: var(--border) transparent;
   scrollbar-width: thin;
 }
@@ -201,6 +203,7 @@ body {
   min-width: 260px;
   min-height: 0;
   transition: border-color 0.2s;
+  scroll-snap-align: center;
 }
 
 .column.drag-over {
@@ -1520,6 +1523,7 @@ body {
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scroll-snap-type: x mandatory;
+    scroll-padding-inline: calc(50% - 140px);
     padding: 12px;
     gap: 12px;
   }
@@ -1527,7 +1531,7 @@ body {
   .board > .column {
     min-width: 280px;
     flex-shrink: 0;
-    scroll-snap-align: start;
+    scroll-snap-align: center;
   }
 
   /* Reduce header padding to reclaim horizontal space */
