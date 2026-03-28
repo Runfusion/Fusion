@@ -1300,6 +1300,23 @@ html, body {
    On narrow viewports (≤768px) the modal goes full-screen, action buttons wrap,
    and spacing is reduced to stay usable on screens as small as 320px. */
 @media (max-width: 768px) {
+  /* Board: horizontal scroll-snap for swipe-between-columns */
+  .board {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .board > .column {
+    min-width: 280px;
+    flex-shrink: 0;
+    scroll-snap-align: start;
+  }
+
   .modal-overlay {
     padding-top: 0;
     align-items: stretch;
