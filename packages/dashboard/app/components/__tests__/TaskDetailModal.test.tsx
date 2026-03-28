@@ -620,6 +620,150 @@ describe("TaskDetailModal", () => {
     });
   });
 
+  describe("mobile responsive structure", () => {
+    it("modal container has both 'modal' and 'modal-lg' classes for responsive CSS targeting", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const modal = container.querySelector(".modal.modal-lg");
+      expect(modal).toBeTruthy();
+    });
+
+    it("modal overlay has 'modal-overlay' and 'open' classes", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const overlay = container.querySelector(".modal-overlay.open");
+      expect(overlay).toBeTruthy();
+    });
+
+    it("modal-actions contains the spacer div for flex layout", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-progress" as Column })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const actions = container.querySelector(".modal-actions");
+      expect(actions).toBeTruthy();
+      // Spacer div with flex: 1 separates left actions from right actions
+      const spacer = actions!.querySelector("div");
+      expect(spacer).toBeTruthy();
+      expect((spacer as HTMLElement).style.flex).toContain("1");
+    });
+
+    it("tab buttons use CSS classes instead of inline styles for responsive override", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const tabs = container.querySelectorAll(".detail-tab");
+      expect(tabs.length).toBe(2);
+      // Tabs should use class-based styling, not inline styles
+      expect(tabs[0].classList.contains("detail-tab")).toBe(true);
+      expect(tabs[0].classList.contains("detail-tab-active")).toBe(true); // Definition is default active
+      expect(tabs[1].classList.contains("detail-tab-active")).toBe(false);
+      // Verify no inline padding/fontSize (responsive CSS controls this)
+      expect((tabs[0] as HTMLElement).style.padding).toBe("");
+      expect((tabs[0] as HTMLElement).style.fontSize).toBe("");
+    });
+
+    it("detail-tabs container uses CSS class instead of inline styles", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const tabsContainer = container.querySelector(".detail-tabs");
+      expect(tabsContainer).toBeTruthy();
+      // Should not have inline display/borderBottom styles — CSS class handles it
+      expect((tabsContainer as HTMLElement).style.display).toBe("");
+      expect((tabsContainer as HTMLElement).style.borderBottom).toBe("");
+    });
+
+    it("detail-body is present and scrollable (flex: 1 + overflow-y: auto via CSS)", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const body = container.querySelector(".detail-body");
+      expect(body).toBeTruthy();
+    });
+
+    it("modal-actions contains Delete and Pause buttons for non-done tasks", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-progress" as Column })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Delete")).toBeTruthy();
+      expect(screen.getByText("Pause")).toBeTruthy();
+    });
+
+    it("in-review modal-actions contains Merge & Close and Back to In Progress buttons", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review" as Column })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Merge & Close")).toBeTruthy();
+      expect(screen.getByText("Back to In Progress")).toBeTruthy();
+    });
+  });
+
   describe("dependency dropdown search", () => {
     const searchTasks: Task[] = [
       { id: "KB-010", title: "Fix login bug", description: "Users cannot log in", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },

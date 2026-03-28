@@ -263,36 +263,16 @@ export function TaskDetailModal({
             Created {new Date(task.createdAt).toLocaleDateString()} · Updated{" "}
             {new Date(task.updatedAt).toLocaleDateString()}
           </div>
-          <div className="detail-tabs" style={{ display: "flex", gap: "0", borderBottom: "1px solid var(--border, #333)", marginBottom: "12px" }}>
+          <div className="detail-tabs">
             <button
               className={`detail-tab${activeTab === "definition" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("definition")}
-              style={{
-                padding: "8px 16px",
-                background: "none",
-                border: "none",
-                borderBottom: activeTab === "definition" ? "2px solid var(--accent, #7c5cbf)" : "2px solid transparent",
-                color: activeTab === "definition" ? "var(--text-primary, #fff)" : "var(--text-secondary, #888)",
-                cursor: "pointer",
-                fontSize: "14px",
-                fontWeight: activeTab === "definition" ? 600 : 400,
-              }}
             >
               Definition
             </button>
             <button
               className={`detail-tab${activeTab === "agent-log" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("agent-log")}
-              style={{
-                padding: "8px 16px",
-                background: "none",
-                border: "none",
-                borderBottom: activeTab === "agent-log" ? "2px solid var(--accent, #7c5cbf)" : "2px solid transparent",
-                color: activeTab === "agent-log" ? "var(--text-primary, #fff)" : "var(--text-secondary, #888)",
-                cursor: "pointer",
-                fontSize: "14px",
-                fontWeight: activeTab === "agent-log" ? 600 : 400,
-              }}
             >
               Agent Log
             </button>

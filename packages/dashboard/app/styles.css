@@ -1268,3 +1268,79 @@ html, body {
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/* === Detail Tabs === */
+.detail-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.detail-tab {
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  font-family: inherit;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.detail-tab-active {
+  border-bottom-color: var(--in-progress);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* === Mobile: Task Detail Modal ===
+   On narrow viewports (≤768px) the modal goes full-screen, action buttons wrap,
+   and spacing is reduced to stay usable on screens as small as 320px. */
+@media (max-width: 768px) {
+  .modal-overlay {
+    padding-top: 0;
+    align-items: stretch;
+  }
+
+  .modal,
+  .modal-lg {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .detail-body {
+    padding: 14px;
+  }
+
+  .detail-title {
+    font-size: 16px;
+  }
+
+  .modal-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .modal-actions .btn {
+    min-width: 0;
+  }
+
+  .modal-header {
+    padding: 12px 14px;
+  }
+
+  .detail-tab {
+    padding: 8px 12px;
+    font-size: 13px;
+    flex: 1;
+    text-align: center;
+  }
+}
