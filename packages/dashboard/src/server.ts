@@ -31,7 +31,6 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   //   2. Next to process.execPath (bun-compiled binary: dist/kb + dist/client/)
   //   3. __dirname/../dist/client  (running from src/ via tsx/ts-node)
   //   4. __dirname/../client        (running from dist/ after tsc)
-  //   5. __dirname/../public        (fallback for dev)
   const execDir = dirname(process.execPath);
   const clientDir = process.env.KB_CLIENT_DIR
     ? process.env.KB_CLIENT_DIR
@@ -39,9 +38,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       ? join(execDir, "client")
       : existsSync(join(__dirname, "..", "dist", "client"))
         ? join(__dirname, "..", "dist", "client")
-        : existsSync(join(__dirname, "..", "client"))
-          ? join(__dirname, "..", "client")
-          : join(__dirname, "..", "public");
+        : join(__dirname, "..", "client");
 
   app.use(express.static(clientDir));
 
