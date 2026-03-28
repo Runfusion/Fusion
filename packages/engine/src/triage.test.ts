@@ -17,7 +17,17 @@ import type { TaskDetail } from "@kb/core";
 const mockedCreateHaiAgent = vi.mocked(createKbAgent);
 
 function createMockStore(tasks: any[] = []) {
-  return {
+  const listeners = new Map<string, Function[]>();
+  const store = {
+    on: vi.fn((event: string, fn: Function) => {
+      const existing = listeners.get(event) || [];
+      existing.push(fn);
+      listeners.set(event, existing);
+    }),
+    /** Trigger registered listeners for an event (test helper). */
+    _trigger(event: string, ...args: any[]) {
+      for (const fn of listeners.get(event) || []) fn(...args);
+    },
     listTasks: vi.fn().mockResolvedValue(tasks),
     getTask: vi.fn().mockResolvedValue({
       id: "KB-001",
@@ -46,7 +56,8 @@ function createMockStore(tasks: any[] = []) {
       groupOverlappingFiles: false,
       autoMerge: false,
     }),
-  } as any;
+  };
+  return store as any;
 }
 
 function createMockTaskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
@@ -1213,5 +1224,118 @@ describe("TriageProcessor usage limit detection", () => {
 
     // Should not crash — just call onError
     expect(onError).toHaveBeenCalled();
+  });
+});
+
+describe("TriageProcessor global pause agent kill", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("disposes active triage sessions when settings:updated fires with globalPause: true", async () => {
+    const store = createMockStore();
+    const disposeFn = vi.fn();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Trigger global pause while the session is active
+          store._trigger("settings:updated", {
+            settings: { globalPause: true },
+            previous: { globalPause: false },
+          });
+          throw new Error("Session terminated");
+        }),
+        dispose: disposeFn,
+      },
+    } as any));
+
+    const triage = new TriageProcessor(store, "/tmp/test");
+
+    await triage.specifyTask({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // dispose is called by the global pause listener and again in finally
+    expect(disposeFn).toHaveBeenCalled();
+    // Status should be cleared (not reported as error)
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: null });
+  });
+
+  it("disposed triage tasks have their status cleared and are not reported as error", async () => {
+    const store = createMockStore();
+    const onError = vi.fn();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          store._trigger("settings:updated", {
+            settings: { globalPause: true },
+            previous: { globalPause: false },
+          });
+          throw new Error("Session terminated");
+        }),
+        dispose: vi.fn(),
+      },
+    } as any));
+
+    const triage = new TriageProcessor(store, "/tmp/test", { onSpecifyError: onError });
+
+    await triage.specifyTask({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // onSpecifyError should NOT be called for global-pause aborted tasks
+    expect(onError).not.toHaveBeenCalled();
+    // Status should be cleared
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: null });
+  });
+
+  it("non-pause errors still report via onSpecifyError", async () => {
+    const store = createMockStore();
+    const onError = vi.fn();
+
+    mockedCreateHaiAgent.mockImplementation(async () => {
+      throw new Error("Agent creation failed");
+    });
+
+    const triage = new TriageProcessor(store, "/tmp/test", { onSpecifyError: onError });
+
+    await triage.specifyTask({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // onSpecifyError should be called for non-pause errors
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "KB-001" }),
+      expect.any(Error),
+    );
   });
 });

@@ -164,6 +164,17 @@ export class TaskExecutor {
   /** Tasks that had a dependency added mid-execution (abort + discard worktree). */
   private depAborted = new Set<string>();
 
+  /**
+   * @param store — Task store instance (also used to listen for events)
+   * @param rootDir — Project root directory
+   * @param options — Executor configuration
+   *
+   * Listens for `task:moved` to auto-execute tasks moved to `in-progress`,
+   * `task:updated` to terminate agent sessions when individual tasks are paused,
+   * and `settings:updated` to terminate **all** active agent sessions when
+   * `globalPause` transitions from `false` to `true` (emergency stop).
+   * Paused tasks are moved back to `todo` rather than marked as `failed`.
+   */
   constructor(
     private store: TaskStore,
     private rootDir: string,
@@ -184,6 +195,17 @@ export class TaskExecutor {
         this.pausedAborted.add(task.id);
         const session = this.activeSessions.get(task.id);
         session?.dispose();
+      }
+    });
+
+    // When globalPause transitions from false → true, terminate all active agent sessions.
+    store.on("settings:updated", ({ settings, previous }) => {
+      if (settings.globalPause && !previous.globalPause) {
+        for (const [taskId, session] of this.activeSessions) {
+          executorLog.log(`Global pause — terminating agent session for ${taskId}`);
+          this.pausedAborted.add(taskId);
+          session.dispose();
+        }
       }
     });
   }

@@ -974,4 +974,52 @@ describe("TaskStore", () => {
       expect(updated.columnMovedAt).toBe(originalMovedAt);
     });
   });
+
+  describe("settings:updated event", () => {
+    it("fires on updateSettings with correct old and new values", async () => {
+      const events: { settings: any; previous: any }[] = [];
+      store.on("settings:updated", (data) => events.push(data));
+
+      await store.updateSettings({ maxConcurrent: 5 });
+
+      expect(events).toHaveLength(1);
+      expect(events[0].previous.maxConcurrent).toBe(2); // DEFAULT_SETTINGS value
+      expect(events[0].settings.maxConcurrent).toBe(5);
+    });
+
+    it("includes previous globalPause: false → new globalPause: true when toggled", async () => {
+      const events: { settings: any; previous: any }[] = [];
+      store.on("settings:updated", (data) => events.push(data));
+
+      // Default globalPause is false
+      await store.updateSettings({ globalPause: true });
+
+      expect(events).toHaveLength(1);
+      expect(events[0].previous.globalPause).toBe(false);
+      expect(events[0].settings.globalPause).toBe(true);
+    });
+
+    it("includes previous globalPause: true → new globalPause: false when toggled off", async () => {
+      await store.updateSettings({ globalPause: true });
+
+      const events: { settings: any; previous: any }[] = [];
+      store.on("settings:updated", (data) => events.push(data));
+
+      await store.updateSettings({ globalPause: false });
+
+      expect(events).toHaveLength(1);
+      expect(events[0].previous.globalPause).toBe(true);
+      expect(events[0].settings.globalPause).toBe(false);
+    });
+
+    it("fires on every updateSettings call even when value unchanged", async () => {
+      const events: { settings: any; previous: any }[] = [];
+      store.on("settings:updated", (data) => events.push(data));
+
+      await store.updateSettings({ maxConcurrent: 2 });
+      await store.updateSettings({ maxConcurrent: 2 });
+
+      expect(events).toHaveLength(2);
+    });
+  });
 });

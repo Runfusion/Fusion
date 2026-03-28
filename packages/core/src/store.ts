@@ -12,6 +12,7 @@ export interface TaskStoreEvents {
   "task:updated": [task: Task];
   "task:deleted": [task: Task];
   "task:merged": [result: MergeResult];
+  "settings:updated": [data: { settings: Settings; previous: Settings }];
   "agent:log": [entry: AgentLogEntry];
 }
 
@@ -130,10 +131,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async updateSettings(patch: Partial<Settings>): Promise<Settings> {
     return this.withConfigLock(async () => {
       const config = await this.readConfig();
-      const current = { ...DEFAULT_SETTINGS, ...config.settings };
-      const updated = { ...current, ...patch };
+      const previous = { ...DEFAULT_SETTINGS, ...config.settings };
+      const updated = { ...previous, ...patch };
       config.settings = updated;
       await this.writeConfig(config);
+      this.emit("settings:updated", { settings: updated, previous });
       return updated;
     });
   }

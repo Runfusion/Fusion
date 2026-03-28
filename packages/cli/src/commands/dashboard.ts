@@ -59,15 +59,31 @@ export async function runDashboard(port: number, opts: { open?: boolean } = {}) 
   // AI-powered merge handler (used by the web UI for manual merges).
   // Wrapped with the shared semaphore so merges count toward the global
   // concurrency limit alongside triage and execution agents.
+  //
+  // Track the active merge session so it can be killed on global pause.
+  let activeMergeSession: { dispose: () => void } | null = null;
+
   const rawMerge = (taskId: string) =>
     aiMergeTask(store, cwd, taskId, {
       pool,
       usageLimitPauser,
       onAgentText: (delta) => process.stdout.write(delta),
       onAgentTool: (name) => console.log(`[merger] tool: ${name}`),
+      onSession: (session) => { activeMergeSession = session; },
     });
 
   const onMerge = (taskId: string) => semaphore.run(() => rawMerge(taskId), PRIORITY_MERGE);
+
+  // When globalPause transitions from false → true, terminate the active merge session.
+  store.on("settings:updated", ({ settings, previous }) => {
+    if (settings.globalPause && !previous.globalPause) {
+      if (activeMergeSession) {
+        console.log("[auto-merge] Global pause — terminating active merge session");
+        activeMergeSession.dispose();
+        activeMergeSession = null;
+      }
+    }
+  });
 
   // ── Serialized auto-merge queue ─────────────────────────────────────
   //

@@ -1176,6 +1176,145 @@ describe("TaskExecutor pause behavior", () => {
   });
 });
 
+describe("TaskExecutor global pause behavior", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("disposes all active sessions when settings:updated fires with globalPause: true", async () => {
+    const store = createMockStore();
+    const disposeFn1 = vi.fn();
+    const disposeFn2 = vi.fn();
+    let callCount = 0;
+
+    mockedCreateHaiAgent.mockImplementation(async () => {
+      callCount++;
+      const dispose = callCount === 1 ? disposeFn1 : disposeFn2;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Wait for the global pause to fire; only fire once for first task
+            if (callCount === 2) {
+              store._trigger("settings:updated", {
+                settings: { globalPause: true },
+                previous: { globalPause: false },
+              });
+            }
+            throw new Error("Session terminated");
+          }),
+          dispose,
+        },
+      } as any;
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Execute two tasks concurrently
+    await Promise.all([
+      executor.execute({
+        id: "KB-001", title: "T1", description: "T", column: "in-progress",
+        dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      }),
+      executor.execute({
+        id: "KB-002", title: "T2", description: "T", column: "in-progress",
+        dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      }),
+    ]);
+
+    // Both tasks should be moved to todo (not marked as failed)
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("KB-002", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("KB-001", { status: "failed" });
+    expect(store.updateTask).not.toHaveBeenCalledWith("KB-002", { status: "failed" });
+  });
+
+  it("moves paused tasks to todo (not marked as failed)", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          store._trigger("settings:updated", {
+            settings: { globalPause: true },
+            previous: { globalPause: false },
+          });
+          throw new Error("Session terminated");
+        }),
+        dispose: vi.fn(),
+      },
+    } as any));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("KB-001", { status: "failed" });
+  });
+
+  it("takes no action when globalPause remains false", async () => {
+    const store = createMockStore();
+    const disposeFn = vi.fn();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Trigger settings:updated but globalPause stays false
+          store._trigger("settings:updated", {
+            settings: { globalPause: false },
+            previous: { globalPause: false },
+          });
+        }),
+        dispose: disposeFn,
+      },
+    } as any));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    // Should move to in-review (normal completion), not todo
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
+  });
+
+  it("takes no action when globalPause transitions from true to true", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Trigger settings:updated but globalPause is already true
+          store._trigger("settings:updated", {
+            settings: { globalPause: true },
+            previous: { globalPause: true },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    // Should move to in-review (normal completion), not todo
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
+  });
+});
 
 // ── Code review verdict enforcement tests ────────────────────────────
 

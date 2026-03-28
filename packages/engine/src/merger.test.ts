@@ -533,3 +533,50 @@ describe("aiMergeTask — usage limit detection", () => {
     );
   });
 });
+
+describe("aiMergeTask — onSession callback", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    setupHappyPathExecSync();
+  });
+
+  it("calls onSession with the session object after creation", async () => {
+    const mockSession = {
+      prompt: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+    };
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: mockSession,
+    } as any);
+
+    const onSession = vi.fn();
+    const store = createMockStore(
+      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    await aiMergeTask(store, "/tmp/root", "KB-050", { onSession });
+
+    expect(onSession).toHaveBeenCalledTimes(1);
+    expect(onSession).toHaveBeenCalledWith(mockSession);
+  });
+
+  it("works without onSession callback (backward compatible)", async () => {
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const store = createMockStore(
+      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    // Should not crash without onSession
+    await expect(aiMergeTask(store, "/tmp/root", "KB-050")).resolves.toBeDefined();
+  });
+});

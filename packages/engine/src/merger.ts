@@ -107,6 +107,10 @@ export interface MergerOptions {
   pool?: WorktreePool;
   /** Usage limit pauser — triggers global pause when API limits are detected. */
   usageLimitPauser?: UsageLimitPauser;
+  /** Called with the agent session immediately after creation. Enables the
+   *  caller (e.g. dashboard.ts) to track and externally dispose the session
+   *  when a global pause is triggered. */
+  onSession?: (session: { dispose: () => void }) => void;
 }
 
 /**
@@ -247,6 +251,9 @@ export async function aiMergeTask(
     defaultModelId: settings.defaultModelId,
     defaultThinkingLevel: settings.defaultThinkingLevel,
   });
+
+  // Notify the caller so it can track/dispose the session externally (e.g. on global pause)
+  options.onSession?.(session);
 
   try {
     const prompt = buildMergePrompt(taskId, branch, commitLog, diffStat, hasConflicts);
