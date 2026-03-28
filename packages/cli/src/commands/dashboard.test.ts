@@ -34,7 +34,26 @@ vi.mock("@kb/core", () => ({
 
 // ── Mock @kb/dashboard ─────────────────────────────────────────────
 
-const mockListen = vi.fn();
+/** Create a mock server (EventEmitter) that simulates net.Server behavior. */
+function createMockServer(portToReturn: number = 0) {
+  const emitter = new EventEmitter();
+  const server = Object.assign(emitter, {
+    listen: vi.fn((_port?: number) => {
+      process.nextTick(() => emitter.emit("listening"));
+      return server;
+    }),
+    address: vi.fn(() => ({ port: portToReturn, family: "IPv4", address: "127.0.0.1" })),
+    close: vi.fn(),
+  });
+  return server;
+}
+
+const mockListen = vi.fn((port: number) => {
+  const server = createMockServer(port);
+  process.nextTick(() => server.emit("listening"));
+  return server;
+});
+
 vi.mock("@kb/dashboard", () => ({
   createServer: vi.fn(() => ({ listen: mockListen })),
 }));
@@ -215,5 +234,120 @@ describe("runDashboard — auto-merge pause exclusion", () => {
       (call: any[]) => call[2],
     );
     expect(mergedIds).not.toContain("KB-PAUSED");
+  });
+});
+
+describe("runDashboard — port fallback on EADDRINUSE", () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { TaskStore } = await import("@kb/core");
+    (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+    const engine = await import("@kb/engine");
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ resumeOrphaned: vi.fn().mockResolvedValue(undefined) }),
+    );
+    consoleSpy = vi.spyOn(console, "log");
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  it("listens on the requested port when available", async () => {
+    await runDashboard(4040, { open: false });
+
+    // Wait for async 'listening' event
+    await new Promise((r) => setTimeout(r, 50));
+
+    // mockListen should have been called with the requested port
+    expect(mockListen).toHaveBeenCalledWith(4040);
+
+    // Banner should show the requested port
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("http://localhost:4040"),
+    );
+
+    // No warning should be printed
+    const warningCalls = consoleSpy.mock.calls.filter(
+      (args) => typeof args[0] === "string" && args[0].includes("Port 4040 in use"),
+    );
+    expect(warningCalls).toHaveLength(0);
+  });
+
+  it("falls back to a random port on EADDRINUSE", async () => {
+    const fallbackPort = 54321;
+    const serverEmitter = new EventEmitter();
+
+    // Mock the server's own listen method (used for the retry with port 0)
+    const mockServerListen = vi.fn((_port?: number) => {
+      process.nextTick(() => serverEmitter.emit("listening"));
+      return serverEmitter;
+    });
+
+    Object.assign(serverEmitter, {
+      listen: mockServerListen,
+      address: vi.fn(() => ({ port: fallbackPort, family: "IPv4", address: "127.0.0.1" })),
+      close: vi.fn(),
+    });
+
+    // Override mockListen for one call: simulate EADDRINUSE
+    mockListen.mockImplementationOnce((_port: number) => {
+      process.nextTick(() => {
+        const err = new Error("listen EADDRINUSE: address already in use") as NodeJS.ErrnoException;
+        err.code = "EADDRINUSE";
+        serverEmitter.emit("error", err);
+      });
+      return serverEmitter;
+    });
+
+    await runDashboard(4040, { open: false });
+
+    // Wait for async events to settle
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Server should have retried with port 0
+    expect(mockServerListen).toHaveBeenCalledWith(0);
+
+    // Banner should show the fallback port, not the requested port
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`http://localhost:${fallbackPort}`),
+    );
+  });
+
+  it("prints a warning when port fallback occurs", async () => {
+    const fallbackPort = 12345;
+    const serverEmitter = new EventEmitter();
+
+    const mockServerListen = vi.fn((_port?: number) => {
+      process.nextTick(() => serverEmitter.emit("listening"));
+      return serverEmitter;
+    });
+
+    Object.assign(serverEmitter, {
+      listen: mockServerListen,
+      address: vi.fn(() => ({ port: fallbackPort, family: "IPv4", address: "127.0.0.1" })),
+      close: vi.fn(),
+    });
+
+    mockListen.mockImplementationOnce((_port: number) => {
+      process.nextTick(() => {
+        const err = new Error("listen EADDRINUSE: address already in use") as NodeJS.ErrnoException;
+        err.code = "EADDRINUSE";
+        serverEmitter.emit("error", err);
+      });
+      return serverEmitter;
+    });
+
+    await runDashboard(4040, { open: false });
+
+    // Wait for async events to settle
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Should print warning with both the requested and actual ports
+    expect(consoleSpy).toHaveBeenCalledWith(
+      `⚠ Port 4040 in use, using ${fallbackPort} instead`,
+    );
   });
 });
