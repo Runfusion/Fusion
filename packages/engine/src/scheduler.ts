@@ -38,7 +38,7 @@ export function pathsOverlap(a: string[], b: string[]): boolean {
 export interface SchedulerOptions {
   /** Max concurrent in-progress tasks. Default: 2 */
   maxConcurrent?: number;
-  /** Max total worktrees (in-progress + in-review with worktree). Default: 4 */
+  /** Max worktrees for active (in-progress) tasks. Default: 4 */
   maxWorktrees?: number;
   /** Milliseconds between scheduling polls. Default: 15000 */
   pollIntervalMs?: number;
@@ -181,11 +181,11 @@ export class Scheduler {
       // Refresh the poll interval if the persisted setting has changed
       this.refreshPollInterval(settings.pollIntervalMs);
 
-      // Count all tasks with active worktrees (in-progress or in-review with worktree set)
+      // Count only in-progress tasks toward the worktree limit.
+      // In-review tasks with worktrees are idle (waiting to merge) and
+      // should not block new tasks from starting.
       const activeWorktrees = tasks.filter(
-        (t) =>
-          t.column === "in-progress" ||
-          (t.column === "in-review" && t.worktree),
+        (t) => t.column === "in-progress",
       ).length;
 
       if (activeWorktrees >= maxWorktrees) {

@@ -175,11 +175,11 @@ describe("Scheduler dynamic settings reload", () => {
   it("reads maxWorktrees from store settings on each schedule() call", async () => {
     const tasks = [
       makeTask({ id: "KB-001", column: "in-progress" }),
-      makeTask({ id: "KB-002", column: "in-review", worktree: "/tmp/wt" }),
+      makeTask({ id: "KB-002", column: "in-progress" }),
       makeTask({ id: "KB-003", column: "todo" }),
     ];
     const store = createMockStore(tasks);
-    // Start with maxWorktrees: 2 — no room (2 active worktrees)
+    // Start with maxWorktrees: 2 — no room (2 in-progress worktrees)
     store.getSettings.mockResolvedValue({
       maxConcurrent: 4,
       maxWorktrees: 2,
@@ -785,5 +785,87 @@ describe("Scheduler worktree limit logging", () => {
     );
     expect(limitMessages).toHaveLength(2);
     logSpy.mockRestore();
+  });
+});
+
+describe("Scheduler in-review worktrees do not count against maxWorktrees", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function runSchedule(scheduler: Scheduler): Promise<void> {
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+  }
+
+  it("in-review task with worktree does NOT count against maxWorktrees", async () => {
+    const tasks = [
+      makeTask({ id: "KB-001", column: "in-review", worktree: "/tmp/wt/kb-001" }),
+      makeTask({ id: "KB-002", column: "in-review", worktree: "/tmp/wt/kb-002" }),
+      makeTask({ id: "KB-003", column: "in-review", worktree: "/tmp/wt/kb-003" }),
+      makeTask({ id: "KB-004", column: "todo" }),
+    ];
+    const store = createMockStore(tasks);
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 4,
+      maxWorktrees: 2,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+    });
+    const scheduler = new Scheduler(store);
+
+    await runSchedule(scheduler);
+
+    // 3 in-review worktrees should NOT block KB-004 — only in-progress counts
+    expect(store.moveTask).toHaveBeenCalledWith("KB-004", "in-progress");
+  });
+
+  it("in-review tasks with worktrees do NOT block scheduling even when many exist", async () => {
+    const tasks = [
+      makeTask({ id: "KB-001", column: "in-review", worktree: "/tmp/wt/kb-001" }),
+      makeTask({ id: "KB-002", column: "in-review", worktree: "/tmp/wt/kb-002" }),
+      makeTask({ id: "KB-003", column: "in-review", worktree: "/tmp/wt/kb-003" }),
+      makeTask({ id: "KB-004", column: "in-review", worktree: "/tmp/wt/kb-004" }),
+      makeTask({ id: "KB-005", column: "in-review", worktree: "/tmp/wt/kb-005" }),
+      makeTask({ id: "KB-006", column: "in-progress" }),
+      makeTask({ id: "KB-007", column: "todo" }),
+    ];
+    const store = createMockStore(tasks);
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 4,
+      maxWorktrees: 2,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+    });
+    const scheduler = new Scheduler(store);
+
+    await runSchedule(scheduler);
+
+    // 5 in-review + 1 in-progress = only 1 active worktree, room for KB-007
+    expect(store.moveTask).toHaveBeenCalledWith("KB-007", "in-progress");
+  });
+
+  it("maxWorktrees correctly limits only in-progress tasks", async () => {
+    const tasks = [
+      makeTask({ id: "KB-001", column: "in-progress" }),
+      makeTask({ id: "KB-002", column: "in-progress" }),
+      makeTask({ id: "KB-003", column: "todo" }),
+    ];
+    const store = createMockStore(tasks);
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 4,
+      maxWorktrees: 2,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+    });
+    const scheduler = new Scheduler(store);
+
+    await runSchedule(scheduler);
+
+    // 2 in-progress = 2 active worktrees, maxWorktrees: 2 — no room for KB-003
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 });
