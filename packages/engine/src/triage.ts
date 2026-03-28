@@ -130,6 +130,11 @@ If a task already covers the same work (even if worded differently), do NOT
 write a PROMPT.md. Instead, write a single line to the output file:
 \`DUPLICATE: {existing-task-id}\`
 
+## Dependency awareness
+When you plan to list a task in the \`## Dependencies\` section, first call \`task_get\` on that task ID to read its PROMPT.md.
+Use what you learn — file scope, APIs, patterns, completion criteria — to make the new spec accurate: reference the right paths, avoid conflicting assumptions, and describe what the dependency must deliver before this task starts.
+If the dependency task has no PROMPT.md yet (not yet specified), note that in the Dependencies section.
+
 ## Guidelines
 - Read the project structure and relevant source files to understand context BEFORE writing
 - Be specific — name actual files, functions, and patterns from the codebase
@@ -373,7 +378,7 @@ export class TriageProcessor {
       label: "Get Task",
       description:
         "Get full details of a specific task including its PROMPT.md content. " +
-        "Use to verify whether a similar task is actually a duplicate.",
+        "Use to verify duplicates and to read dependency task specs before writing a new PROMPT.md.",
       parameters: taskGetParams,
       execute: async (_callId: string, params: Static<typeof taskGetParams>) => {
         try {

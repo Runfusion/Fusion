@@ -404,6 +404,73 @@ describe("buildSpecificationPrompt", () => {
   });
 });
 
+describe("TRIAGE_SYSTEM_PROMPT and task_get tool", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("system prompt contains dependency awareness instructions", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const triage = new TriageProcessor(store, "/tmp/test");
+    await triage.specifyTask({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const callArgs = mockedCreateHaiAgent.mock.calls[0][0];
+    const systemPrompt = callArgs.systemPrompt as string;
+    expect(systemPrompt).toContain("## Dependency awareness");
+    expect(systemPrompt).toContain("call `task_get` on that task ID to read its PROMPT.md");
+  });
+
+  it("task_get tool description mentions reading dependency specs", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const triage = new TriageProcessor(store, "/tmp/test");
+    await triage.specifyTask({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const callArgs = mockedCreateHaiAgent.mock.calls[0][0];
+    const tools = callArgs.customTools as any[];
+    const taskGetTool = tools.find((t: any) => t.name === "task_get");
+    expect(taskGetTool).toBeDefined();
+    expect(taskGetTool.description).toContain("read dependency task specs");
+  });
+});
+
 function createEnoentError(path = "/fake/path"): NodeJS.ErrnoException {
   return Object.assign(
     new Error(`ENOENT: no such file or directory, open '${path}'`),
