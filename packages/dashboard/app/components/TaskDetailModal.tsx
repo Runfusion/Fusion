@@ -59,6 +59,10 @@ export function TaskDetailModal({
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
   const [showDepDropdown, setShowDepDropdown] = useState(false);
+  const [depSearch, setDepSearch] = useState("");
+  useEffect(() => {
+    if (!showDepDropdown) setDepSearch("");
+  }, [showDepDropdown]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { entries: agentLogEntries, loading: agentLogLoading } = useAgentLogs(
     task.id,
@@ -419,27 +423,45 @@ export function TaskDetailModal({
               >
                 Add Dependency
               </button>
-              {showDepDropdown && (
-                <div className="dep-dropdown">
-                  {availableTasks.length === 0 ? (
-                    <div className="dep-dropdown-empty">No available tasks</div>
-                  ) : (
-                    availableTasks.map((t) => (
-                      <div
-                        key={t.id}
-                        className="dep-dropdown-item"
-                        onClick={() => {
-                          handleAddDep(t.id);
-                          setShowDepDropdown(false);
-                        }}
-                      >
-                        <span className="dep-dropdown-id">{t.id}</span>
-                        <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
+              {showDepDropdown && (() => {
+                const term = depSearch.toLowerCase();
+                const filtered = term
+                  ? availableTasks.filter((t) =>
+                      t.id.toLowerCase().includes(term) ||
+                      (t.title && t.title.toLowerCase().includes(term)) ||
+                      (t.description && t.description.toLowerCase().includes(term))
+                    )
+                  : availableTasks;
+                return (
+                  <div className="dep-dropdown">
+                    <input
+                      className="dep-dropdown-search"
+                      placeholder="Search tasks…"
+                      autoFocus
+                      value={depSearch}
+                      onChange={(e) => setDepSearch(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    {filtered.length === 0 ? (
+                      <div className="dep-dropdown-empty">No available tasks</div>
+                    ) : (
+                      filtered.map((t) => (
+                        <div
+                          key={t.id}
+                          className="dep-dropdown-item"
+                          onClick={() => {
+                            handleAddDep(t.id);
+                            setShowDepDropdown(false);
+                          }}
+                        >
+                          <span className="dep-dropdown-id">{t.id}</span>
+                          <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
           <div className="detail-section detail-activity">

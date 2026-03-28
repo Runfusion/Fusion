@@ -619,4 +619,98 @@ describe("TaskDetailModal", () => {
       expect(afterSwitch[1]).toBe(true);
     });
   });
+
+  describe("dependency dropdown search", () => {
+    const searchTasks: Task[] = [
+      { id: "KB-010", title: "Fix login bug", description: "Users cannot log in", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+      { id: "KB-020", title: "Add dark mode", description: "Theme support", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-02-01T00:00:00Z", updatedAt: "2026-02-01T00:00:00Z" },
+      { id: "KB-030", title: "Refactor API", description: "Clean up endpoints", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-01T00:00:00Z", updatedAt: "2026-03-01T00:00:00Z" },
+      { id: "KB-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-15T00:00:00Z", updatedAt: "2026-03-15T00:00:00Z" },
+    ];
+
+    function renderWithSearch(taskOverrides: Partial<TaskDetail> = {}) {
+      return render(
+        <TaskDetailModal
+          task={makeTask(taskOverrides)}
+          tasks={searchTasks}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+    }
+
+    it("shows search input when dropdown is opened", () => {
+      renderWithSearch();
+      fireEvent.click(screen.getByText("Add Dependency"));
+      const input = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
+      expect(input).toBeTruthy();
+      expect(input.placeholder).toBe("Search tasks…");
+    });
+
+    it("filters tasks by search term", () => {
+      renderWithSearch();
+      fireEvent.click(screen.getByText("Add Dependency"));
+      const input = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "login" } });
+
+      const items = document.querySelectorAll(".dep-dropdown-item");
+      expect(items).toHaveLength(1);
+      expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("KB-010");
+    });
+
+    it("matches task ID case-insensitively", () => {
+      renderWithSearch();
+      fireEvent.click(screen.getByText("Add Dependency"));
+      const input = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "kb-020" } });
+
+      const items = document.querySelectorAll(".dep-dropdown-item");
+      expect(items).toHaveLength(1);
+      expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("KB-020");
+    });
+
+    it("matches task title", () => {
+      renderWithSearch();
+      fireEvent.click(screen.getByText("Add Dependency"));
+      const input = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "dark mode" } });
+
+      const items = document.querySelectorAll(".dep-dropdown-item");
+      expect(items).toHaveLength(1);
+      expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("KB-020");
+    });
+
+    it("shows empty state when search matches nothing", () => {
+      renderWithSearch();
+      fireEvent.click(screen.getByText("Add Dependency"));
+      const input = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "zzz-nonexistent" } });
+
+      const items = document.querySelectorAll(".dep-dropdown-item");
+      expect(items).toHaveLength(0);
+      expect(document.querySelector(".dep-dropdown-empty")?.textContent).toBe("No available tasks");
+    });
+
+    it("resets search when dropdown closes and reopens", () => {
+      renderWithSearch();
+      fireEvent.click(screen.getByText("Add Dependency"));
+      const input = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "login" } });
+      expect(input.value).toBe("login");
+
+      // Close by clicking again
+      fireEvent.click(screen.getByText("Add Dependency"));
+      expect(document.querySelector(".dep-dropdown")).toBeNull();
+
+      // Reopen
+      fireEvent.click(screen.getByText("Add Dependency"));
+      const newInput = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
+      expect(newInput.value).toBe("");
+      // All items visible again
+      expect(document.querySelectorAll(".dep-dropdown-item")).toHaveLength(3);
+    });
+  });
 });

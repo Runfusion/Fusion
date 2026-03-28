@@ -1134,6 +1134,30 @@ html, body {
   box-shadow: var(--shadow);
 }
 
+.dep-dropdown-search {
+  position: sticky;
+  top: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--surface);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  outline: none;
+  z-index: 1;
+}
+
+.dep-dropdown-search::placeholder {
+  color: var(--text-dim);
+}
+
+.dep-dropdown-search:focus {
+  border-bottom-color: var(--accent, #58a6ff);
+}
+
 .dep-dropdown-empty {
   padding: 10px 12px;
   font-size: 12px;

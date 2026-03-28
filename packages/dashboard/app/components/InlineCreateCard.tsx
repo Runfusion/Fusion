@@ -22,6 +22,7 @@ export function InlineCreateCard({ tasks, onSubmit, onCancel, addToast }: Inline
   const [description, setDescription] = useState("");
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [showDeps, setShowDeps] = useState(false);
+  const [depSearch, setDepSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -30,6 +31,10 @@ export function InlineCreateCard({ tasks, onSubmit, onCancel, addToast }: Inline
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (!showDeps) setDepSearch("");
+  }, [showDeps]);
 
   // Cancel when focus leaves the card entirely and there's no content
   useEffect(() => {
@@ -190,24 +195,42 @@ export function InlineCreateCard({ tasks, onSubmit, onCancel, addToast }: Inline
           >
             <Link size={12} style={{ verticalAlign: 'middle' }} />{dependencies.length > 0 ? ` ${dependencies.length} deps` : " Deps"}
           </button>
-          {showDeps && (
-            <div className="dep-dropdown">
-              {tasks.length === 0 ? (
-                <div className="dep-dropdown-empty">No existing tasks</div>
-              ) : (
-                tasks.map((t) => (
-                  <div
-                    key={t.id}
-                    className={`dep-dropdown-item${dependencies.includes(t.id) ? " selected" : ""}`}
-                    onClick={() => toggleDep(t.id)}
-                  >
-                    <span className="dep-dropdown-id">{t.id}</span>
-                    <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
+          {showDeps && (() => {
+            const term = depSearch.toLowerCase();
+            const filtered = term
+              ? tasks.filter((t) =>
+                  t.id.toLowerCase().includes(term) ||
+                  (t.title && t.title.toLowerCase().includes(term)) ||
+                  (t.description && t.description.toLowerCase().includes(term))
+                )
+              : tasks;
+            return (
+              <div className="dep-dropdown">
+                <input
+                  className="dep-dropdown-search"
+                  placeholder="Search tasks…"
+                  autoFocus
+                  value={depSearch}
+                  onChange={(e) => setDepSearch(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                {filtered.length === 0 ? (
+                  <div className="dep-dropdown-empty">No existing tasks</div>
+                ) : (
+                  filtered.map((t) => (
+                    <div
+                      key={t.id}
+                      className={`dep-dropdown-item${dependencies.includes(t.id) ? " selected" : ""}`}
+                      onClick={() => toggleDep(t.id)}
+                    >
+                      <span className="dep-dropdown-id">{t.id}</span>
+                      <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            );
+          })()}
         </div>
         <span className="inline-create-hint">Enter to create · Esc to cancel</span>
       </div>
