@@ -27,7 +27,7 @@ export function Header({
         <button
           className={`btn-icon${enginePaused ? " btn-icon--paused" : ""}`}
           onClick={onToggleEnginePause}
-          title={enginePaused ? "Resume AI engine" : "Pause AI engine"}
+          title={enginePaused ? "Resume scheduling" : "Pause scheduling"}
           disabled={!!globalPaused}
         >
           {enginePaused ? <Play size={16} /> : <Pause size={16} />}

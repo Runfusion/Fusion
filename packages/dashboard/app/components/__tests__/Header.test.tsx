@@ -28,47 +28,47 @@ describe("Header", () => {
 
   // ── Pause button (soft pause) ────────────────────────────────────
 
-  it("renders pause button with 'Pause AI engine' title when not paused", () => {
+  it("renders pause button with 'Pause scheduling' title when not paused", () => {
     render(<Header enginePaused={false} />);
-    const btn = screen.getByTitle("Pause AI engine");
+    const btn = screen.getByTitle("Pause scheduling");
     expect(btn).toBeDefined();
   });
 
-  it("renders play button with 'Resume AI engine' title when engine is paused", () => {
+  it("renders play button with 'Resume scheduling' title when engine is paused", () => {
     render(<Header enginePaused={true} />);
-    const btn = screen.getByTitle("Resume AI engine");
+    const btn = screen.getByTitle("Resume scheduling");
     expect(btn).toBeDefined();
   });
 
   it("calls onToggleEnginePause when pause button is clicked", () => {
     const onToggle = vi.fn();
     render(<Header enginePaused={false} onToggleEnginePause={onToggle} />);
-    const btn = screen.getByTitle("Pause AI engine");
+    const btn = screen.getByTitle("Pause scheduling");
     fireEvent.click(btn);
     expect(onToggle).toHaveBeenCalledOnce();
   });
 
   it("applies btn-icon--paused class when engine is paused", () => {
     render(<Header enginePaused={true} />);
-    const btn = screen.getByTitle("Resume AI engine");
+    const btn = screen.getByTitle("Resume scheduling");
     expect(btn.className).toContain("btn-icon--paused");
   });
 
   it("does not apply btn-icon--paused class when engine is not paused", () => {
     render(<Header enginePaused={false} />);
-    const btn = screen.getByTitle("Pause AI engine");
+    const btn = screen.getByTitle("Pause scheduling");
     expect(btn.className).not.toContain("btn-icon--paused");
   });
 
   it("pause button is disabled when globalPaused is true", () => {
     render(<Header globalPaused={true} enginePaused={false} />);
-    const btn = screen.getByTitle("Pause AI engine");
+    const btn = screen.getByTitle("Pause scheduling");
     expect((btn as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("pause button is enabled when globalPaused is false", () => {
     render(<Header globalPaused={false} enginePaused={false} />);
-    const btn = screen.getByTitle("Pause AI engine");
+    const btn = screen.getByTitle("Pause scheduling");
     expect((btn as HTMLButtonElement).disabled).toBe(false);
   });
 

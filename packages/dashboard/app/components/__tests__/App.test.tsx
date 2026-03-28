@@ -218,9 +218,9 @@ describe("App engine pause (soft pause)", () => {
 
     render(<App />);
 
-    // When engine is paused, the pause button should show "Resume AI engine"
+    // When engine is paused, the pause button should show "Resume scheduling"
     await waitFor(() => {
-      expect(screen.getByTitle("Resume AI engine")).toBeTruthy();
+      expect(screen.getByTitle("Resume scheduling")).toBeTruthy();
     });
   });
 
@@ -233,7 +233,7 @@ describe("App engine pause (soft pause)", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTitle("Pause AI engine")).toBeTruthy();
+      expect(screen.getByTitle("Pause scheduling")).toBeTruthy();
     });
   });
 
@@ -246,15 +246,15 @@ describe("App engine pause (soft pause)", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTitle("Pause AI engine")).toBeTruthy();
+      expect(screen.getByTitle("Pause scheduling")).toBeTruthy();
     });
 
     // Click the pause button
-    fireEvent.click(screen.getByTitle("Pause AI engine"));
+    fireEvent.click(screen.getByTitle("Pause scheduling"));
 
     // Should optimistically switch to "Resume" state
     await waitFor(() => {
-      expect(screen.getByTitle("Resume AI engine")).toBeTruthy();
+      expect(screen.getByTitle("Resume scheduling")).toBeTruthy();
     });
 
     // Should call updateSettings with enginePaused: true
