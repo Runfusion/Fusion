@@ -344,6 +344,48 @@ describe("runDashboard — immediate resume on unpause", () => {
   });
 });
 
+describe("runDashboard — engine pause/unpause cycle", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@kb/core");
+    (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@kb/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+  });
+
+  it("calls executor.resumeOrphaned() when enginePaused transitions true → false", async () => {
+    const { TaskExecutor } = await import("@kb/engine");
+    const resumeOrphaned = vi.fn().mockResolvedValue(undefined);
+    (TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned };
+      },
+    );
+
+    await runDashboard(0, { open: false });
+
+    // Clear the startup call to resumeOrphaned
+    resumeOrphaned.mockClear();
+
+    // Trigger engine unpause event
+    mockStore.emit("settings:updated", {
+      settings: { enginePaused: false, maxConcurrent: 1, autoMerge: false },
+      previous: { enginePaused: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(resumeOrphaned).toHaveBeenCalled();
+  });
+});
+
 describe("runDashboard — port fallback on EADDRINUSE", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
 

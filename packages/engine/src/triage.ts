@@ -185,19 +185,19 @@ export class TriageProcessor {
   private processing = new Set<string>();
   private wasGlobalPaused = false;
   private wasEnginePaused = false;
-  /** Active agent sessions per task, used to terminate on global pause. */
+  /** Active agent sessions per task, used to terminate on pause. */
   private activeSessions = new Map<string, { dispose: () => void }>();
-  /** Tasks that were aborted due to global pause (to avoid reporting as errors). */
-  private globalPauseAborted = new Set<string>();
+  /** Tasks aborted due to globalPause or enginePaused (to avoid reporting as errors). */
+  private pauseAborted = new Set<string>();
 
   /**
    * @param store — Task store instance (also used to listen for `settings:updated` events)
    * @param rootDir — Project root directory
    * @param options — Processor configuration
    *
-   * Listens for `settings:updated` events: when `globalPause` transitions from
-   * `false` to `true`, all active triage specification sessions are immediately
-   * terminated so the engine acts as a true emergency stop.
+   * Listens for `settings:updated` events: when `globalPause` or `enginePaused`
+   * transitions from `false` to `true`, all active triage specification sessions
+   * are immediately terminated so the engine stops all AI activity.
    */
   constructor(
     private store: TaskStore,
@@ -209,7 +209,19 @@ export class TriageProcessor {
       if (settings.globalPause && !previous.globalPause) {
         for (const [taskId, session] of this.activeSessions) {
           triageLog.log(`Global pause — terminating triage session for ${taskId}`);
-          this.globalPauseAborted.add(taskId);
+          this.pauseAborted.add(taskId);
+          session.dispose();
+        }
+      }
+    });
+
+    // When enginePaused transitions from false → true, terminate all active triage sessions.
+    // Same pattern as globalPause: agents are killed, status cleared (not reported as error).
+    store.on("settings:updated", ({ settings, previous }) => {
+      if (settings.enginePaused && !previous.enginePaused) {
+        for (const [taskId, session] of this.activeSessions) {
+          triageLog.log(`Engine pause — terminating triage session for ${taskId}`);
+          this.pauseAborted.add(taskId);
           session.dispose();
         }
       }
@@ -231,14 +243,10 @@ export class TriageProcessor {
     });
 
     /**
-     * Immediate soft-unpause resume: when `enginePaused` transitions from
+     * Immediate engine-unpause resume: when `enginePaused` transitions from
      * `true` to `false`, trigger a triage poll right away instead of
      * waiting for the next poll interval. Same pattern as the globalPause
      * unpause handler above.
-     *
-     * Note: the agent-kill listener above only fires on `globalPause`
-     * transitions (hard stop). `enginePaused` (soft pause) lets in-flight
-     * agents finish gracefully.
      */
     store.on("settings:updated", ({ settings, previous }) => {
       if (previous.enginePaused && !settings.enginePaused && this.running) {
@@ -453,10 +461,10 @@ export class TriageProcessor {
       // and specifyTask(). The file is gone, so just log and skip — no point retrying.
       if (err.code === "ENOENT") {
         triageLog.log(`${task.id} no longer exists — skipping`);
-      } else if (this.globalPauseAborted.has(task.id)) {
-        // Global pause — clear specifying status without reporting an error
-        this.globalPauseAborted.delete(task.id);
-        triageLog.log(`${task.id} aborted by global pause — clearing status`);
+      } else if (this.pauseAborted.has(task.id)) {
+        // Pause (global or engine) — clear specifying status without reporting an error
+        this.pauseAborted.delete(task.id);
+        triageLog.log(`${task.id} aborted by pause — clearing status`);
         await this.store.updateTask(task.id, { status: null }).catch(() => {});
       } else {
         // Check if the error is a usage-limit error and trigger global pause

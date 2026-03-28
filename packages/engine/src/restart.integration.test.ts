@@ -80,6 +80,9 @@ function createMockStore(overrides: Record<string, any> = {}) {
       return makeTask("KB-NEW", "triage");
     }),
     deleteTask: vi.fn().mockResolvedValue(undefined),
+    _trigger(event: string, ...args: any[]) {
+      for (const fn of listeners.get(event) || []) fn(...args);
+    },
     _listeners: listeners,
     ...overrides,
   } as any;
@@ -908,5 +911,187 @@ describe("Edge case: worktree deleted between scan and acquire", () => {
     const result = pool.acquire();
     expect(result).toBeNull();
     expect(pool.size).toBe(0);
+  });
+});
+
+// ── Engine pause/unpause cycle integration tests ──────────────────────────
+
+describe("Engine pause/unpause cycle", () => {
+  it("executor: agents terminated on pause, tasks moved to todo, resume picks them up", async () => {
+    const store = createMockStore();
+    const task = makeTask("KB-EP1", "in-progress");
+    store.getTask.mockResolvedValue(makeTaskDetail("KB-EP1", "in-progress"));
+
+    // Agent waits for engine pause, then throws (simulating session termination)
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Trigger engine pause
+          store._trigger("settings:updated", {
+            settings: { enginePaused: true },
+            previous: { enginePaused: false },
+          });
+          throw new Error("Session terminated");
+        }),
+        dispose: vi.fn(),
+      },
+    } as any));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute(task);
+
+    // Task should be moved to todo (not failed)
+    expect(store.moveTask).toHaveBeenCalledWith("KB-EP1", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("KB-EP1", { status: "failed" });
+
+    // Now simulate unpause: resumeOrphaned picks up in-progress tasks
+    store.moveTask.mockClear();
+    mockedCreateHaiAgent.mockClear();
+
+    // After unpause, the task would be in todo; scheduler would move it to in-progress
+    // Here we test that resumeOrphaned can pick up orphaned in-progress tasks
+    const resumeTask = makeTask("KB-EP1", "in-progress");
+    store.listTasks.mockResolvedValue([resumeTask]);
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    await executor.resumeOrphaned();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Agent should be created again for the resumed task
+    expect(mockedCreateHaiAgent).toHaveBeenCalled();
+  });
+
+  it("triage: agents terminated on pause, status cleared, resume picks up tasks", async () => {
+    const store = createMockStore();
+
+    // Agent waits for engine pause, then throws
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          store._trigger("settings:updated", {
+            settings: { enginePaused: true },
+            previous: { enginePaused: false },
+          });
+          throw new Error("Session terminated");
+        }),
+        dispose: vi.fn(),
+      },
+    } as any));
+
+    const triage = new TriageProcessor(store, "/tmp/test");
+
+    await triage.specifyTask(makeTask("KB-EP2", "triage"));
+
+    // Status should be cleared (not reported as error)
+    expect(store.updateTask).toHaveBeenCalledWith("KB-EP2", { status: null });
+
+    // Now simulate unpause: triage poll picks up unspecified tasks
+    store.updateTask.mockClear();
+    mockedCreateHaiAgent.mockClear();
+
+    const triageTask = makeTask("KB-EP2", "triage");
+    store.listTasks.mockResolvedValue([triageTask]);
+    store.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS, enginePaused: false });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    // Trigger a poll — triage should process the task again
+    (triage as any).running = true;
+    await (triage as any).poll();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Task should be picked up for specification
+    expect(store.updateTask).toHaveBeenCalledWith("KB-EP2", { status: "specifying" });
+  });
+
+  it("scheduler resumes on unpause: schedule() runs when enginePaused goes true→false", async () => {
+    const store = createMockStore();
+    const todoTask = makeTask("KB-EP3", "todo");
+    store.listTasks.mockResolvedValue([todoTask]);
+    store.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS, enginePaused: false });
+    store.parseFileScopeFromPrompt.mockResolvedValue([]);
+
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, {
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      onSchedule,
+    });
+
+    scheduler.start();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Scheduler should have moved todo task to in-progress
+    expect(store.moveTask).toHaveBeenCalledWith("KB-EP3", "in-progress");
+
+    // Now simulate engine pause then unpause
+    store.moveTask.mockClear();
+    onSchedule.mockClear();
+
+    // During pause, scheduler halts
+    store.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS, enginePaused: true });
+
+    // Add a new todo task
+    const newTask = makeTask("KB-EP4", "todo");
+    store.listTasks.mockResolvedValue([newTask]);
+
+    // Unpause — trigger settings:updated to wake the scheduler
+    store.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS, enginePaused: false });
+    store._trigger("settings:updated", {
+      settings: { ...DEFAULT_SETTINGS, enginePaused: false },
+      previous: { ...DEFAULT_SETTINGS, enginePaused: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+    scheduler.stop();
+
+    // The new task should have been scheduled after unpause
+    expect(store.moveTask).toHaveBeenCalledWith("KB-EP4", "in-progress");
+  });
+
+  it("concurrency slots freed on pause: semaphore released when agents are terminated", async () => {
+    const sem = new AgentSemaphore(1); // Only 1 concurrent slot
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(makeTaskDetail("KB-EP5", "in-progress"));
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Trigger engine pause while the agent holds the semaphore slot
+          store._trigger("settings:updated", {
+            settings: { enginePaused: true },
+            previous: { enginePaused: false },
+          });
+          throw new Error("Session terminated");
+        }),
+        dispose: vi.fn(),
+      },
+    } as any));
+
+    const executor = new TaskExecutor(store, "/tmp/test", { semaphore: sem });
+
+    // Execute — this acquires the semaphore slot, runs the agent, then releases on termination
+    await executor.execute(makeTask("KB-EP5", "in-progress"));
+
+    // After termination, the semaphore slot should be freed.
+    // Verify by running a new task through the semaphore — it should not block.
+    let secondSlotAcquired = false;
+    const runPromise = sem.run(async () => {
+      secondSlotAcquired = true;
+    }, 10);
+
+    // If the slot was properly released, this resolves immediately
+    await runPromise;
+    expect(secondSlotAcquired).toBe(true);
   });
 });
