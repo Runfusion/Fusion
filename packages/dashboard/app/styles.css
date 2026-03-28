@@ -1296,10 +1296,44 @@ html, body {
   font-weight: 600;
 }
 
-/* === Mobile: Task Detail Modal ===
-   On narrow viewports (≤768px) the modal goes full-screen, action buttons wrap,
-   and spacing is reduced to stay usable on screens as small as 320px. */
+/* === Mobile Responsive Overrides ===
+   On narrow viewports (≤768px) the board switches from a 5-column grid to a
+   horizontally-scrollable flex layout so only one scrollbar appears.  Each
+   column gets a fixed min-width and snap-scrolling for a polished swipe feel.
+   The modal also goes full-screen with reduced spacing. */
 @media (max-width: 768px) {
+  /* Prevent ancestor elements from producing a second horizontal scrollbar */
+  html, body {
+    overflow: hidden;
+  }
+
+  #root {
+    overflow: hidden;
+  }
+
+  /* Board: flex layout with single horizontal scroll + snap */
+  .board {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .board > .column {
+    min-width: 280px;
+    flex-shrink: 0;
+    scroll-snap-align: start;
+  }
+
+  /* Reduce header padding to reclaim horizontal space */
+  .header {
+    padding: 12px 12px;
+  }
+
+  /* Modal: full-screen on mobile */
   .modal-overlay {
     padding-top: 0;
     align-items: stretch;

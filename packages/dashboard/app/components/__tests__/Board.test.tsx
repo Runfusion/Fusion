@@ -52,4 +52,23 @@ describe("Board", () => {
       expect(screen.getByTestId(`column-${col}`)).toBeDefined();
     }
   });
+
+  it("renders all 5 columns as direct children of .board (CSS selector target)", () => {
+    renderBoard();
+    const board = screen.getByRole("main");
+    // The mock Column renders <div data-testid="column-{col}" />, which are direct children
+    const directChildren = Array.from(board.children);
+    expect(directChildren).toHaveLength(COLUMNS.length);
+    // Each direct child should be one of the column test-id elements
+    for (const col of COLUMNS) {
+      const colEl = screen.getByTestId(`column-${col}`);
+      expect(colEl.parentElement).toBe(board);
+    }
+  });
+
+  it("renders the board element as a <main> tag (semantic structure)", () => {
+    renderBoard();
+    const board = screen.getByRole("main");
+    expect(board.tagName).toBe("MAIN");
+  });
 });
