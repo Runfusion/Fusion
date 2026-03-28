@@ -1,4 +1,5 @@
 import { exec } from "node:child_process";
+import type { AddressInfo } from "node:net";
 import { TaskStore } from "@kb/core";
 import { createServer } from "@kb/dashboard";
 import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask } from "@kb/engine";
@@ -226,11 +227,28 @@ export async function runDashboard(port: number, opts: { open?: boolean } = {}) 
     });
   }
 
-  app.listen(port, () => {
+  const server = app.listen(port);
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      server.listen(0);
+    } else {
+      console.error(`Failed to start server: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+  server.on("listening", () => {
+    const actualPort = (server.address() as AddressInfo).port;
+
+    if (actualPort !== port) {
+      console.log(`⚠ Port ${port} in use, using ${actualPort} instead`);
+    }
+
     console.log();
     console.log(`  kb board`);
     console.log(`  ────────────────────────`);
-    console.log(`  → http://localhost:${port}`);
+    console.log(`  → http://localhost:${actualPort}`);
     console.log();
     console.log(`  Tasks stored in .kb/tasks/`);
     console.log(`  Merge:      AI-assisted (conflict resolution + commit messages)`);
@@ -242,7 +260,7 @@ export async function runDashboard(port: number, opts: { open?: boolean } = {}) 
     console.log();
 
     if (opts.open !== false) {
-      openBrowser(`http://localhost:${port}`);
+      openBrowser(`http://localhost:${actualPort}`);
     }
   });
 }

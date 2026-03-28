@@ -32,7 +32,26 @@ vi.mock("@kb/core", () => ({
 
 // ── Mock @kb/dashboard ─────────────────────────────────────────────
 
-const mockListen = vi.fn();
+/** Create a mock server (EventEmitter) that simulates net.Server behavior. */
+function createMockServer(portToReturn: number = 0) {
+  const emitter = new EventEmitter();
+  const server = Object.assign(emitter, {
+    listen: vi.fn((_port?: number) => {
+      process.nextTick(() => emitter.emit("listening"));
+      return server;
+    }),
+    address: vi.fn(() => ({ port: portToReturn, family: "IPv4", address: "127.0.0.1" })),
+    close: vi.fn(),
+  });
+  return server;
+}
+
+const mockListen = vi.fn((port: number) => {
+  const server = createMockServer(port);
+  process.nextTick(() => server.emit("listening"));
+  return server;
+});
+
 vi.mock("@kb/dashboard", () => ({
   createServer: vi.fn(() => ({ listen: mockListen })),
 }));
