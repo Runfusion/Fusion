@@ -57,7 +57,7 @@ Settings are in `.kb/config.json`:
 | `maxConcurrent` | Max tasks executing simultaneously | 2 |
 | `maxWorktrees` | Max git worktrees | 4 |
 | `pollIntervalMs` | Scheduler/triage poll interval | 15000 |
-| `autoMerge` | Auto-merge tasks when they reach in-review | false |
+| `autoMerge` | Auto-merge tasks when they reach in-review | true |
 
 ## Task storage
 

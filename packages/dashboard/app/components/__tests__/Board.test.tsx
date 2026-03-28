@@ -25,7 +25,7 @@ function renderBoard() {
       onCancelCreate={noop}
       onCreateTask={noopAsync}
       onNewTask={noop}
-      autoMerge={false}
+      autoMerge={true}
       onToggleAutoMerge={noop}
       globalPaused={false}
     />,

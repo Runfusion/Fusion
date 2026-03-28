@@ -8,7 +8,7 @@ const defaultSettings: Settings = {
   maxWorktrees: 4,
   pollIntervalMs: 15000,
   groupOverlappingFiles: false,
-  autoMerge: false,
+  autoMerge: true,
   recycleWorktrees: false,
   worktreeInitCommand: "",
   testCommand: "",

@@ -16,7 +16,7 @@ function AppInner() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
-  const [autoMerge, setAutoMerge] = useState(false);
+  const [autoMerge, setAutoMerge] = useState(true);
   const [globalPaused, setGlobalPaused] = useState(false);
   const [enginePaused, setEnginePaused] = useState(false);
   const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask } = useTasks();
