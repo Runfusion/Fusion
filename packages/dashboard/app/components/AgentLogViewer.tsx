@@ -68,7 +68,13 @@ export function AgentLogViewer({ entries, loading }: AgentLogViewerProps) {
       }}
     >
       {entries.map((entry, i) => {
-        const agentBadge = entry.agent ? (
+        const prev = entries[i - 1];
+        const isBlockLevel = entry.type === "tool" || entry.type === "tool_result" || entry.type === "tool_error";
+        const showBadge = entry.agent
+          ? isBlockLevel || i === 0 || prev?.agent !== entry.agent || prev?.type !== entry.type
+          : false;
+
+        const agentBadge = showBadge ? (
           <span
             className="agent-log-agent-badge"
             style={{

@@ -175,6 +175,91 @@ describe("AgentLogViewer", () => {
     expect(viewer.scrollTop).toBe(200);
   });
 
+  describe("agent badge deduplication", () => {
+    it("shows badge only on the first of consecutive text entries from the same agent", () => {
+      const entries = [
+        makeEntry({ text: "chunk 1", type: "text", agent: "executor" }),
+        makeEntry({ text: "chunk 2", type: "text", agent: "executor" }),
+        makeEntry({ text: "chunk 3", type: "text", agent: "executor" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const badges = container.querySelectorAll(".agent-log-agent-badge");
+      expect(badges).toHaveLength(1);
+      expect(badges[0].textContent).toBe("[executor]");
+    });
+
+    it("shows badge on each agent transition for consecutive text entries", () => {
+      const entries = [
+        makeEntry({ text: "hello", type: "text", agent: "triage" }),
+        makeEntry({ text: "world", type: "text", agent: "triage" }),
+        makeEntry({ text: "starting", type: "text", agent: "executor" }),
+        makeEntry({ text: "done", type: "text", agent: "executor" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const badges = container.querySelectorAll(".agent-log-agent-badge");
+      expect(badges).toHaveLength(2);
+      expect(badges[0].textContent).toBe("[triage]");
+      expect(badges[1].textContent).toBe("[executor]");
+    });
+
+    it("shows badge on text, tool, and text-after-tool (same agent, type change)", () => {
+      const entries = [
+        makeEntry({ text: "reading...", type: "text", agent: "executor" }),
+        makeEntry({ text: "Read", type: "tool", agent: "executor" }),
+        makeEntry({ text: "got it", type: "text", agent: "executor" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const badges = container.querySelectorAll(".agent-log-agent-badge");
+      // Badge on first text, on the tool (always), and on the text after tool (type changed)
+      expect(badges).toHaveLength(3);
+    });
+
+    it("shows badge only on the first of consecutive thinking entries from the same agent", () => {
+      const entries = [
+        makeEntry({ text: "hmm", type: "thinking", agent: "triage" }),
+        makeEntry({ text: "let me think", type: "thinking", agent: "triage" }),
+        makeEntry({ text: "ok", type: "thinking", agent: "triage" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const badges = container.querySelectorAll(".agent-log-agent-badge");
+      expect(badges).toHaveLength(1);
+      expect(badges[0].textContent).toBe("[triage]");
+    });
+
+    it("always shows badge on tool entries regardless of surrounding entries", () => {
+      const entries = [
+        makeEntry({ text: "Bash", type: "tool", agent: "executor" }),
+        makeEntry({ text: "Read", type: "tool", agent: "executor" }),
+        makeEntry({ text: "Write", type: "tool", agent: "executor" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const badges = container.querySelectorAll(".agent-log-agent-badge");
+      expect(badges).toHaveLength(3);
+    });
+
+    it("always shows badge on tool_result and tool_error entries", () => {
+      const entries = [
+        makeEntry({ text: "Bash", type: "tool", agent: "executor" }),
+        makeEntry({ text: "ok", type: "tool_result", agent: "executor" }),
+        makeEntry({ text: "Read", type: "tool", agent: "executor" }),
+        makeEntry({ text: "not found", type: "tool_error", agent: "executor" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const badges = container.querySelectorAll(".agent-log-agent-badge");
+      expect(badges).toHaveLength(4);
+    });
+
+    it("produces no badges when entries have no agent field", () => {
+      const entries = [
+        makeEntry({ text: "legacy chunk 1", type: "text" }),
+        makeEntry({ text: "legacy chunk 2", type: "text" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const badges = container.querySelectorAll(".agent-log-agent-badge");
+      expect(badges).toHaveLength(0);
+    });
+  });
+
   it("enables auto-scroll when user is exactly at the bottom", () => {
     const entries = [makeEntry({ text: "line 1" })];
     const { container, rerender } = render(
