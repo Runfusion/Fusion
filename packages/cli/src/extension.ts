@@ -1,0 +1,443 @@
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Type, type Static } from "@sinclair/typebox";
+import { StringEnum } from "@mariozechner/pi-ai";
+import {
+  TaskStore,
+  COLUMNS,
+  COLUMN_LABELS,
+  type Column,
+  type Task,
+} from "@kb/core";
+import { resolve, basename, extname } from "node:path";
+import { readFile } from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
+
+// ── Helpers ────────────────────────────────────────────────────────
+
+const MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".txt": "text/plain",
+  ".log": "text/plain",
+  ".json": "application/json",
+  ".yaml": "text/yaml",
+  ".yml": "text/yaml",
+  ".toml": "text/x-toml",
+  ".csv": "text/csv",
+  ".xml": "application/xml",
+};
+
+/** Cache stores per cwd to avoid re-init on every tool call. */
+const storeCache = new Map<string, TaskStore>();
+
+async function getStore(cwd: string): Promise<TaskStore> {
+  const existing = storeCache.get(cwd);
+  if (existing) return existing;
+
+  const store = new TaskStore(cwd);
+  await store.init();
+  storeCache.set(cwd, store);
+  return store;
+}
+
+function formatTaskLine(t: Task): string {
+  const label =
+    t.title || t.description.slice(0, 60) + (t.description.length > 60 ? "…" : "");
+  const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
+  const paused = t.paused ? " (paused)" : "";
+  return `${t.id}  ${label}${deps}${paused}`;
+}
+
+// ── Extension entry point ──────────────────────────────────────────
+
+export default function kbExtension(pi: ExtensionAPI) {
+  // ── kb_task_create ───────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_create",
+    label: "KB: Create Task",
+    description:
+      "Create a new task on the kb task board. The task enters the triage column " +
+      "where the AI triage agent will specify it into a full prompt with steps, " +
+      "file scope, and acceptance criteria.",
+    promptSnippet: "Create a task on the kb AI-orchestrated task board",
+    promptGuidelines: [
+      "Use kb_task_create for task tracking — be descriptive so the triage agent can write a good spec.",
+      "Include the problem AND desired outcome. For bugs, describe current vs expected behavior.",
+    ],
+    parameters: Type.Object({
+      description: Type.String({ description: "What needs to be done — be descriptive" }),
+      depends: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Task IDs this depends on (e.g. ['KB-001', 'KB-002'])",
+        }),
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const task = await store.createTask({
+        description: params.description.trim(),
+        dependencies: params.depends,
+      });
+
+      const label =
+        task.description.length > 80
+          ? task.description.slice(0, 80) + "…"
+          : task.description;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Created ${task.id}: ${label}\n` +
+              `Column: triage\n` +
+              (task.dependencies.length
+                ? `Dependencies: ${task.dependencies.join(", ")}\n`
+                : "") +
+              `Path: .kb/tasks/${task.id}/`,
+          },
+        ],
+        details: { taskId: task.id, column: task.column, dependencies: task.dependencies },
+      };
+    },
+  });
+
+  // ── kb_task_list ─────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_list",
+    label: "KB: List Tasks",
+    description: "List all tasks on the kb board, grouped by column.",
+    promptSnippet: "List all tasks on the kb board grouped by column",
+    parameters: Type.Object({
+      column: Type.Optional(
+        StringEnum([...COLUMNS] as unknown as string[], {
+          description: "Filter to a specific column",
+        }) as any,
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          description: "Max tasks to show per column (default: 10)",
+        }),
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const tasks = await store.listTasks();
+
+      if (tasks.length === 0) {
+        return {
+          content: [{ type: "text", text: "No tasks yet." }],
+          details: { count: 0 },
+        };
+      }
+
+      const perColumn = params.limit ?? 10;
+      const lines: string[] = [];
+      for (const col of COLUMNS) {
+        if (params.column && params.column !== col) continue;
+
+        const colTasks = tasks.filter((t) => t.column === col);
+        if (colTasks.length === 0) continue;
+
+        lines.push(`${COLUMN_LABELS[col]} (${colTasks.length}):`);
+        const shown = colTasks.slice(0, perColumn);
+        for (const t of shown) {
+          lines.push(`  ${formatTaskLine(t)}`);
+        }
+        const hidden = colTasks.length - shown.length;
+        if (hidden > 0) {
+          lines.push(`  ... and ${hidden} more`);
+        }
+        lines.push("");
+      }
+
+      return {
+        content: [{ type: "text", text: lines.join("\n").trimEnd() }],
+        details: { count: tasks.length },
+      };
+    },
+  });
+
+  // ── kb_task_show ─────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_show",
+    label: "KB: Show Task",
+    description: "Show full details for a task including steps, progress, and log entries.",
+    promptSnippet: "Show full details for a kb task",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID (e.g. KB-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const task = await store.getTask(params.id);
+
+      const lines: string[] = [];
+      lines.push(`${task.id}: ${task.title || task.description}`);
+      lines.push(
+        `Column: ${COLUMN_LABELS[task.column]}` +
+          (task.size ? ` · Size: ${task.size}` : "") +
+          (task.reviewLevel !== undefined ? ` · Review: ${task.reviewLevel}` : ""),
+      );
+      if (task.dependencies.length) {
+        lines.push(`Dependencies: ${task.dependencies.join(", ")}`);
+      }
+      if (task.paused) lines.push("Status: PAUSED");
+      lines.push("");
+
+      // Steps
+      if (task.steps.length > 0) {
+        const done = task.steps.filter((s) => s.status === "done").length;
+        lines.push(`Steps (${done}/${task.steps.length}):`);
+        for (let i = 0; i < task.steps.length; i++) {
+          const s = task.steps[i];
+          const icon =
+            s.status === "done"
+              ? "✓"
+              : s.status === "in-progress"
+                ? "▸"
+                : s.status === "skipped"
+                  ? "–"
+                  : " ";
+          const marker =
+            i === task.currentStep && s.status !== "done" ? " ◀" : "";
+          lines.push(`  [${icon}] ${i}: ${s.name}${marker}`);
+        }
+        lines.push("");
+      }
+
+      // Prompt (truncated)
+      if (task.prompt) {
+        const promptPreview =
+          task.prompt.length > 500
+            ? task.prompt.slice(0, 500) + "\n... (truncated)"
+            : task.prompt;
+        lines.push("Prompt:");
+        lines.push(promptPreview);
+        lines.push("");
+      }
+
+      // Recent log
+      if (task.log.length > 0) {
+        const recent = task.log.slice(-5);
+        lines.push(`Log (last ${recent.length}):`);
+        for (const l of recent) {
+          const ts = new Date(l.timestamp).toLocaleTimeString();
+          lines.push(
+            `  ${ts}  ${l.action}${l.outcome ? ` → ${l.outcome}` : ""}`,
+          );
+        }
+      }
+
+      return {
+        content: [{ type: "text", text: lines.join("\n").trimEnd() }],
+        details: { task },
+      };
+    },
+  });
+
+  // ── kb_task_attach ───────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_attach",
+    label: "KB: Attach File",
+    description:
+      "Attach a file to a task. Supports images (png, jpg, gif, webp) and " +
+      "text files (txt, log, json, yaml, yml, toml, csv, xml).",
+    promptSnippet: "Attach a file to a kb task",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID (e.g. KB-001)" }),
+      path: Type.String({ description: "Path to the file to attach" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const filePath = resolve(ctx.cwd, params.path.replace(/^@/, ""));
+      const filename = basename(filePath);
+      const ext = extname(filename).toLowerCase();
+      const mimeType = MIME_TYPES[ext];
+
+      if (!mimeType) {
+        throw new Error(
+          `Unsupported file type: ${ext}. Supported: ${Object.keys(MIME_TYPES).join(", ")}`,
+        );
+      }
+
+      let content: Buffer;
+      try {
+        content = await readFile(filePath);
+      } catch {
+        throw new Error(`Cannot read file: ${params.path}`);
+      }
+
+      const store = await getStore(ctx.cwd);
+      const attachment = await store.addAttachment(params.id, filename, content, mimeType);
+      const sizeKB = (attachment.size / 1024).toFixed(1);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Attached to ${params.id}: ${attachment.originalName} (${sizeKB} KB)\n` +
+              `Path: .kb/tasks/${params.id}/attachments/${attachment.filename}`,
+          },
+        ],
+        details: { taskId: params.id, attachment },
+      };
+    },
+  });
+
+  // ── kb_task_pause ────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_pause",
+    label: "KB: Pause Task",
+    description:
+      "Pause a task — stops all automated agent and scheduler interaction for this task.",
+    promptSnippet: "Pause a kb task (stops automation)",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID (e.g. KB-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const task = await store.pauseTask(params.id, true);
+
+      return {
+        content: [{ type: "text", text: `Paused ${task.id}` }],
+        details: { taskId: task.id },
+      };
+    },
+  });
+
+  // ── kb_task_unpause ──────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_unpause",
+    label: "KB: Unpause Task",
+    description:
+      "Unpause a task — resumes automated agent and scheduler interaction.",
+    promptSnippet: "Unpause a kb task (resumes automation)",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID (e.g. KB-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const task = await store.pauseTask(params.id, false);
+
+      return {
+        content: [{ type: "text", text: `Unpaused ${task.id}` }],
+        details: { taskId: task.id },
+      };
+    },
+  });
+
+  // ── /kb command — start the dashboard + engine ───────────────────
+
+  let dashboardProcess: ChildProcess | null = null;
+  let dashboardPort: number | null = null;
+
+  pi.registerCommand("kb", {
+    description: "Start (or stop) the kb dashboard and AI engine",
+    handler: async (args, ctx) => {
+      const trimmed = (args ?? "").trim();
+
+      // /kb stop — kill the dashboard
+      if (trimmed === "stop") {
+        if (dashboardProcess) {
+          dashboardProcess.kill("SIGINT");
+          dashboardProcess = null;
+          dashboardPort = null;
+          ctx.ui.setStatus("kb", "");
+          ctx.ui.notify("kb dashboard stopped", "info");
+        } else {
+          ctx.ui.notify("kb dashboard is not running", "warning");
+        }
+        return;
+      }
+
+      // /kb status
+      if (trimmed === "status") {
+        if (dashboardProcess && !dashboardProcess.killed) {
+          ctx.ui.notify(`kb dashboard running on http://localhost:${dashboardPort}`, "info");
+        } else {
+          dashboardProcess = null;
+          dashboardPort = null;
+          ctx.ui.notify("kb dashboard is not running", "info");
+        }
+        return;
+      }
+
+      // /kb [port] — start the dashboard
+      if (dashboardProcess && !dashboardProcess.killed) {
+        ctx.ui.notify(
+          `kb dashboard already running on http://localhost:${dashboardPort}. Use /kb stop first.`,
+          "warning",
+        );
+        return;
+      }
+
+      const port = trimmed ? parseInt(trimmed, 10) || 4040 : 4040;
+
+      // Find the kb binary: prefer local node_modules, then global
+      const child = spawn("kb", ["dashboard", "--port", String(port), "--no-open"], {
+        cwd: ctx.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: false,
+        env: { ...process.env },
+      });
+
+      dashboardProcess = child;
+      dashboardPort = port;
+
+      // Watch for early exit (e.g. kb not found)
+      child.on("error", (err) => {
+        dashboardProcess = null;
+        dashboardPort = null;
+        ctx.ui.setStatus("kb", "");
+        ctx.ui.notify(`Failed to start kb dashboard: ${err.message}`, "error");
+      });
+
+      child.on("exit", (code) => {
+        if (dashboardProcess === child) {
+          dashboardProcess = null;
+          dashboardPort = null;
+          ctx.ui.setStatus("kb", "");
+          if (code !== 0 && code !== null) {
+            ctx.ui.notify(`kb dashboard exited with code ${code}`, "warning");
+          }
+        }
+      });
+
+      // Wait briefly to see if it crashes immediately
+      await new Promise((r) => setTimeout(r, 500));
+
+      if (dashboardProcess && !dashboardProcess.killed) {
+        const url = `http://localhost:${port}`;
+        ctx.ui.notify(`kb dashboard started on ${url} (AI engine active)`, "info");
+        const link = `\x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\`;
+        ctx.ui.setStatus("kb", `kb ● ${link}`);
+      }
+    },
+  });
+
+  // ── Cleanup on session end ───────────────────────────────────────
+
+  pi.on("session_shutdown", async () => {
+    if (dashboardProcess) {
+      dashboardProcess.kill("SIGINT");
+      dashboardProcess = null;
+      dashboardPort = null;
+    }
+    storeCache.clear();
+  });
+}

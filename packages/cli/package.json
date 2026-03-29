@@ -2,8 +2,15 @@
   "name": "@dustinbyrne/kb",
   "version": "0.3.1",
   "type": "module",
+  "keywords": ["pi-package"],
   "bin": {
     "kb": "./dist/bin.js"
+  },
+  "pi": {
+    "extensions": ["./dist/extension.js"]
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "dist/**/*.js",
@@ -27,10 +34,21 @@
     "express": "^5.1.0",
     "multer": "^2.1.1"
   },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-ai": { "optional": true },
+    "@mariozechner/pi-coding-agent": { "optional": true },
+    "@sinclair/typebox": { "optional": true }
+  },
   "devDependencies": {
     "@kb/core": "workspace:*",
     "@kb/dashboard": "workspace:*",
     "@kb/engine": "workspace:*",
+    "@sinclair/typebox": "^0.34.0",
     "tsup": "^8.5.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

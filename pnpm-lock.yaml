@@ -42,6 +42,9 @@ importers:
       '@kb/engine':
         specifier: workspace:*
         version: link:../engine
+      '@sinclair/typebox':
+        specifier: ^0.34.0
+        version: 0.34.48
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)

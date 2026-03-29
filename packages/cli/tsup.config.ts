@@ -8,7 +8,7 @@ const dashboardClientSrc = join(__dirname, "..", "dashboard", "dist", "client");
 const dashboardClientDest = join(__dirname, "dist", "client");
 
 export default defineConfig({
-  entry: ["src/bin.ts"],
+  entry: ["src/bin.ts", "src/extension.ts"],
   format: ["esm"],
   platform: "node",
   target: "node22",
