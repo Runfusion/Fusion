@@ -11,7 +11,8 @@
   "pi": {
     "extensions": [
       "./dist/extension.js"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/dustinbyrne/kb/main/demo/screenshot.png"
   },
   "publishConfig": {
     "access": "public"
