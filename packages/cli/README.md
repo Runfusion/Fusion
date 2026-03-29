@@ -2,6 +2,8 @@
 
 An automated Kanban board for [pi](https://github.com/badlogic/pi-mono). You (or an agent) add high level ideas to your task list, and a team of agents execute them using worktrees.
 
+![kb dashboard](https://raw.githubusercontent.com/dustinbyrne/kb/main/demo/screenshot.png)
+
 ## Installation
 
 ```bash

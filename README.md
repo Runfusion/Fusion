@@ -2,6 +2,8 @@
 
 AI-orchestrated task board. Like Trello, but your tasks get specified, executed, and delivered by AI — powered by [pi](https://github.com/badlogic/pi-mono).
 
+![kb dashboard](demo/screenshot.png)
+
 ## Workflow
 
 ```mermaid
