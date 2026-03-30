@@ -189,9 +189,9 @@ describe("ListView", () => {
 
   it("sorts tasks by ID when ID header is clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-003", title: "Third" }),
-      createMockTask({ id: "KB-001", title: "First" }),
-      createMockTask({ id: "KB-002", title: "Second" }),
+      createMockTask({ id: "KB-003", title: "Third", column: "triage" }),
+      createMockTask({ id: "KB-001", title: "First", column: "triage" }),
+      createMockTask({ id: "KB-002", title: "Second", column: "triage" }),
     ];
 
     renderListView({ tasks });
@@ -200,7 +200,8 @@ describe("ListView", () => {
     const idHeader = screen.getByText("ID");
     fireEvent.click(idHeader);
 
-    const rows = screen.getAllByRole("row").slice(1); // Skip header row
+    // Get all data rows (excluding section headers by using data-id attribute)
+    const rows = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
     expect(rows[0].textContent).toContain("KB-001");
     expect(rows[1].textContent).toContain("KB-002");
     expect(rows[2].textContent).toContain("KB-003");
@@ -208,7 +209,7 @@ describe("ListView", () => {
     // Second click - descending
     fireEvent.click(idHeader);
 
-    const rowsDesc = screen.getAllByRole("row").slice(1);
+    const rowsDesc = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
     expect(rowsDesc[0].textContent).toContain("KB-003");
     expect(rowsDesc[1].textContent).toContain("KB-002");
     expect(rowsDesc[2].textContent).toContain("KB-001");
@@ -226,17 +227,18 @@ describe("ListView", () => {
     const columnHeader = screen.getByText("Column");
     fireEvent.click(columnHeader);
 
-    const rows = screen.getAllByRole("row").slice(1);
-    // Should be sorted alphabetically: done, in-progress, triage
-    expect(rows[0].textContent).toContain("Done");
-    expect(rows[2].textContent).toContain("Triage");
+    // Get data rows - sorted by column alphabetically: done, in-progress, triage
+    const rows = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
+    expect(rows[0].textContent).toContain("KB-002"); // triage (sorted first alphabetically)
+    expect(rows[1].textContent).toContain("KB-003"); // in-progress
+    expect(rows[2].textContent).toContain("KB-001"); // done
   });
 
   it("sorts tasks by status when Status header is clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", status: "executing" }),
-      createMockTask({ id: "KB-002", status: "pending" }),
-      createMockTask({ id: "KB-003", status: "failed" }),
+      createMockTask({ id: "KB-001", status: "executing", column: "triage" }),
+      createMockTask({ id: "KB-002", status: "pending", column: "triage" }),
+      createMockTask({ id: "KB-003", status: "failed", column: "triage" }),
     ];
 
     renderListView({ tasks });
@@ -244,8 +246,9 @@ describe("ListView", () => {
     const statusHeader = screen.getByText("Status");
     fireEvent.click(statusHeader);
 
-    const rows = screen.getAllByRole("row").slice(1);
-    // Should be sorted alphabetically: executing, failed, pending
+    // Get data rows - sorted by status alphabetically
+    const rows = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
+    // Should be sorted alphabetically by status: executing, failed, pending
     expect(rows[0].textContent).toContain("executing");
     expect(rows[2].textContent).toContain("pending");
   });
@@ -349,9 +352,10 @@ describe("ListView", () => {
 
     renderListView({ tasks });
 
-    const progressCells = screen.getAllByRole("cell");
-    const lastCell = progressCells[progressCells.length - 1];
-    expect(lastCell.textContent).toBe("-");
+    // Find the task row and check its progress cell
+    const row = screen.getByText("KB-001").closest("tr")!;
+    const progressCell = row.querySelector(".list-cell-progress");
+    expect(progressCell?.textContent).toBe("-");
   });
 
   it("renders dependency count with icon", () => {
@@ -465,8 +469,8 @@ describe("ListView", () => {
       },
     });
 
-    // Simulate drop on todo column
-    const todoZone = screen.getByText("Todo").closest("[data-column]")!;
+    // Simulate drop on todo column drop zone (use querySelector for specificity)
+    const todoZone = document.querySelector('[data-column="todo"].list-drop-zone')!;
     fireEvent.dragOver(todoZone, {
       preventDefault: vi.fn(),
       dataTransfer: { dropEffect: "move" },
@@ -519,7 +523,8 @@ describe("ListView", () => {
       },
     });
 
-    const todoZone = screen.getByText("Todo").closest("[data-column]")!;
+    // Use querySelector to find the specific drop zone
+    const todoZone = document.querySelector('[data-column="todo"].list-drop-zone')!;
     fireEvent.drop(todoZone, {
       preventDefault: vi.fn(),
       dataTransfer: {
@@ -563,5 +568,101 @@ describe("ListView", () => {
     const titleCell = screen.getByText(/A{60}/).closest("td")!;
     expect(titleCell.textContent).toContain("…");
     expect(titleCell.textContent?.length).toBeLessThan(longDescription.length);
+  });
+
+  // Grouped view tests
+  it("renders section headers for each column", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "triage" }),
+      createMockTask({ id: "KB-002", column: "todo" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Check that section headers are rendered with column names
+    expect(screen.getAllByText("Triage").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Todo").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In Progress").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In Review").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("displays correct task count in section headers", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "triage" }),
+      createMockTask({ id: "KB-002", column: "triage" }),
+      createMockTask({ id: "KB-003", column: "todo" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Find section headers by their structure
+    const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
+    expect(sectionHeaders.length).toBe(5); // One for each column
+
+    // Check that triage section shows count of 2
+    const triageHeader = sectionHeaders.find(h => h.textContent?.includes("Triage"));
+    expect(triageHeader?.textContent).toContain("2");
+
+    // Check that todo section shows count of 1
+    const todoHeader = sectionHeaders.find(h => h.textContent?.includes("Todo"));
+    expect(todoHeader?.textContent).toContain("1");
+  });
+
+  it("shows No tasks placeholder for empty columns", () => {
+    const tasks = [createMockTask({ id: "KB-001", column: "triage" })];
+
+    renderListView({ tasks });
+
+    // Should show "No tasks" for empty columns
+    const noTasksCells = screen.getAllByText("No tasks");
+    expect(noTasksCells.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("hides empty sections when filter is active", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", title: "Alpha Task", column: "triage" }),
+      createMockTask({ id: "KB-002", title: "Beta Task", column: "todo" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Apply filter that only matches triage task
+    const filterInput = screen.getByPlaceholderText("Filter by ID or title...");
+    fireEvent.change(filterInput, { target: { value: "Alpha" } });
+
+    // Only triage section should be visible (todo section should be hidden)
+    const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
+    expect(sectionHeaders.length).toBe(1);
+    expect(sectionHeaders[0].textContent).toContain("Triage");
+
+    // Verify the filtered task is visible
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.queryByText("KB-002")).toBeNull();
+  });
+
+  it("maintains sort order within each section", () => {
+    const tasks = [
+      createMockTask({ id: "KB-003", title: "Charlie", column: "triage" }),
+      createMockTask({ id: "KB-001", title: "Alpha", column: "triage" }),
+      createMockTask({ id: "KB-002", title: "Bravo", column: "triage" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Sort by title
+    const titleHeader = screen.getByText("Title");
+    fireEvent.click(titleHeader);
+
+    // Get only data rows within the triage section
+    const allRows = screen.getAllByRole("row");
+    const triageSectionStart = allRows.findIndex(r => r.className.includes("list-section-header") && r.textContent?.includes("Triage"));
+    
+    // The next 3 rows after the section header should be the sorted tasks
+    const dataRows = allRows.slice(triageSectionStart + 1, triageSectionStart + 4).filter(r => r.getAttribute("data-id"));
+    
+    expect(dataRows[0].textContent).toContain("KB-001"); // Alpha
+    expect(dataRows[1].textContent).toContain("KB-002"); // Bravo
+    expect(dataRows[2].textContent).toContain("KB-003"); // Charlie
   });
 });

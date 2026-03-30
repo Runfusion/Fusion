@@ -2291,6 +2291,73 @@ body {
   color: var(--text-muted);
 }
 
+/* Section headers for grouped list view */
+.list-section-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.list-section-header:hover {
+  background: var(--surface); /* Prevent hover effect on section headers */
+}
+
+.list-section-cell {
+  padding: 10px 16px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.list-section-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.list-section-title {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+.list-section-count {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--card);
+  padding: 2px 8px;
+  border-radius: 10px;
+  min-width: 24px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+/* Empty section row */
+.list-section-empty {
+  background: var(--bg);
+}
+
+.list-section-empty:hover {
+  background: var(--bg); /* Prevent hover effect on empty section rows */
+}
+
+.list-empty-cell {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-style: italic;
+  border-bottom: 1px solid var(--border);
+}
+
 /* === List View Mobile Responsive === */
 @media (max-width: 768px) {
   .list-toolbar {
