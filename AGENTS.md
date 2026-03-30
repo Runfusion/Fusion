@@ -120,3 +120,47 @@ To enable manual plan approval:
   }
 }
 ```
+
+## Per-Task Model Overrides
+
+The kb dashboard allows overriding the global AI model selection on a per-task basis. This enables using different models for different types of work without changing global settings.
+
+### How It Works
+
+Each task can optionally specify:
+- **Executor Model**: The AI model used to implement the task (executor agent)
+- **Validator Model**: The AI model used to review code and plans (reviewer agent)
+
+When not specified, tasks use the global default settings (`defaultProvider`/`defaultModelId`).
+
+### Setting Per-Task Models
+
+In the dashboard, open any task's detail modal and click the **Model** tab. Select models from the dropdown:
+- **Use default**: Uses the global default model (shown when no override is set)
+- **Specific model**: Override with a chosen provider/model combination
+
+Both provider and model ID must be selected together — selecting only one is treated as "not set" and falls back to defaults.
+
+### Storage
+
+Per-task model overrides are stored in the task's `task.json`:
+```json
+{
+  "modelProvider": "anthropic",
+  "modelId": "claude-sonnet-4-5",
+  "validatorModelProvider": "openai",
+  "validatorModelId": "gpt-4o"
+}
+```
+
+To clear overrides, select "Use default" for both fields and save.
+
+### Engine Behavior
+
+- **Executor**: When both `modelProvider` and `modelId` are set on a task, the executor uses those instead of global settings when creating the agent session.
+- **Reviewer**: When both `validatorModelProvider` and `validatorModelId` are set, the reviewer uses those instead of global settings. The validator model is passed via `ReviewOptions` to `reviewStep()`.
+
+### Limitations
+
+- Triage (task specification) always uses global defaults — per-task overrides apply only to execution and review
+- Both provider and modelId must be set together; partial configuration falls back to defaults

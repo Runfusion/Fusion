@@ -2852,3 +2852,176 @@ describe("TaskExecutor usage limit detection", () => {
     );
   });
 });
+
+describe("Per-task model overrides", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("uses per-task model overrides when both provider and modelId are set", async () => {
+    const store = createMockStore();
+    const capturedOptions: any[] = [];
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOptions.push(opts);
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: {},
+        },
+      } as any;
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Override getTask to return task with model overrides
+    store.getTask.mockResolvedValue({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    });
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    });
+
+    // Should use per-task model overrides
+    expect(capturedOptions[0].defaultProvider).toBe("anthropic");
+    expect(capturedOptions[0].defaultModelId).toBe("claude-sonnet-4-5");
+  });
+
+  it("falls back to global settings when per-task model is not fully specified", async () => {
+    const store = createMockStore();
+    const capturedOptions: any[] = [];
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOptions.push(opts);
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: {},
+        },
+      } as any;
+    });
+
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: undefined,
+      defaultProvider: "openai",
+      defaultModelId: "gpt-4o",
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      // No modelProvider/modelId set
+    });
+
+    // Should use global settings (not task overrides)
+    expect(capturedOptions[0].defaultProvider).toBe("openai");
+    expect(capturedOptions[0].defaultModelId).toBe("gpt-4o");
+  });
+
+  it("falls back to global settings when only modelProvider is set (missing modelId)", async () => {
+    const store = createMockStore();
+    const capturedOptions: any[] = [];
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOptions.push(opts);
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: {},
+        },
+      } as any;
+    });
+
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: undefined,
+      defaultProvider: "openai",
+      defaultModelId: "gpt-4o",
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Override getTask to return task with only modelProvider set
+    store.getTask.mockResolvedValue({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      modelProvider: "anthropic",
+      // modelId is missing
+    });
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      modelProvider: "anthropic",
+      // modelId is missing
+    });
+
+    // Should fall back to global settings since modelId is not set
+    expect(capturedOptions[0].defaultProvider).toBe("openai");
+    expect(capturedOptions[0].defaultModelId).toBe("gpt-4o");
+  });
+});

@@ -396,7 +396,7 @@ export class TaskExecutor {
         this.createTaskCreateTool(),
         this.createTaskAddDepTool(task.id),
         this.createTaskDoneTool(task.id, () => { taskDone = true; }),
-        this.createReviewStepTool(task.id, worktreePath, detail.prompt, codeReviewVerdicts, sessionRef, stepCheckpoints),
+        this.createReviewStepTool(task.id, worktreePath, detail.prompt, codeReviewVerdicts, sessionRef, stepCheckpoints, detail),
       ];
 
       const agentLogger = new AgentLogger({
@@ -408,6 +408,15 @@ export class TaskExecutor {
       });
 
       const agentWork = async () => {
+        // Resolve model settings: use per-task overrides if both provider and modelId are set,
+        // otherwise fall back to global settings
+        const executorProvider = detail.modelProvider && detail.modelId
+          ? detail.modelProvider
+          : settings.defaultProvider;
+        const executorModelId = detail.modelProvider && detail.modelId
+          ? detail.modelId
+          : settings.defaultModelId;
+
         const { session } = await createKbAgent({
           cwd: worktreePath,
           systemPrompt: EXECUTOR_SYSTEM_PROMPT,
@@ -417,8 +426,8 @@ export class TaskExecutor {
           onThinking: agentLogger.onThinking,
           onToolStart: agentLogger.onToolStart,
           onToolEnd: agentLogger.onToolEnd,
-          defaultProvider: settings.defaultProvider,
-          defaultModelId: settings.defaultModelId,
+          defaultProvider: executorProvider,
+          defaultModelId: executorModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,
         });
 
@@ -732,6 +741,7 @@ export class TaskExecutor {
     codeReviewVerdicts: Map<number, ReviewVerdict>,
     sessionRef: { current: AgentSession | null },
     stepCheckpoints: Map<number, string>,
+    detail: TaskDetail,
   ): ToolDefinition {
     const store = this.store;
     const options = this.options;
@@ -761,6 +771,8 @@ export class TaskExecutor {
               defaultProvider: settings.defaultProvider,
               defaultModelId: settings.defaultModelId,
               defaultThinkingLevel: settings.defaultThinkingLevel,
+              validatorModelProvider: detail.validatorModelProvider,
+              validatorModelId: detail.validatorModelId,
               store,
               taskId,
             },

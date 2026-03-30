@@ -100,6 +100,22 @@ export interface Task {
   log: TaskLogEntry[];
   size?: "S" | "M" | "L";
   reviewLevel?: number;
+  /** AI model provider override for the executor agent (e.g., "anthropic").
+   *  Must be set together with `modelId`. When both model fields are undefined,
+   *  the executor uses global settings defaults. */
+  modelProvider?: string;
+  /** AI model ID override for the executor agent (e.g., "claude-sonnet-4-5").
+   *  Must be set together with `modelProvider`. When both model fields are undefined,
+   *  the executor uses global settings defaults. */
+  modelId?: string;
+  /** AI model provider override for the validator/reviewer agent.
+   *  Must be set together with `validatorModelId`. When both validator model fields
+   *  are undefined, the reviewer uses global settings defaults. */
+  validatorModelProvider?: string;
+  /** AI model ID override for the validator/reviewer agent.
+   *  Must be set together with `validatorModelProvider`. When both validator model
+   *  fields are undefined, the reviewer uses global settings defaults. */
+  validatorModelId?: string;
   /** Number of merge retry attempts made for this task (auto-merge conflict recovery) */
   mergeRetries?: number;
   /** ISO-8601 timestamp of when the task last entered its current column.

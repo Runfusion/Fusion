@@ -8,6 +8,7 @@ import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { AgentLogViewer } from "./AgentLogViewer";
 import { SteeringTab } from "./SteeringTab";
+import { ModelSelectorTab } from "./ModelSelectorTab";
 import { PrSection } from "./PrSection";
 import { SpecEditor } from "./SpecEditor";
 
@@ -75,7 +76,7 @@ export function TaskDetailModal({
   addToast,
   githubTokenConfigured,
 }: TaskDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "steering" | "spec">("definition");
+  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "steering" | "model" | "spec">("definition");
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
@@ -382,6 +383,12 @@ export function TaskDetailModal({
               Steering
             </button>
             <button
+              className={`detail-tab${activeTab === "model" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("model")}
+            >
+              Model
+            </button>
+            <button
               className={`detail-tab${activeTab === "spec" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("spec")}
             >
@@ -397,6 +404,10 @@ export function TaskDetailModal({
                 isSaving={isSavingSpec}
                 isRequesting={isRequestingRevision}
               />
+            </div>
+          ) : activeTab === "model" ? (
+            <div className="detail-section">
+              <ModelSelectorTab task={task} addToast={addToast} />
             </div>
           ) : activeTab === "agent-log" ? (
             <div className="detail-section">

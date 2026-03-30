@@ -916,16 +916,36 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // Update task
   router.patch("/tasks/:id", async (req, res) => {
     try {
-      const { title, description, prompt, dependencies } = req.body;
+      const { title, description, prompt, dependencies, modelProvider, modelId, validatorModelProvider, validatorModelId } = req.body;
+
+      // Validate model fields are strings or undefined/null
+      const validateModelField = (value: unknown, name: string): string | null | undefined => {
+        if (value === undefined || value === null) return null;
+        if (typeof value !== "string") {
+          throw new Error(`${name} must be a string`);
+        }
+        return value;
+      };
+
+      const validatedModelProvider = validateModelField(modelProvider, "modelProvider");
+      const validatedModelId = validateModelField(modelId, "modelId");
+      const validatedValidatorModelProvider = validateModelField(validatorModelProvider, "validatorModelProvider");
+      const validatedValidatorModelId = validateModelField(validatorModelId, "validatorModelId");
+
       const task = await store.updateTask(req.params.id, {
         title,
         description,
         prompt,
         dependencies,
+        modelProvider: validatedModelProvider,
+        modelId: validatedModelId,
+        validatorModelProvider: validatedValidatorModelProvider,
+        validatorModelId: validatedValidatorModelId,
       });
       res.json(task);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const status = err.message?.includes("must be a string") ? 400 : 500;
+      res.status(status).json({ error: err.message });
     }
   });
 

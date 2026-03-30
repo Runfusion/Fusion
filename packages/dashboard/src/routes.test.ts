@@ -289,6 +289,10 @@ describe("PATCH /tasks/:id", () => {
       description: undefined,
       prompt: undefined,
       dependencies: ["KB-002"],
+      modelProvider: null,
+      modelId: null,
+      validatorModelProvider: null,
+      validatorModelId: null,
     });
     expect(res.body.dependencies).toEqual(["KB-002"]);
   });
@@ -306,6 +310,90 @@ describe("PATCH /tasks/:id", () => {
       description: undefined,
       prompt: undefined,
       dependencies: undefined,
+      modelProvider: null,
+      modelId: null,
+      validatorModelProvider: null,
+      validatorModelId: null,
+    });
+  });
+
+  it("forwards model override fields to store.updateTask", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      validatorModelProvider: "openai",
+      validatorModelId: "gpt-4o",
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      validatorModelProvider: "openai",
+      validatorModelId: "gpt-4o",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      title: undefined,
+      description: undefined,
+      prompt: undefined,
+      dependencies: undefined,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      validatorModelProvider: "openai",
+      validatorModelId: "gpt-4o",
+    });
+  });
+
+  it("returns 400 for invalid modelProvider type", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      modelProvider: 123,
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("modelProvider must be a string");
+  });
+
+  it("returns 400 for invalid modelId type", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      modelId: true,
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("modelId must be a string");
+  });
+
+  it("accepts null to clear model fields", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      modelProvider: undefined,
+      modelId: undefined,
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      modelProvider: null,
+      modelId: null,
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      title: undefined,
+      description: undefined,
+      prompt: undefined,
+      dependencies: undefined,
+      modelProvider: null,
+      modelId: null,
+      validatorModelProvider: null,
+      validatorModelId: null,
     });
   });
 });

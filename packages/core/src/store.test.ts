@@ -615,6 +615,64 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("updateTask — model overrides", () => {
+    it("sets executor model provider and id via updateTask", async () => {
+      const task = await createTestTask();
+      const updated = await store.updateTask(task.id, { modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      expect(updated.modelProvider).toBe("anthropic");
+      expect(updated.modelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("sets validator model provider and id via updateTask", async () => {
+      const task = await createTestTask();
+      const updated = await store.updateTask(task.id, { validatorModelProvider: "openai", validatorModelId: "gpt-4o" });
+      expect(updated.validatorModelProvider).toBe("openai");
+      expect(updated.validatorModelId).toBe("gpt-4o");
+    });
+
+    it("clears executor model fields via null", async () => {
+      const task = await createTestTask();
+      await store.updateTask(task.id, { modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      const updated = await store.updateTask(task.id, { modelProvider: null, modelId: null });
+      expect(updated.modelProvider).toBeUndefined();
+      expect(updated.modelId).toBeUndefined();
+    });
+
+    it("clears validator model fields via null", async () => {
+      const task = await createTestTask();
+      await store.updateTask(task.id, { validatorModelProvider: "openai", validatorModelId: "gpt-4o" });
+      const updated = await store.updateTask(task.id, { validatorModelProvider: null, validatorModelId: null });
+      expect(updated.validatorModelProvider).toBeUndefined();
+      expect(updated.validatorModelId).toBeUndefined();
+    });
+
+    it("sets only executor model without affecting validator model", async () => {
+      const task = await createTestTask();
+      await store.updateTask(task.id, { validatorModelProvider: "openai", validatorModelId: "gpt-4o" });
+      const updated = await store.updateTask(task.id, { modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      expect(updated.modelProvider).toBe("anthropic");
+      expect(updated.modelId).toBe("claude-sonnet-4-5");
+      expect(updated.validatorModelProvider).toBe("openai");
+      expect(updated.validatorModelId).toBe("gpt-4o");
+    });
+
+    it("preserves model fields when updating unrelated fields", async () => {
+      const task = await createTestTask();
+      await store.updateTask(task.id, {
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        validatorModelProvider: "openai",
+        validatorModelId: "gpt-4o",
+      });
+      const updated = await store.updateTask(task.id, { title: "Updated title" });
+      expect(updated.modelProvider).toBe("anthropic");
+      expect(updated.modelId).toBe("claude-sonnet-4-5");
+      expect(updated.validatorModelProvider).toBe("openai");
+      expect(updated.validatorModelId).toBe("gpt-4o");
+      expect(updated.title).toBe("Updated title");
+    });
+  });
+
   describe("agent log persistence", () => {
     it("appendAgentLog creates agent.log and getAgentLogs reads it back", async () => {
       const task = await createTestTask();

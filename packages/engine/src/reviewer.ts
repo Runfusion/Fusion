@@ -144,6 +144,10 @@ export interface ReviewOptions {
   defaultProvider?: string;
   /** Default model ID within the provider (e.g. "claude-sonnet-4-5"). When set with `defaultProvider`, overrides the reviewer's model selection. */
   defaultModelId?: string;
+  /** Validator model provider override. When both `validatorModelProvider` and `validatorModelId` are set, they take precedence over `defaultProvider`/`defaultModelId`. */
+  validatorModelProvider?: string;
+  /** Validator model ID override. When both `validatorModelProvider` and `validatorModelId` are set, they take precedence over `defaultProvider`/`defaultModelId`. */
+  validatorModelId?: string;
   /** Default thinking effort level for the reviewer agent session. */
   defaultThinkingLevel?: string;
   /** Task store for persisting agent log entries. When provided with `taskId`, enables full conversation logging. */
@@ -182,6 +186,15 @@ export async function reviewStep(
       })
     : null;
 
+  // Resolve validator model settings: use per-task overrides if both provider and modelId are set,
+  // otherwise fall back to defaultProvider/defaultModelId
+  const validatorProvider = options.validatorModelProvider && options.validatorModelId
+    ? options.validatorModelProvider
+    : options.defaultProvider;
+  const validatorModelId = options.validatorModelProvider && options.validatorModelId
+    ? options.validatorModelId
+    : options.defaultModelId;
+
   // Spawn a reviewer agent with read-only tools
   const { session } = await createKbAgent({
     cwd,
@@ -191,8 +204,8 @@ export async function reviewStep(
     onThinking: agentLogger?.onThinking,
     onToolStart: agentLogger?.onToolStart,
     onToolEnd: agentLogger?.onToolEnd,
-    defaultProvider: options.defaultProvider,
-    defaultModelId: options.defaultModelId,
+    defaultProvider: validatorProvider,
+    defaultModelId: validatorModelId,
     defaultThinkingLevel: options.defaultThinkingLevel,
   });
 

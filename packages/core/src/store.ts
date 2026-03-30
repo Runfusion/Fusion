@@ -340,7 +340,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
@@ -382,6 +382,26 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (updates.baseBranch !== undefined) task.baseBranch = updates.baseBranch;
       if (updates.size !== undefined) task.size = updates.size;
       if (updates.reviewLevel !== undefined) task.reviewLevel = updates.reviewLevel;
+      if (updates.modelProvider === null) {
+        task.modelProvider = undefined;
+      } else if (updates.modelProvider !== undefined) {
+        task.modelProvider = updates.modelProvider;
+      }
+      if (updates.modelId === null) {
+        task.modelId = undefined;
+      } else if (updates.modelId !== undefined) {
+        task.modelId = updates.modelId;
+      }
+      if (updates.validatorModelProvider === null) {
+        task.validatorModelProvider = undefined;
+      } else if (updates.validatorModelProvider !== undefined) {
+        task.validatorModelProvider = updates.validatorModelProvider;
+      }
+      if (updates.validatorModelId === null) {
+        task.validatorModelId = undefined;
+      } else if (updates.validatorModelId !== undefined) {
+        task.validatorModelId = updates.validatorModelId;
+      }
       task.updatedAt = new Date().toISOString();
 
       await this.atomicWriteTaskJson(dir, task);
