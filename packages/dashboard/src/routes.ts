@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
 import { createReadStream } from "node:fs";
 import { execSync } from "node:child_process";
@@ -1486,6 +1486,182 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
 
       res.status(201).json(task);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/github/issues/batch-import
+   * Import multiple GitHub issues as kb tasks with throttling.
+   * Body: { owner: string, repo: string, issueNumbers: number[], delayMs?: number }
+   * Returns: { results: BatchImportResult[] }
+   */
+  // Batch import rate limiter: max 1 request per 10 seconds per IP
+  const batchImportRateLimiter = (() => {
+    const clients = new Map<string, number>();
+    const windowMs = 10_000; // 10 seconds
+
+    setInterval(() => {
+      const now = Date.now();
+      for (const [ip, resetTime] of clients) {
+        if (now >= resetTime) {
+          clients.delete(ip);
+        }
+      }
+    }, windowMs);
+
+    return (req: Request, res: Response, next: NextFunction): void => {
+      const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+      const now = Date.now();
+
+      const resetTime = clients.get(ip);
+      if (resetTime && now < resetTime) {
+        const retryAfter = Math.ceil((resetTime - now) / 1000);
+        res.setHeader("Retry-After", String(retryAfter));
+        res.status(429).json({ error: "Batch import rate limit exceeded. Try again in a few seconds." });
+        return;
+      }
+
+      clients.set(ip, now + windowMs);
+      next();
+    };
+  })();
+
+  router.post("/github/issues/batch-import", batchImportRateLimiter, async (req, res) => {
+    try {
+      const { owner, repo, issueNumbers, delayMs } = req.body;
+
+      // Validate owner
+      if (!owner || typeof owner !== "string") {
+        res.status(400).json({ error: "owner is required" });
+        return;
+      }
+
+      // Validate repo
+      if (!repo || typeof repo !== "string") {
+        res.status(400).json({ error: "repo is required" });
+        return;
+      }
+
+      // Validate issueNumbers
+      if (!Array.isArray(issueNumbers)) {
+        res.status(400).json({ error: "issueNumbers is required and must be an array" });
+        return;
+      }
+
+      if (issueNumbers.length === 0) {
+        res.status(400).json({ error: "issueNumbers must contain at least 1 issue number" });
+        return;
+      }
+
+      if (issueNumbers.length > 50) {
+        res.status(400).json({ error: "issueNumbers cannot contain more than 50 issue numbers" });
+        return;
+      }
+
+      if (!issueNumbers.every((n) => typeof n === "number" && n > 0 && Number.isInteger(n))) {
+        res.status(400).json({ error: "issueNumbers must contain only positive integers" });
+        return;
+      }
+
+      const token = process.env.GITHUB_TOKEN;
+      const githubClient = new GitHubClient(token);
+
+      // Get existing tasks to check for duplicates
+      const existingTasks = await store.listTasks();
+
+      // Process issues sequentially with throttling
+      const results: Array<{
+        issueNumber: number;
+        success: boolean;
+        taskId?: string;
+        error?: string;
+        skipped?: boolean;
+        retryAfter?: number;
+      }> = [];
+
+      for (const issueNumber of issueNumbers) {
+        const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`;
+
+        // Use throttled fetch to avoid rate limits
+        const fetchResult = await githubClient.fetchThrottled<{
+          number: number;
+          title: string;
+          body: string | null;
+          html_url: string;
+          pull_request?: unknown;
+        }>(url, {}, { delayMs: delayMs ?? 1000, maxRetries: 3 });
+
+        if (!fetchResult.success) {
+          results.push({
+            issueNumber,
+            success: false,
+            error: fetchResult.error ?? "Failed to fetch issue",
+            retryAfter: fetchResult.retryAfter,
+          });
+          continue;
+        }
+
+        const issue = fetchResult.data!;
+
+        // Check if it's a pull request
+        if (issue.pull_request) {
+          results.push({
+            issueNumber,
+            success: false,
+            error: "This is a pull request, not an issue",
+          });
+          continue;
+        }
+
+        // Check if already imported
+        const sourceUrl = issue.html_url;
+        const existingTask = existingTasks.find((t) => t.description.includes(sourceUrl));
+        if (existingTask) {
+          results.push({
+            issueNumber,
+            success: true,
+            skipped: true,
+            taskId: existingTask.id,
+          });
+          continue;
+        }
+
+        // Create the task
+        const title = issue.title.slice(0, 200);
+        const body = issue.body?.trim() || "(no description)";
+        const description = `${body}\n\nSource: ${sourceUrl}`;
+
+        try {
+          const task = await store.createTask({
+            title: title || undefined,
+            description,
+            column: "triage",
+            dependencies: [],
+          });
+
+          // Log the import action
+          await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
+
+          results.push({
+            issueNumber,
+            success: true,
+            taskId: task.id,
+          });
+
+          // Add to existingTasks to avoid duplicate imports within the same batch
+          existingTasks.push({ ...task, description });
+        } catch (err: any) {
+          results.push({
+            issueNumber,
+            success: false,
+            error: err.message ?? "Failed to create task",
+          });
+        }
+      }
+
+      res.json({ results });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

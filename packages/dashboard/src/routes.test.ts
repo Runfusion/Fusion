@@ -2100,6 +2100,360 @@ describe("POST /github/issues/import", () => {
   });
 });
 
+describe("POST /github/issues/batch-import", () => {
+  let store: TaskStore;
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as any;
+
+    store = createMockStore({
+      listTasks: vi.fn().mockResolvedValue([]),
+      createTask: vi.fn().mockImplementation((input) =>
+        Promise.resolve({
+          id: `KB-${String(Math.floor(Math.random() * 999)).padStart(3, "0")}`,
+          title: input.title,
+          description: input.description,
+          column: "triage",
+        })
+      ),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  const mockGitHubIssue = (number: number, title = `Issue ${number}`) => ({
+    number,
+    title,
+    body: `Body for issue ${number}`,
+    html_url: `https://github.com/owner/repo/issues/${number}`,
+    labels: [{ name: "bug" }],
+  });
+
+  it("imports multiple issues successfully", async () => {
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockGitHubIssue(1, "First Issue")),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockGitHubIssue(2, "Second Issue")),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockGitHubIssue(3, "Third Issue")),
+      } as Response);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1, 2, 3], delayMs: 10 }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(3);
+    expect(res.body.results.every((r: { success: boolean }) => r.success)).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(store.createTask).toHaveBeenCalledTimes(3);
+  });
+
+  it("skips already-imported issues", async () => {
+    // Mock issue 1 fetch
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(mockGitHubIssue(1, "Already Imported Issue")),
+    } as Response);
+
+    // First import - should create a new task
+    const res1 = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1], delayMs: 10 }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res1.status).toBe(200);
+    expect(res1.body.results).toHaveLength(1);
+    expect(res1.body.results[0].success).toBe(true);
+    expect(res1.body.results[0].skipped).toBeUndefined();
+    const createdTaskId = res1.body.results[0].taskId;
+    expect(createdTaskId).toBeDefined();
+
+    // Now verify that if we import again with the task in the list, it gets skipped
+    // Update the listTasks mock to return the created task
+    const createdTaskDescription = `Already Imported Issue\n\nSource: https://github.com/owner/repo/issues/1`;
+    store.listTasks = vi.fn().mockResolvedValue([
+      {
+        id: createdTaskId,
+        description: createdTaskDescription,
+        column: "triage",
+      },
+    ]);
+
+    // Second import - should skip
+    const res2 = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1], delayMs: 10 }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res2.status).toBe(200);
+    expect(res2.body.results).toHaveLength(1);
+    expect(res2.body.results[0].success).toBe(true);
+    expect(res2.body.results[0].skipped).toBe(true);
+    expect(res2.body.results[0].taskId).toBe(createdTaskId);
+  });
+
+  it("returns 400 for empty issueNumbers array", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [] }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("at least 1");
+  });
+
+  it("returns 400 for more than 50 issue numbers", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: Array.from({ length: 51 }, (_, i) => i + 1) }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("more than 50");
+  });
+
+  it("returns 400 for invalid issueNumbers (non-integers)", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1, "two", 3] }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("positive integers");
+  });
+
+  it("handles partial failures (some succeed, some fail)", async () => {
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockGitHubIssue(1)),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: () => Promise.resolve({ message: "Not Found" }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockGitHubIssue(3)),
+      } as Response);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1, 2, 3], delayMs: 10 }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(3);
+    expect(res.body.results[0].success).toBe(true);
+    expect(res.body.results[1].success).toBe(false);
+    expect(res.body.results[1].error).toContain("404");
+    expect(res.body.results[2].success).toBe(true);
+  });
+
+  it("rejects pull requests with appropriate error", async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ ...mockGitHubIssue(1), pull_request: {} }),
+    } as Response);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1], delayMs: 10 }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.results[0].success).toBe(false);
+    expect(res.body.results[0].error).toContain("pull request");
+  });
+
+  it("handles rate limit (429) with retry and eventual success", async () => {
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: new Headers({ "Retry-After": "1" }),
+        json: () => Promise.resolve({ message: "Rate limited" }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockGitHubIssue(1, "Issue After Rate Limit")),
+      } as Response);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1], delayMs: 10 }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].success).toBe(true);
+    expect(res.body.results[0].taskId).toBeDefined();
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // Initial 429 + 1 retry
+  }, 10000); // Increase timeout for retry delay
+
+  it("returns error after max retries exceeded on 429", async () => {
+    // Always return 429
+    fetchSpy.mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: new Headers({ "Retry-After": "1" }), // 1 second for test speed
+      json: () => Promise.resolve({ message: "Rate limited" }),
+    } as Response);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1], delayMs: 1 }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].success).toBe(false);
+    expect(res.body.results[0].error).toContain("rate limit");
+    expect(res.body.results[0].retryAfter).toBe(1);
+    // Initial attempt + 3 retries = 4 calls
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+  }, 15000); // Increase timeout for multiple retries
+
+  it("processes issues sequentially (not parallel)", async () => {
+    const callTimes: number[] = [];
+    fetchSpy.mockImplementation(() => {
+      callTimes.push(Date.now());
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockGitHubIssue(callTimes.length)),
+      } as Response);
+    });
+
+    await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1, 2, 3], delayMs: 50 }),
+      { "Content-Type": "application/json" }
+    );
+
+    // Verify sequential processing by checking call timing
+    expect(callTimes).toHaveLength(3);
+    // Each call should be at least 40ms after the previous (allowing for small timing variations)
+    for (let i = 1; i < callTimes.length; i++) {
+      expect(callTimes[i] - callTimes[i - 1]).toBeGreaterThanOrEqual(40);
+    }
+  });
+
+  it("requires owner parameter", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ repo: "repo", issueNumbers: [1] }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("owner");
+  });
+
+  it("requires repo parameter", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", issueNumbers: [1] }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("repo");
+  });
+
+  it("logs import actions for created tasks", async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(mockGitHubIssue(1)),
+    } as Response);
+
+    await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/github/issues/batch-import",
+      JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1], delayMs: 10 }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(store.logEntry).toHaveBeenCalledWith(
+      expect.any(String),
+      "Imported from GitHub",
+      "https://github.com/owner/repo/issues/1"
+    );
+  });
+});
+
 // --- Spec Revision route tests ---
 
 describe("POST /tasks/:id/spec/revise", () => {

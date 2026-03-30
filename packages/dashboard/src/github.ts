@@ -9,6 +9,33 @@ import {
   runGh,
 } from "@kb/core";
 
+/**
+ * Sleep for a specified number of milliseconds.
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Result of a throttled fetch operation.
+ */
+export interface ThrottledFetchResult<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  retryAfter?: number;
+}
+
+/**
+ * Options for throttled fetch operations.
+ */
+export interface ThrottledFetchOptions {
+  /** Delay between requests in milliseconds (default: 1000ms) */
+  delayMs?: number;
+  /** Maximum number of retries on 429 responses (default: 3) */
+  maxRetries?: number;
+}
+
 export interface CreatePrParams {
   owner?: string;
   repo?: string;
@@ -244,6 +271,7 @@ export function isPrMergeReady(input: {
 export class GitHubClient {
   private token: string | undefined;
   private baseUrl = "https://api.github.com";
+  private lastRequestTime = 0;
 
   /**
    * Create a GitHub client.
@@ -1045,6 +1073,105 @@ export class GitHubClient {
     }
 
     return normalizeBadgeBatchPayload(payload.data?.repository, requests);
+  }
+
+  /**
+   * Fetch a URL with throttling and automatic retry on rate limit (429) responses.
+   * Implements exponential backoff and respects Retry-After header when present.
+   * Ensures minimum delay between sequential requests.
+   */
+  async fetchThrottled<T>(
+    url: string,
+    options: RequestInit = {},
+    throttleOptions: ThrottledFetchOptions = {},
+  ): Promise<ThrottledFetchResult<T>> {
+    const { delayMs = 1000, maxRetries = 3 } = throttleOptions;
+
+    // Enforce delay between sequential requests
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    if (this.lastRequestTime > 0 && timeSinceLastRequest < delayMs) {
+      await delay(delayMs - timeSinceLastRequest);
+    }
+
+    let didBackoffDelay = false;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // On retry attempts (after first failure), apply delay
+        // Skip if we already applied backoff delay in previous iteration
+        if (attempt > 0 && !didBackoffDelay) {
+          await delay(delayMs);
+        }
+        didBackoffDelay = false; // Reset for this iteration
+
+        this.lastRequestTime = Date.now();
+
+        const response = await fetch(url, {
+          ...options,
+          headers: {
+            ...this.buildHeaders(),
+            ...(options.headers || {}),
+          },
+        });
+
+        // Handle rate limit (429) with retry logic
+        if (response.status === 429) {
+          const retryAfter = response.headers.get("Retry-After");
+          const retryAfterSeconds = retryAfter ? parseInt(retryAfter, 10) : undefined;
+
+          // If this is the last retry, return the error
+          if (attempt >= maxRetries) {
+            return {
+              success: false,
+              error: `GitHub API rate limit exceeded. Retry after ${retryAfterSeconds ?? "unknown"} seconds.`,
+              retryAfter: retryAfterSeconds,
+            };
+          }
+
+          // Calculate exponential backoff delay
+          // Use Retry-After header if present, otherwise use exponential backoff
+          const backoffDelay = retryAfterSeconds
+            ? retryAfterSeconds * 1000
+            : delayMs * Math.pow(2, attempt);
+
+          await delay(backoffDelay);
+          didBackoffDelay = true;
+          // Continue to next iteration - the backoff delay was already applied
+          // so we skip the standard inter-request delay logic
+          continue;
+        }
+
+        // Handle other non-OK responses (don't retry)
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ message: response.statusText }));
+          return {
+            success: false,
+            error: `GitHub API error: ${response.status} ${error.message || response.statusText}`,
+          };
+        }
+
+        // Success - parse and return data
+        const data = await response.json() as T;
+        return { success: true, data };
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+
+        // On last attempt, return the error
+        if (attempt >= maxRetries) {
+          return { success: false, error: errorMessage };
+        }
+
+        // For network errors, wait and retry with exponential backoff
+        // Skip standard inter-request delay since we're applying backoff
+        const backoffDelay = delayMs * Math.pow(2, attempt);
+        await delay(backoffDelay);
+        didBackoffDelay = true;
+      }
+    }
+
+    // Should never reach here, but TypeScript needs it
+    return { success: false, error: "Max retries exceeded" };
   }
 
   private buildHeaders(): Record<string, string> {

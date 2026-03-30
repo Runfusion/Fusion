@@ -809,4 +809,222 @@ describe("GitHubClient", () => {
       })).rejects.toThrow("GitHub CLI (gh) is not available or not authenticated");
     });
   });
+
+  describe("fetchThrottled", () => {
+    let fetchSpy: ReturnType<typeof vi.fn>;
+    const originalFetch = globalThis.fetch;
+
+    beforeEach(() => {
+      fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy as any;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    it("returns success with data on successful request", async () => {
+      const mockData = { id: 1, title: "Test Issue" };
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockData),
+      } as Response);
+
+      const result = await client.fetchThrottled("https://api.github.com/repos/owner/repo/issues/1");
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual(mockData);
+      expect(result.error).toBeUndefined();
+    });
+
+    it("returns error on non-429 HTTP error without retry", async () => {
+      fetchSpy.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: () => Promise.resolve({ message: "Not Found" }),
+      } as Response);
+
+      const result = await client.fetchThrottled("https://api.github.com/repos/owner/repo/issues/1");
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("404");
+      expect(fetchSpy).toHaveBeenCalledTimes(1); // No retries for non-429 errors
+    });
+
+    it("retries on 429 with exponential backoff", async () => {
+      fetchSpy
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+          statusText: "Too Many Requests",
+          headers: new Headers(),
+          json: () => Promise.resolve({ message: "Rate limited" }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ id: 1 }),
+        } as Response);
+
+      const result = await client.fetchThrottled(
+        "https://api.github.com/repos/owner/repo/issues/1",
+        {},
+        { delayMs: 10, maxRetries: 3 }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ id: 1 });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("respects Retry-After header on 429", async () => {
+      const headers = new Headers();
+      headers.set("Retry-After", "1"); // Use 1 second for test speed
+
+      fetchSpy
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+          statusText: "Too Many Requests",
+          headers,
+          json: () => Promise.resolve({ message: "Rate limited" }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ id: 1 }),
+        } as Response);
+
+      const startTime = Date.now();
+      const result = await client.fetchThrottled(
+        "https://api.github.com/repos/owner/repo/issues/1",
+        {},
+        { delayMs: 100, maxRetries: 3 }
+      );
+      const elapsed = Date.now() - startTime;
+
+      expect(result.success).toBe(true);
+      // Should wait at least 1 second (Retry-After value), not just the exponential backoff
+      expect(elapsed).toBeGreaterThanOrEqual(900); // Allow some tolerance
+    }, 10000); // Increase timeout for this test
+
+    it("returns error with retryAfter after max retries exceeded", async () => {
+      const headers = new Headers();
+      headers.set("Retry-After", "1"); // Use 1 second for test speed
+
+      // All attempts return 429
+      fetchSpy.mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers,
+        json: () => Promise.resolve({ message: "Rate limited" }),
+      } as Response);
+
+      const result = await client.fetchThrottled(
+        "https://api.github.com/repos/owner/repo/issues/1",
+        {},
+        { delayMs: 1, maxRetries: 2 }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("rate limit exceeded");
+      expect(result.retryAfter).toBe(1);
+      expect(fetchSpy).toHaveBeenCalledTimes(3); // initial + 2 retries
+    }, 10000); // Increase timeout for this test
+
+    it("retries on network errors with exponential backoff", async () => {
+      fetchSpy
+        .mockRejectedValueOnce(new Error("Network error"))
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ id: 1 }),
+        } as Response);
+
+      const result = await client.fetchThrottled(
+        "https://api.github.com/repos/owner/repo/issues/1",
+        {},
+        { delayMs: 10, maxRetries: 3 }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ id: 1 });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns error after max retries on persistent network errors", async () => {
+      fetchSpy.mockRejectedValue(new Error("Network error"));
+
+      const result = await client.fetchThrottled(
+        "https://api.github.com/repos/owner/repo/issues/1",
+        {},
+        { delayMs: 1, maxRetries: 2 }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Network error");
+      expect(fetchSpy).toHaveBeenCalledTimes(3); // initial + 2 retries
+    });
+
+    it("enforces delay between sequential requests", async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ id: 1 }),
+      } as Response);
+
+      // First request
+      await client.fetchThrottled(
+        "https://api.github.com/repos/owner/repo/issues/1",
+        {},
+        { delayMs: 100 }
+      );
+
+      const startTime = Date.now();
+      // Second request should be delayed
+      await client.fetchThrottled(
+        "https://api.github.com/repos/owner/repo/issues/2",
+        {},
+        { delayMs: 100 }
+      );
+      const elapsed = Date.now() - startTime;
+
+      // Should have waited at least 100ms between requests
+      expect(elapsed).toBeGreaterThanOrEqual(90); // Allow some tolerance
+    });
+
+    it("uses custom delayMs option", async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ id: 1 }),
+      } as Response);
+
+      const startTime = Date.now();
+      await client.fetchThrottled(
+        "https://api.github.com/repos/owner/repo/issues/1",
+        {},
+        { delayMs: 200 }
+      );
+      const elapsed = Date.now() - startTime;
+
+      // Should be relatively quick since no previous request
+      expect(elapsed).toBeLessThan(100);
+    });
+
+    it("uses custom maxRetries option", async () => {
+      fetchSpy.mockRejectedValue(new Error("Network error"));
+
+      await client.fetchThrottled(
+        "https://api.github.com/repos/owner/repo/issues/1",
+        {},
+        { delayMs: 1, maxRetries: 1 }
+      );
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2); // initial + 1 retry
+    });
+  });
 });

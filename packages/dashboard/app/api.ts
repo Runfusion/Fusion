@@ -276,6 +276,29 @@ export function apiImportGitHubIssue(owner: string, repo: string, issueNumber: n
   });
 }
 
+/** Result of a batch import operation for a single issue */
+export interface BatchImportResult {
+  issueNumber: number;
+  success: boolean;
+  taskId?: string;
+  error?: string;
+  skipped?: boolean;
+  retryAfter?: number;
+}
+
+/** Batch import multiple GitHub issues as kb tasks with throttling */
+export function apiBatchImportGitHubIssues(
+  owner: string,
+  repo: string,
+  issueNumbers: number[],
+  delayMs?: number
+): Promise<{ results: BatchImportResult[] }> {
+  return api<{ results: BatchImportResult[] }>("/github/issues/batch-import", {
+    method: "POST",
+    body: JSON.stringify({ owner, repo, issueNumbers, delayMs }),
+  });
+}
+
 // --- Git Remote Detection API ---
 
 /** Git remote info returned by the remotes endpoint */
