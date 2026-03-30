@@ -722,13 +722,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "feedback is required and must be a string" });
         return;
       }
-      if (feedback.length === 0 || feedback.length > 2000) {
+      // Trim before checking length to catch whitespace-only input
+      const trimmedFeedback = feedback.trim();
+      if (trimmedFeedback.length === 0 || trimmedFeedback.length > 2000) {
         res.status(400).json({ error: "feedback must be between 1 and 2000 characters" });
         return;
       }
 
-      const refinedTask = await store.refineTask(req.params.id, feedback);
-      await store.logEntry(req.params.id, "Refinement requested", feedback);
+      const refinedTask = await store.refineTask(req.params.id, trimmedFeedback);
+      await store.logEntry(req.params.id, "Refinement requested", trimmedFeedback);
       res.status(201).json(refinedTask);
     } catch (err: any) {
       const status = err.code === "ENOENT" ? 404

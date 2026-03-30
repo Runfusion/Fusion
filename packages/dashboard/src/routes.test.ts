@@ -573,15 +573,15 @@ describe("POST /tasks/:id/refine", () => {
     expect(res.body.error).toContain("not found");
   });
 
-  it("returns 400 when feedback is whitespace only (rejected by store)", async () => {
-    (store.refineTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Feedback is required and cannot be empty"));
-
+  it("returns 400 when feedback is whitespace only (caught at validation)", async () => {
+    // Route-level validation now catches whitespace-only input before it reaches the store
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({ feedback: "   " }), {
       "Content-Type": "application/json",
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("Feedback is required");
+    expect(res.body.error).toContain("feedback must be between 1 and 2000 characters");
+    expect(store.refineTask).not.toHaveBeenCalled();
   });
 
   it("returns 500 on unexpected errors", async () => {
