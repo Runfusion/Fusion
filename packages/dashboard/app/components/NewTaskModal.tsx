@@ -287,7 +287,6 @@ function ModelCombobox({
 }
 
 export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, onPlanningMode }: NewTaskModalProps) {
-  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [showDepDropdown, setShowDepDropdown] = useState(false);
@@ -319,7 +318,6 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
   // Track dirty state
   useEffect(() => {
     const isDirty = 
-      title.trim() !== "" ||
       description.trim() !== "" ||
       dependencies.length > 0 ||
       pendingImages.length > 0 ||
@@ -327,7 +325,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
       validatorModel !== "" ||
       enablePlanningMode;
     setHasDirtyState(isDirty);
-  }, [title, description, dependencies, pendingImages, executorModel, validatorModel, enablePlanningMode]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, enablePlanningMode]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -402,7 +400,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
     pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
     setPendingImages([]);
     // Reset form
-    setTitle("");
+    setPendingImages([]);
     setDescription("");
     setDependencies([]);
     setExecutorModel("");
@@ -425,7 +423,6 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
         
         // Clear form state
         setPendingImages([]);
-        setTitle("");
         setDescription("");
         setDependencies([]);
         setExecutorModel("");
@@ -445,7 +442,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
     try {
       // Create the base task
       const task = await onCreateTask({
-        title: title.trim() || undefined,
+        title: undefined,
         description: trimmedDesc,
         column: "triage",
         dependencies: dependencies.length ? dependencies : undefined,
@@ -491,7 +488,6 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
       // Clean up
       pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       setPendingImages([]);
-      setTitle("");
       setDescription("");
       setDependencies([]);
       setExecutorModel("");
@@ -505,7 +501,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
     } finally {
       setIsSubmitting(false);
     }
-  }, [description, title, dependencies, pendingImages, executorModel, validatorModel, enablePlanningMode, isSubmitting, onCreateTask, addToast, onClose, onPlanningMode]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, enablePlanningMode, isSubmitting, onCreateTask, addToast, onClose, onPlanningMode]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -560,21 +556,6 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
         </div>
 
         <div className="modal-body">
-          {/* Title field */}
-          <div className="form-group">
-            <label htmlFor="new-task-title">
-              Title <span className="optional">(optional)</span>
-            </label>
-            <input
-              id="new-task-title"
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Brief title for the task"
-              disabled={isSubmitting}
-            />
-          </div>
-
           {/* Description field */}
           <div className="form-group">
             <label htmlFor="new-task-description">Description</label>

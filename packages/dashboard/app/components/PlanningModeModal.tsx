@@ -563,16 +563,6 @@ function SummaryView({
 
         <div className="planning-summary-form">
           <div className="form-group">
-            <label htmlFor="summary-title">Title</label>
-            <input
-              id="summary-title"
-              type="text"
-              value={summary.title}
-              onChange={(e) => onSummaryChange({ ...summary, title: e.target.value })}
-            />
-          </div>
-
-          <div className="form-group">
             <label>
               Description
               <button
@@ -653,7 +643,7 @@ function SummaryView({
         <button
           className="btn btn-primary"
           onClick={onCreateTask}
-          disabled={isLoading || !summary.title.trim()}
+          disabled={isLoading}
         >
           {isLoading ? (
             <>

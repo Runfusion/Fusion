@@ -56,7 +56,6 @@ describe("NewTaskModal", () => {
     renderNewTaskModal();
     
     expect(screen.getByText("New Task")).toBeTruthy();
-    expect(screen.getByLabelText(/Title/i)).toBeTruthy();
     expect(screen.getByLabelText(/Description/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add dependencies" })).toBeTruthy();
     expect(screen.getByText(/Model Configuration/i)).toBeTruthy();
@@ -66,13 +65,11 @@ describe("NewTaskModal", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
-  it("creates task with all provided data on submit", async () => {
+  it("creates task with description on submit", async () => {
     const { props } = renderNewTaskModal();
     
-    const titleInput = screen.getByLabelText(/Title/i);
     const descTextarea = screen.getByLabelText(/Description/i);
     
-    fireEvent.change(titleInput, { target: { value: "My Task Title" } });
     fireEvent.change(descTextarea, { target: { value: "My task description" } });
     
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -80,7 +77,7 @@ describe("NewTaskModal", () => {
     await waitFor(() => {
       expect(props.onCreateTask).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: "My Task Title",
+          title: undefined,
           description: "My task description",
           column: "triage",
         }),
@@ -245,7 +242,7 @@ describe("NewTaskModal", () => {
     expect(props.onClose).toHaveBeenCalled();
   });
 
-  it("creates task without title when title is empty", async () => {
+  it("creates task with title undefined by default", async () => {
     const { props } = renderNewTaskModal();
     
     const descTextarea = screen.getByLabelText(/Description/i);
@@ -268,11 +265,9 @@ describe("NewTaskModal", () => {
     const onPlanningMode = vi.fn();
     const { props } = renderNewTaskModal({ onPlanningMode });
     
-    const titleInput = screen.getByLabelText(/Title/i);
     const descTextarea = screen.getByLabelText(/Description/i);
     const checkbox = screen.getByLabelText(/Enable planning mode/i);
     
-    fireEvent.change(titleInput, { target: { value: "My Task" } });
     fireEvent.change(descTextarea, { target: { value: "Build a login system" } });
     fireEvent.click(checkbox);
     
@@ -347,11 +342,9 @@ describe("NewTaskModal", () => {
     const onPlanningMode = vi.fn();
     renderNewTaskModal({ onPlanningMode });
     
-    const titleInput = screen.getByLabelText(/Title/i);
     const descTextarea = screen.getByLabelText(/Description/i);
     const checkbox = screen.getByLabelText(/Enable planning mode/i);
     
-    fireEvent.change(titleInput, { target: { value: "My Task" } });
     fireEvent.change(descTextarea, { target: { value: "Build a login system" } });
     fireEvent.click(checkbox);
     
