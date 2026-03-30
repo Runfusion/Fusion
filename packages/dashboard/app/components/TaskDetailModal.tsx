@@ -940,7 +940,7 @@ export function TaskDetailModal({
           )}
           {(task.column === "done" || task.column === "in-review") && (
             <button className="btn btn-sm" onClick={handleOpenRefineModal}>
-              Request Refinement
+              Refine
             </button>
           )}
           {task.status === "failed" && onRetryTask && (
@@ -1011,7 +1011,7 @@ export function TaskDetailModal({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="modal-header">
-                <h3 style={{ margin: 0 }}>Request Refinement</h3>
+                <h3 style={{ margin: 0 }}>Refine</h3>
                 <button className="modal-close" onClick={handleCloseRefineModal}>
                   &times;
                 </button>

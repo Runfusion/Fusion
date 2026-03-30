@@ -2030,7 +2030,7 @@ describe("TaskDetailModal", () => {
   });
 
   describe("Refinement button", () => {
-    it("renders Request Refinement button for 'done' column tasks", () => {
+    it("renders Refine button for 'done' column tasks", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "done" })}
@@ -2043,10 +2043,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Request Refinement")).toBeTruthy();
+      expect(screen.getByText("Refine")).toBeTruthy();
     });
 
-    it("renders Request Refinement button for 'in-review' column tasks", () => {
+    it("renders Refine button for 'in-review' column tasks", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "in-review" })}
@@ -2059,10 +2059,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Request Refinement")).toBeTruthy();
+      expect(screen.getByText("Refine")).toBeTruthy();
     });
 
-    it("does NOT render Request Refinement button for 'triage' column tasks", () => {
+    it("does NOT render Refine button for 'triage' column tasks", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "triage" })}
@@ -2075,10 +2075,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.queryByText("Request Refinement")).toBeNull();
+      expect(screen.queryByText("Refine")).toBeNull();
     });
 
-    it("does NOT render Request Refinement button for 'todo' column tasks", () => {
+    it("does NOT render Refine button for 'todo' column tasks", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "todo" })}
@@ -2091,10 +2091,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.queryByText("Request Refinement")).toBeNull();
+      expect(screen.queryByText("Refine")).toBeNull();
     });
 
-    it("does NOT render Request Refinement button for 'in-progress' column tasks", () => {
+    it("does NOT render Refine button for 'in-progress' column tasks", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "in-progress" })}
@@ -2107,10 +2107,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.queryByText("Request Refinement")).toBeNull();
+      expect(screen.queryByText("Refine")).toBeNull();
     });
 
-    it("clicking Request Refinement opens the refinement modal", () => {
+    it("clicking Refine opens the refinement modal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "KB-001", column: "done" })}
@@ -2123,9 +2123,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Refine"));
 
-      expect(screen.getByText("Request Refinement", { selector: "h3" })).toBeTruthy();
+      expect(screen.getByText("Refine", { selector: "h3" })).toBeTruthy();
       expect(screen.getByPlaceholderText("Enter your feedback here...")).toBeTruthy();
     });
 
@@ -2142,7 +2142,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Refine"));
 
       expect(screen.getByText("0/2000 characters")).toBeTruthy();
     });
@@ -2160,7 +2160,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Refine"));
 
       const textarea = screen.getByPlaceholderText("Enter your feedback here...");
       await act(async () => {
@@ -2183,7 +2183,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Refine"));
 
       const submitButton = screen.getByText("Create Refinement Task");
       expect(submitButton.hasAttribute("disabled")).toBe(true);
@@ -2202,7 +2202,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Refine"));
 
       const textarea = screen.getByPlaceholderText("Enter your feedback here...");
       await act(async () => {
@@ -2228,11 +2228,11 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Refine"));
       fireEvent.click(screen.getByText("Cancel"));
 
       // Modal should be closed, but detail modal stays open (onClose not called)
-      expect(screen.queryByText("Request Refinement", { selector: "h3" })).toBeNull();
+      expect(screen.queryByText("Refine", { selector: "h3" })).toBeNull();
       expect(onClose).not.toHaveBeenCalled();
     });
 
@@ -2251,7 +2251,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Refine"));
 
       // Try to submit with empty text (manually trigger submit since button is disabled)
       const { refineTask } = await import("../../api");
@@ -2279,7 +2279,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Refine"));
 
       const textarea = screen.getByPlaceholderText("Enter your feedback here...");
       fireEvent.change(textarea, { target: { value: "Need to add more tests" } });
@@ -2311,7 +2311,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Refine"));
 
       const textarea = screen.getByPlaceholderText("Enter your feedback here...");
       fireEvent.change(textarea, { target: { value: "Need to add more tests" } });
