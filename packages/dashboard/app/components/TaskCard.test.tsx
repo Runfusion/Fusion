@@ -156,4 +156,97 @@ describe("TaskCard", () => {
       );
     });
   });
+
+  // Size badge positioning regression tests (KB-197)
+  it("renders size badge for sized tasks", () => {
+    const { container } = render(
+      <TaskCard task={makeTask({ size: "S" })} onOpenDetail={noop} addToast={noop} />,
+    );
+    expect(container.querySelector(".card-size-badge")).not.toBeNull();
+    expect(screen.getByText("S")).toBeDefined();
+  });
+
+  it("does not render size badge when task has no size", () => {
+    const { container } = render(
+      <TaskCard task={makeTask({ size: undefined })} onOpenDetail={noop} addToast={noop} />,
+    );
+    expect(container.querySelector(".card-size-badge")).toBeNull();
+  });
+
+  it("renders all three size values with correct CSS classes", () => {
+    const sizes: Array<"S" | "M" | "L"> = ["S", "M", "L"];
+    const expectedClasses = ["size-s", "size-m", "size-l"];
+
+    sizes.forEach((size, index) => {
+      const { container } = render(
+        <TaskCard task={makeTask({ size })} onOpenDetail={noop} addToast={noop} />,
+      );
+      const badge = container.querySelector(".card-size-badge");
+      expect(badge).not.toBeNull();
+      expect(badge?.classList.contains(expectedClasses[index])).toBe(true);
+      // Clean up for next iteration
+      container.remove();
+    });
+  });
+
+  it("places size badge inside card-header-actions container", () => {
+    const { container } = render(
+      <TaskCard task={makeTask({ size: "M" })} onOpenDetail={noop} addToast={noop} />,
+    );
+    const actionsContainer = container.querySelector(".card-header-actions");
+    const sizeBadge = container.querySelector(".card-size-badge");
+    
+    expect(actionsContainer).not.toBeNull();
+    expect(sizeBadge).not.toBeNull();
+    expect(actionsContainer?.contains(sizeBadge)).toBe(true);
+  });
+
+  it("places card-header-actions after card-id in DOM order", () => {
+    const { container } = render(
+      <TaskCard task={makeTask({ size: "S" })} onOpenDetail={noop} addToast={noop} />,
+    );
+    const cardId = container.querySelector(".card-id")!;
+    const actionsContainer = container.querySelector(".card-header-actions")!;
+    
+    expect(cardId).not.toBeNull();
+    expect(actionsContainer).not.toBeNull();
+    // The actions container should come after card-id
+    expect(
+      cardId.compareDocumentPosition(actionsContainer) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("renders edit button inside card-header-actions for editable columns", () => {
+    const { container } = render(
+      <TaskCard 
+        task={makeTask({ column: "todo", size: "S" })} 
+        onOpenDetail={noop} 
+        addToast={noop}
+        onUpdateTask={async () => makeTask()}
+      />,
+    );
+    const actionsContainer = container.querySelector(".card-header-actions");
+    const editBtn = container.querySelector(".card-edit-btn");
+    
+    expect(actionsContainer).not.toBeNull();
+    expect(editBtn).not.toBeNull();
+    expect(actionsContainer?.contains(editBtn)).toBe(true);
+  });
+
+  it("renders archive button inside card-header-actions for done column", () => {
+    const { container } = render(
+      <TaskCard 
+        task={makeTask({ column: "done", size: "L" })} 
+        onOpenDetail={noop} 
+        addToast={noop}
+        onArchiveTask={async () => makeTask()}
+      />,
+    );
+    const actionsContainer = container.querySelector(".card-header-actions");
+    const archiveBtn = container.querySelector(".card-archive-btn");
+    
+    expect(actionsContainer).not.toBeNull();
+    expect(archiveBtn).not.toBeNull();
+    expect(actionsContainer?.contains(archiveBtn)).toBe(true);
+  });
 });
