@@ -37,8 +37,8 @@ import {
 const mockAddToast = vi.fn();
 
 const mockTasks: Task[] = [
-  { id: "KB-001", description: "Test task 1", column: "in-progress", dependencies: [], worktree: "/worktrees/kb-001" },
-  { id: "KB-002", description: "Test task 2", column: "todo", dependencies: [] },
+  { id: "KB-001", description: "Test task 1", column: "in-progress", dependencies: [], worktree: "/worktrees/kb-001", steps: [], currentStep: 0, log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: "KB-002", description: "Test task 2", column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
 ];
 
 describe("GitManagerModal", () => {

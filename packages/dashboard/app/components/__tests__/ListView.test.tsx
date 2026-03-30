@@ -795,15 +795,15 @@ describe("ListView Column Visibility", () => {
     
     // Uncheck all but one
     for (let i = 0; i < checkboxes.length - 1; i++) {
-      if (checkboxes[i].checked) {
+      if ((checkboxes[i] as HTMLInputElement).checked) {
         fireEvent.click(checkboxes[i]);
       }
     }
 
     // The last checkbox should be disabled (check the disabled property)
     const lastCheckbox = checkboxes[checkboxes.length - 1];
-    if (lastCheckbox.checked) {
-      expect(lastCheckbox.disabled).toBe(true);
+    if ((lastCheckbox as HTMLInputElement).checked) {
+      expect((lastCheckbox as HTMLInputElement).disabled).toBe(true);
     }
   });
 

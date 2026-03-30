@@ -25,7 +25,7 @@ import {
 } from "../api";
 import {
   GitBranch as GitBranchIcon,
-  GitCommit,
+  GitCommit as GitCommitIcon,
   GitPullRequest,
   GitMerge,
   RefreshCw,
@@ -47,7 +47,7 @@ type SectionId = "status" | "commits" | "branches" | "worktrees" | "remotes";
 
 const SECTIONS = [
   { id: "status" as SectionId, label: "Status", icon: Radio },
-  { id: "commits" as SectionId, label: "Commits", icon: GitCommit },
+  { id: "commits" as SectionId, label: "Commits", icon: GitCommitIcon },
   { id: "branches" as SectionId, label: "Branches", icon: GitBranchIcon },
   { id: "worktrees" as SectionId, label: "Worktrees", icon: HardDrive },
   { id: "remotes" as SectionId, label: "Remotes", icon: GitMerge },
