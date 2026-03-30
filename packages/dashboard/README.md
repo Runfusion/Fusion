@@ -219,6 +219,10 @@ pnpm build
 pnpm dev
 ```
 
+### Strict TypeScript Verification
+
+The dashboard enforces strict type-checking via `src/__tests__/typecheck.test.ts`, which runs `tsc --noEmit --skipLibCheck false`. This ensures type safety across the workspace and catches missing or incompatible types in dependencies. The test verifies that dashboard source code (which imports from `@kb/engine`) satisfies all TypeScript constraints without skipping library type definitions.
+
 ## API Endpoints
 
 The dashboard server exposes a REST API at `/api`:
