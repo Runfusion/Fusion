@@ -1276,7 +1276,9 @@ describe("TaskCard steps toggle", () => {
   });
 
   it("shows steps toggle with count when task has steps", () => {
+    // Use 'todo' column to test default collapsed behavior
     const task = makeTask({
+      column: "todo",
       steps: [
         { name: "Step 1", status: "done" },
         { name: "Step 2", status: "pending" },
@@ -1297,7 +1299,9 @@ describe("TaskCard steps toggle", () => {
   });
 
   it("clicking toggle expands and shows step list", () => {
+    // Use 'todo' column to test default collapsed behavior
     const task = makeTask({
+      column: "todo",
       steps: [
         { name: "First step", status: "done" },
         { name: "Second step", status: "in-progress" },
@@ -1321,7 +1325,9 @@ describe("TaskCard steps toggle", () => {
   });
 
   it("clicking toggle again collapses step list", () => {
+    // Use 'todo' column to test default collapsed behavior
     const task = makeTask({
+      column: "todo",
       steps: [{ name: "Single step", status: "pending" }],
     });
 
@@ -1345,7 +1351,9 @@ describe("TaskCard steps toggle", () => {
   });
 
   it("step list renders correct number of steps", () => {
+    // Use 'todo' column to test default collapsed behavior
     const task = makeTask({
+      column: "todo",
       steps: [
         { name: "Step 1", status: "done" },
         { name: "Step 2", status: "in-progress" },
@@ -1371,7 +1379,9 @@ describe("TaskCard steps toggle", () => {
   });
 
   it("completed steps have strikethrough style", () => {
+    // Use 'todo' column to test default collapsed behavior
     const task = makeTask({
+      column: "todo",
       steps: [
         { name: "Done step", status: "done" },
         { name: "Pending step", status: "pending" },
@@ -1397,7 +1407,9 @@ describe("TaskCard steps toggle", () => {
   });
 
   it("toggle does not trigger card click when clicked", () => {
+    // Use 'todo' column to test default collapsed behavior
     const task = makeTask({
+      column: "todo",
       steps: [{ name: "Test step", status: "pending" }],
     });
     const onOpenDetail = vi.fn();
@@ -1418,7 +1430,9 @@ describe("TaskCard steps toggle", () => {
   });
 
   it("aria-expanded reflects toggle state", () => {
+    // Use 'todo' column to test default collapsed behavior
     const task = makeTask({
+      column: "todo",
       steps: [{ name: "Test step", status: "pending" }],
     });
 
@@ -1438,7 +1452,9 @@ describe("TaskCard steps toggle", () => {
   });
 
   it("chevron icon rotates when expanded", () => {
+    // Use 'todo' column to test default collapsed behavior
     const task = makeTask({
+      column: "todo",
       steps: [{ name: "Test step", status: "pending" }],
     });
 
@@ -1484,7 +1500,9 @@ describe("TaskCard steps toggle", () => {
   });
 
   it("step list renders skipped status with correct CSS class", () => {
+    // Use 'todo' column to test default collapsed behavior
     const task = makeTask({
+      column: "todo",
       steps: [
         { name: "Done step", status: "done" },
         { name: "Skipped step", status: "skipped" },
@@ -1536,6 +1554,213 @@ describe("TaskCard steps toggle", () => {
     const progressFill = document.querySelector(".card-progress-fill") as HTMLElement;
     expect(progressFill).toBeDefined();
     expect(progressFill.style.width).toBe("100%");
+  });
+});
+
+/**
+ * Tests for auto-expanded steps disclosure in in-progress column (KB-193).
+ */
+describe("TaskCard steps auto-expand", () => {
+  const noopToast = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("steps are expanded by default for 'in-progress' column tasks", () => {
+    const task = makeTask({
+      column: "in-progress",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "pending" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Steps should be visible without clicking
+    expect(screen.getByText("Step 1")).toBeDefined();
+    expect(screen.getByText("Step 2")).toBeDefined();
+
+    // Toggle should show "Hide steps"
+    const toggle = screen.getByRole("button", { name: /Hide steps/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("steps are collapsed by default for 'triage' column tasks", () => {
+    const task = makeTask({
+      column: "triage",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "pending" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Steps should not be visible
+    expect(screen.queryByText("Step 1")).toBeNull();
+    expect(screen.queryByText("Step 2")).toBeNull();
+
+    // Toggle should show "Show steps"
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("steps are collapsed by default for 'todo' column tasks", () => {
+    const task = makeTask({
+      column: "todo",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "pending" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Steps should not be visible
+    expect(screen.queryByText("Step 1")).toBeNull();
+    expect(screen.queryByText("Step 2")).toBeNull();
+
+    // Toggle should show "Show steps"
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("steps are collapsed by default for 'in-review' column tasks", () => {
+    const task = makeTask({
+      column: "in-review",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "pending" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Steps should not be visible
+    expect(screen.queryByText("Step 1")).toBeNull();
+    expect(screen.queryByText("Step 2")).toBeNull();
+
+    // Toggle should show "Show steps"
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("steps are collapsed by default for 'done' column tasks", () => {
+    const task = makeTask({
+      column: "done",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "done" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Steps should not be visible
+    expect(screen.queryByText("Step 1")).toBeNull();
+    expect(screen.queryByText("Step 2")).toBeNull();
+
+    // Toggle should show "Show steps"
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("toggle button works to collapse steps on in-progress cards", () => {
+    const task = makeTask({
+      column: "in-progress",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "pending" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Steps should be visible initially
+    expect(screen.getByText("Step 1")).toBeDefined();
+
+    // Click toggle to collapse
+    const toggle = screen.getByRole("button", { name: /Hide steps/i });
+    fireEvent.click(toggle);
+
+    // Steps should now be hidden
+    expect(screen.queryByText("Step 1")).toBeNull();
+    expect(screen.queryByText("Step 2")).toBeNull();
+
+    // Toggle should now show "Show steps"
+    expect(toggle.getAttribute("aria-label")).toBe("Show steps");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("toggle button works to expand steps on non-in-progress cards", () => {
+    const task = makeTask({
+      column: "todo",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "pending" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Steps should be hidden initially
+    expect(screen.queryByText("Step 1")).toBeNull();
+
+    // Click toggle to expand
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    fireEvent.click(toggle);
+
+    // Steps should now be visible
+    expect(screen.getByText("Step 1")).toBeDefined();
+    expect(screen.getByText("Step 2")).toBeDefined();
+
+    // Toggle should now show "Hide steps"
+    expect(toggle.getAttribute("aria-label")).toBe("Hide steps");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
   });
 });
 
