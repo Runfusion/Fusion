@@ -15,6 +15,11 @@ vi.mock("../../api", async () => {
   };
 });
 
+// Mock ProviderIcon to avoid rendering actual icons
+vi.mock("../ProviderIcon", () => ({
+  ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`provider-icon-${provider}`} />,
+}));
+
 const mockFetchModels = api.fetchModels as ReturnType<typeof vi.fn>;
 const mockUpdateTask = api.updateTask as ReturnType<typeof vi.fn>;
 
@@ -94,6 +99,40 @@ describe("ModelSelectorTab", () => {
     expect(screen.getByText("openai/gpt-4o")).toBeInTheDocument();
   });
 
+  it("displays provider icon next to current selection in badge", async () => {
+    const taskWithModels = {
+      ...FAKE_TASK,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      validatorModelProvider: "openai",
+      validatorModelId: "gpt-4o",
+    };
+
+    render(<ModelSelectorTab task={taskWithModels} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Verify provider icons are rendered in the component (both badges and dropdown trigger)
+    const anthropicIcons = screen.getAllByTestId("provider-icon-anthropic");
+    const openaiIcons = screen.getAllByTestId("provider-icon-openai");
+
+    expect(anthropicIcons.length).toBeGreaterThanOrEqual(1);
+    expect(openaiIcons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not display provider icon in badge when using default", async () => {
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // No provider icons should be rendered when using default
+    expect(screen.queryByTestId(/provider-icon-/)).not.toBeInTheDocument();
+  });
+
   it("opens combobox when trigger is clicked", async () => {
     const user = userEvent.setup();
     render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
@@ -129,6 +168,23 @@ describe("ModelSelectorTab", () => {
     // Check provider headers are present
     expect(screen.getByText("anthropic")).toBeInTheDocument();
     expect(screen.getByText("openai")).toBeInTheDocument();
+  });
+
+  it("displays provider icons in dropdown group headers", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Open the combobox
+    const executorTrigger = screen.getByLabelText("Executor Model");
+    await user.click(executorTrigger);
+
+    // Check provider icons are displayed in dropdown headers
+    expect(screen.getByTestId("provider-icon-anthropic")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-icon-openai")).toBeInTheDocument();
   });
 
   it("enables Save button when selections change", async () => {
