@@ -3,7 +3,7 @@ import type { IssueInfo, PrInfo } from "@kb/core";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
 import { GitHubBadge } from "./GitHubBadge";
 
-function pickPreferredBadge<T extends { lastCheckedAt?: string }>(
+export function pickPreferredBadge<T extends { lastCheckedAt?: string }>(
   liveValue: T | null | undefined,
   liveTimestamp: string | undefined,
   taskValue: T | undefined,

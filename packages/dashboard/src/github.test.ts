@@ -35,6 +35,10 @@ const mockRunGhJson = vi.mocked(runGhJson);
 const mockRunGhJsonAsync = vi.mocked(runGhJsonAsync);
 const mockGetCurrentRepo = vi.mocked(getCurrentRepo);
 
+function createGraphQlBatchPayload(repository: Record<string, unknown>) {
+  return JSON.stringify({ data: { repository } });
+}
+
 describe("GitHubClient", () => {
   let client: GitHubClient;
 
@@ -47,6 +51,7 @@ describe("GitHubClient", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -399,6 +404,230 @@ describe("GitHubClient", () => {
       expect(result?.number).toBe(1);
 
       vi.restoreAllMocks();
+    });
+  });
+
+  describe("getBatchIssueStatus", () => {
+    it("uses the REST issues list endpoint for recent requested issues", async () => {
+      mockRunGhJsonAsync.mockResolvedValue([
+        {
+          number: 250,
+          html_url: "https://github.com/owner/repo/issues/250",
+          title: "Issue 250",
+          state: "open",
+          state_reason: null,
+        },
+        {
+          number: 120,
+          html_url: "https://github.com/owner/repo/issues/120",
+          title: "Issue 120",
+          state: "closed",
+          state_reason: "completed",
+        },
+      ]);
+
+      const result = await client.getBatchIssueStatus("owner", "repo", [250, 120]);
+
+      expect(mockRunGhJsonAsync).toHaveBeenCalledWith([
+        "api",
+        "repos/owner/repo/issues?state=all&per_page=100",
+      ]);
+      expect(mockRunGhAsync).not.toHaveBeenCalled();
+      expect(result.get(250)).toMatchObject({ number: 250, state: "open" });
+      expect(result.get(120)).toMatchObject({ number: 120, state: "closed", stateReason: "completed" });
+    });
+
+    it("falls back for requested issues missing from the REST list response", async () => {
+      mockRunGhJsonAsync.mockResolvedValue([
+        {
+          number: 250,
+          html_url: "https://github.com/owner/repo/issues/250",
+          title: "Issue 250",
+          state: "open",
+          state_reason: null,
+        },
+      ]);
+      mockRunGhAsync.mockResolvedValue(
+        createGraphQlBatchPayload({
+          issue_120: {
+            number: 120,
+            url: "https://github.com/owner/repo/issues/120",
+            title: "Issue 120",
+            state: "CLOSED",
+            stateReason: "COMPLETED",
+          },
+          issue_100: null,
+        }),
+      );
+
+      const result = await client.getBatchIssueStatus("owner", "repo", [250, 120, 100]);
+
+      expect(mockRunGhJsonAsync).toHaveBeenCalledTimes(1);
+      expect(mockRunGhAsync).toHaveBeenCalledTimes(1);
+      expect(result.get(250)).toMatchObject({ number: 250, state: "open" });
+      expect(result.get(120)).toMatchObject({ number: 120, state: "closed", stateReason: "completed" });
+      expect(result.has(100)).toBe(false);
+      expect(result.size).toBe(2);
+    });
+
+    it("returns early for empty input", async () => {
+      const result = await client.getBatchIssueStatus("owner", "repo", []);
+
+      expect(result.size).toBe(0);
+      expect(mockRunGhJsonAsync).not.toHaveBeenCalled();
+      expect(mockRunGhAsync).not.toHaveBeenCalled();
+    });
+
+    it("retries transient REST failures with a 5 second backoff", async () => {
+      vi.useFakeTimers();
+      mockRunGhJsonAsync
+        .mockRejectedValueOnce(new Error("secondary rate limit"))
+        .mockRejectedValueOnce(new Error("502 Bad Gateway"))
+        .mockResolvedValueOnce([
+          {
+            number: 5,
+            html_url: "https://github.com/owner/repo/issues/5",
+            title: "Issue 5",
+            state: "open",
+            state_reason: null,
+          },
+        ]);
+
+      const promise = client.getBatchIssueStatus("owner", "repo", [5]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await promise;
+
+      expect(mockRunGhJsonAsync).toHaveBeenCalledTimes(3);
+      expect(result.get(5)?.number).toBe(5);
+    });
+
+    it("stops retrying the REST batch call after 3 attempts", async () => {
+      vi.useFakeTimers();
+      mockRunGhJsonAsync.mockRejectedValue(new Error("secondary rate limit"));
+
+      const exhaustedPromise = client.getBatchIssueStatus("owner", "repo", [6]);
+      const rejection = expect(exhaustedPromise).rejects.toThrow("secondary rate limit");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejection;
+
+      expect(mockRunGhJsonAsync).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe("getBatchPrStatus", () => {
+    it("uses the REST pulls list endpoint and maps merged PRs correctly", async () => {
+      mockRunGhJsonAsync.mockResolvedValue([
+        {
+          number: 150,
+          html_url: "https://github.com/owner/repo/pull/150",
+          title: "PR 150",
+          state: "closed",
+          merged_at: "2026-03-30T12:00:00Z",
+          head: { ref: "feature/150" },
+          base: { ref: "main" },
+          comments: 2,
+          updated_at: "2026-03-30T11:00:00Z",
+        },
+        {
+          number: 147,
+          html_url: "https://github.com/owner/repo/pull/147",
+          title: "PR 147",
+          state: "closed",
+          merged_at: null,
+          head: { ref: "feature/147" },
+          base: { ref: "main" },
+          comments: 1,
+          updated_at: "2026-03-30T11:00:00Z",
+        },
+      ]);
+
+      const result = await client.getBatchPrStatus("owner", "repo", [150, 147]);
+
+      expect(mockRunGhJsonAsync).toHaveBeenCalledWith([
+        "api",
+        "repos/owner/repo/pulls?state=all&per_page=100",
+      ]);
+      expect(mockRunGhAsync).not.toHaveBeenCalled();
+      expect(result.get(150)?.status).toBe("merged");
+      expect(result.get(147)?.status).toBe("closed");
+    });
+
+    it("chunks fallback exact lookups when more than 100 requested PRs are missing from the REST list", async () => {
+      mockRunGhJsonAsync.mockResolvedValue([]);
+      mockRunGhAsync
+        .mockResolvedValueOnce(
+          createGraphQlBatchPayload(
+            Object.fromEntries(
+              Array.from({ length: 100 }, (_, index) => {
+                const number = 150 - index;
+                return [`pr_${number}`, {
+                  number,
+                  url: `https://github.com/owner/repo/pull/${number}`,
+                  title: `PR ${number}`,
+                  state: number === 150 ? "MERGED" : number === 147 ? "CLOSED" : "OPEN",
+                  baseRefName: "main",
+                  headRefName: `feature/${number}`,
+                  comments: { totalCount: number % 4, nodes: [{ updatedAt: "2026-03-30T11:00:00Z" }] },
+                }];
+              }),
+            ),
+          ),
+        )
+        .mockResolvedValueOnce(
+          createGraphQlBatchPayload({
+            pr_50: {
+              number: 50,
+              url: "https://github.com/owner/repo/pull/50",
+              title: "PR 50",
+              state: "OPEN",
+              baseRefName: "main",
+              headRefName: "feature/50",
+              comments: { totalCount: 2, nodes: [{ updatedAt: "2026-03-30T11:00:00Z" }] },
+            },
+          }),
+        );
+
+      const requestedNumbers = Array.from({ length: 101 }, (_, index) => 150 - index);
+      const result = await client.getBatchPrStatus("owner", "repo", requestedNumbers);
+
+      expect(mockRunGhJsonAsync).toHaveBeenCalledTimes(1);
+      expect(mockRunGhAsync).toHaveBeenCalledTimes(2);
+      expect(result.size).toBe(101);
+      expect(result.get(150)?.status).toBe("merged");
+      expect(result.get(149)?.status).toBe("open");
+      expect(result.get(147)?.status).toBe("closed");
+    });
+
+    it("falls back to REST auth when gh REST batch fetch fails and a token is available", async () => {
+      mockRunGhJsonAsync.mockRejectedValueOnce(new Error("gh failed"));
+      const clientWithToken = new GitHubClient("ghp_token");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve([
+          {
+            number: 42,
+            html_url: "https://github.com/owner/repo/pull/42",
+            title: "PR 42",
+            state: "open",
+            merged_at: null,
+            head: { ref: "feature/42" },
+            base: { ref: "main" },
+            comments: 1,
+            updated_at: "2026-03-30T11:00:00Z",
+          },
+        ]),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.getBatchPrStatus("owner", "repo", [42]);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://api.github.com/repos/owner/repo/pulls?state=all&per_page=100",
+        expect.objectContaining({ headers: expect.any(Object) }),
+      );
+      expect(result.get(42)?.number).toBe(42);
     });
   });
 

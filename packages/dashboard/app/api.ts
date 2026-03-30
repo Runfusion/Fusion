@@ -1,4 +1,16 @@
-import type { Task, TaskDetail, TaskAttachment, TaskCreateInput, AgentLogEntry, Column, MergeResult, Settings } from "@kb/core";
+import type {
+  Task,
+  TaskDetail,
+  TaskAttachment,
+  TaskCreateInput,
+  AgentLogEntry,
+  Column,
+  MergeResult,
+  Settings,
+  BatchStatusResult,
+  BatchStatusResponse,
+  BatchStatusEntry,
+} from "@kb/core";
 import type { PlanningQuestion, PlanningSummary, PlanningResponse } from "@kb/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult } from "@kb/core";
 
@@ -388,8 +400,8 @@ export function refreshPrStatus(id: string): Promise<PrRefreshResponse> {
 
 // --- Issue Management API ---
 
-/** Re-export IssueInfo type for convenience */
-export type { IssueInfo } from "@kb/core";
+/** Re-export GitHub badge-related types for convenience */
+export type { IssueInfo, BatchStatusResult, BatchStatusEntry } from "@kb/core";
 
 /** Fetch cached issue status for a task */
 export function fetchIssueStatus(id: string): Promise<{ issueInfo: import("@kb/core").IssueInfo; stale: boolean }> {
@@ -401,6 +413,16 @@ export function refreshIssueStatus(id: string): Promise<import("@kb/core").Issue
   return api<import("@kb/core").IssueInfo>(`/tasks/${id}/issue/refresh`, {
     method: "POST",
   });
+}
+
+/** Batch-refresh cached GitHub badge status for multiple tasks. */
+export async function fetchBatchStatus(taskIds: string[]): Promise<BatchStatusResult> {
+  const response = await api<BatchStatusResponse>("/github/batch/status", {
+    method: "POST",
+    body: JSON.stringify({ taskIds }),
+  });
+
+  return response.results;
 }
 
 // --- Terminal API ---

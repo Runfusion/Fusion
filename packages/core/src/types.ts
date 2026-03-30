@@ -52,6 +52,23 @@ export interface IssueInfo {
   lastCheckedAt?: string;
 }
 
+export interface BatchStatusRequest {
+  taskIds: string[];
+}
+
+export interface BatchStatusEntry {
+  issueInfo?: IssueInfo;
+  prInfo?: PrInfo;
+  stale: boolean;
+  error?: string;
+}
+
+export type BatchStatusResult = Record<string, BatchStatusEntry>;
+
+export interface BatchStatusResponse {
+  results: BatchStatusResult;
+}
+
 export type StepStatus = "pending" | "in-progress" | "done" | "skipped";
 
 export interface TaskStep {

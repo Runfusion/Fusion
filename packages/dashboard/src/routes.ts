@@ -3,7 +3,7 @@ import multer from "multer";
 import { createReadStream } from "node:fs";
 import { execSync } from "node:child_process";
 import type { TaskStore, Column, MergeResult, ScheduleType } from "@kb/core";
-import { COLUMNS, VALID_TRANSITIONS, type PrInfo, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore } from "@kb/core";
+import { COLUMNS, VALID_TRANSITIONS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore } from "@kb/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -102,6 +102,24 @@ function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
   }
 
   return null;
+}
+
+function parseGitHubBadgeUrl(url: string | undefined): { owner: string; repo: string } | null {
+  if (!url) return null;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "github.com") return null;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length < 4) return null;
+    const [owner, repo, resourceType] = parts;
+    if ((resourceType !== "issues" && resourceType !== "pull") || !owner || !repo) {
+      return null;
+    }
+    return { owner, repo };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -2147,6 +2165,203 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * POST /api/github/batch/status
+   * Refresh issue/PR badge status for up to 100 tasks in grouped GitHub requests.
+   * Body: { taskIds: string[] }
+   */
+  router.post("/github/batch/status", async (req, res) => {
+    try {
+      const { taskIds } = (req.body ?? {}) as import("@kb/core").BatchStatusRequest;
+      if (!Array.isArray(taskIds)) {
+        res.status(400).json({ error: "taskIds must be an array" });
+        return;
+      }
+      if (taskIds.some((taskId) => typeof taskId !== "string" || taskId.trim().length === 0)) {
+        res.status(400).json({ error: "taskIds must contain non-empty strings" });
+        return;
+      }
+      if (taskIds.length > 100) {
+        res.status(400).json({ error: "taskIds must contain at most 100 items" });
+        return;
+      }
+      if (taskIds.length === 0) {
+        res.json({ results: {} } satisfies BatchStatusResponse);
+        return;
+      }
+
+      const fallbackRepo = getDefaultGitHubRepo(store);
+      const results: BatchStatusResult = {};
+      const issueGroups = new Map<string, { owner: string; repo: string; numbers: Set<number>; taskIds: Set<string> }>();
+      const prGroups = new Map<string, { owner: string; repo: string; numbers: Set<number>; taskIds: Set<string> }>();
+      const tasksById = new Map<string, Awaited<ReturnType<TaskStore["getTask"]>>>();
+
+      for (const taskId of taskIds) {
+        try {
+          const task = await store.getTask(taskId);
+          tasksById.set(taskId, task);
+
+          const entry = ensureBatchStatusEntry(results, taskId);
+          if (task.issueInfo) entry.issueInfo = task.issueInfo;
+          if (task.prInfo) entry.prInfo = task.prInfo;
+          entry.stale = Boolean(
+            (task.issueInfo && isBatchStatusStale(task.issueInfo, task.updatedAt))
+            || (task.prInfo && isBatchStatusStale(task.prInfo, task.updatedAt)),
+          );
+
+          if (!task.issueInfo && !task.prInfo) {
+            appendBatchStatusError(results, taskId, "Task has no GitHub badge metadata");
+            continue;
+          }
+
+          if (task.issueInfo) {
+            const issueRepo = parseGitHubBadgeUrl(task.issueInfo.url) ?? fallbackRepo;
+            if (!issueRepo) {
+              appendBatchStatusError(results, taskId, "Could not determine GitHub repository for issue badge");
+            } else {
+              const repoKey = `${issueRepo.owner}/${issueRepo.repo}`;
+              const group = issueGroups.get(repoKey) ?? {
+                owner: issueRepo.owner,
+                repo: issueRepo.repo,
+                numbers: new Set<number>(),
+                taskIds: new Set<string>(),
+              };
+              group.numbers.add(task.issueInfo.number);
+              group.taskIds.add(taskId);
+              issueGroups.set(repoKey, group);
+            }
+          }
+
+          if (task.prInfo) {
+            const prRepo = parseGitHubBadgeUrl(task.prInfo.url) ?? fallbackRepo;
+            if (!prRepo) {
+              appendBatchStatusError(results, taskId, "Could not determine GitHub repository for PR badge");
+            } else {
+              const repoKey = `${prRepo.owner}/${prRepo.repo}`;
+              const group = prGroups.get(repoKey) ?? {
+                owner: prRepo.owner,
+                repo: prRepo.repo,
+                numbers: new Set<number>(),
+                taskIds: new Set<string>(),
+              };
+              group.numbers.add(task.prInfo.number);
+              group.taskIds.add(taskId);
+              prGroups.set(repoKey, group);
+            }
+          }
+        } catch (err: any) {
+          if (err?.code === "ENOENT") {
+            appendBatchStatusError(results, taskId, `Task ${taskId} not found`);
+          } else {
+            appendBatchStatusError(results, taskId, err.message || `Failed to load task ${taskId}`);
+          }
+        }
+      }
+
+      const client = new GitHubClient(githubToken);
+      const applyIssueGroup = async (group: { owner: string; repo: string; numbers: Set<number>; taskIds: Set<string> }) => {
+        const repoKey = `${group.owner}/${group.repo}`;
+        if (!githubRateLimiter.canMakeRequest(repoKey)) {
+          const resetTime = githubRateLimiter.getResetTime(repoKey);
+          res.status(429).json({
+            error: "GitHub API rate limit exceeded for this repository",
+            resetAt: resetTime?.toISOString(),
+          });
+          return false;
+        }
+
+        try {
+          const issueStatuses = await client.getBatchIssueStatus(group.owner, group.repo, [...group.numbers]);
+          const refreshedAt = new Date().toISOString();
+
+          for (const taskId of group.taskIds) {
+            const task = tasksById.get(taskId);
+            if (!task?.issueInfo) continue;
+            const issueInfo = issueStatuses.get(task.issueInfo.number);
+            if (!issueInfo) {
+              appendBatchStatusError(results, taskId, `Issue #${task.issueInfo.number} not found in ${group.owner}/${group.repo}`);
+              continue;
+            }
+
+            const updatedIssueInfo: IssueInfo = {
+              ...issueInfo,
+              lastCheckedAt: refreshedAt,
+            };
+            await store.updateIssueInfo(taskId, updatedIssueInfo);
+            const entry = ensureBatchStatusEntry(results, taskId);
+            entry.issueInfo = updatedIssueInfo;
+            entry.stale = entry.prInfo ? isBatchStatusStale(entry.prInfo, task.updatedAt) : false;
+          }
+        } catch (err: any) {
+          for (const taskId of group.taskIds) {
+            appendBatchStatusError(results, taskId, err.message || `Failed to refresh issue badges for ${repoKey}`);
+          }
+        }
+
+        return true;
+      };
+
+      const applyPrGroup = async (group: { owner: string; repo: string; numbers: Set<number>; taskIds: Set<string> }) => {
+        const repoKey = `${group.owner}/${group.repo}`;
+        if (!githubRateLimiter.canMakeRequest(repoKey)) {
+          const resetTime = githubRateLimiter.getResetTime(repoKey);
+          res.status(429).json({
+            error: "GitHub API rate limit exceeded for this repository",
+            resetAt: resetTime?.toISOString(),
+          });
+          return false;
+        }
+
+        try {
+          const prStatuses = await client.getBatchPrStatus(group.owner, group.repo, [...group.numbers]);
+          const refreshedAt = new Date().toISOString();
+
+          for (const taskId of group.taskIds) {
+            const task = tasksById.get(taskId);
+            if (!task?.prInfo) continue;
+            const prInfo = prStatuses.get(task.prInfo.number);
+            if (!prInfo) {
+              appendBatchStatusError(results, taskId, `PR #${task.prInfo.number} not found in ${group.owner}/${group.repo}`);
+              continue;
+            }
+
+            const updatedPrInfo: PrInfo = {
+              ...prInfo,
+              lastCheckedAt: refreshedAt,
+            };
+            await store.updatePrInfo(taskId, updatedPrInfo);
+            const entry = ensureBatchStatusEntry(results, taskId);
+            entry.prInfo = updatedPrInfo;
+            entry.stale = entry.issueInfo ? isBatchStatusStale(entry.issueInfo, task.updatedAt) : false;
+          }
+        } catch (err: any) {
+          for (const taskId of group.taskIds) {
+            appendBatchStatusError(results, taskId, err.message || `Failed to refresh PR badges for ${repoKey}`);
+          }
+        }
+
+        return true;
+      };
+
+      for (const group of issueGroups.values()) {
+        const shouldContinue = await applyIssueGroup(group);
+        if (!shouldContinue) return;
+      }
+      for (const group of prGroups.values()) {
+        const shouldContinue = await applyPrGroup(group);
+        if (!shouldContinue) return;
+      }
+
+      for (const taskId of taskIds) {
+        ensureBatchStatusEntry(results, taskId);
+      }
+
+      res.json({ results } satisfies BatchStatusResponse);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to batch refresh GitHub status" });
+    }
+  });
+
   // ── Terminal Routes ─────────────────────────────────────────────────
 
   /**
@@ -2982,6 +3197,36 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   return router;
+}
+
+function getDefaultGitHubRepo(store: TaskStore): { owner: string; repo: string } | null {
+  const envRepo = process.env.GITHUB_REPOSITORY;
+  if (envRepo) {
+    const [owner, repo] = envRepo.split("/");
+    if (owner && repo) {
+      return { owner, repo };
+    }
+  }
+
+  const rootDir = typeof store.getRootDir === "function" ? store.getRootDir() : process.cwd();
+  return getCurrentGitHubRepo(rootDir);
+}
+
+function isBatchStatusStale(info: { lastCheckedAt?: string } | undefined, updatedAt?: string): boolean {
+  const lastChecked = info?.lastCheckedAt ?? updatedAt;
+  if (!lastChecked) return true;
+  return Date.now() - new Date(lastChecked).getTime() > 5 * 60 * 1000;
+}
+
+function ensureBatchStatusEntry(results: BatchStatusResult, taskId: string): BatchStatusEntry {
+  results[taskId] ??= { stale: true };
+  return results[taskId];
+}
+
+function appendBatchStatusError(results: BatchStatusResult, taskId: string, message: string): void {
+  const entry = ensureBatchStatusEntry(results, taskId);
+  entry.error = entry.error ? `${entry.error}; ${message}` : message;
+  entry.stale = true;
 }
 
 /**

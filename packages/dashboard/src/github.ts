@@ -152,6 +152,27 @@ interface GhIssueViewJson {
   stateReason?: "completed" | "not_planned" | "reopened";
 }
 
+interface RestIssueListItem {
+  number: number;
+  html_url: string;
+  title: string;
+  state: string;
+  state_reason?: "completed" | "not_planned" | "reopened";
+  pull_request?: unknown;
+}
+
+interface RestPrListItem {
+  number: number;
+  html_url: string;
+  title: string;
+  state: string;
+  merged_at?: string | null;
+  head: { ref: string };
+  base: { ref: string };
+  comments: number;
+  updated_at?: string;
+}
+
 interface GraphQlBatchPullRequest {
   number: number;
   url: string;
@@ -179,6 +200,10 @@ interface GraphQlBatchPayload {
   };
   errors?: Array<{ message: string }>;
 }
+
+const MAX_BADGE_BATCH_SIZE = 100;
+const BATCH_RETRY_DELAY_MS = 5_000;
+const MAX_BATCH_RETRIES = 3;
 
 function normalizeCheckState(state: string | null | undefined): PrCheckState {
   switch ((state ?? "").toLowerCase()) {
@@ -997,6 +1022,219 @@ export class GitHubClient {
     };
   }
 
+  async getBatchIssueStatus(
+    owner: string,
+    repo: string,
+    issueNumbers: number[],
+  ): Promise<Map<number, IssueInfo>> {
+    const requestedNumbers = uniqueBatchNumbers(issueNumbers);
+    if (requestedNumbers.length === 0) {
+      return new Map();
+    }
+
+    const issues = await retryBatchRequest(() => this.getRecentIssueStatuses(owner, repo, requestedNumbers));
+    const missingNumbers = requestedNumbers.filter((number) => !issues.has(number));
+
+    if (missingNumbers.length === 0) {
+      return issues;
+    }
+
+    // Fall back to the exact-number badge query only for resources that were not
+    // present in the recent REST listing, keeping the common path REST-based while
+    // still bounding request count for older sparse issue numbers.
+    const fallbackRequests = missingNumbers.map((number) => ({
+      alias: `issue_${number}`,
+      type: "issue" as const,
+      number,
+    }));
+    const fallbackResources = await this.getBadgeStatusesBatchWithRetry(owner, repo, fallbackRequests);
+
+    for (const request of fallbackRequests) {
+      const resource = fallbackResources[request.alias];
+      if (!resource || resource.type !== "issue") continue;
+      issues.set(request.number, resource.issueInfo);
+    }
+
+    return issues;
+  }
+
+  async getBatchPrStatus(
+    owner: string,
+    repo: string,
+    prNumbers: number[],
+  ): Promise<Map<number, PrInfo>> {
+    const requestedNumbers = uniqueBatchNumbers(prNumbers);
+    if (requestedNumbers.length === 0) {
+      return new Map();
+    }
+
+    const prs = await retryBatchRequest(() => this.getRecentPrStatuses(owner, repo, requestedNumbers));
+    const missingNumbers = requestedNumbers.filter((number) => !prs.has(number));
+
+    if (missingNumbers.length === 0) {
+      return prs;
+    }
+
+    // Use the exact-number fallback only for PRs omitted from the recent REST page
+    // so older items do not force paginated list scans or N single-resource calls.
+    const fallbackRequests = missingNumbers.map((number) => ({
+      alias: `pr_${number}`,
+      type: "pr" as const,
+      number,
+    }));
+    const fallbackResources = await this.getBadgeStatusesBatchWithRetry(owner, repo, fallbackRequests);
+
+    for (const request of fallbackRequests) {
+      const resource = fallbackResources[request.alias];
+      if (!resource || resource.type !== "pr") continue;
+      prs.set(request.number, resource.prInfo);
+    }
+
+    return prs;
+  }
+
+  private async getRecentIssueStatuses(
+    owner: string,
+    repo: string,
+    requestedNumbers: number[],
+  ): Promise<Map<number, IssueInfo>> {
+    const requestedSet = new Set(requestedNumbers);
+    const issues = new Map<number, IssueInfo>();
+    const items = await this.listRecentIssueStatusPage(owner, repo);
+
+    for (const issue of items) {
+      if (!requestedSet.has(issue.number) || issue.pull_request) continue;
+      issues.set(issue.number, {
+        url: issue.html_url,
+        number: issue.number,
+        state: this.mapIssueState(issue.state),
+        title: issue.title,
+        stateReason: issue.state_reason,
+      });
+    }
+
+    return issues;
+  }
+
+  private async listRecentIssueStatusPage(
+    owner: string,
+    repo: string,
+  ): Promise<RestIssueListItem[]> {
+    const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?state=all&per_page=${MAX_BADGE_BATCH_SIZE}`;
+
+    if (this.hasGhAuth()) {
+      try {
+        return await runGhJsonAsync<RestIssueListItem[]>(["api", path]);
+      } catch (err) {
+        if (this.token) {
+          return this.listRecentIssueStatusPageWithApi(owner, repo);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.listRecentIssueStatusPageWithApi(owner, repo);
+    }
+
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+  }
+
+  private async listRecentIssueStatusPageWithApi(
+    owner: string,
+    repo: string,
+  ): Promise<RestIssueListItem[]> {
+    const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?state=all&per_page=${MAX_BADGE_BATCH_SIZE}`;
+    const response = await fetch(url, { headers: this.buildHeaders() });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: response.statusText }));
+      throw new Error(`GitHub API error: ${response.status} ${error.message || response.statusText}`);
+    }
+
+    return response.json() as Promise<RestIssueListItem[]>;
+  }
+
+  private async getRecentPrStatuses(
+    owner: string,
+    repo: string,
+    requestedNumbers: number[],
+  ): Promise<Map<number, PrInfo>> {
+    const requestedSet = new Set(requestedNumbers);
+    const prs = new Map<number, PrInfo>();
+    const items = await this.listRecentPrStatusPage(owner, repo);
+
+    for (const pr of items) {
+      if (!requestedSet.has(pr.number)) continue;
+      prs.set(pr.number, {
+        url: pr.html_url,
+        number: pr.number,
+        status: pr.merged_at ? "merged" : this.mapPrState(pr.state),
+        title: pr.title,
+        headBranch: pr.head.ref,
+        baseBranch: pr.base.ref,
+        commentCount: pr.comments,
+        lastCommentAt: pr.updated_at,
+      });
+    }
+
+    return prs;
+  }
+
+  private async listRecentPrStatusPage(
+    owner: string,
+    repo: string,
+  ): Promise<RestPrListItem[]> {
+    const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?state=all&per_page=${MAX_BADGE_BATCH_SIZE}`;
+
+    if (this.hasGhAuth()) {
+      try {
+        return await runGhJsonAsync<RestPrListItem[]>(["api", path]);
+      } catch (err) {
+        if (this.token) {
+          return this.listRecentPrStatusPageWithApi(owner, repo);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.listRecentPrStatusPageWithApi(owner, repo);
+    }
+
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+  }
+
+  private async listRecentPrStatusPageWithApi(
+    owner: string,
+    repo: string,
+  ): Promise<RestPrListItem[]> {
+    const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?state=all&per_page=${MAX_BADGE_BATCH_SIZE}`;
+    const response = await fetch(url, { headers: this.buildHeaders() });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: response.statusText }));
+      throw new Error(`GitHub API error: ${response.status} ${error.message || response.statusText}`);
+    }
+
+    return response.json() as Promise<RestPrListItem[]>;
+  }
+
+  private async getBadgeStatusesBatchWithRetry(
+    owner: string,
+    repo: string,
+    requests: BadgeBatchRequest[],
+  ): Promise<BadgeBatchResponse> {
+    const response: BadgeBatchResponse = {};
+
+    for (const chunk of chunkBadgeRequests(requests, MAX_BADGE_BATCH_SIZE)) {
+      const chunkResponse = await retryBatchRequest(() => this.getBadgeStatusesBatch(owner, repo, chunk));
+      Object.assign(response, chunkResponse);
+    }
+
+    return response;
+  }
+
   async getBadgeStatusesBatch(
     owner: string,
     repo: string,
@@ -1639,6 +1877,48 @@ export class GitHubClient {
       return null;
     }
   }
+}
+
+function uniqueBatchNumbers(numbers: number[]): number[] {
+  return [...new Set(numbers.filter((number) => Number.isInteger(number) && number > 0))];
+}
+
+function chunkBadgeRequests(requests: BadgeBatchRequest[], size: number): BadgeBatchRequest[][] {
+  if (requests.length === 0) return [];
+
+  const chunks: BadgeBatchRequest[][] = [];
+  for (let index = 0; index < requests.length; index += size) {
+    chunks.push(requests.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function retryBatchRequest<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_BATCH_RETRIES; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= MAX_BATCH_RETRIES || !shouldRetryBatchRequestError(error)) {
+        throw error;
+      }
+
+      await delay(BATCH_RETRY_DELAY_MS);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Batch request failed"));
+}
+
+function shouldRetryBatchRequestError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /rate limit|secondary rate limit|timed out|timeout|fetch failed|econnreset|econnrefused|socket hang up|502|503|504/i.test(message);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildBadgeBatchQuery(requests: BadgeBatchRequest[]): string {

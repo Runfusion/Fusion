@@ -3,6 +3,7 @@ import express from "express";
 import http from "node:http";
 import { createApiRoutes } from "./routes.js";
 import { GitHubClient } from "./github.js";
+import { githubRateLimiter } from "./github-poll.js";
 import type { TaskStore, TaskAttachment } from "@kb/core";
 import type { TaskDetail } from "@kb/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
@@ -38,6 +39,9 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     logEntry: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),
     addSteeringComment: vi.fn(),
+    updatePrInfo: vi.fn().mockResolvedValue(undefined),
+    updateIssueInfo: vi.fn().mockResolvedValue(undefined),
+    getRootDir: vi.fn().mockReturnValue("/fake/root"),
     ...overrides,
   } as unknown as TaskStore;
 }
@@ -1847,6 +1851,226 @@ describe("Pause/Unpause endpoints", () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("no associated issue");
+    });
+  });
+
+  describe("POST /github/batch/status", () => {
+    let store: TaskStore;
+
+    beforeEach(() => {
+      store = createMockStore({
+        getTask: vi.fn(),
+        updateIssueInfo: vi.fn().mockResolvedValue(undefined),
+        updatePrInfo: vi.fn().mockResolvedValue(undefined),
+      });
+    });
+
+    function buildApp() {
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+      return app;
+    }
+
+    it("returns status for multiple tasks in one request", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          ...FAKE_TASK_DETAIL,
+          id: "KB-001",
+          updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          issueInfo: {
+            url: "https://github.com/owner/repo/issues/101",
+            number: 101,
+            state: "open" as const,
+            title: "Issue 101",
+          },
+        })
+        .mockResolvedValueOnce({
+          ...FAKE_TASK_DETAIL,
+          id: "KB-002",
+          updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          prInfo: {
+            url: "https://github.com/owner/repo/pull/42",
+            number: 42,
+            status: "open" as const,
+            title: "PR 42",
+            headBranch: "feature/42",
+            baseBranch: "main",
+            commentCount: 0,
+          },
+        });
+
+      vi.spyOn(GitHubClient.prototype, "getBatchIssueStatus").mockResolvedValue(new Map([
+        [101, {
+          url: "https://github.com/owner/repo/issues/101",
+          number: 101,
+          state: "closed",
+          title: "Issue 101",
+          stateReason: "completed",
+        }],
+      ]));
+      vi.spyOn(GitHubClient.prototype, "getBatchPrStatus").mockResolvedValue(new Map([
+        [42, {
+          url: "https://github.com/owner/repo/pull/42",
+          number: 42,
+          status: "merged",
+          title: "PR 42",
+          headBranch: "feature/42",
+          baseBranch: "main",
+          commentCount: 3,
+        }],
+      ]));
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/github/batch/status",
+        JSON.stringify({ taskIds: ["KB-001", "KB-002"] }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.results["KB-001"].issueInfo.state).toBe("closed");
+      expect(res.body.results["KB-001"].stale).toBe(false);
+      expect(res.body.results["KB-002"].prInfo.status).toBe("merged");
+      expect(res.body.results["KB-002"].stale).toBe(false);
+      expect(store.updateIssueInfo).toHaveBeenCalledWith(
+        "KB-001",
+        expect.objectContaining({ number: 101, state: "closed", lastCheckedAt: expect.any(String) }),
+      );
+      expect(store.updatePrInfo).toHaveBeenCalledWith(
+        "KB-002",
+        expect.objectContaining({ number: 42, status: "merged", lastCheckedAt: expect.any(String) }),
+      );
+    });
+
+    it("handles partial failures without dropping successful results", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          ...FAKE_TASK_DETAIL,
+          id: "KB-001",
+          updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          issueInfo: {
+            url: "https://github.com/owner/repo/issues/101",
+            number: 101,
+            state: "open" as const,
+            title: "Issue 101",
+          },
+        })
+        .mockResolvedValueOnce({
+          ...FAKE_TASK_DETAIL,
+          id: "KB-002",
+          updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          issueInfo: {
+            url: "https://github.com/owner/repo/issues/404",
+            number: 404,
+            state: "open" as const,
+            title: "Issue 404",
+          },
+        });
+
+      vi.spyOn(GitHubClient.prototype, "getBatchIssueStatus").mockResolvedValue(new Map([
+        [101, {
+          url: "https://github.com/owner/repo/issues/101",
+          number: 101,
+          state: "closed",
+          title: "Issue 101",
+          stateReason: "completed",
+        }],
+      ]));
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/github/batch/status",
+        JSON.stringify({ taskIds: ["KB-001", "KB-002"] }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.results["KB-001"].issueInfo.state).toBe("closed");
+      expect(res.body.results["KB-002"].error).toContain("Issue #404 not found");
+      expect(res.body.results["KB-002"].stale).toBe(true);
+    });
+
+    it("returns 429 when rate limit is exceeded", async () => {
+      const originalRepo = process.env.GITHUB_REPOSITORY;
+      process.env.GITHUB_REPOSITORY = "owner/repo";
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...FAKE_TASK_DETAIL,
+        id: "KB-001",
+        issueInfo: {
+          url: "https://github.com/owner/repo/issues/101",
+          number: 101,
+          state: "open" as const,
+          title: "Issue 101",
+        },
+      });
+
+      const canMakeRequestSpy = vi.spyOn(githubRateLimiter, "canMakeRequest").mockReturnValue(false);
+      const getResetTimeSpy = vi.spyOn(githubRateLimiter, "getResetTime").mockReturnValue(new Date("2026-03-30T12:05:00.000Z"));
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/github/batch/status",
+        JSON.stringify({ taskIds: ["KB-001"] }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(429);
+      expect(res.body.error).toContain("rate limit exceeded");
+      expect(res.body.resetAt).toBe("2026-03-30T12:05:00.000Z");
+
+      canMakeRequestSpy.mockRestore();
+      getResetTimeSpy.mockRestore();
+      if (originalRepo) {
+        process.env.GITHUB_REPOSITORY = originalRepo;
+      } else {
+        delete process.env.GITHUB_REPOSITORY;
+      }
+    });
+
+    it("calculates stale per task based on refresh success and existing cached data", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...FAKE_TASK_DETAIL,
+        id: "KB-001",
+        updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        issueInfo: {
+          url: "https://github.com/owner/repo/issues/101",
+          number: 101,
+          state: "open" as const,
+          title: "Issue 101",
+          lastCheckedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        },
+      });
+      vi.spyOn(GitHubClient.prototype, "getBatchIssueStatus").mockResolvedValue(new Map());
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/github/batch/status",
+        JSON.stringify({ taskIds: ["KB-001"] }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.results["KB-001"].stale).toBe(true);
+      expect(res.body.results["KB-001"].error).toContain("Issue #101 not found");
+    });
+
+    it("returns empty results for empty taskIds", async () => {
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/github/batch/status",
+        JSON.stringify({ taskIds: [] }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ results: {} });
+      expect(store.getTask).not.toHaveBeenCalled();
     });
   });
 });

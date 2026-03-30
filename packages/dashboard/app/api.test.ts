@@ -1,6 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchTaskDetail, updateTask, archiveTask, unarchiveTask, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, addSteeringComment, fetchGitRemotes, refineTask } from "./api";
-import type { Task, TaskDetail } from "@kb/core";
+import {
+  fetchTaskDetail,
+  updateTask,
+  archiveTask,
+  unarchiveTask,
+  fetchAuthStatus,
+  loginProvider,
+  logoutProvider,
+  fetchModels,
+  addSteeringComment,
+  fetchGitRemotes,
+  refineTask,
+  fetchBatchStatus,
+} from "./api";
+import type { Task, TaskDetail, BatchStatusResponse } from "@kb/core";
 
 const FAKE_DETAIL: TaskDetail = {
   id: "KB-001",
@@ -128,6 +141,48 @@ describe("fetchModels", () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Server error" }));
 
     await expect(fetchModels()).rejects.toThrow("Server error");
+  });
+});
+
+describe("fetchBatchStatus", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("posts task ids and unwraps the results envelope", async () => {
+    const response: BatchStatusResponse = {
+      results: {
+        "KB-001": {
+          issueInfo: {
+            url: "https://github.com/owner/repo/issues/101",
+            number: 101,
+            state: "closed",
+            title: "Issue 101",
+            stateReason: "completed",
+            lastCheckedAt: "2026-03-30T12:00:00.000Z",
+          },
+          stale: false,
+        },
+      },
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, response));
+
+    const result = await fetchBatchStatus(["KB-001"]);
+
+    expect(result).toEqual(response.results);
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/github/batch/status", {
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      body: JSON.stringify({ taskIds: ["KB-001"] }),
+    });
+  });
+
+  it("propagates API errors", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "rate limit exceeded" }, 429));
+
+    await expect(fetchBatchStatus(["KB-001"])).rejects.toThrow("rate limit exceeded");
   });
 });
 

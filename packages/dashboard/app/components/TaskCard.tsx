@@ -1,8 +1,11 @@
-import { memo, useCallback, useState, useRef, useEffect } from "react";
+import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
 import { Link, Clock, Layers, Pencil, ChevronDown } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo } from "@kb/core";
 import { fetchTaskDetail, uploadAttachment } from "../api";
-import { TaskCardBadge } from "./TaskCardBadge";
+import { GitHubBadge } from "./GitHubBadge";
+import { pickPreferredBadge } from "./TaskCardBadge";
+import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
+import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import type { ToastType } from "../hooks/useToast";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
@@ -134,6 +137,7 @@ function TaskCardComponent({
   const touchOpenHandledRef = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
+  const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket();
 
   // Touch gesture detection refs
   const touchStartPosRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -306,6 +310,66 @@ function TaskCardComponent({
   // Check if this card can be edited inline
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
   const hasGitHubBadge = Boolean(task.prInfo || task.issueInfo);
+
+  useEffect(() => {
+    if (!hasGitHubBadge || !isInViewport) {
+      unsubscribeFromBadge(task.id);
+      return;
+    }
+
+    subscribeToBadge(task.id);
+    return () => {
+      unsubscribeFromBadge(task.id);
+    };
+  }, [hasGitHubBadge, isInViewport, subscribeToBadge, task.id, unsubscribeFromBadge]);
+
+  const liveBadgeData = badgeUpdates.get(task.id);
+
+  // Get fresh batch data if available
+  const batchData = useMemo(() => getFreshBatchData(task.id), [task.id]);
+
+  // Pick the freshest data among WebSocket, batch, and task data
+  const livePrInfo = useMemo(() => {
+    const wsData = liveBadgeData?.prInfo;
+    const wsTimestamp = liveBadgeData?.timestamp;
+    const batchInfo = batchData?.result?.prInfo;
+    const batchTimestamp = batchData?.timestamp ? new Date(batchData.timestamp).toISOString() : undefined;
+    const taskInfo = task.prInfo;
+    const taskTimestamp = task.prInfo?.lastCheckedAt ?? task.updatedAt;
+
+    // Compare all three sources and pick the freshest
+    let bestData = pickPreferredBadge<PrInfo>(wsData, wsTimestamp, taskInfo, taskTimestamp);
+    let bestTimestamp = wsTimestamp && wsTimestamp >= taskTimestamp ? wsTimestamp : taskTimestamp;
+
+    if (batchInfo && batchTimestamp) {
+      if (!bestTimestamp || batchTimestamp > bestTimestamp) {
+        bestData = batchInfo;
+      }
+    }
+
+    return bestData;
+  }, [liveBadgeData, batchData, task.prInfo, task.updatedAt]);
+
+  const liveIssueInfo = useMemo(() => {
+    const wsData = liveBadgeData?.issueInfo;
+    const wsTimestamp = liveBadgeData?.timestamp;
+    const batchInfo = batchData?.result?.issueInfo;
+    const batchTimestamp = batchData?.timestamp ? new Date(batchData.timestamp).toISOString() : undefined;
+    const taskInfo = task.issueInfo;
+    const taskTimestamp = task.issueInfo?.lastCheckedAt ?? task.updatedAt;
+
+    // Compare all three sources and pick the freshest
+    let bestData = pickPreferredBadge<IssueInfo>(wsData, wsTimestamp, taskInfo, taskTimestamp);
+    let bestTimestamp = wsTimestamp && wsTimestamp >= taskTimestamp ? wsTimestamp : taskTimestamp;
+
+    if (batchInfo && batchTimestamp) {
+      if (!bestTimestamp || batchTimestamp > bestTimestamp) {
+        bestData = batchInfo;
+      }
+    }
+
+    return bestData;
+  }, [liveBadgeData, batchData, task.issueInfo, task.updatedAt]);
 
   const enterEditMode = useCallback((e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -519,12 +583,9 @@ function TaskCardComponent({
           </span>
         )}
         {hasGitHubBadge && (
-          <TaskCardBadge
-            taskId={task.id}
-            prInfo={task.prInfo}
-            issueInfo={task.issueInfo}
-            updatedAt={task.updatedAt}
-            isInViewport={isInViewport}
+          <GitHubBadge
+            prInfo={livePrInfo}
+            issueInfo={liveIssueInfo}
           />
         )}
         <div className="card-header-actions">
