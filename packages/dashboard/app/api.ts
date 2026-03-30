@@ -262,3 +262,131 @@ export function refreshPrStatus(id: string): Promise<PrInfo> {
     method: "POST",
   });
 }
+
+// --- Git Management API ---
+
+/** Current git status */
+export interface GitStatus {
+  branch: string;
+  commit: string;
+  isDirty: boolean;
+  ahead: number;
+  behind: number;
+}
+
+/** Git commit info */
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  date: string;
+  parents: string[];
+}
+
+/** Git branch info */
+export interface GitBranch {
+  name: string;
+  isCurrent: boolean;
+  remote?: string;
+  lastCommitDate?: string;
+}
+
+/** Git worktree info */
+export interface GitWorktree {
+  path: string;
+  branch?: string;
+  isMain: boolean;
+  isBare: boolean;
+  taskId?: string;
+}
+
+/** Result of a fetch operation */
+export interface GitFetchResult {
+  fetched: boolean;
+  message: string;
+}
+
+/** Result of a pull operation */
+export interface GitPullResult {
+  success: boolean;
+  message: string;
+  conflict?: boolean;
+}
+
+/** Result of a push operation */
+export interface GitPushResult {
+  success: boolean;
+  message: string;
+}
+
+/** Fetch current git status */
+export function fetchGitStatus(): Promise<GitStatus> {
+  return api<GitStatus>("/git/status");
+}
+
+/** Fetch recent commits */
+export function fetchGitCommits(limit?: number): Promise<GitCommit[]> {
+  const query = limit ? `?limit=${limit}` : "";
+  return api<GitCommit[]>(`/git/commits${query}`);
+}
+
+/** Fetch diff for a specific commit */
+export function fetchCommitDiff(hash: string): Promise<{ stat: string; patch: string }> {
+  return api<{ stat: string; patch: string }>(`/git/commits/${hash}/diff`);
+}
+
+/** Fetch all local branches */
+export function fetchGitBranches(): Promise<GitBranch[]> {
+  return api<GitBranch[]>("/git/branches");
+}
+
+/** Fetch all worktrees */
+export function fetchGitWorktrees(): Promise<GitWorktree[]> {
+  return api<GitWorktree[]>("/git/worktrees");
+}
+
+/** Create a new branch */
+export function createBranch(name: string, base?: string): Promise<void> {
+  return api<void>("/git/branches", {
+    method: "POST",
+    body: JSON.stringify({ name, base }),
+  });
+}
+
+/** Checkout an existing branch */
+export function checkoutBranch(name: string): Promise<void> {
+  return api<void>(`/git/branches/${encodeURIComponent(name)}/checkout`, {
+    method: "POST",
+  });
+}
+
+/** Delete a branch */
+export function deleteBranch(name: string, force?: boolean): Promise<void> {
+  const query = force ? "?force=true" : "";
+  return api<void>(`/git/branches/${encodeURIComponent(name)}${query}`, {
+    method: "DELETE",
+  });
+}
+
+/** Fetch from remote */
+export function fetchRemote(remote?: string): Promise<GitFetchResult> {
+  return api<GitFetchResult>("/git/fetch", {
+    method: "POST",
+    body: JSON.stringify({ remote }),
+  });
+}
+
+/** Pull current branch */
+export function pullBranch(): Promise<GitPullResult> {
+  return api<GitPullResult>("/git/pull", {
+    method: "POST",
+  });
+}
+
+/** Push current branch */
+export function pushBranch(): Promise<GitPushResult> {
+  return api<GitPushResult>("/git/push", {
+    method: "POST",
+  });
+}

@@ -370,3 +370,271 @@ describe("rejectPlan", () => {
     await expect(rejectPlan("KB-001")).rejects.toThrow("awaiting-approval");
   });
 });
+
+// --- Git Management API tests ---
+
+import {
+  fetchGitStatus,
+  fetchGitCommits,
+  fetchCommitDiff,
+  fetchGitBranches,
+  fetchGitWorktrees,
+  createBranch,
+  checkoutBranch,
+  deleteBranch,
+  fetchRemote,
+  pullBranch,
+  pushBranch,
+} from "./api";
+
+describe("Git Management API", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  describe("fetchGitStatus", () => {
+    it("returns git status", async () => {
+      const status = { branch: "main", commit: "abc1234", isDirty: false, ahead: 0, behind: 0 };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, status));
+
+      const result = await fetchGitStatus();
+
+      expect(result).toEqual(status);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/status", {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    it("throws on error", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Not a git repository" }, 400));
+
+      await expect(fetchGitStatus()).rejects.toThrow("Not a git repository");
+    });
+  });
+
+  describe("fetchGitCommits", () => {
+    it("returns commits without limit", async () => {
+      const commits = [
+        { hash: "abc123", shortHash: "abc", message: "Test commit", author: "User", date: "2026-01-01", parents: [] },
+      ];
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, commits));
+
+      const result = await fetchGitCommits();
+
+      expect(result).toEqual(commits);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/commits", {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    it("includes limit in query string", async () => {
+      const commits = [{ hash: "abc123", shortHash: "abc", message: "Test", author: "User", date: "2026-01-01", parents: [] }];
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, commits));
+
+      const result = await fetchGitCommits(50);
+
+      expect(result).toEqual(commits);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/commits?limit=50", {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+  });
+
+  describe("fetchCommitDiff", () => {
+    it("returns diff for a commit", async () => {
+      const diff = { stat: "1 file changed", patch: "diff content" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, diff));
+
+      const result = await fetchCommitDiff("abc123");
+
+      expect(result).toEqual(diff);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/commits/abc123/diff", {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    it("throws on 404", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Commit not found" }, 404));
+
+      await expect(fetchCommitDiff("invalid")).rejects.toThrow("Commit not found");
+    });
+  });
+
+  describe("fetchGitBranches", () => {
+    it("returns branches array", async () => {
+      const branches = [{ name: "main", isCurrent: true, remote: "origin/main" }];
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, branches));
+
+      const result = await fetchGitBranches();
+
+      expect(result).toEqual(branches);
+    });
+  });
+
+  describe("fetchGitWorktrees", () => {
+    it("returns worktrees array", async () => {
+      const worktrees = [{ path: "/path/to/repo", branch: "main", isMain: true, isBare: false }];
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, worktrees));
+
+      const result = await fetchGitWorktrees();
+
+      expect(result).toEqual(worktrees);
+    });
+  });
+
+  describe("createBranch", () => {
+    it("sends POST to create branch", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { created: true }, 201));
+
+      await createBranch("feature-branch");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({ name: "feature-branch", base: undefined }),
+      });
+    });
+
+    it("sends base when provided", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { created: true }, 201));
+
+      await createBranch("feature-branch", "main");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({ name: "feature-branch", base: "main" }),
+      });
+    });
+
+    it("throws on error", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Invalid branch name" }, 400));
+
+      await expect(createBranch("invalid")).rejects.toThrow("Invalid branch name");
+    });
+  });
+
+  describe("checkoutBranch", () => {
+    it("sends POST to checkout branch", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { checkedOut: "main" }));
+
+      await checkoutBranch("main");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches/main/checkout", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+    });
+
+    it("encodes branch name", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {}));
+
+      await checkoutBranch("feature/test");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches/feature%2Ftest/checkout", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+    });
+  });
+
+  describe("deleteBranch", () => {
+    it("sends DELETE to remove branch", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { deleted: "feature" }));
+
+      await deleteBranch("feature");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches/feature", {
+        headers: { "Content-Type": "application/json" },
+        method: "DELETE",
+      });
+    });
+
+    it("includes force query param when true", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { deleted: "feature" }));
+
+      await deleteBranch("feature", true);
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/branches/feature?force=true", {
+        headers: { "Content-Type": "application/json" },
+        method: "DELETE",
+      });
+    });
+  });
+
+  describe("fetchRemote", () => {
+    it("sends POST to fetch origin by default", async () => {
+      const result = { fetched: true, message: "Fetched" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, result));
+
+      const response = await fetchRemote();
+
+      expect(response).toEqual(result);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/fetch", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({ remote: undefined }),
+      });
+    });
+
+    it("sends custom remote when provided", async () => {
+      const result = { fetched: true, message: "Fetched from upstream" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, result));
+
+      await fetchRemote("upstream");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/fetch", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({ remote: "upstream" }),
+      });
+    });
+  });
+
+  describe("pullBranch", () => {
+    it("sends POST to pull", async () => {
+      const result = { success: true, message: "Pulled 2 commits" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, result));
+
+      const response = await pullBranch();
+
+      expect(response).toEqual(result);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/pull", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+    });
+
+    it("returns conflict info when there are conflicts", async () => {
+      const result = { success: false, message: "Merge conflict", conflict: true };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, result, 409));
+
+      const response = await pullBranch();
+
+      expect(response.conflict).toBe(true);
+    });
+  });
+
+  describe("pushBranch", () => {
+    it("sends POST to push", async () => {
+      const result = { success: true, message: "Pushed to origin" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, result));
+
+      const response = await pushBranch();
+
+      expect(response).toEqual(result);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/push", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+    });
+
+    it("throws on rejection", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Push rejected" }, 409));
+
+      await expect(pushBranch()).rejects.toThrow("Push rejected");
+    });
+  });
+});

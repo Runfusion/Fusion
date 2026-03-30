@@ -9,6 +9,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import type { SectionId } from "./components/SettingsModal";
 import { ToastContainer } from "./components/ToastContainer";
 import { GitHubImportModal } from "./components/GitHubImportModal";
+import { GitManagerModal } from "./components/GitManagerModal";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
 
@@ -17,6 +18,7 @@ function AppInner() {
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [githubImportOpen, setGitHubImportOpen] = useState(false);
+  const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [autoMerge, setAutoMerge] = useState(true);
@@ -119,11 +121,20 @@ function AppInner() {
     addToast(`Imported ${task.id} from GitHub`, "success");
   }, [addToast]);
 
+  const handleOpenGitManager = useCallback(() => {
+    setGitManagerOpen(true);
+  }, []);
+
+  const handleCloseGitManager = useCallback(() => {
+    setGitManagerOpen(false);
+  }, []);
+
   return (
     <>
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenGitHubImport={() => setGitHubImportOpen(true)}
+        onOpenGitManager={handleOpenGitManager}
         globalPaused={globalPaused}
         enginePaused={enginePaused}
         onToggleGlobalPause={handleToggleGlobalPause}
@@ -188,6 +199,12 @@ function AppInner() {
         onClose={() => setGitHubImportOpen(false)}
         onImport={handleGitHubImport}
         tasks={tasks}
+      />
+      <GitManagerModal
+        isOpen={gitManagerOpen}
+        onClose={handleCloseGitManager}
+        tasks={tasks}
+        addToast={addToast}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>

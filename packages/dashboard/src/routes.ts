@@ -117,6 +117,404 @@ function getGitHubRemotes(): GitRemote[] {
 }
 
 /**
+ * Check if the current directory is a git repository.
+ * Used to validate git operations before executing commands.
+ */
+function isGitRepo(): boolean {
+  try {
+    execSync("git rev-parse --git-dir", { encoding: "utf-8", timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get the current git status including branch, commit hash, and dirty state.
+ * Returns structured data for the Git Manager UI.
+ */
+function getGitStatus(): {
+  branch: string;
+  commit: string;
+  isDirty: boolean;
+  ahead: number;
+  behind: number;
+} | null {
+  try {
+    // Get current branch
+    const branch = execSync("git branch --show-current", { encoding: "utf-8", timeout: 5000 }).trim() || "HEAD detached";
+
+    // Get current commit hash (short)
+    const commit = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
+
+    // Check if working directory is dirty
+    const statusOutput = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000 }).trim();
+    const isDirty = statusOutput.length > 0;
+
+    // Get ahead/behind counts from origin
+    let ahead = 0;
+    let behind = 0;
+    try {
+      const revListOutput = execSync("git rev-list --left-right --count HEAD...@{u}", { encoding: "utf-8", timeout: 5000 }).trim();
+      const match = revListOutput.match(/(\d+)\s+(\d+)/);
+      if (match) {
+        ahead = parseInt(match[1], 10);
+        behind = parseInt(match[2], 10);
+      }
+    } catch {
+      // No upstream or other error - leave as 0
+    }
+
+    return { branch, commit, isDirty, ahead, behind };
+  } catch {
+    return null;
+  }
+}
+
+/** Git commit info returned by the commits endpoint */
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  date: string;
+  parents: string[];
+}
+
+/**
+ * Get recent commits from the git log.
+ * @param limit Maximum number of commits to return (default 20)
+ */
+function getGitCommits(limit: number = 20): GitCommit[] {
+  try {
+    // Format: hash|shortHash|message|author|date|parents
+    const format = "%H|%h|%s|%an|%aI|%P";
+    const output = execSync(`git log --max-count=${limit} --pretty=format:"${format}"`, {
+      encoding: "utf-8",
+      timeout: 10000,
+    });
+
+    const commits: GitCommit[] = [];
+    for (const line of output.split("\n")) {
+      const parts = line.split("|");
+      if (parts.length < 5) continue;
+
+      const [hash, shortHash, message, author, date, parentsStr] = parts;
+      const parents = parentsStr ? parentsStr.split(" ").filter(Boolean) : [];
+
+      commits.push({
+        hash,
+        shortHash,
+        message: message || "",
+        author: author || "",
+        date: date || "",
+        parents,
+      });
+    }
+
+    return commits;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get the diff for a specific commit.
+ * @param hash The commit hash
+ * @returns Object with stat and patch
+ */
+function getCommitDiff(hash: string): { stat: string; patch: string } | null {
+  try {
+    // Validate the hash is a valid git object
+    execSync(`git cat-file -t ${hash}`, { encoding: "utf-8", timeout: 5000 });
+
+    // Get diff stat
+    const stat = execSync(`git show --stat --format="" ${hash}`, { encoding: "utf-8", timeout: 10000 }).trim();
+
+    // Get patch
+    const patch = execSync(`git show --format="" ${hash}`, { encoding: "utf-8", timeout: 10000 });
+
+    return { stat, patch };
+  } catch {
+    return null;
+  }
+}
+
+/** Git branch info returned by the branches endpoint */
+export interface GitBranch {
+  name: string;
+  isCurrent: boolean;
+  remote?: string;
+  lastCommitDate?: string;
+}
+
+/**
+ * Get all local branches with their info.
+ */
+function getGitBranches(): GitBranch[] {
+  try {
+    // Get current branch name
+    let currentBranch = "";
+    try {
+      currentBranch = execSync("git branch --show-current", { encoding: "utf-8", timeout: 5000 }).trim();
+    } catch {
+      // Detached HEAD - no current branch
+    }
+
+    // Get all branches with info
+    const format = "%(refname:short)|%(upstream:short)|%(committerdate:iso8601)|%(HEAD)";
+    const output = execSync(`git for-each-ref --format="${format}" refs/heads/`, {
+      encoding: "utf-8",
+      timeout: 10000,
+    });
+
+    const branches: GitBranch[] = [];
+    for (const line of output.trim().split("\n")) {
+      const parts = line.split("|");
+      if (parts.length < 4) continue;
+
+      const [name, remote, lastCommitDate, headMarker] = parts;
+      const isCurrent = headMarker === "*" || name === currentBranch;
+
+      branches.push({
+        name,
+        isCurrent,
+        remote: remote || undefined,
+        lastCommitDate: lastCommitDate || undefined,
+      });
+    }
+
+    return branches;
+  } catch {
+    return [];
+  }
+}
+
+/** Git worktree info returned by the worktrees endpoint */
+export interface GitWorktree {
+  path: string;
+  branch?: string;
+  isMain: boolean;
+  isBare: boolean;
+  taskId?: string;
+}
+
+/**
+ * Get all git worktrees.
+ * @param tasks Optional task list to correlate worktrees with tasks
+ */
+function getGitWorktrees(tasks: { id: string; worktree?: string }[] = []): GitWorktree[] {
+  try {
+    const output = execSync("git worktree list --porcelain", { encoding: "utf-8", timeout: 10000 });
+
+    const worktrees: GitWorktree[] = [];
+    let currentWorktree: Partial<GitWorktree> = {};
+
+    for (const line of output.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        // Save previous worktree if exists
+        if (currentWorktree.path) {
+          // Find associated task by matching worktree path
+          const task = tasks.find((t) => t.worktree && currentWorktree.path === t.worktree);
+          worktrees.push({
+            path: currentWorktree.path,
+            branch: currentWorktree.branch,
+            isMain: currentWorktree.isMain || false,
+            isBare: currentWorktree.isBare || false,
+            taskId: task?.id,
+          });
+        }
+        // Start new worktree
+        currentWorktree = { path: line.slice(9).trim() };
+      } else if (line.startsWith("branch ")) {
+        currentWorktree.branch = line.slice(8).trim().replace(/^refs\/heads\//, "");
+      } else if (line === "bare") {
+        currentWorktree.isBare = true;
+      } else if (line === "main") {
+        currentWorktree.isMain = true;
+      } else if (line === "" && currentWorktree.path) {
+        // Empty line signals end of worktree entry
+        const task = tasks.find((t) => t.worktree && currentWorktree.path === t.worktree);
+        worktrees.push({
+          path: currentWorktree.path,
+          branch: currentWorktree.branch,
+          isMain: currentWorktree.isMain || false,
+          isBare: currentWorktree.isBare || false,
+          taskId: task?.id,
+        });
+        currentWorktree = {};
+      }
+    }
+
+    // Handle last worktree if no trailing newline
+    if (currentWorktree.path) {
+      const task = tasks.find((t) => t.worktree && currentWorktree.path === t.worktree);
+      worktrees.push({
+        path: currentWorktree.path,
+        branch: currentWorktree.branch,
+        isMain: currentWorktree.isMain || false,
+        isBare: currentWorktree.isBare || false,
+        taskId: task?.id,
+      });
+    }
+
+    return worktrees;
+  } catch {
+    return [];
+  }
+}
+
+// ── Git Action Helper Functions ──────────────────────────────────────────
+
+/**
+ * Validates a branch name to prevent command injection.
+ * Branch names must not contain spaces, special shell characters, or start with dashes.
+ */
+function isValidBranchName(name: string): boolean {
+  // Must not be empty
+  if (!name || name.length === 0) return false;
+  // Must not start with a dash (could be interpreted as an option)
+  if (name.startsWith("-")) return false;
+  // Must not contain shell metacharacters
+  if (/[;<>&|`$(){}[\]\r\n]/.test(name)) return false;
+  // Must be valid git ref format (no spaces, no double dots, etc)
+  if (/\s/.test(name)) return false;
+  if (name.includes("..")) return false;
+  if (name.includes("~")) return false;
+  if (name.includes("^")) return false;
+  if (name.includes(":")) return false;
+  // Must not be a reserved git ref name
+  const reserved = ["HEAD", "FETCH_HEAD", "ORIG_HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD"];
+  if (reserved.includes(name)) return false;
+  return true;
+}
+
+/**
+ * Create a new branch from current HEAD or specified base.
+ * Returns the created branch name.
+ */
+function createGitBranch(name: string, base?: string): string {
+  if (!isValidBranchName(name)) {
+    throw new Error("Invalid branch name");
+  }
+  if (base && !isValidBranchName(base)) {
+    throw new Error("Invalid base branch name");
+  }
+  const cmd = base
+    ? `git checkout -b ${name} ${base}`
+    : `git checkout -b ${name}`;
+  execSync(cmd, { encoding: "utf-8", timeout: 10000 });
+  return name;
+}
+
+/**
+ * Checkout an existing branch.
+ * Throws if there are uncommitted changes that would be lost.
+ */
+function checkoutGitBranch(name: string): void {
+  if (!isValidBranchName(name)) {
+    throw new Error("Invalid branch name");
+  }
+  // Check for uncommitted changes that would be lost
+  try {
+    execSync("git diff-index --quiet HEAD --", { encoding: "utf-8", timeout: 5000 });
+  } catch {
+    // Has uncommitted changes - check if they'd be lost
+    const diff = execSync("git diff --name-only", { encoding: "utf-8", timeout: 5000 }).trim();
+    if (diff) {
+      throw new Error("Uncommitted changes would be lost. Commit or stash changes first.");
+    }
+  }
+  execSync(`git checkout ${name}`, { encoding: "utf-8", timeout: 10000 });
+}
+
+/**
+ * Delete a branch.
+ * Throws if it's the current branch or has unmerged commits.
+ */
+function deleteGitBranch(name: string, force: boolean = false): void {
+  if (!isValidBranchName(name)) {
+    throw new Error("Invalid branch name");
+  }
+  const flag = force ? "-D" : "-d";
+  execSync(`git branch ${flag} ${name}`, { encoding: "utf-8", timeout: 10000 });
+}
+
+/** Result of a fetch operation */
+export interface GitFetchResult {
+  fetched: boolean;
+  message: string;
+}
+
+/**
+ * Fetch from origin or specified remote.
+ */
+function fetchGitRemote(remote: string = "origin"): GitFetchResult {
+  if (!isValidBranchName(remote)) {
+    throw new Error("Invalid remote name");
+  }
+  try {
+    const output = execSync(`git fetch ${remote}`, { encoding: "utf-8", timeout: 30000 });
+    return { fetched: true, message: output.trim() || "Fetch completed" };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("Could not resolve host") || message.includes("Connection refused")) {
+      throw new Error("Failed to connect to remote");
+    }
+    // No updates is not an error
+    return { fetched: false, message: message || "No updates" };
+  }
+}
+
+/** Result of a pull operation */
+export interface GitPullResult {
+  success: boolean;
+  message: string;
+  conflict?: boolean;
+}
+
+/**
+ * Pull the current branch.
+ */
+function pullGitBranch(): GitPullResult {
+  try {
+    const output = execSync("git pull", { encoding: "utf-8", timeout: 30000 });
+    return { success: true, message: output.trim() };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("CONFLICT") || message.includes("Merge conflict")) {
+      return { success: false, message: "Merge conflict detected. Resolve manually.", conflict: true };
+    }
+    throw new Error(message || "Pull failed");
+  }
+}
+
+/** Result of a push operation */
+export interface GitPushResult {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * Push the current branch.
+ */
+function pushGitBranch(): GitPushResult {
+  try {
+    const output = execSync("git push", { encoding: "utf-8", timeout: 30000 });
+    return { success: true, message: output.trim() || "Push completed" };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("rejected") || message.includes("non-fast-forward")) {
+      throw new Error("Push rejected. Pull latest changes first.");
+    }
+    if (message.includes("Could not resolve host") || message.includes("Connection refused")) {
+      throw new Error("Failed to connect to remote");
+    }
+    throw new Error(message || "Push failed");
+  }
+}
+
+/**
  * Per-repo GitHub API rate limiter.
  * Tracks requests per repo and enforces 60 requests per hour per repo.
  */
@@ -552,6 +950,265 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.json(remotes);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/status
+   * Returns current git status: branch, commit hash, dirty state, ahead/behind counts.
+   * Response: { branch: string, commit: string, isDirty: boolean, ahead: number, behind: number }
+   */
+  router.get("/git/status", (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const status = getGitStatus();
+      if (!status) {
+        res.status(500).json({ error: "Failed to get git status" });
+        return;
+      }
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/commits
+   * Returns recent commits (default 20, configurable via ?limit=).
+   * Response: Array of GitCommit objects
+   */
+  router.get("/git/commits", (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
+      const commits = getGitCommits(limit);
+      res.json(commits);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/commits/:hash/diff
+   * Returns diff for a specific commit (stat + patch).
+   * Response: { stat: string, patch: string }
+   */
+  router.get("/git/commits/:hash/diff", (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { hash } = req.params;
+      // Validate hash format (only hex characters, 7-40 chars)
+      if (!/^[a-f0-9]{7,40}$/i.test(hash)) {
+        res.status(400).json({ error: "Invalid commit hash format" });
+        return;
+      }
+      const diff = getCommitDiff(hash);
+      if (!diff) {
+        res.status(404).json({ error: "Commit not found" });
+        return;
+      }
+      res.json(diff);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/branches
+   * Returns all local branches with current indicator, remote tracking info, and last commit date.
+   * Response: Array of GitBranch objects
+   */
+  router.get("/git/branches", (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const branches = getGitBranches();
+      res.json(branches);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/worktrees
+   * Returns all worktrees with path, branch, isMain, and associated task ID.
+   * Response: Array of GitWorktree objects
+   */
+  router.get("/git/worktrees", async (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      // Get tasks to correlate with worktrees
+      const tasks = await store.listTasks();
+      const worktrees = getGitWorktrees(tasks);
+      res.json(worktrees);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+// ── Git Action Routes ─────────────────────────────────────────────
+
+  /**
+   * POST /api/git/branches
+   * Create a new branch from current HEAD or specified base.
+   * Body: { name: string, base?: string }
+   */
+  router.post("/git/branches", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name, base } = req.body;
+      if (!name || typeof name !== "string") {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      const branchName = createGitBranch(name, base);
+      res.status(201).json({ name: branchName, created: true });
+    } catch (err: any) {
+      if (err.message.includes("Invalid branch name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message.includes("already exists")) {
+        res.status(409).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/git/branches/:name/checkout
+   * Checkout an existing branch.
+   */
+  router.post("/git/branches/:name/checkout", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name } = req.params;
+      checkoutGitBranch(name);
+      res.json({ checkedOut: name });
+    } catch (err: any) {
+      if (err.message.includes("Invalid branch name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message.includes("Uncommitted changes")) {
+        res.status(409).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * DELETE /api/git/branches/:name
+   * Delete a branch.
+   * Query: ?force=true to force delete (even with unmerged commits)
+   */
+  router.delete("/git/branches/:name", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name } = req.params;
+      const force = req.query.force === "true";
+      deleteGitBranch(name, force);
+      res.json({ deleted: name });
+    } catch (err: any) {
+      if (err.message.includes("Invalid branch name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message.includes("Cannot delete branch") || err.message.includes("is currently checked out")) {
+        res.status(409).json({ error: err.message });
+      } else if (err.message.includes("not fully merged")) {
+        res.status(409).json({ error: "Branch has unmerged commits. Use force=true to delete anyway." });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/git/fetch
+   * Fetch from origin or specified remote.
+   * Body: { remote?: string }
+   */
+  router.post("/git/fetch", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { remote } = req.body;
+      const result = fetchGitRemote(remote || "origin");
+      res.json(result);
+    } catch (err: any) {
+      if (err.message.includes("Invalid remote name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message.includes("Failed to connect")) {
+        res.status(503).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/git/pull
+   * Pull the current branch.
+   */
+  router.post("/git/pull", async (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const result = pullGitBranch();
+      if (result.conflict) {
+        res.status(409).json(result);
+      } else {
+        res.json(result);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/git/push
+   * Push the current branch.
+   */
+  router.post("/git/push", async (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const result = pushGitBranch();
+      res.json(result);
+    } catch (err: any) {
+      if (err.message.includes("rejected") || err.message.includes("Pull latest")) {
+        res.status(409).json({ error: err.message });
+      } else if (err.message.includes("Failed to connect")) {
+        res.status(503).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
     }
   });
 

@@ -1659,6 +1659,7 @@ describe("POST /tasks/:id/spec/revise", () => {
   });
 });
 
+
 // --- Plan Approval route tests ---
 
 describe("POST /tasks/:id/approve-plan", () => {
@@ -1814,5 +1815,262 @@ describe("POST /tasks/:id/reject-plan", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Database error");
+  });
+});
+
+// --- Git Management route tests ---
+// These are integration tests that run against the actual git repository
+
+describe("Git Management endpoints", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  describe("GET /git/status", () => {
+    it("returns git status structure", async () => {
+      const res = await GET(buildApp(), "/api/git/status");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("branch");
+      expect(res.body).toHaveProperty("commit");
+      expect(res.body).toHaveProperty("isDirty");
+      expect(res.body).toHaveProperty("ahead");
+      expect(res.body).toHaveProperty("behind");
+      expect(typeof res.body.branch).toBe("string");
+      expect(typeof res.body.commit).toBe("string");
+      expect(typeof res.body.isDirty).toBe("boolean");
+      expect(typeof res.body.ahead).toBe("number");
+      expect(typeof res.body.behind).toBe("number");
+    });
+  });
+
+  describe("GET /git/commits", () => {
+    it("returns commits array", async () => {
+      const res = await GET(buildApp(), "/api/git/commits");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      if (res.body.length > 0) {
+        expect(res.body[0]).toHaveProperty("hash");
+        expect(res.body[0]).toHaveProperty("shortHash");
+        expect(res.body[0]).toHaveProperty("message");
+        expect(res.body[0]).toHaveProperty("author");
+        expect(res.body[0]).toHaveProperty("date");
+      }
+    });
+
+    it("respects limit parameter", async () => {
+      const res = await GET(buildApp(), "/api/git/commits?limit=5");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBeLessThanOrEqual(5);
+    });
+
+    it("caps limit at 100", async () => {
+      const res = await GET(buildApp(), "/api/git/commits?limit=200");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBeLessThanOrEqual(100);
+    });
+  });
+
+  describe("GET /git/commits/:hash/diff", () => {
+    it("returns 400 for invalid hash format", async () => {
+      const res = await GET(buildApp(), "/api/git/commits/invalid-hash!/diff");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid commit hash format");
+    });
+
+    it("returns 404 for non-existent commit", async () => {
+      const res = await GET(buildApp(), "/api/git/commits/0000000/diff");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Commit not found");
+    });
+
+    it("returns diff for HEAD commit", async () => {
+      // Get HEAD commit hash first
+      const commitsRes = await GET(buildApp(), "/api/git/commits?limit=1");
+      const headHash = commitsRes.body[0]?.hash;
+
+      if (headHash) {
+        const res = await GET(buildApp(), `/api/git/commits/${headHash}/diff`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveProperty("stat");
+        expect(res.body).toHaveProperty("patch");
+      }
+    });
+  });
+
+  describe("GET /git/branches", () => {
+    it("returns branches array", async () => {
+      const res = await GET(buildApp(), "/api/git/branches");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      if (res.body.length > 0) {
+        expect(res.body[0]).toHaveProperty("name");
+        expect(res.body[0]).toHaveProperty("isCurrent");
+        expect(typeof res.body[0].name).toBe("string");
+        expect(typeof res.body[0].isCurrent).toBe("boolean");
+      }
+    });
+  });
+
+  describe("GET /git/worktrees", () => {
+    it("returns worktrees array", async () => {
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const res = await GET(buildApp(), "/api/git/worktrees");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      if (res.body.length > 0) {
+        expect(res.body[0]).toHaveProperty("path");
+        expect(res.body[0]).toHaveProperty("isMain");
+        expect(res.body[0]).toHaveProperty("isBare");
+      }
+    });
+
+    it("correlates worktrees with tasks", async () => {
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: "KB-TEST", worktree: "/some/worktree/path" },
+      ]);
+
+      const res = await GET(buildApp(), "/api/git/worktrees");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+    });
+  });
+
+  describe("POST /git/branches", () => {
+    it("returns 400 without name", async () => {
+      const res = await REQUEST(buildApp(), "POST", "/api/git/branches", JSON.stringify({}), {
+        "Content-Type": "application/json",
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("name is required");
+    });
+
+    it("returns 400 for invalid branch name", async () => {
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/git/branches",
+        JSON.stringify({ name: "invalid;rm -rf /" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid branch name");
+    });
+
+    it("returns 400 for branch name starting with dash", async () => {
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/git/branches",
+        JSON.stringify({ name: "--force" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid branch name");
+    });
+  });
+
+  describe("POST /git/branches/:name/checkout", () => {
+    it("returns 400 for invalid branch name", async () => {
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/git/branches/invalid;cmd/checkout",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("DELETE /git/branches/:name", () => {
+    it("returns 400 for invalid branch name", async () => {
+      const res = await REQUEST(buildApp(), "DELETE", "/api/git/branches/invalid;cmd");
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("POST /git/fetch", () => {
+    it("returns result structure", async () => {
+      const res = await REQUEST(buildApp(), "POST", "/api/git/fetch", JSON.stringify({}), {
+        "Content-Type": "application/json",
+      });
+
+      // May succeed or fail depending on network, but should return proper structure
+      expect(res.status === 200 || res.status === 503 || res.status === 500).toBe(true);
+      if (res.status === 200) {
+        expect(res.body).toHaveProperty("fetched");
+        expect(res.body).toHaveProperty("message");
+      }
+    });
+
+    it("validates remote name", async () => {
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/git/fetch",
+        JSON.stringify({ remote: "invalid;rm -rf /" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid remote name");
+    });
+  });
+
+  describe("POST /git/pull", () => {
+    it("returns result or conflict status", async () => {
+      const res = await REQUEST(buildApp(), "POST", "/api/git/pull", JSON.stringify({}), {
+        "Content-Type": "application/json",
+      });
+
+      // May succeed or fail depending on state, but should return proper structure
+      expect(res.status === 200 || res.status === 409 || res.status === 500).toBe(true);
+      if (res.status === 200 || res.status === 409) {
+        expect(res.body).toHaveProperty("success");
+        expect(res.body).toHaveProperty("message");
+      }
+    });
+  });
+
+  describe("POST /git/push", () => {
+    it("returns result or rejection status", async () => {
+      const res = await REQUEST(buildApp(), "POST", "/api/git/push", JSON.stringify({}), {
+        "Content-Type": "application/json",
+      });
+
+      // May succeed or fail depending on remote state
+      expect(res.status === 200 || res.status === 409 || res.status === 503 || res.status === 500).toBe(true);
+      if (res.status === 200) {
+        expect(res.body).toHaveProperty("success");
+        expect(res.body).toHaveProperty("message");
+      }
+    });
   });
 });
