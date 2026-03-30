@@ -52,8 +52,16 @@ const mockListen = vi.fn((port: number) => {
   return server;
 });
 
+const MockGitHubClient = vi.fn().mockImplementation(() => ({
+  findPrForBranch: vi.fn(),
+  createPr: vi.fn(),
+  getPrMergeStatus: vi.fn(),
+  mergePr: vi.fn(),
+}));
+
 vi.mock("@kb/dashboard", () => ({
   createServer: vi.fn(() => ({ listen: mockListen })),
+  GitHubClient: MockGitHubClient,
 }));
 
 // ── Mock @kb/engine ────────────────────────────────────────────────

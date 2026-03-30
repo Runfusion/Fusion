@@ -10,4 +10,5 @@ export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees } from "./wor
 export { createLogger, type Logger } from "./logger.js";
 export { isUsageLimitError, UsageLimitPauser } from "./usage-limit-detector.js";
 export { PrMonitor, type PrComment, type TrackedPr, type OnNewCommentsCallback } from "./pr-monitor.js";
+export { PrCommentHandler } from "./pr-comment-handler.js";
 export { NtfyNotifier, type NtfyNotifierOptions } from "./notifier.js";

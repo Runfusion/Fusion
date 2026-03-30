@@ -183,6 +183,7 @@ describe("PrSection", () => {
       );
 
       expect(screen.getByText("merged")).toBeDefined();
+      expect(screen.getByText(/finish local cleanup and move the task to Done/i)).toBeDefined();
     });
 
     it("shows correct status badge for closed PR", () => {
@@ -218,7 +219,14 @@ describe("PrSection", () => {
 
     it("refreshes PR status when refresh button is clicked", async () => {
       const updatedPr = { ...mockPrInfo, status: "merged" as const };
-      (refreshPrStatus as ReturnType<typeof vi.fn>).mockResolvedValue(updatedPr);
+      (refreshPrStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        prInfo: updatedPr,
+        mergeReady: true,
+        blockingReasons: [],
+        reviewDecision: "APPROVED",
+        checks: [{ name: "ci", required: true, state: "success" }],
+        automationStatus: null,
+      });
 
       render(
         <PrSection
@@ -261,6 +269,51 @@ describe("PrSection", () => {
 
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith("Network error", "error");
+      });
+    });
+
+    it("shows automatic PR creation message while PR-first automation is creating a PR", () => {
+      render(
+        <PrSection
+          taskId="KB-001"
+          automationStatus="creating-pr"
+          hasGitHubToken={true}
+          onPrCreated={mockOnPrCreated}
+          onPrUpdated={mockOnPrUpdated}
+          addToast={mockAddToast}
+        />
+      );
+
+      expect(screen.getByText(/creating a pull request automatically/i)).toBeDefined();
+      expect(screen.queryByText("Create PR")).toBeNull();
+    });
+
+    it("shows awaiting-checks messaging from refreshed merge blockers", async () => {
+      (refreshPrStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        prInfo: mockPrInfo,
+        mergeReady: false,
+        blockingReasons: ["required checks not successful: ci (pending)"],
+        reviewDecision: null,
+        checks: [{ name: "ci", required: true, state: "pending" }],
+        automationStatus: "awaiting-pr-checks",
+      });
+
+      render(
+        <PrSection
+          taskId="KB-001"
+          prInfo={mockPrInfo}
+          automationStatus="awaiting-pr-checks"
+          hasGitHubToken={true}
+          onPrCreated={mockOnPrCreated}
+          onPrUpdated={mockOnPrUpdated}
+          addToast={mockAddToast}
+        />
+      );
+
+      fireEvent.click(screen.getByTitle("Refresh PR status"));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Waiting for: required checks not successful: ci \(pending\)/)).toBeDefined();
       });
     });
   });

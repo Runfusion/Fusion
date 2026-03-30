@@ -64,7 +64,7 @@ export function SettingsModal({
   onThemeModeChange,
   onColorThemeChange,
 }: SettingsModalProps) {
-  const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false, autoMerge: true, recycleWorktrees: false, worktreeNaming: "random", includeTaskIdInCommit: true, worktreeInitCommand: "" });
+  const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false, autoMerge: true, mergeStrategy: "direct", recycleWorktrees: false, worktreeNaming: "random", includeTaskIdInCommit: true, worktreeInitCommand: "" });
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<SectionId>(initialSection ?? SETTINGS_SECTIONS[0].id);
   const [prefixError, setPrefixError] = useState<string | null>(null);
@@ -527,6 +527,22 @@ export function SettingsModal({
                 Auto-merge completed tasks
               </label>
               <small>When enabled, tasks that pass review are automatically merged into the main branch</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="mergeStrategy">Auto-completion mode</label>
+              <select
+                id="mergeStrategy"
+                value={form.mergeStrategy || "direct"}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, mergeStrategy: e.target.value as Settings["mergeStrategy"] }))
+                }
+              >
+                <option value="direct">Direct merge into the current branch</option>
+                <option value="pull-request">Create, monitor, and merge a GitHub pull request</option>
+              </select>
+              <small>
+                Controls what happens after a task reaches In Review. Direct mode preserves kb&apos;s current local squash-merge behavior. Pull request mode keeps the task in In Review while kb waits for GitHub reviews and required checks before merging the PR.
+              </small>
             </div>
             <div className="form-group">
               <label htmlFor="includeTaskIdInCommit" className="checkbox-label">

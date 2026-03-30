@@ -384,6 +384,19 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("mergeStrategy setting", () => {
+    it("defaults mergeStrategy to direct for backward compatibility", async () => {
+      const settings = await store.getSettings();
+      expect(settings.mergeStrategy).toBe("direct");
+    });
+
+    it("persists mergeStrategy and returns it via getSettings", async () => {
+      await store.updateSettings({ mergeStrategy: "pull-request" });
+      const settings = await store.getSettings();
+      expect(settings.mergeStrategy).toBe("pull-request");
+    });
+  });
+
   // ── Concurrent stress test ───────────────────────────────────────
 
   describe("concurrent stress", () => {

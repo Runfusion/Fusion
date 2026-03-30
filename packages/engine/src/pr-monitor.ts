@@ -155,6 +155,16 @@ export class PrMonitor {
   }
 
   /**
+   * Update the cached PR metadata for an already tracked task.
+   * Keeps comment polling state intact while refreshing fields like PR status.
+   */
+  updatePrInfo(taskId: string, prInfo: PrInfo): void {
+    const tracked = this.trackedPrs.get(taskId);
+    if (!tracked) return;
+    tracked.prInfo = prInfo;
+  }
+
+  /**
    * Stop monitoring a PR.
    */
   stopMonitoring(taskId: string): void {

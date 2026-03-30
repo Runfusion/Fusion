@@ -24,8 +24,8 @@ graph TD
         R2 -->|rethink| P
     end
 
-    R2 -->|done| IR["In Review\n<i>ready to merge,\nor auto-merge</i>"]
-    IR -->|squash merge| D["Done"]
+    R2 -->|done| IR["In Review\n<i>ready to merge,\nor auto-complete</i>"]
+    IR -->|direct squash merge\nor merged PR| D["Done"]
 
     style H fill:#161b22,stroke:#8b949e,color:#e6edf3
     style T fill:#2d2006,stroke:#d29922,color:#d29922
@@ -234,6 +234,25 @@ kb can create GitHub Pull Requests directly from the dashboard for tasks in the 
 5. The PR is created and linked to the task automatically
 
 The dashboard shows real-time PR status (open, closed, merged) with a refresh button to fetch the latest state from GitHub.
+
+### Auto-completion modes
+
+kb supports two completion strategies once a task reaches **In Review**:
+
+- **Direct merge** *(default)* — existing behavior. kb AI-squash-merges the task branch into your current branch locally.
+- **Pull request** — kb creates or links a GitHub PR for the task branch, keeps the task in **In Review** while reviews/checks are pending, and auto-merges the PR when required checks succeed and no review is actively blocking it.
+
+`autoMerge` still controls whether kb performs either completion strategy automatically. Turning `autoMerge` off means tasks stay in **In Review** until you merge manually.
+
+### PR-first mode prerequisites and behavior
+
+PR-first automation is designed for repositories that require GitHub-side governance:
+
+- Authenticate GitHub access with `gh auth login` or `GITHUB_TOKEN`
+- Ensure the task branch already exists on GitHub using the normal kb branch naming convention: `kb/<task-id-lower>`
+- Expect the task to remain in **In Review** while required checks are pending/failing or a review is blocking merge
+
+**Important:** kb does **not** implicitly push task branches before creating a PR. PR-first mode assumes branch publishing is handled by your existing workflow or repository automation.
 
 ### Spec Editing & AI Revision
 

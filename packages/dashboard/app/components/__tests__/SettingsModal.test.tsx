@@ -10,6 +10,7 @@ const defaultSettings: Settings = {
   pollIntervalMs: 15000,
   groupOverlappingFiles: false,
   autoMerge: true,
+  mergeStrategy: "direct",
   recycleWorktrees: false,
   worktreeInitCommand: "",
   testCommand: "",
@@ -107,6 +108,7 @@ describe("SettingsModal", () => {
     // Merge
     fireEvent.click(screen.getByText("Merge"));
     expect(screen.getByText("Auto-merge completed tasks")).toBeTruthy();
+    expect(screen.getByLabelText("Auto-completion mode")).toBeTruthy();
     expect(screen.getByText("Include task ID in commit scope")).toBeTruthy();
     expect(screen.getByText("Auto-resolve conflicts in lock files and generated files")).toBeTruthy();
     expect(screen.getByText("Smart conflict resolution")).toBeTruthy();
@@ -186,6 +188,31 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Save"));
     // Should not have called updateSettings due to validation error
     expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("shows Auto-completion mode select in Merge section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const select = screen.getByLabelText("Auto-completion mode") as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    expect(select.value).toBe("direct");
+  });
+
+  it("saves pull-request mergeStrategy when selected", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const select = screen.getByLabelText("Auto-completion mode") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "pull-request" } });
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.mergeStrategy).toBe("pull-request");
   });
 
   it("shows Include task ID in commit scope checkbox in Merge section", async () => {

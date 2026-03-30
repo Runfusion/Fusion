@@ -386,6 +386,12 @@ export function TaskDetailModal({
     });
 
   const transitions = VALID_TRANSITIONS[task.column] || [];
+  const prAutomationStatusLabels: Record<string, string> = {
+    "creating-pr": "Creating PR…",
+    "awaiting-pr-checks": "Awaiting PR checks",
+    "merging-pr": "Merging PR…",
+  };
+  const prAutomationLabel = task.status ? prAutomationStatusLabels[task.status] : undefined;
 
   return (
     <div className="modal-overlay open" onClick={handleOverlayClick}>
@@ -716,6 +722,7 @@ export function TaskDetailModal({
             <PrSection
               taskId={task.id}
               prInfo={task.prInfo}
+              automationStatus={task.status ?? null}
               hasGitHubToken={githubTokenConfigured ?? false}
               onPrCreated={(prInfo) => {
                 // Update task locally to show new PR
@@ -772,9 +779,15 @@ export function TaskDetailModal({
               <button className="btn btn-sm" onClick={() => handleMove("in-progress")}>
                 Back to In Progress
               </button>
-              <button className="btn btn-primary btn-sm" onClick={handleMerge}>
-                Merge &amp; Close
-              </button>
+              {prAutomationLabel ? (
+                <button className="btn btn-primary btn-sm" disabled>
+                  {prAutomationLabel}
+                </button>
+              ) : (
+                <button className="btn btn-primary btn-sm" onClick={handleMerge}>
+                  Merge &amp; Close
+                </button>
+              )}
             </>
           ) : (
             transitions.map((col) => (

@@ -150,11 +150,14 @@ export class Scheduler {
 
       // Check if we're already monitoring this task
       const tracked = this.options.prMonitor.getTrackedPrs();
-      if (!tracked.has(task.id)) {
-        const repo = getCurrentGitHubRepo(this.store.getRootDir());
-        if (repo) {
-          this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
-        }
+      if (tracked.has(task.id)) {
+        this.options.prMonitor.updatePrInfo(task.id, task.prInfo);
+        return;
+      }
+
+      const repo = getCurrentGitHubRepo(this.store.getRootDir());
+      if (repo) {
+        this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
       }
     });
   }

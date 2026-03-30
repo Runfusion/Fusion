@@ -43,7 +43,7 @@ AI-guided interactive planning for creating well-specified tasks from high-level
 - **List View**: Alternative tabular view for tasks with sorting and filtering. The "Hide Done" toggle hides both Done and Archived tasks for an active-work-only view.
 - **Task Details**: View full task specifications, agent logs, and attachments
 - **GitHub Import**: Import issues directly from GitHub repositories
-- **PR Management**: Create and track pull requests for in-review tasks
+- **PR Management**: Create, monitor, and merge pull requests for in-review tasks
 
 ### Interactive Terminal
 Access a fully functional shell terminal directly from the dashboard. Click the terminal icon in the header to open the interactive terminal modal.
@@ -141,6 +141,28 @@ Browse and edit task worktree files directly from the task detail modal:
 - **Authentication**: OAuth provider management for AI model access
 - **Pause Controls**: Soft pause (stop new work) and hard stop (kill all agents)
 - **Theming**: Light/dark/system mode toggle and 8 color themes (see Theming section below)
+
+### Merge strategies
+
+The dashboard exposes two automated completion strategies in Settings:
+
+- **Direct merge** *(default)* — preserves existing behavior. When `autoMerge` is enabled, kb merges in-review tasks locally.
+- **Pull request** — when `autoMerge` is enabled, kb creates or links a PR for the task branch, keeps the task in **In Review** while waiting on GitHub policy, and merges the PR when it is ready.
+
+`autoMerge` is still the master switch for automation. Turning it off disables both direct merge and PR-first auto-completion.
+
+### PR-first workflow notes
+
+When the merge strategy is **Pull request**:
+
+- The task's PR section shows whether kb is waiting on checks/reviews or has merged successfully
+- Required checks must pass before kb merges the PR; optional checks do not block auto-merge
+- A blocking review state (for example, active changes requested) prevents auto-merge until cleared
+- Closed PRs do not auto-merge
+- GitHub access must be available via `gh auth login` or `GITHUB_TOKEN`
+- kb expects the task branch to already be pushed using the standard branch name `kb/<task-id-lower>`
+
+**Non-goal:** the dashboard does not implicitly push branches before PR creation. Use your normal git workflow or automation to publish task branches first.
 
 ## Theming
 

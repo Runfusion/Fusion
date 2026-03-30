@@ -23,6 +23,7 @@ export const COLOR_THEMES = [
 export type ColorTheme = (typeof COLOR_THEMES)[number];
 
 export type PrStatus = "open" | "closed" | "merged";
+export type MergeStrategy = "direct" | "pull-request";
 
 export interface PrInfo {
   url: string;
@@ -195,6 +196,12 @@ export interface Settings {
   pollIntervalMs: number;
   groupOverlappingFiles: boolean;
   autoMerge: boolean;
+  /** How completed in-review tasks should be finalized when autoMerge is enabled.
+   *  - "direct": preserve the existing local squash-merge flow into the current branch
+   *  - "pull-request": create or reuse a GitHub PR and wait for GitHub-side checks/reviews
+   *    before merging through GitHub
+   *  Default: "direct" for backward compatibility. */
+  mergeStrategy?: MergeStrategy;
   /** Shell command to run inside each new worktree immediately after creation.
    *  Useful for project-specific setup (e.g. `pnpm install`, `cp .env.local .env`). */
   worktreeInitCommand?: string;
@@ -271,6 +278,7 @@ export const DEFAULT_SETTINGS: Settings = {
   pollIntervalMs: 15000,
   groupOverlappingFiles: false,
   autoMerge: true,
+  mergeStrategy: "direct",
   worktreeInitCommand: undefined,
   recycleWorktrees: false,
   worktreeNaming: "random",

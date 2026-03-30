@@ -1,9 +1,10 @@
-import { exec } from "node:child_process";
+import { exec, execSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
 import { TaskStore } from "@kb/core";
-import { createServer } from "@kb/dashboard";
-import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier } from "@kb/engine";
+import type { Settings, TaskDetail, PrInfo } from "@kb/core";
+import { createServer, GitHubClient } from "@kb/dashboard";
+import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler } from "@kb/engine";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 
 function openBrowser(url: string): void {
@@ -71,6 +72,124 @@ export function promptForPort(defaultPort: number = 4040, input: NodeJS.Readable
 
     ask();
   });
+}
+
+export function getMergeStrategy(settings: Pick<Settings, "mergeStrategy">): NonNullable<Settings["mergeStrategy"]> {
+  return settings.mergeStrategy ?? "direct";
+}
+
+export function getTaskBranchName(taskId: string): string {
+  return `kb/${taskId.toLowerCase()}`;
+}
+
+function buildPullRequestTitle(task: Pick<TaskDetail, "id" | "title">): string {
+  return task.title ? `${task.id}: ${task.title}` : task.id;
+}
+
+function buildPullRequestBody(task: Pick<TaskDetail, "id" | "description">): string {
+  return [`Automated PR for ${task.id}.`, "", task.description].join("\n");
+}
+
+function cleanupMergedTaskArtifacts(cwd: string, task: Pick<TaskDetail, "id" | "worktree">): void {
+  const branch = getTaskBranchName(task.id);
+
+  if (task.worktree) {
+    try {
+      execSync(`git worktree remove \"${task.worktree}\" --force`, {
+        cwd,
+        stdio: "pipe",
+      });
+    } catch {
+      // Best-effort cleanup — worktree may already be gone.
+    }
+  }
+
+  try {
+    execSync(`git branch -d \"${branch}\"`, {
+      cwd,
+      stdio: "pipe",
+    });
+  } catch {
+    try {
+      execSync(`git branch -D \"${branch}\"`, {
+        cwd,
+        stdio: "pipe",
+      });
+    } catch {
+      // Best-effort cleanup — branch may already be gone.
+    }
+  }
+}
+
+export async function processPullRequestMergeTask(
+  store: TaskStore,
+  cwd: string,
+  taskId: string,
+  github: Pick<GitHubClient, "findPrForBranch" | "createPr" | "getPrMergeStatus" | "mergePr">,
+): Promise<"waiting" | "merged" | "skipped"> {
+  const task = await store.getTask(taskId);
+  if (task.column !== "in-review" || task.paused) {
+    return "skipped";
+  }
+
+  const branch = getTaskBranchName(task.id);
+  let prInfo: PrInfo | undefined = task.prInfo;
+
+  if (!prInfo) {
+    await store.updateTask(task.id, { status: "creating-pr" });
+
+    const existingPr = await github.findPrForBranch({ head: branch, state: "all" });
+    prInfo = existingPr ?? await github.createPr({
+      title: buildPullRequestTitle(task),
+      body: buildPullRequestBody(task),
+      head: branch,
+    });
+
+    await store.updatePrInfo(task.id, prInfo);
+    await store.logEntry(
+      task.id,
+      existingPr ? "Linked existing PR" : "Created PR",
+      `PR #${prInfo.number}: ${prInfo.url}`,
+    );
+  }
+
+  if (!prInfo) {
+    throw new Error(`Failed to create or resolve pull request for ${task.id}`);
+  }
+
+  const mergeStatus = await github.getPrMergeStatus(undefined, undefined, prInfo.number);
+  const refreshedPrInfo: PrInfo = {
+    ...prInfo,
+    ...mergeStatus.prInfo,
+    lastCheckedAt: new Date().toISOString(),
+  };
+  await store.updatePrInfo(task.id, refreshedPrInfo);
+
+  if (mergeStatus.prInfo.status === "merged") {
+    cleanupMergedTaskArtifacts(cwd, task);
+    await store.moveTask(task.id, "done");
+    await store.updateTask(task.id, { status: null, mergeRetries: 0 });
+    await store.logEntry(task.id, "Pull request merged", `PR #${prInfo.number}: ${prInfo.url}`);
+    return "merged";
+  }
+
+  if (!mergeStatus.mergeReady) {
+    if (mergeStatus.prInfo.status === "open") {
+      await store.updateTask(task.id, { status: "awaiting-pr-checks" });
+    } else {
+      await store.updateTask(task.id, { status: null });
+    }
+    return "waiting";
+  }
+
+  await store.updateTask(task.id, { status: "merging-pr" });
+  const mergedPr = await github.mergePr({ number: prInfo.number, method: "squash" });
+  await store.updatePrInfo(task.id, { ...mergedPr, lastCheckedAt: new Date().toISOString() });
+  cleanupMergedTaskArtifacts(cwd, task);
+  await store.moveTask(task.id, "done");
+  await store.updateTask(task.id, { status: null, mergeRetries: 0 });
+  await store.logEntry(task.id, "Pull request merged", `PR #${mergedPr.number}: ${mergedPr.url}`);
+  return "merged";
 }
 
 export async function runDashboard(port: number, opts: { open?: boolean; paused?: boolean; dev?: boolean; interactive?: boolean } = {}) {
@@ -160,6 +279,7 @@ export async function runDashboard(port: number, opts: { open?: boolean; paused?
   // pause is deduplicated across concurrent agents.
   //
   const usageLimitPauser = new UsageLimitPauser(store);
+  const githubClient = new GitHubClient(process.env.GITHUB_TOKEN);
 
   // AI-powered merge handler (used by the web UI for manual merges).
   // Wrapped with the shared semaphore so merges count toward the global
@@ -238,52 +358,71 @@ export async function runDashboard(port: number, opts: { open?: boolean; paused?
           if (task.column !== "in-review" || task.paused) {
             continue;
           }
-          console.log(`[auto-merge] Merging ${taskId}...`);
-          await onMerge(taskId);
-          console.log(`[auto-merge] ✓ ${taskId} merged`);
-          // Clear mergeRetries on success
-          if (task.mergeRetries && task.mergeRetries > 0) {
-            await store.updateTask(taskId, { mergeRetries: 0 });
+          const mergeStrategy = getMergeStrategy(settings);
+          if (mergeStrategy === "pull-request") {
+            console.log(`[auto-merge] Processing PR flow for ${taskId}...`);
+            const result = await processPullRequestMergeTask(store, cwd, taskId, githubClient);
+            if (result === "merged") {
+              console.log(`[auto-merge] ✓ ${taskId} merged via pull request`);
+            } else if (result === "waiting") {
+              console.log(`[auto-merge] … ${taskId} waiting on PR checks or reviews`);
+            }
+          } else {
+            console.log(`[auto-merge] Merging ${taskId}...`);
+            await onMerge(taskId);
+            console.log(`[auto-merge] ✓ ${taskId} merged`);
+            // Clear mergeRetries on success
+            if (task.mergeRetries && task.mergeRetries > 0) {
+              await store.updateTask(taskId, { mergeRetries: 0 });
+            }
           }
         } catch (err: any) {
           const errorMsg = err.message ?? String(err);
           console.log(`[auto-merge] ✗ ${taskId}: ${errorMsg}`);
 
-          // Check if this is a conflict error and if we should retry
-          const isConflictError = errorMsg.includes("conflict") || errorMsg.includes("Conflict");
+          const settings = await store.getSettings().catch(() => ({ autoResolveConflicts: true, mergeStrategy: "direct" as const }));
           const task = await store.getTask(taskId).catch(() => null);
+          const mergeStrategy = getMergeStrategy(settings);
 
-          if (task && isConflictError) {
-            const settings = await store.getSettings().catch(() => ({ autoResolveConflicts: true }));
-            const currentRetries = task.mergeRetries ?? 0;
-            const maxRetries = 3;
+          if (mergeStrategy === "direct") {
+            // Check if this is a conflict error and if we should retry
+            const isConflictError = errorMsg.includes("conflict") || errorMsg.includes("Conflict");
 
-            if (settings.autoResolveConflicts !== false && currentRetries < maxRetries) {
-              // Increment retry counter and re-enqueue with delay
-              const newRetryCount = currentRetries + 1;
-              await store.updateTask(taskId, { mergeRetries: newRetryCount, status: null });
+            if (task && isConflictError) {
+              const currentRetries = task.mergeRetries ?? 0;
+              const maxRetries = 3;
 
-              // Calculate exponential backoff delay: 5s, 10s, 20s
-              const delayMs = 5000 * Math.pow(2, currentRetries);
-              console.log(`[auto-merge] ↻ ${taskId}: retry ${newRetryCount}/${maxRetries} in ${delayMs / 1000}s`);
+              if (settings.autoResolveConflicts !== false && currentRetries < maxRetries) {
+                // Increment retry counter and re-enqueue with delay
+                const newRetryCount = currentRetries + 1;
+                await store.updateTask(taskId, { mergeRetries: newRetryCount, status: null });
 
-              setTimeout(() => {
-                enqueueMerge(taskId);
-              }, delayMs);
-            } else {
-              // Max retries exceeded or auto-resolve disabled - keep in in-review
-              if (currentRetries >= maxRetries) {
-                console.log(`[auto-merge] ⊘ ${taskId}: max retries (${maxRetries}) exceeded — manual resolution required`);
+                // Calculate exponential backoff delay: 5s, 10s, 20s
+                const delayMs = 5000 * Math.pow(2, currentRetries);
+                console.log(`[auto-merge] ↻ ${taskId}: retry ${newRetryCount}/${maxRetries} in ${delayMs / 1000}s`);
+
+                setTimeout(() => {
+                  enqueueMerge(taskId);
+                }, delayMs);
               } else {
-                console.log(`[auto-merge] ⊘ ${taskId}: autoResolveConflicts disabled — manual resolution required`);
+                // Max retries exceeded or auto-resolve disabled - keep in in-review
+                if (currentRetries >= maxRetries) {
+                  console.log(`[auto-merge] ⊘ ${taskId}: max retries (${maxRetries}) exceeded — manual resolution required`);
+                } else {
+                  console.log(`[auto-merge] ⊘ ${taskId}: autoResolveConflicts disabled — manual resolution required`);
+                }
+                // Reset task status so it doesn't appear stuck as "merging" in the UI
+                try {
+                  await store.updateTask(taskId, { status: null });
+                } catch { /* best-effort */ }
               }
-              // Reset task status so it doesn't appear stuck as "merging" in the UI
+            } else {
+              // Non-conflict error - reset task status
               try {
                 await store.updateTask(taskId, { status: null });
               } catch { /* best-effort */ }
             }
           } else {
-            // Non-conflict error - reset task status
             try {
               await store.updateTask(taskId, { status: null });
             } catch { /* best-effort */ }
@@ -341,9 +480,15 @@ export async function runDashboard(port: number, opts: { open?: boolean; paused?
     });
 
     const settings = await store.getSettings();
+    const prMonitor = new PrMonitor();
+    const prCommentHandler = new PrCommentHandler(store);
+    prMonitor.onNewComments((taskId, prInfo, comments) =>
+      prCommentHandler.handleNewComments(taskId, prInfo, comments),
+    );
 
     const scheduler = new Scheduler(store, {
       semaphore,
+      prMonitor,
       onSchedule: (t) => console.log(`[engine] Scheduled ${t.id}`),
       onBlocked: (t, deps) => console.log(`[engine] ${t.id} blocked by ${deps.join(", ")}`),
     });

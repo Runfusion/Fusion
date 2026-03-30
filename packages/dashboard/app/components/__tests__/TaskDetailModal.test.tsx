@@ -1233,6 +1233,50 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("Merge & Close")).toBeTruthy();
       expect(screen.getByText("Back to In Progress")).toBeTruthy();
     });
+
+    it("shows PR automation waiting label instead of Merge & Close when awaiting PR checks", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review" as Column, status: "awaiting-pr-checks", prInfo: {
+            url: "https://github.com/owner/repo/pull/42",
+            number: 42,
+            status: "open",
+            title: "Task",
+            headBranch: "kb/kb-099",
+            baseBranch: "main",
+            commentCount: 0,
+          } })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const button = screen.getByText("Awaiting PR checks") as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(screen.queryByText("Merge & Close")).toBeNull();
+    });
+
+    it("shows Creating PR label while PR-first automation is creating a PR", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review" as Column, status: "creating-pr" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const button = screen.getByText("Creating PR…") as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(screen.queryByText("Merge & Close")).toBeNull();
+    });
   });
 
   describe("dependency dropdown search", () => {

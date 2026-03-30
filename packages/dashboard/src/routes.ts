@@ -693,6 +693,31 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Create refinement task from a completed or in-review task
+  router.post("/tasks/:id/refine", async (req, res) => {
+    try {
+      const { feedback } = req.body;
+      if (!feedback || typeof feedback !== "string") {
+        res.status(400).json({ error: "feedback is required and must be a string" });
+        return;
+      }
+      if (feedback.length === 0 || feedback.length > 2000) {
+        res.status(400).json({ error: "feedback must be between 1 and 2000 characters" });
+        return;
+      }
+
+      const refinedTask = await store.refineTask(req.params.id, feedback);
+      await store.logEntry(req.params.id, "Refinement requested", feedback);
+      res.status(201).json(refinedTask);
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404
+        : err.message?.includes("must be in 'done' or 'in-review'") ? 400
+        : err.message?.includes("Feedback is required") ? 400
+        : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // Archive task (done → archived)
   router.post("/tasks/:id/archive", async (req, res) => {
     try {
@@ -1576,6 +1601,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.json({
         prInfo: task.prInfo,
         stale: isStale,
+        automationStatus: task.status ?? null,
       });
 
       // Trigger background refresh if stale (don't await, let it run)
@@ -1635,18 +1661,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      // Fetch fresh PR status
+      // Fetch fresh PR status + merge readiness
       const client = new GitHubClient(githubToken);
+      const mergeStatus = await client.getPrMergeStatus(owner, repo, task.prInfo.number);
 
-      const prInfo = await client.getPrStatus(owner, repo, task.prInfo.number);
-
-      // Add lastCheckedAt timestamp
-      prInfo.lastCheckedAt = new Date().toISOString();
+      const prInfo = {
+        ...mergeStatus.prInfo,
+        lastCheckedAt: new Date().toISOString(),
+      };
 
       // Update stored PR info
       await store.updatePrInfo(task.id, prInfo);
 
-      res.json(prInfo);
+      res.json({
+        prInfo,
+        mergeReady: mergeStatus.mergeReady,
+        blockingReasons: mergeStatus.blockingReasons,
+        reviewDecision: mergeStatus.reviewDecision,
+        checks: mergeStatus.checks,
+        automationStatus: task.status ?? null,
+      });
     } catch (err: any) {
       if (err.code === "ENOENT") {
         res.status(404).json({ error: `Task ${req.params.id} not found` });

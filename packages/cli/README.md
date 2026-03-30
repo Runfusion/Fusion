@@ -49,7 +49,16 @@ An executor agent works through the spec step by step in the worktree. At each s
 
 ### Merge
 
-When execution finishes and the reviewer signs off, the task moves to "in review." By default, the completed work is automatically squash-merged into your current branch with a clean commit. Worktrees can be cleaned up after merge or reused by the next task to keep build caches warm. You can disable auto-merge if you prefer to review and merge manually.
+When execution finishes and the reviewer signs off, the task moves to "in review." kb supports two completion modes:
+
+- **Direct merge** *(default)* — automatically squash-merges the completed task branch into your current branch with a clean commit.
+- **Pull request** — automatically creates or links a GitHub PR for the task branch, waits for GitHub reviews/checks, then merges the PR once policy conditions are satisfied.
+
+`autoMerge` still controls whether kb performs completion automatically at all. If `autoMerge` is disabled, tasks stay in **In Review** until you finish the merge yourself.
+
+For PR-first mode, authenticate GitHub with `gh auth login` or `GITHUB_TOKEN`, and make sure the task branch already exists on GitHub as `kb/<task-id-lower>`. kb does **not** push branches for you before PR creation.
+
+Worktrees can be cleaned up after merge or reused by the next task to keep build caches warm.
 
 Tasks flow through: **Triage → Todo → In Progress → In Review → Done**.
 

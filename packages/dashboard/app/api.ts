@@ -291,6 +291,27 @@ export interface PrInfo {
   lastCheckedAt?: string;
 }
 
+export interface PrCheckStatus {
+  name: string;
+  required: boolean;
+  state: string;
+}
+
+export interface PrStatusResponse {
+  prInfo: PrInfo;
+  stale: boolean;
+  automationStatus?: string | null;
+}
+
+export interface PrRefreshResponse {
+  prInfo: PrInfo;
+  mergeReady: boolean;
+  blockingReasons: string[];
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  checks: PrCheckStatus[];
+  automationStatus?: string | null;
+}
+
 /** Create a GitHub PR for a task */
 export function createPr(
   id: string,
@@ -303,13 +324,13 @@ export function createPr(
 }
 
 /** Fetch cached PR status for a task */
-export function fetchPrStatus(id: string): Promise<{ prInfo: PrInfo; stale: boolean }> {
-  return api<{ prInfo: PrInfo; stale: boolean }>(`/tasks/${id}/pr/status`);
+export function fetchPrStatus(id: string): Promise<PrStatusResponse> {
+  return api<PrStatusResponse>(`/tasks/${id}/pr/status`);
 }
 
 /** Force refresh PR status from GitHub */
-export function refreshPrStatus(id: string): Promise<PrInfo> {
-  return api<PrInfo>(`/tasks/${id}/pr/refresh`, {
+export function refreshPrStatus(id: string): Promise<PrRefreshResponse> {
+  return api<PrRefreshResponse>(`/tasks/${id}/pr/refresh`, {
     method: "POST",
   });
 }

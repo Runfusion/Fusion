@@ -2,7 +2,6 @@ import type { PrInfo } from "@kb/core";
 import {
   isGhAvailable,
   isGhAuthenticated,
-  runGhJson,
   runGhJsonAsync,
   getGhErrorMessage,
   getCurrentRepo,
@@ -27,12 +26,55 @@ export interface PrComment {
   html_url: string;
 }
 
+export type ReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+export type PrCheckState =
+  | "success"
+  | "pending"
+  | "failure"
+  | "cancelled"
+  | "timed_out"
+  | "action_required"
+  | "neutral"
+  | "skipped"
+  | "stale"
+  | "startup_failure";
+
+export interface PrCheckStatus {
+  name: string;
+  required: boolean;
+  state: PrCheckState;
+}
+
+export interface PrMergeStatus {
+  prInfo: PrInfo;
+  reviewDecision: ReviewDecision;
+  checks: PrCheckStatus[];
+  mergeReady: boolean;
+  blockingReasons: string[];
+}
+
+export interface FindPrParams {
+  owner?: string;
+  repo?: string;
+  head: string;
+  state?: "open" | "closed" | "all";
+}
+
+export interface MergePrParams {
+  owner?: string;
+  repo?: string;
+  number: number;
+  method?: "merge" | "squash" | "rebase";
+}
+
 // gh CLI JSON output types
 interface GhPrViewJson {
+  id?: string;
   number: number;
   url: string;
   title: string;
   state: "OPEN" | "CLOSED" | "MERGED";
+  reviewDecision?: ReviewDecision;
   baseRefName: string;
   headRefName: string;
   comments: Array<{
@@ -45,12 +87,116 @@ interface GhPrViewJson {
   }>;
 }
 
+interface GhPrListJson {
+  number: number;
+  url: string;
+  title: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  baseRefName: string;
+  headRefName: string;
+  isCrossRepository?: boolean;
+  mergedAt?: string | null;
+}
+
+interface GhPrCheckJson {
+  name: string;
+  state: string;
+}
+
 interface GhIssueViewJson {
   number: number;
   url: string;
   title: string;
   state: "OPEN" | "CLOSED";
   stateReason?: "completed" | "not_planned" | "reopened";
+}
+
+function normalizeCheckState(state: string | null | undefined): PrCheckState {
+  switch ((state ?? "").toLowerCase()) {
+    case "success":
+      return "success";
+    case "pending":
+    case "queued":
+    case "in_progress":
+    case "expected":
+      return "pending";
+    case "failure":
+    case "failed":
+    case "error":
+      return "failure";
+    case "cancelled":
+      return "cancelled";
+    case "timed_out":
+      return "timed_out";
+    case "action_required":
+      return "action_required";
+    case "neutral":
+      return "neutral";
+    case "skipped":
+      return "skipped";
+    case "stale":
+      return "stale";
+    case "startup_failure":
+      return "startup_failure";
+    default:
+      return "failure";
+  }
+}
+
+function toPrInfo(input: {
+  url: string;
+  number: number;
+  title: string;
+  status: PrInfo["status"];
+  headBranch: string;
+  baseBranch: string;
+  commentCount?: number;
+  lastCommentAt?: string;
+  lastCheckedAt?: string;
+}): PrInfo {
+  return {
+    url: input.url,
+    number: input.number,
+    status: input.status,
+    title: input.title,
+    headBranch: input.headBranch,
+    baseBranch: input.baseBranch,
+    commentCount: input.commentCount ?? 0,
+    lastCommentAt: input.lastCommentAt,
+    lastCheckedAt: input.lastCheckedAt,
+  };
+}
+
+export function isPrMergeReady(input: {
+  status: PrInfo["status"];
+  reviewDecision: ReviewDecision;
+  checks: PrCheckStatus[];
+}): { ready: boolean; blockingReasons: string[] } {
+  const blockingReasons: string[] = [];
+
+  if (input.status !== "open") {
+    blockingReasons.push(`PR is ${input.status}`);
+  }
+
+  if (input.reviewDecision === "CHANGES_REQUESTED") {
+    blockingReasons.push("changes requested review is active");
+  }
+
+  const blockingChecks = input.checks.filter(
+    (check) => check.required && check.state !== "success",
+  );
+  if (blockingChecks.length > 0) {
+    blockingReasons.push(
+      `required checks not successful: ${blockingChecks
+        .map((check) => `${check.name} (${check.state})`)
+        .join(", ")}`,
+    );
+  }
+
+  return {
+    ready: blockingReasons.length === 0,
+    blockingReasons,
+  };
 }
 
 export class GitHubClient {
@@ -65,13 +211,32 @@ export class GitHubClient {
     this.token = token;
   }
 
+  private hasGhAuth(): boolean {
+    return isGhAvailable() && isGhAuthenticated();
+  }
+
+  private resolveRepo(owner?: string, repo?: string): { owner: string; repo: string } {
+    if (owner && repo) {
+      return { owner, repo };
+    }
+
+    const currentRepo = getCurrentRepo();
+    if (!currentRepo) {
+      throw new Error(
+        "Could not determine repository. Specify owner/repo in params or run from a git repository with a GitHub remote.",
+      );
+    }
+
+    return currentRepo;
+  }
+
   /**
    * Try to create a PR using the `gh` CLI if available, otherwise fall back
    * to the REST API. Returns the created PR info.
    */
   async createPr(params: CreatePrParams): Promise<PrInfo> {
     // Try gh CLI first (preferred for auth handling)
-    if (isGhAvailable() && isGhAuthenticated()) {
+    if (this.hasGhAuth()) {
       try {
         return this.createPrWithGh(params);
       } catch (err) {
@@ -92,24 +257,7 @@ export class GitHubClient {
 
   private createPrWithGh(params: CreatePrParams): PrInfo {
     const { owner: paramOwner, repo: paramRepo, title, body, head, base } = params;
-
-    // Get owner/repo from params or current repo context
-    let owner = paramOwner;
-    let repo = paramRepo;
-    
-    if (!owner || !repo) {
-      const currentRepo = getCurrentRepo();
-      if (!currentRepo) {
-        throw new Error("Could not determine repository. Specify owner/repo in params or run from a git repository with a GitHub remote.");
-      }
-      owner = currentRepo.owner;
-      repo = currentRepo.repo;
-    }
-
-    // Type guard: owner and repo are now guaranteed to be strings
-    if (!owner || !repo) {
-      throw new Error("Could not determine repository.");
-    }
+    const { owner, repo } = this.resolveRepo(paramOwner, paramRepo);
 
     // Build gh pr create command arguments (as array for safety)
     const args = [
@@ -138,7 +286,7 @@ export class GitHubClient {
 
     const number = parseInt(match[1], 10);
 
-    return {
+    return toPrInfo({
       url: prUrl,
       number,
       status: "open",
@@ -146,29 +294,12 @@ export class GitHubClient {
       headBranch: head,
       baseBranch: base || "main",
       commentCount: 0,
-    };
+    });
   }
 
   private async createPrWithApi(params: CreatePrParams): Promise<PrInfo> {
     const { owner: paramOwner, repo: paramRepo, title, body, head, base = "main" } = params;
-    
-    // Get owner/repo from params or current repo context
-    let owner = paramOwner;
-    let repo = paramRepo;
-    
-    if (!owner || !repo) {
-      const currentRepo = getCurrentRepo();
-      if (!currentRepo) {
-        throw new Error("Could not determine repository. Specify owner/repo in params or run from a git repository with a GitHub remote.");
-      }
-      owner = currentRepo.owner;
-      repo = currentRepo.repo;
-    }
-
-    // Type guard: owner and repo are now guaranteed to be strings
-    if (!owner || !repo) {
-      throw new Error("Could not determine repository.");
-    }
+    const { owner, repo } = this.resolveRepo(paramOwner, paramRepo);
 
     const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`;
 
@@ -200,7 +331,7 @@ export class GitHubClient {
       comments: number;
     };
 
-    return {
+    return toPrInfo({
       url: data.html_url,
       number: data.number,
       status: this.mapPrState(data.state),
@@ -208,14 +339,339 @@ export class GitHubClient {
       headBranch: data.head.ref,
       baseBranch: data.base.ref,
       commentCount: data.comments,
+    });
+  }
+
+  async findPrForBranch(params: FindPrParams): Promise<PrInfo | null> {
+    if (this.hasGhAuth()) {
+      try {
+        return await this.findPrForBranchWithGh(params);
+      } catch (err) {
+        if (this.token) {
+          return this.findPrForBranchWithApi(params);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.findPrForBranchWithApi(params);
+    }
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+  }
+
+  private async findPrForBranchWithGh(params: FindPrParams): Promise<PrInfo | null> {
+    const { owner, repo } = this.resolveRepo(params.owner, params.repo);
+    const prs = await runGhJsonAsync<GhPrListJson[]>([
+      "pr", "list",
+      "--repo", `${owner}/${repo}`,
+      "--head", params.head,
+      "--state", params.state ?? "all",
+      "--json", "number,url,title,state,baseRefName,headRefName,mergedAt",
+    ]);
+
+    const pr = prs[0];
+    if (!pr) return null;
+
+    return toPrInfo({
+      url: pr.url,
+      number: pr.number,
+      status: pr.mergedAt ? "merged" : this.mapGhPrState(pr.state),
+      title: pr.title,
+      headBranch: pr.headRefName,
+      baseBranch: pr.baseRefName,
+      commentCount: 0,
+    });
+  }
+
+  private async findPrForBranchWithApi(params: FindPrParams): Promise<PrInfo | null> {
+    const { owner, repo } = this.resolveRepo(params.owner, params.repo);
+    const searchParams = new URLSearchParams();
+    searchParams.set("head", `${owner}:${params.head}`);
+    searchParams.set("state", params.state ?? "all");
+    searchParams.set("per_page", "1");
+
+    const response = await fetch(
+      `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?${searchParams}`,
+      { headers: this.buildHeaders() },
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: response.statusText }));
+      throw new Error(`GitHub API error: ${response.status} ${error.message || response.statusText}`);
+    }
+
+    const pulls = (await response.json()) as Array<{
+      number: number;
+      html_url: string;
+      title: string;
+      state: string;
+      merged_at: string | null;
+      head: { ref: string };
+      base: { ref: string };
+      comments: number;
+    }>;
+
+    const pr = pulls[0];
+    if (!pr) return null;
+
+    return toPrInfo({
+      url: pr.html_url,
+      number: pr.number,
+      status: pr.merged_at ? "merged" : this.mapPrState(pr.state),
+      title: pr.title,
+      headBranch: pr.head.ref,
+      baseBranch: pr.base.ref,
+      commentCount: pr.comments,
+    });
+  }
+
+  async getPrMergeStatus(owner: string | undefined, repo: string | undefined, number: number): Promise<PrMergeStatus> {
+    if (this.hasGhAuth()) {
+      try {
+        return await this.getPrMergeStatusWithGh(owner, repo, number);
+      } catch (err) {
+        if (this.token) {
+          return this.getPrMergeStatusWithApi(owner, repo, number);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.getPrMergeStatusWithApi(owner, repo, number);
+    }
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+  }
+
+  private async getPrMergeStatusWithGh(owner: string | undefined, repo: string | undefined, number: number): Promise<PrMergeStatus> {
+    const resolved = this.resolveRepo(owner, repo);
+    const pr = await runGhJsonAsync<GhPrViewJson>([
+      "pr", "view", String(number),
+      "--repo", `${resolved.owner}/${resolved.repo}`,
+      "--json", "number,url,title,state,baseRefName,headRefName,reviewDecision",
+    ]);
+    const checks = await runGhJsonAsync<GhPrCheckJson[]>([
+      "pr", "checks", String(number),
+      "--repo", `${resolved.owner}/${resolved.repo}`,
+      "--required",
+      "--json", "name,state",
+    ]).catch(() => []);
+
+    const prInfo = toPrInfo({
+      url: pr.url,
+      number: pr.number,
+      status: this.mapGhPrState(pr.state),
+      title: pr.title,
+      headBranch: pr.headRefName,
+      baseBranch: pr.baseRefName,
+      commentCount: 0,
+    });
+    const normalizedChecks = checks.map((check) => ({
+      name: check.name,
+      required: true,
+      state: normalizeCheckState(check.state),
+    } satisfies PrCheckStatus));
+    const readiness = isPrMergeReady({
+      status: prInfo.status,
+      reviewDecision: pr.reviewDecision ?? null,
+      checks: normalizedChecks,
+    });
+
+    return {
+      prInfo,
+      reviewDecision: pr.reviewDecision ?? null,
+      checks: normalizedChecks,
+      mergeReady: readiness.ready,
+      blockingReasons: readiness.blockingReasons,
     };
+  }
+
+  private async getPrMergeStatusWithApi(owner: string | undefined, repo: string | undefined, number: number): Promise<PrMergeStatus> {
+    const resolved = this.resolveRepo(owner, repo);
+    const response = await fetch(`${this.baseUrl}/graphql`, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify({
+        query: `query PullRequestMergeStatus($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              number
+              url
+              title
+              state
+              reviewDecision
+              baseRefName
+              headRefName
+              comments { totalCount }
+              commits(last: 1) {
+                nodes {
+                  commit {
+                    statusCheckRollup {
+                      contexts(first: 100) {
+                        nodes {
+                          __typename
+                          ... on CheckRun {
+                            name
+                            status
+                            conclusion
+                            isRequired(pullRequestNumber: $number)
+                          }
+                          ... on StatusContext {
+                            context
+                            state
+                            isRequired(pullRequestNumber: $number)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`,
+        variables: { owner: resolved.owner, repo: resolved.repo, number },
+      }),
+    });
+
+    const payload = await response.json() as {
+      data?: {
+        repository?: {
+          pullRequest?: {
+            number: number;
+            url: string;
+            title: string;
+            state: "OPEN" | "CLOSED" | "MERGED";
+            reviewDecision: ReviewDecision;
+            baseRefName: string;
+            headRefName: string;
+            comments: { totalCount: number };
+            commits: {
+              nodes: Array<{
+                commit: {
+                  statusCheckRollup?: {
+                    contexts?: {
+                      nodes?: Array<
+                        | { __typename: "CheckRun"; name: string; status: string; conclusion: string | null; isRequired?: boolean }
+                        | { __typename: "StatusContext"; context: string; state: string; isRequired?: boolean }
+                        | null
+                      >;
+                    };
+                  } | null;
+                };
+              }>;
+            };
+          };
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+
+    if (!response.ok || payload.errors?.length) {
+      const message = payload.errors?.[0]?.message || response.statusText;
+      throw new Error(`GitHub API error: ${response.status} ${message}`);
+    }
+
+    const pr = payload.data?.repository?.pullRequest;
+    if (!pr) {
+      throw new Error(`PR #${number} not found in ${resolved.owner}/${resolved.repo}`);
+    }
+
+    const nodes = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts?.nodes ?? [];
+    const checks = nodes.flatMap((node) => {
+      if (!node || !node.isRequired) return [];
+      if (node.__typename === "CheckRun") {
+        return [{
+          name: node.name,
+          required: true,
+          state: normalizeCheckState(node.conclusion ?? node.status),
+        } satisfies PrCheckStatus];
+      }
+      return [{
+        name: node.context,
+        required: true,
+        state: normalizeCheckState(node.state),
+      } satisfies PrCheckStatus];
+    });
+
+    const prInfo = toPrInfo({
+      url: pr.url,
+      number: pr.number,
+      status: this.mapGhPrState(pr.state),
+      title: pr.title,
+      headBranch: pr.headRefName,
+      baseBranch: pr.baseRefName,
+      commentCount: pr.comments.totalCount,
+    });
+    const readiness = isPrMergeReady({
+      status: prInfo.status,
+      reviewDecision: pr.reviewDecision,
+      checks,
+    });
+
+    return {
+      prInfo,
+      reviewDecision: pr.reviewDecision,
+      checks,
+      mergeReady: readiness.ready,
+      blockingReasons: readiness.blockingReasons,
+    };
+  }
+
+  async mergePr(params: MergePrParams): Promise<PrInfo> {
+    if (this.hasGhAuth()) {
+      try {
+        return await this.mergePrWithGh(params);
+      } catch (err) {
+        if (this.token) {
+          return this.mergePrWithApi(params);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.mergePrWithApi(params);
+    }
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+  }
+
+  private async mergePrWithGh(params: MergePrParams): Promise<PrInfo> {
+    const resolved = this.resolveRepo(params.owner, params.repo);
+    runGh([
+      "pr", "merge", String(params.number),
+      "--repo", `${resolved.owner}/${resolved.repo}`,
+      `--${params.method ?? "squash"}`,
+      "--delete-branch",
+    ]);
+    return this.getPrStatus(resolved.owner, resolved.repo, params.number);
+  }
+
+  private async mergePrWithApi(params: MergePrParams): Promise<PrInfo> {
+    const resolved = this.resolveRepo(params.owner, params.repo);
+    const response = await fetch(
+      `${this.baseUrl}/repos/${encodeURIComponent(resolved.owner)}/${encodeURIComponent(resolved.repo)}/pulls/${params.number}/merge`,
+      {
+        method: "PUT",
+        headers: this.buildHeaders(),
+        body: JSON.stringify({ merge_method: params.method ?? "squash" }),
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: response.statusText }));
+      throw new Error(`GitHub API error: ${response.status} ${error.message || response.statusText}`);
+    }
+
+    return this.getPrStatus(resolved.owner, resolved.repo, params.number);
   }
 
   /**
    * Fetch current PR status using gh CLI if available, otherwise REST API.
    */
   async getPrStatus(owner: string, repo: string, number: number): Promise<PrInfo> {
-    if (isGhAvailable() && isGhAuthenticated()) {
+    if (this.hasGhAuth()) {
       try {
         return await this.getPrStatusWithGh(owner, repo, number);
       } catch (err) {
@@ -298,7 +754,7 @@ export class GitHubClient {
     number: number,
     since?: string,
   ): Promise<PrComment[]> {
-    if (isGhAvailable() && isGhAuthenticated()) {
+    if (this.hasGhAuth()) {
       try {
         return await this.listPrCommentsWithGh(owner, repo, number, since);
       } catch (err) {
@@ -383,7 +839,7 @@ export class GitHubClient {
     repo: string,
     number: number,
   ): Promise<Omit<import("@kb/core").IssueInfo, "lastCheckedAt"> | null> {
-    if (isGhAvailable() && isGhAuthenticated()) {
+    if (this.hasGhAuth()) {
       try {
         return await this.getIssueStatusWithGh(owner, repo, number);
       } catch (err) {
@@ -525,7 +981,7 @@ export class GitHubClient {
     html_url: string;
     labels: Array<{ name: string }>;
   }>> {
-    if (isGhAvailable() && isGhAuthenticated()) {
+    if (this.hasGhAuth()) {
       try {
         return await this.listIssuesWithGh(owner, repo, options);
       } catch (err) {
@@ -652,7 +1108,7 @@ export class GitHubClient {
     state: "open" | "closed";
     stateReason?: "completed" | "not_planned" | "reopened";
   } | null> {
-    if (isGhAvailable() && isGhAuthenticated()) {
+    if (this.hasGhAuth()) {
       try {
         return await this.getIssueWithGh(owner, repo, number);
       } catch (err) {

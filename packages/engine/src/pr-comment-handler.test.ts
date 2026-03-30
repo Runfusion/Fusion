@@ -4,7 +4,7 @@ import type { TaskStore } from "@kb/core";
 
 const mockStore = {
   addSteeringComment: vi.fn(),
-  createTask: vi.fn(),
+  createTask: vi.fn().mockResolvedValue({ id: "KB-123" }),
 } as unknown as TaskStore;
 
 describe("PrCommentHandler", () => {
@@ -175,6 +175,23 @@ describe("PrCommentHandler", () => {
         expect.any(String),
         "agent"
       );
+    });
+
+    it("calls out follow-up context when feedback arrives after PR is merged", async () => {
+      await handler.handleNewComments("KB-001", { ...mockPrInfo, status: "merged" }, [
+        {
+          id: 1,
+          body: "Please add one more regression test",
+          user: { login: "reviewer" },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          html_url: "https://github.com/owner/repo/pull/42#issuecomment-1",
+        },
+      ]);
+
+      const text = mockStore.addSteeringComment.mock.calls[0][1] as string;
+      expect(text).toContain("This PR is already merged");
+      expect(text).toContain("follow-up work");
     });
   });
 

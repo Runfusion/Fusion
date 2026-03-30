@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { GitHubClient, CreatePrParams, PrComment } from "./github.js";
+import { GitHubClient, CreatePrParams, PrComment, isPrMergeReady } from "./github.js";
 
 // Mock the gh-cli module from @kb/core
 vi.mock("@kb/core", async () => {
@@ -551,6 +551,242 @@ describe("GitHubClient", () => {
       expect(result?.number).toBe(1);
 
       vi.restoreAllMocks();
+    });
+  });
+
+  describe("findPrForBranch", () => {
+    it("finds an existing PR for a head branch via gh CLI", async () => {
+      mockRunGhJsonAsync.mockResolvedValue([
+        {
+          number: 42,
+          url: "https://github.com/owner/repo/pull/42",
+          title: "Existing PR",
+          state: "OPEN",
+          baseRefName: "main",
+          headRefName: "kb/kb-093",
+          mergedAt: null,
+        },
+      ]);
+
+      const result = await client.findPrForBranch({ owner: "owner", repo: "repo", head: "kb/kb-093", state: "all" });
+
+      expect(mockRunGhJsonAsync).toHaveBeenCalledWith([
+        "pr", "list",
+        "--repo", "owner/repo",
+        "--head", "kb/kb-093",
+        "--state", "all",
+        "--json", "number,url,title,state,baseRefName,headRefName,mergedAt",
+      ]);
+      expect(result).toEqual(expect.objectContaining({ number: 42, status: "open" }));
+    });
+
+    it("falls back to REST API for branch lookup when gh CLI fails and token is available", async () => {
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
+      const clientWithToken = new GitHubClient("ghp_token");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve([
+          {
+            number: 5,
+            html_url: "https://github.com/owner/repo/pull/5",
+            title: "API PR",
+            state: "open",
+            merged_at: null,
+            head: { ref: "kb/kb-093" },
+            base: { ref: "main" },
+            comments: 2,
+          },
+        ]),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.findPrForBranch({ owner: "owner", repo: "repo", head: "kb/kb-093" });
+
+      expect(mockFetch).toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({ number: 5, commentCount: 2 }));
+      vi.restoreAllMocks();
+    });
+  });
+
+  describe("getPrMergeStatus", () => {
+    it("returns merge-ready status only when required checks pass and review is non-blocking", async () => {
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce({
+          number: 42,
+          url: "https://github.com/owner/repo/pull/42",
+          title: "Ready PR",
+          state: "OPEN",
+          reviewDecision: "APPROVED",
+          baseRefName: "main",
+          headRefName: "kb/kb-093",
+        })
+        .mockResolvedValueOnce([
+          { name: "ci", state: "SUCCESS" },
+          { name: "lint", state: "SUCCESS" },
+        ]);
+
+      const result = await client.getPrMergeStatus("owner", "repo", 42);
+
+      expect(result.mergeReady).toBe(true);
+      expect(result.blockingReasons).toEqual([]);
+      expect(result.checks).toEqual([
+        { name: "ci", required: true, state: "success" },
+        { name: "lint", required: true, state: "success" },
+      ]);
+    });
+
+    it("falls back to GraphQL API when gh CLI merge-status lookup fails and token is available", async () => {
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
+      const clientWithToken = new GitHubClient("ghp_token");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          data: {
+            repository: {
+              pullRequest: {
+                number: 42,
+                url: "https://github.com/owner/repo/pull/42",
+                title: "Fallback PR",
+                state: "OPEN",
+                reviewDecision: null,
+                baseRefName: "main",
+                headRefName: "kb/kb-093",
+                comments: { totalCount: 0 },
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        statusCheckRollup: {
+                          contexts: {
+                            nodes: [
+                              {
+                                __typename: "CheckRun",
+                                name: "ci",
+                                status: "COMPLETED",
+                                conclusion: "SUCCESS",
+                                isRequired: true,
+                              },
+                              {
+                                __typename: "CheckRun",
+                                name: "optional-preview",
+                                status: "COMPLETED",
+                                conclusion: "FAILURE",
+                                isRequired: false,
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.getPrMergeStatus("owner", "repo", 42);
+
+      expect(result.mergeReady).toBe(true);
+      expect(result.checks).toEqual([{ name: "ci", required: true, state: "success" }]);
+      vi.restoreAllMocks();
+    });
+  });
+
+  describe("mergePr", () => {
+    it("merges a PR with gh CLI and refetches merged status", async () => {
+      mockRunGh.mockReturnValue("Merged pull request");
+      mockRunGhJsonAsync.mockResolvedValue({
+        number: 42,
+        url: "https://github.com/owner/repo/pull/42",
+        title: "Merged PR",
+        state: "MERGED",
+        baseRefName: "main",
+        headRefName: "kb/kb-093",
+      });
+
+      const result = await client.mergePr({ owner: "owner", repo: "repo", number: 42, method: "squash" });
+
+      expect(mockRunGh).toHaveBeenCalledWith([
+        "pr", "merge", "42",
+        "--repo", "owner/repo",
+        "--squash",
+        "--delete-branch",
+      ]);
+      expect(result.status).toBe("merged");
+    });
+
+    it("falls back to REST API merge when gh CLI fails and token is available", async () => {
+      mockRunGh.mockImplementation(() => {
+        throw new Error("gh failed");
+      });
+      const clientWithToken = new GitHubClient("ghp_token");
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ merged: true }) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            number: 42,
+            html_url: "https://github.com/owner/repo/pull/42",
+            title: "Merged PR",
+            state: "closed",
+            merged: true,
+            head: { ref: "kb/kb-093" },
+            base: { ref: "main" },
+            comments: 0,
+            updated_at: "2024-01-01T00:00:00Z",
+          }),
+        });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.mergePr({ owner: "owner", repo: "repo", number: 42 });
+
+      expect(result.status).toBe("merged");
+      vi.restoreAllMocks();
+    });
+  });
+
+  describe("isPrMergeReady", () => {
+    it("blocks closed PRs", () => {
+      expect(isPrMergeReady({ status: "closed", reviewDecision: null, checks: [] })).toEqual({
+        ready: false,
+        blockingReasons: ["PR is closed"],
+      });
+    });
+
+    it("blocks changes requested review even when checks pass", () => {
+      expect(isPrMergeReady({
+        status: "open",
+        reviewDecision: "CHANGES_REQUESTED",
+        checks: [{ name: "ci", required: true, state: "success" }],
+      })).toEqual({
+        ready: false,
+        blockingReasons: ["changes requested review is active"],
+      });
+    });
+
+    it("blocks pending required checks", () => {
+      expect(isPrMergeReady({
+        status: "open",
+        reviewDecision: null,
+        checks: [{ name: "ci", required: true, state: "pending" }],
+      })).toEqual({
+        ready: false,
+        blockingReasons: ["required checks not successful: ci (pending)"],
+      });
+    });
+
+    it("ignores optional checks when determining readiness", () => {
+      expect(isPrMergeReady({
+        status: "open",
+        reviewDecision: "REVIEW_REQUIRED",
+        checks: [
+          { name: "required-ci", required: true, state: "success" },
+          { name: "optional-preview", required: false, state: "failure" },
+        ],
+      })).toEqual({ ready: true, blockingReasons: [] });
     });
   });
 

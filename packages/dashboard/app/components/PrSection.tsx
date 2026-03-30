@@ -1,12 +1,13 @@
 import { useState, useCallback } from "react";
 import { GitPullRequest, ExternalLink, RefreshCw, Plus, MessageSquare } from "lucide-react";
 import type { PrInfo } from "@kb/core";
-import { createPr, refreshPrStatus } from "../api";
+import { createPr, refreshPrStatus, type PrRefreshResponse } from "../api";
 import type { ToastType } from "../hooks/useToast";
 
 interface PrSectionProps {
   taskId: string;
   prInfo?: PrInfo;
+  automationStatus?: string | null;
   hasGitHubToken: boolean;
   onPrCreated: (prInfo: PrInfo) => void;
   onPrUpdated: (prInfo: PrInfo) => void;
@@ -22,6 +23,7 @@ const STATUS_COLORS = {
 export function PrSection({
   taskId,
   prInfo,
+  automationStatus,
   hasGitHubToken,
   onPrCreated,
   onPrUpdated,
@@ -32,6 +34,7 @@ export function PrSection({
   const [prBody, setPrBody] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshState, setRefreshState] = useState<PrRefreshResponse | null>(null);
 
   const handleCreate = useCallback(async () => {
     if (!prTitle.trim()) return;
@@ -60,7 +63,8 @@ export function PrSection({
     setIsRefreshing(true);
     try {
       const updated = await refreshPrStatus(taskId);
-      onPrUpdated(updated);
+      setRefreshState(updated);
+      onPrUpdated(updated.prInfo);
       addToast("PR status refreshed", "success");
     } catch (err: any) {
       addToast(err.message || "Failed to refresh PR", "error");
@@ -69,8 +73,22 @@ export function PrSection({
     }
   }, [taskId, prInfo, onPrUpdated, addToast]);
 
-  // No PR yet - show create button
+  // No PR yet - show create button or automation state
   if (!prInfo) {
+    if (automationStatus === "creating-pr") {
+      return (
+        <div className="pr-section">
+          <h4>
+            <GitPullRequest size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
+            Pull Request
+          </h4>
+          <div className="pr-hint" style={{ opacity: 0.8, fontSize: 13 }}>
+            kb is creating a pull request automatically for this task.
+          </div>
+        </div>
+      );
+    }
+
     if (showCreateForm) {
       return (
         <div className="pr-section">
@@ -142,6 +160,7 @@ export function PrSection({
 
   // PR exists - show PR card
   const statusStyle = STATUS_COLORS[prInfo.status];
+  const blockingReasons = refreshState?.blockingReasons ?? [];
 
   return (
     <div className="pr-section">
@@ -196,6 +215,23 @@ export function PrSection({
           <span style={{ margin: "0 8px" }}>→</span>
           <span>{prInfo.baseBranch}</span>
         </div>
+        {automationStatus === "merging-pr" && (
+          <div className="pr-hint" style={{ marginBottom: 8, fontSize: 12 }}>
+            kb is merging this pull request automatically.
+          </div>
+        )}
+        {automationStatus === "awaiting-pr-checks" && (
+          <div className="pr-hint" style={{ marginBottom: 8, fontSize: 12 }}>
+            {blockingReasons.length > 0
+              ? `Waiting for: ${blockingReasons.join("; ")}`
+              : "Waiting for required checks or review feedback before auto-merge."}
+          </div>
+        )}
+        {prInfo.status === "merged" && (
+          <div className="pr-hint" style={{ marginBottom: 8, fontSize: 12 }}>
+            This PR is merged. kb will finish local cleanup and move the task to Done.
+          </div>
+        )}
         <div className="pr-footer" style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {prInfo.commentCount > 0 && (
             <span className="pr-comments" style={{ display: "flex", alignItems: "center", gap: 4 }}>

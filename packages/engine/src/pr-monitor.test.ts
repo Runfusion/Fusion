@@ -44,6 +44,19 @@ describe("PrMonitor", () => {
     });
   });
 
+  describe("updatePrInfo", () => {
+    it("updates tracked PR metadata without restarting monitoring", () => {
+      monitor.startMonitoring("KB-001", "owner", "repo", mockPrInfo);
+      const updatedPrInfo = { ...mockPrInfo, status: "merged" as const };
+
+      monitor.updatePrInfo("KB-001", updatedPrInfo);
+
+      const tracked = monitor.getTrackedPrs();
+      expect(tracked.get("KB-001")?.prInfo.status).toBe("merged");
+      expect(tracked.get("KB-001")?.owner).toBe("owner");
+    });
+  });
+
   describe("stopMonitoring", () => {
     it("stops monitoring a task", () => {
       monitor.startMonitoring("KB-001", "owner", "repo", mockPrInfo);

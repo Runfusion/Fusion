@@ -17,10 +17,14 @@ function makeMockStore() {
       maxConcurrent: 1,
       maxWorktrees: 2,
       autoMerge: false,
+      mergeStrategy: "direct",
       pollIntervalMs: 60_000,
     }),
     listTasks: vi.fn().mockResolvedValue([]),
-    getTask: vi.fn().mockResolvedValue({ column: "in-review", paused: false }),
+    getTask: vi.fn().mockResolvedValue({ id: "KB-TEST", column: "in-review", paused: false, description: "Test task", log: [] }),
+    moveTask: vi.fn().mockResolvedValue({}),
+    updatePrInfo: vi.fn().mockResolvedValue({}),
+    logEntry: vi.fn().mockResolvedValue(undefined),
     updateTask: vi.fn().mockResolvedValue({}),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       emitter.on(event, handler);
@@ -34,6 +38,35 @@ function makeMockStore() {
 vi.mock("@kb/core", () => ({
   TaskStore: vi.fn().mockImplementation(() => makeMockStore()),
 }));
+
+// ── Hoisted shared mocks ───────────────────────────────────────────
+
+const {
+  mockExec,
+  mockExecSync,
+  mockFindPrForBranch,
+  mockCreatePr,
+  mockGetPrMergeStatus,
+  mockMergePr,
+} = vi.hoisted(() => ({
+  mockExec: vi.fn((_command: string, callback?: () => void) => callback?.()),
+  mockExecSync: vi.fn(() => ""),
+  mockFindPrForBranch: vi.fn(),
+  mockCreatePr: vi.fn(),
+  mockGetPrMergeStatus: vi.fn(),
+  mockMergePr: vi.fn(),
+}));
+
+// ── Mock node:child_process ────────────────────────────────────────
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...original,
+    exec: mockExec,
+    execSync: mockExecSync,
+  };
+});
 
 // ── Mock @kb/dashboard ─────────────────────────────────────────────
 
@@ -59,6 +92,12 @@ const mockListen = vi.fn((port: number) => {
 
 vi.mock("@kb/dashboard", () => ({
   createServer: vi.fn(() => ({ listen: mockListen })),
+  GitHubClient: vi.fn().mockImplementation(() => ({
+    findPrForBranch: mockFindPrForBranch,
+    createPr: mockCreatePr,
+    getPrMergeStatus: mockGetPrMergeStatus,
+    mergePr: mockMergePr,
+  })),
 }));
 
 // ── Mock node:readline ──────────────────────────────────────────────
@@ -94,6 +133,17 @@ vi.mock("@kb/engine", async (importOriginal) => {
       start: vi.fn(),
       stop: vi.fn(),
     })),
+    PrMonitor: vi.fn().mockImplementation(() => ({
+      onNewComments: vi.fn(),
+      startMonitoring: vi.fn(),
+      stopMonitoring: vi.fn(),
+      stopAll: vi.fn(),
+      getTrackedPrs: vi.fn().mockReturnValue(new Map()),
+      updatePrInfo: vi.fn(),
+    })),
+    PrCommentHandler: vi.fn().mockImplementation(() => ({
+      handleNewComments: vi.fn().mockResolvedValue(undefined),
+    })),
     aiMergeTask: vi.fn().mockImplementation(() => Promise.resolve({ merged: true })),
     scanIdleWorktrees: vi.fn().mockResolvedValue([]),
     cleanupOrphanedWorktrees: vi.fn().mockResolvedValue(0),
@@ -102,14 +152,294 @@ vi.mock("@kb/engine", async (importOriginal) => {
 
 // ── Import module under test (after mocks) ──────────────────────────
 
-const { runDashboard } = await import("./dashboard.js");
+const { runDashboard, processPullRequestMergeTask, getMergeStrategy, getTaskBranchName } = await import("./dashboard.js");
 
 // ── Tests ───────────────────────────────────────────────────────────
+
+function resetGitHubMocks() {
+  mockFindPrForBranch.mockReset();
+  mockCreatePr.mockReset();
+  mockGetPrMergeStatus.mockReset();
+  mockMergePr.mockReset();
+
+  mockFindPrForBranch.mockResolvedValue(null);
+  mockCreatePr.mockResolvedValue({
+    url: "https://github.com/owner/repo/pull/42",
+    number: 42,
+    status: "open",
+    title: "KB-TEST",
+    headBranch: "kb/kb-test",
+    baseBranch: "main",
+    commentCount: 0,
+  });
+  mockGetPrMergeStatus.mockResolvedValue({
+    prInfo: {
+      url: "https://github.com/owner/repo/pull/42",
+      number: 42,
+      status: "open",
+      title: "KB-TEST",
+      headBranch: "kb/kb-test",
+      baseBranch: "main",
+      commentCount: 0,
+    },
+    reviewDecision: null,
+    checks: [],
+    mergeReady: false,
+    blockingReasons: ["required checks not successful: ci (pending)"],
+  });
+  mockMergePr.mockResolvedValue({
+    url: "https://github.com/owner/repo/pull/42",
+    number: 42,
+    status: "merged",
+    title: "KB-TEST",
+    headBranch: "kb/kb-test",
+    baseBranch: "main",
+    commentCount: 0,
+  });
+}
+
+beforeEach(() => {
+  resetGitHubMocks();
+  mockExecSync.mockReset();
+  mockExecSync.mockReturnValue("");
+  mockExec.mockClear();
+});
+
+describe("PR merge helpers", () => {
+  it("defaults mergeStrategy to direct when unset", () => {
+    expect(getMergeStrategy({ mergeStrategy: undefined })).toBe("direct");
+  });
+
+  it("uses pull-request mergeStrategy when configured", () => {
+    expect(getMergeStrategy({ mergeStrategy: "pull-request" })).toBe("pull-request");
+  });
+
+  it("uses kb/{task-id-lower} branch naming for pull requests", () => {
+    expect(getTaskBranchName("KB-093")).toBe("kb/kb-093");
+  });
+});
+
+describe("processPullRequestMergeTask", () => {
+  it("creates and links a PR when task.prInfo is missing", async () => {
+    const store = makeMockStore();
+    store.getTask.mockResolvedValue({
+      id: "KB-093",
+      title: "Add support for creating pull requests",
+      description: "Implement PR automation",
+      column: "in-review",
+      paused: false,
+      worktree: "/tmp/kb-093",
+      log: [],
+    });
+
+    const result = await processPullRequestMergeTask(store as any, "/repo", "KB-093", {
+      findPrForBranch: mockFindPrForBranch,
+      createPr: mockCreatePr,
+      getPrMergeStatus: mockGetPrMergeStatus,
+      mergePr: mockMergePr,
+    } as any);
+
+    expect(result).toBe("waiting");
+    expect(mockFindPrForBranch).toHaveBeenCalledWith({ head: "kb/kb-093", state: "all" });
+    expect(mockCreatePr).toHaveBeenCalledWith({
+      title: "KB-093: Add support for creating pull requests",
+      body: "Automated PR for KB-093.\n\nImplement PR automation",
+      head: "kb/kb-093",
+    });
+    expect(store.updatePrInfo).toHaveBeenCalledWith(
+      "KB-093",
+      expect.objectContaining({ number: 42, status: "open" }),
+    );
+    expect(store.updateTask).toHaveBeenCalledWith("KB-093", { status: "awaiting-pr-checks" });
+  });
+
+  it("links an existing PR instead of creating a duplicate", async () => {
+    const store = makeMockStore();
+    const existingPr = {
+      url: "https://github.com/owner/repo/pull/7",
+      number: 7,
+      status: "open" as const,
+      title: "Existing PR",
+      headBranch: "kb/kb-093",
+      baseBranch: "main",
+      commentCount: 0,
+    };
+    mockFindPrForBranch.mockResolvedValue(existingPr);
+    store.getTask.mockResolvedValue({
+      id: "KB-093",
+      title: "Task",
+      description: "Description",
+      column: "in-review",
+      paused: false,
+      log: [],
+    });
+
+    await processPullRequestMergeTask(store as any, "/repo", "KB-093", {
+      findPrForBranch: mockFindPrForBranch,
+      createPr: mockCreatePr,
+      getPrMergeStatus: mockGetPrMergeStatus,
+      mergePr: mockMergePr,
+    } as any);
+
+    expect(mockCreatePr).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "KB-093",
+      "Linked existing PR",
+      "PR #7: https://github.com/owner/repo/pull/7",
+    );
+  });
+
+  it("merges a ready PR and finalizes task cleanup", async () => {
+    const store = makeMockStore();
+    store.getTask.mockResolvedValue({
+      id: "KB-093",
+      title: "Task",
+      description: "Description",
+      column: "in-review",
+      paused: false,
+      worktree: "/tmp/kb-093",
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Task",
+        headBranch: "kb/kb-093",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+      log: [],
+    });
+    mockGetPrMergeStatus.mockResolvedValue({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Task",
+        headBranch: "kb/kb-093",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+      reviewDecision: "APPROVED",
+      checks: [{ name: "ci", required: true, state: "success" }],
+      mergeReady: true,
+      blockingReasons: [],
+    });
+
+    const result = await processPullRequestMergeTask(store as any, "/repo", "KB-093", {
+      findPrForBranch: mockFindPrForBranch,
+      createPr: mockCreatePr,
+      getPrMergeStatus: mockGetPrMergeStatus,
+      mergePr: mockMergePr,
+    } as any);
+
+    expect(result).toBe("merged");
+    expect(mockMergePr).toHaveBeenCalledWith({ number: 42, method: "squash" });
+    expect(store.moveTask).toHaveBeenCalledWith("KB-093", "done");
+    expect(mockExecSync).toHaveBeenCalledWith('git worktree remove "/tmp/kb-093" --force', expect.any(Object));
+    expect(mockExecSync).toHaveBeenCalledWith('git branch -d "kb/kb-093"', expect.any(Object));
+  });
+
+  it("does not merge when required checks or reviews are blocking", async () => {
+    const store = makeMockStore();
+    store.getTask.mockResolvedValue({
+      id: "KB-093",
+      title: "Task",
+      description: "Description",
+      column: "in-review",
+      paused: false,
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Task",
+        headBranch: "kb/kb-093",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+      log: [],
+    });
+    mockGetPrMergeStatus.mockResolvedValue({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Task",
+        headBranch: "kb/kb-093",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+      reviewDecision: "CHANGES_REQUESTED",
+      checks: [{ name: "ci", required: true, state: "pending" }],
+      mergeReady: false,
+      blockingReasons: ["changes requested review is active", "required checks not successful: ci (pending)"],
+    });
+
+    const result = await processPullRequestMergeTask(store as any, "/repo", "KB-093", {
+      findPrForBranch: mockFindPrForBranch,
+      createPr: mockCreatePr,
+      getPrMergeStatus: mockGetPrMergeStatus,
+      mergePr: mockMergePr,
+    } as any);
+
+    expect(result).toBe("waiting");
+    expect(mockMergePr).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("KB-093", { status: "awaiting-pr-checks" });
+  });
+});
+
+describe("runDashboard — PR-first auto-merge queue", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      mergeStrategy: "pull-request",
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
+    });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "KB-093", column: "in-review", paused: false },
+    ]);
+    mockStore.getTask.mockResolvedValue({
+      id: "KB-093",
+      title: "Task",
+      description: "Description",
+      column: "in-review",
+      paused: false,
+      log: [],
+    });
+
+    const { TaskStore } = await import("@kb/core");
+    (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+  });
+
+  it("uses PR lifecycle instead of aiMergeTask when mergeStrategy is pull-request", async () => {
+    const { aiMergeTask } = await import("@kb/engine");
+
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(mockCreatePr).toHaveBeenCalledWith({
+      title: "KB-093: Task",
+      body: "Automated PR for KB-093.\n\nDescription",
+      head: "kb/kb-093",
+    });
+    expect(aiMergeTask).not.toHaveBeenCalled();
+  });
+});
 
 describe("runDashboard — WorktreePool wiring", () => {
   beforeEach(async () => {
     capturedExecutorOpts = undefined;
     vi.clearAllMocks();
+    resetGitHubMocks();
     // Re-set TaskStore mock (clearAllMocks wipes implementations)
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
@@ -177,6 +507,7 @@ describe("runDashboard — auto-merge pause exclusion", () => {
   beforeEach(async () => {
     capturedExecutorOpts = undefined;
     vi.clearAllMocks();
+    resetGitHubMocks();
     mockStore = makeMockStore();
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
@@ -254,6 +585,7 @@ describe("runDashboard — immediate resume on unpause", () => {
   beforeEach(async () => {
     capturedExecutorOpts = undefined;
     vi.clearAllMocks();
+    resetGitHubMocks();
     mockStore = makeMockStore();
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
@@ -359,6 +691,7 @@ describe("runDashboard — engine pause/unpause cycle", () => {
   beforeEach(async () => {
     capturedExecutorOpts = undefined;
     vi.clearAllMocks();
+    resetGitHubMocks();
     mockStore = makeMockStore();
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
@@ -400,6 +733,7 @@ describe("runDashboard — port fallback on EADDRINUSE", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    resetGitHubMocks();
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
     const engine = await import("@kb/engine");
@@ -516,6 +850,7 @@ describe("runDashboard — enginePaused (soft pause)", () => {
   beforeEach(async () => {
     capturedExecutorOpts = undefined;
     vi.clearAllMocks();
+    resetGitHubMocks();
     mockStore = makeMockStore();
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
@@ -630,6 +965,7 @@ describe("runDashboard — --paused flag", () => {
   beforeEach(async () => {
     capturedExecutorOpts = undefined;
     vi.clearAllMocks();
+    resetGitHubMocks();
     mockStore = makeMockStore();
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
@@ -690,6 +1026,7 @@ describe("runDashboard — --paused flag", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    resetGitHubMocks();
     mockStore = makeMockStore();
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
@@ -742,6 +1079,7 @@ describe("runDashboard — --dev mode", () => {
   beforeEach(async () => {
     capturedExecutorOpts = undefined;
     vi.clearAllMocks();
+    resetGitHubMocks();
     mockStore = makeMockStore();
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
@@ -855,6 +1193,7 @@ describe("runDashboard — merge conflict retry logic", () => {
   beforeEach(async () => {
     capturedExecutorOpts = undefined;
     vi.clearAllMocks();
+    resetGitHubMocks();
     mockStore = makeMockStore();
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);

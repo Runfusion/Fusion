@@ -128,6 +128,9 @@ export class PrCommentHandler {
 
     lines.push(`**PR Review Feedback** from @${comment.user.login}`);
     lines.push(`**PR:** #${prInfo.number} (${prInfo.status})`);
+    if (prInfo.status !== "open") {
+      lines.push(`**Note:** This PR is already ${prInfo.status}. Treat the feedback as follow-up work.`);
+    }
     lines.push("");
 
     // Truncate comment body if too long

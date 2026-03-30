@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import express from "express";
 import http from "node:http";
 import { createApiRoutes } from "./routes.js";
+import { GitHubClient } from "./github.js";
 import type { TaskStore, TaskAttachment } from "@kb/core";
 import type { TaskDetail } from "@kb/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
@@ -1409,6 +1410,7 @@ describe("Pause/Unpause endpoints", () => {
       expect(res.status).toBe(200);
       expect(res.body.prInfo).toEqual(mockPrInfo);
       expect(res.body.stale).toBe(false);
+      expect(res.body.automationStatus).toBeNull();
     });
 
     it("returns 404 when task has no PR", async () => {
@@ -1460,6 +1462,20 @@ describe("Pause/Unpause endpoints", () => {
       expect(res.body.stale).toBe(true);
     });
 
+    it("returns automationStatus so the UI can reflect PR-first waiting states", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...FAKE_TASK_DETAIL,
+        status: "awaiting-pr-checks",
+        prInfo: mockPrInfo,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const res = await GET(buildApp(), "/api/tasks/KB-001/pr/status");
+
+      expect(res.status).toBe(200);
+      expect(res.body.automationStatus).toBe("awaiting-pr-checks");
+    });
+
     it("marks data as fresh when lastCheckedAt is recent", async () => {
       const recentCheck = new Date(Date.now() - 2 * 60 * 1000).toISOString(); // 2 minutes ago
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1503,6 +1519,44 @@ describe("Pause/Unpause endpoints", () => {
       baseBranch: "main",
       commentCount: 3,
     };
+
+    it("returns merge readiness details for PR-first UI refreshes", async () => {
+      const originalRepo = process.env.GITHUB_REPOSITORY;
+      process.env.GITHUB_REPOSITORY = "owner/repo";
+      vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
+        prInfo: mockPrInfo,
+        mergeReady: false,
+        blockingReasons: ["required checks not successful: ci (pending)"],
+        reviewDecision: "CHANGES_REQUESTED",
+        checks: [{ name: "ci", required: true, state: "pending" }],
+      });
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...FAKE_TASK_DETAIL,
+        status: "awaiting-pr-checks",
+        prInfo: mockPrInfo,
+      });
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/pr/refresh",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.prInfo.number).toBe(42);
+      expect(res.body.mergeReady).toBe(false);
+      expect(res.body.blockingReasons).toEqual(["required checks not successful: ci (pending)"]);
+      expect(res.body.reviewDecision).toBe("CHANGES_REQUESTED");
+      expect(res.body.automationStatus).toBe("awaiting-pr-checks");
+
+      if (originalRepo) {
+        process.env.GITHUB_REPOSITORY = originalRepo;
+      } else {
+        delete process.env.GITHUB_REPOSITORY;
+      }
+    });
 
     it("returns 404 when task has no PR", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_TASK_DETAIL);
