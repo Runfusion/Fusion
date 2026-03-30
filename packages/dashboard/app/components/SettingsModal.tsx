@@ -458,6 +458,20 @@ export function SettingsModal({ onClose, addToast, initialSection }: SettingsMod
               </label>
               <small>When disabled, merge commit messages omit the task ID from the scope (e.g. <code>feat: ...</code> instead of <code>feat(KB-001): ...</code>)</small>
             </div>
+            <div className="form-group">
+              <label htmlFor="autoResolveConflicts" className="checkbox-label">
+                <input
+                  id="autoResolveConflicts"
+                  type="checkbox"
+                  checked={form.autoResolveConflicts !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, autoResolveConflicts: e.target.checked }))
+                  }
+                />
+                Auto-resolve conflicts in lock files and generated files
+              </label>
+              <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.), generated files (dist/*, *.gen.ts), and trivial whitespace conflicts are resolved automatically without AI intervention. Complex code conflicts still require AI review.</small>
+            </div>
           </>
         );
       case "authentication":

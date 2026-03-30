@@ -13,6 +13,7 @@ const defaultSettings: Settings = {
   worktreeInitCommand: "",
   testCommand: "",
   buildCommand: "",
+  autoResolveConflicts: true,
 };
 
 vi.mock("../../api", () => ({
@@ -103,6 +104,7 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Merge"));
     expect(screen.getByText("Auto-merge completed tasks")).toBeTruthy();
     expect(screen.getByText("Include task ID in commit scope")).toBeTruthy();
+    expect(screen.getByText("Auto-resolve conflicts in lock files and generated files")).toBeTruthy();
   });
 
   it("shows Recycle worktrees checkbox in Worktrees section", async () => {
@@ -191,6 +193,16 @@ describe("SettingsModal", () => {
     expect(checkbox.getAttribute("type")).toBe("checkbox");
   });
 
+  it("shows Auto-resolve conflicts checkbox in Merge section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const checkbox = screen.getByLabelText("Auto-resolve conflicts in lock files and generated files");
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.getAttribute("type")).toBe("checkbox");
+  });
+
   it("toggling includeTaskIdInCommit checkbox sends false in save payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
@@ -205,6 +217,36 @@ describe("SettingsModal", () => {
 
     const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.includeTaskIdInCommit).toBe(false);
+  });
+
+  it("toggling autoResolveConflicts checkbox sends false in save payload when unchecked", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const checkbox = screen.getByLabelText("Auto-resolve conflicts in lock files and generated files");
+    // Default is checked (true), click to uncheck
+    fireEvent.click(checkbox);
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.autoResolveConflicts).toBe(false);
+  });
+
+  it("autoResolveConflicts defaults to enabled (true) when setting is true", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      autoResolveConflicts: true,
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const checkbox = screen.getByLabelText("Auto-resolve conflicts in lock files and generated files") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
   });
 
   it("groupOverlappingFiles input has type checkbox", async () => {
