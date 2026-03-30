@@ -20,6 +20,14 @@ import {
   detectResolvableConflicts,
   autoResolveFile,
   resolveConflicts,
+  classifyConflict,
+  getConflictedFiles,
+  isTrivialWhitespaceConflict,
+  resolveWithOurs,
+  resolveWithTheirs,
+  resolveTrivialWhitespace,
+  LOCKFILE_PATTERNS,
+  GENERATED_PATTERNS,
   type ConflictCategory,
 } from "./merger.js";
 import { createKbAgent } from "./pi.js";
@@ -751,35 +759,35 @@ describe("detectResolvableConflicts", () => {
     });
   });
 
-  it("detects .gen.ts files as generated files with 'ours' strategy", () => {
+  it("detects .gen.ts files as generated files with 'theirs' strategy", () => {
     mockedExecSync.mockReturnValue("src/types.gen.ts\n");
 
     const result = detectResolvableConflicts("/tmp/root");
     expect(result[0]).toMatchObject({
       autoResolvable: true,
-      strategy: "ours",
+      strategy: "theirs",
       reason: "generated-file",
     });
   });
 
-  it("detects dist/ paths as generated files", () => {
+  it("detects dist/ paths as generated files with 'theirs' strategy", () => {
     mockedExecSync.mockReturnValue("dist/index.js\n");
 
     const result = detectResolvableConflicts("/tmp/root");
     expect(result[0]).toMatchObject({
       autoResolvable: true,
-      strategy: "ours",
+      strategy: "theirs",
       reason: "generated-file",
     });
   });
 
-  it("detects coverage/ paths as generated files", () => {
+  it("detects coverage/ paths as generated files with 'theirs' strategy", () => {
     mockedExecSync.mockReturnValue("coverage/lcov-report/index.html\n");
 
     const result = detectResolvableConflicts("/tmp/root");
     expect(result[0]).toMatchObject({
       autoResolvable: true,
-      strategy: "ours",
+      strategy: "theirs",
       reason: "generated-file",
     });
   });
@@ -1376,5 +1384,284 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
     expect(result.merged).toBe(true);
     expect(result.resolutionStrategy).toBe("ai");
     expect(result.attemptsMade).toBe(1);
+  });
+});
+
+// ── New Smart Conflict Resolution API Tests ────────────────────────────
+
+describe("classifyConflict", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("classifies package-lock.json as 'lockfile-ours'", () => {
+    const result = classifyConflict("package-lock.json", "/tmp/root");
+    expect(result).toBe("lockfile-ours");
+  });
+
+  it("classifies pnpm-lock.yaml as 'lockfile-ours'", () => {
+    const result = classifyConflict("pnpm-lock.yaml", "/tmp/root");
+    expect(result).toBe("lockfile-ours");
+  });
+
+  it("classifies yarn.lock as 'lockfile-ours'", () => {
+    const result = classifyConflict("yarn.lock", "/tmp/root");
+    expect(result).toBe("lockfile-ours");
+  });
+
+  it("classifies Gemfile.lock as 'lockfile-ours'", () => {
+    const result = classifyConflict("Gemfile.lock", "/tmp/root");
+    expect(result).toBe("lockfile-ours");
+  });
+
+  it("classifies bun.lockb as 'lockfile-ours'", () => {
+    const result = classifyConflict("bun.lockb", "/tmp/root");
+    expect(result).toBe("lockfile-ours");
+  });
+
+  it("classifies go.sum as 'lockfile-ours'", () => {
+    const result = classifyConflict("go.sum", "/tmp/root");
+    expect(result).toBe("lockfile-ours");
+  });
+
+  it("classifies *.gen.ts files as 'generated-theirs'", () => {
+    const result = classifyConflict("src/types.gen.ts", "/tmp/root");
+    expect(result).toBe("generated-theirs");
+  });
+
+  it("classifies dist/* files as 'generated-theirs'", () => {
+    const result = classifyConflict("dist/bundle.js", "/tmp/root");
+    expect(result).toBe("generated-theirs");
+  });
+
+  it("classifies build/* files as 'generated-theirs'", () => {
+    const result = classifyConflict("build/index.html", "/tmp/root");
+    expect(result).toBe("generated-theirs");
+  });
+
+  it("classifies *.min.js files as 'generated-theirs'", () => {
+    const result = classifyConflict("app.min.js", "/tmp/root");
+    expect(result).toBe("generated-theirs");
+  });
+
+  it("classifies regular source files as 'complex'", () => {
+    mockedReadFileSync.mockReturnValue("const x = 1;");
+    const result = classifyConflict("src/components/App.tsx", "/tmp/root");
+    expect(result).toBe("complex");
+  });
+});
+
+describe("getConflictedFiles", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns array of conflicted file paths", () => {
+    mockedExecSync.mockReturnValue("package-lock.json\nsrc/index.ts\n");
+
+    const result = getConflictedFiles("/tmp/root");
+    expect(result).toEqual(["package-lock.json", "src/index.ts"]);
+  });
+
+  it("returns empty array when no conflicts", () => {
+    mockedExecSync.mockReturnValue("");
+
+    const result = getConflictedFiles("/tmp/root");
+    expect(result).toEqual([]);
+  });
+
+  it("returns empty array on git error", () => {
+    mockedExecSync.mockImplementation(() => {
+      throw new Error("git error");
+    });
+
+    const result = getConflictedFiles("/tmp/root");
+    expect(result).toEqual([]);
+  });
+});
+
+describe("resolveWithOurs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExecSync.mockReturnValue(Buffer.from(""));
+  });
+
+  it("calls git checkout --ours and git add", () => {
+    resolveWithOurs("package-lock.json", "/tmp/root");
+
+    const checkoutCall = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("checkout --ours"),
+    );
+    const addCall = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("git add"),
+    );
+
+    expect(checkoutCall).toBeDefined();
+    expect(addCall).toBeDefined();
+    expect(String(checkoutCall![0])).toContain("package-lock.json");
+  });
+
+  it("throws on git error", () => {
+    mockedExecSync.mockImplementation(() => {
+      throw new Error("checkout failed");
+    });
+
+    expect(() => resolveWithOurs("file.ts", "/tmp/root")).toThrow(
+      "Failed to auto-resolve",
+    );
+  });
+});
+
+describe("resolveWithTheirs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExecSync.mockReturnValue(Buffer.from(""));
+  });
+
+  it("calls git checkout --theirs and git add", () => {
+    resolveWithTheirs("dist/bundle.js", "/tmp/root");
+
+    const checkoutCall = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("checkout --theirs"),
+    );
+    const addCall = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("git add"),
+    );
+
+    expect(checkoutCall).toBeDefined();
+    expect(addCall).toBeDefined();
+    expect(String(checkoutCall![0])).toContain("dist/bundle.js");
+  });
+
+  it("throws on git error", () => {
+    mockedExecSync.mockImplementation(() => {
+      throw new Error("checkout failed");
+    });
+
+    expect(() => resolveWithTheirs("file.ts", "/tmp/root")).toThrow(
+      "Failed to auto-resolve",
+    );
+  });
+});
+
+describe("resolveTrivialWhitespace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExecSync.mockReturnValue(Buffer.from(""));
+  });
+
+  it("calls git add to resolve trivial whitespace conflict", () => {
+    resolveTrivialWhitespace("src/utils.ts", "/tmp/root");
+
+    const addCall = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("git add"),
+    );
+
+    expect(addCall).toBeDefined();
+    expect(String(addCall![0])).toContain("src/utils.ts");
+  });
+
+  it("throws on git error", () => {
+    mockedExecSync.mockImplementation(() => {
+      throw new Error("add failed");
+    });
+
+    expect(() => resolveTrivialWhitespace("file.ts", "/tmp/root")).toThrow(
+      "Failed to auto-resolve",
+    );
+  });
+});
+
+describe("LOCKFILE_PATTERNS and GENERATED_PATTERNS", () => {
+  it("LOCKFILE_PATTERNS contains expected lock file patterns", () => {
+    expect(LOCKFILE_PATTERNS).toContain("package-lock.json");
+    expect(LOCKFILE_PATTERNS).toContain("pnpm-lock.yaml");
+    expect(LOCKFILE_PATTERNS).toContain("yarn.lock");
+    expect(LOCKFILE_PATTERNS).toContain("Gemfile.lock");
+    expect(LOCKFILE_PATTERNS).toContain("bun.lockb");
+    expect(LOCKFILE_PATTERNS).toContain("go.sum");
+    expect(LOCKFILE_PATTERNS).toContain("composer.lock");
+    expect(LOCKFILE_PATTERNS).toContain("poetry.lock");
+    expect(LOCKFILE_PATTERNS).not.toContain("Cargo.lock"); // Not in task spec
+  });
+
+  it("GENERATED_PATTERNS contains expected generated file patterns", () => {
+    expect(GENERATED_PATTERNS).toContain("*.gen.ts");
+    expect(GENERATED_PATTERNS).toContain("*.gen.js");
+    expect(GENERATED_PATTERNS).toContain("*.min.js");
+    expect(GENERATED_PATTERNS).toContain("*.min.css");
+    expect(GENERATED_PATTERNS).toContain("dist/*");
+    expect(GENERATED_PATTERNS).toContain("build/*");
+    expect(GENERATED_PATTERNS).toContain("coverage/*");
+    expect(GENERATED_PATTERNS).toContain("out/*");
+  });
+});
+
+describe("isTrivialWhitespaceConflict", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns true when diff contains only whitespace changes", () => {
+    // Mock git diff-tree to return empty diff (no content changes)
+    mockedExecSync.mockReturnValue(
+      "diff --git a/file.ts b/file.ts\nindex 123..456 100644\n--- a/file.ts\n+++ b/file.ts\n"
+    );
+
+    const result = isTrivialWhitespaceConflict("src/file.ts", "/tmp/root");
+    expect(result).toBe(true);
+  });
+
+  it("returns false when diff contains content changes", () => {
+    // Mock git diff-tree to return diff with actual content changes
+    mockedExecSync.mockImplementation(() => {
+      const error = new Error("exit code 1") as any;
+      error.stdout = `diff --git a/file.ts b/file.ts
+--- a/file.ts
++++ b/file.ts
+@@ -1 +1 @@
+-const x = 1;
++const x = 2;`;
+      throw error;
+    });
+
+    const result = isTrivialWhitespaceConflict("src/file.ts", "/tmp/root");
+    expect(result).toBe(false);
+  });
+
+  it("returns true when only line endings differ (CRLF vs LF)", () => {
+    // Mock git diff-tree -w to show no content changes (whitespace ignored)
+    mockedExecSync.mockReturnValue(
+      "diff --git a/file.ts b/file.ts\nindex 123..456 100644\n--- a/file.ts\n+++ b/file.ts\n"
+    );
+
+    const result = isTrivialWhitespaceConflict("src/file.ts", "/tmp/root");
+    expect(result).toBe(true);
+  });
+
+  it("returns false when git diff-tree fails unexpectedly", () => {
+    mockedExecSync.mockImplementation(() => {
+      throw new Error("fatal: not a git repository");
+    });
+    // Mock readFileSync for the fallback
+    mockedReadFileSync.mockReturnValue("content without conflict markers");
+
+    const result = isTrivialWhitespaceConflict("src/file.ts", "/tmp/root");
+    expect(result).toBe(false);
+  });
+
+  it("calls git diff-tree with correct index references (:2: and :3:)", () => {
+    mockedExecSync.mockReturnValue("");
+
+    isTrivialWhitespaceConflict("src/utils.ts", "/tmp/root");
+
+    const call = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("git diff-tree")
+    );
+    expect(call).toBeDefined();
+    const cmdStr = String(call![0]);
+    expect(cmdStr).toContain("-w"); // whitespace ignored
+    expect(cmdStr).toContain(':2:"src/utils.ts"');
+    expect(cmdStr).toContain(':3:"src/utils.ts"');
   });
 });

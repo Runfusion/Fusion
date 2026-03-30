@@ -184,6 +184,10 @@ export interface Settings {
    *  intervention. When AI resolution fails, the system will retry with escalating
    *  strategies. Default: true. */
   autoResolveConflicts?: boolean;
+  /** Alias for autoResolveConflicts. When true, enables automatic resolution of
+   *  lock files (ours), generated files (theirs), and trivial whitespace conflicts
+   *  without spawning an AI agent. Default: true. */
+  smartConflictResolution?: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -202,6 +206,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultModelId: undefined,
   defaultThinkingLevel: undefined,
   autoResolveConflicts: true,
+  smartConflictResolution: true,
 };
 
 export interface BoardConfig {
@@ -218,8 +223,12 @@ export interface MergeResult {
   error?: string;
   /** Strategy that successfully resolved the merge, if any */
   resolutionStrategy?: "ai" | "auto-resolve" | "theirs";
+  /** Alias for resolutionStrategy — how conflicts were resolved (for metrics/debugging) */
+  resolutionMethod?: "ai" | "auto" | "mixed" | "theirs";
   /** Number of retry attempts made (1 = first attempt succeeded, 2-3 = retries needed) */
   attemptsMade?: 1 | 2 | 3;
+  /** Number of files auto-resolved (for tracking mixed resolution scenarios) */
+  autoResolvedCount?: number;
 }
 
 export const COLUMN_LABELS: Record<Column, string> = {

@@ -71,7 +71,7 @@ The following settings are available in the kb configuration (stored in `.kb/con
 When enabled, the auto-merge system will intelligently resolve common merge conflict patterns without requiring manual intervention:
 
 - **Lock files** (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `Gemfile.lock`, etc.) — automatically resolved using the current branch's version ("ours")
-- **Generated files** (`*.gen.ts`, `dist/*`, `coverage/*`, etc.) — automatically resolved using the current branch's version
+- **Generated files** (`*.gen.ts`, `dist/*`, `coverage/*`, etc.) — automatically resolved using the branch's fresh generation ("theirs")
 - **Trivial conflicts** (whitespace-only differences) — automatically resolved
 
 When a merge encounters conflicts and the AI agent fails to resolve them on the first attempt, the system implements a 3-attempt retry logic with escalating strategies:
@@ -91,3 +91,12 @@ To disable automatic conflict resolution and require manual intervention for all
   }
 }
 ```
+
+### `smartConflictResolution` (default: `true`)
+
+Alias for `autoResolveConflicts`. When enabled, enables automatic resolution of:
+- Lock files using "ours" strategy (keep current branch's version)
+- Generated files using "theirs" strategy (keep branch's fresh generation)  
+- Trivial whitespace conflicts via `git diff-tree -w`
+
+This setting is preferred for new configurations. If both settings are present, `smartConflictResolution` takes precedence.

@@ -7,7 +7,216 @@ import { AgentLogger } from "./agent-logger.js";
 import { mergerLog } from "./logger.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
 
-/** Conflict category for a file with merge conflicts */
+/** Conflict type classification for merge conflict resolution */
+export type ConflictType =
+  | "lockfile-ours"
+  | "generated-theirs"
+  | "trivial-whitespace"
+  | "complex";
+
+/** Lock file patterns that should auto-resolve using "ours" (keep current branch's version) */
+export const LOCKFILE_PATTERNS = [
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "Gemfile.lock",
+  "composer.lock",
+  "poetry.lock",
+  "bun.lockb",
+  "go.sum",
+];
+
+/** Generated file patterns that should auto-resolve using "theirs" (keep branch's fresh generation) */
+export const GENERATED_PATTERNS = [
+  "*.gen.ts",
+  "*.gen.js",
+  "*.min.js",
+  "*.min.css",
+  "dist/*",
+  "build/*",
+  "coverage/*",
+  ".next/*",
+  ".nuxt/*",
+  ".output/*",
+  ".cache/*",
+  "out/*",
+  "__generated__/*",
+  "generated/*",
+];
+
+/** Check if a path matches a glob pattern (simple glob support: * and **) */
+function matchGlob(path: string, pattern: string): boolean {
+  // Handle ** which matches across directory boundaries (must do before single *)
+  if (pattern.includes("**")) {
+    // Convert ** to match any characters including /
+    const regexPattern = pattern
+      .replace(/\./g, "\\.")
+      .replace(/\*\*/g, "<<<DOUBLESTAR>>>")
+      .replace(/\*/g, "[^/]*")
+      .replace(/<<<DOUBLESTAR>>>/g, ".*");
+    const regex = new RegExp(`^${regexPattern}$`);
+    return regex.test(path);
+  }
+  
+  // Handle patterns with single directory wildcards (e.g., "src/*.ts")
+  const lastSlash = pattern.lastIndexOf("/");
+  if (lastSlash !== -1) {
+    const patternDir = pattern.slice(0, lastSlash);
+    const patternFile = pattern.slice(lastSlash + 1);
+    const pathDir = path.lastIndexOf("/") !== -1 ? path.slice(0, path.lastIndexOf("/")) : "";
+    const pathFile = path.lastIndexOf("/") !== -1 ? path.slice(path.lastIndexOf("/")) : path;
+    
+    // Check if directories match
+    if (patternDir.includes("*")) {
+      const dirRegex = new RegExp(`^${patternDir.replace(/\./g, "\\.").replace(/\*/g, "[^/]*")}$`);
+      if (!dirRegex.test(pathDir)) return false;
+    } else if (!pathDir.endsWith(patternDir) && patternDir !== pathDir) {
+      return false;
+    }
+    
+    // Match filename pattern
+    return matchGlob(pathFile, patternFile);
+  }
+  
+  // Simple pattern without directory - match against filename only or full path
+  const fileName = path.lastIndexOf("/") !== -1 ? path.slice(path.lastIndexOf("/") + 1) : path;
+  
+  // Convert glob to regex
+  const regexPattern = pattern
+    .replace(/\./g, "\\.")
+    .replace(/\*/g, "[^/]*");
+  const regex = new RegExp(`^${regexPattern}$`);
+  return regex.test(fileName) || regex.test(path);
+}
+
+/**
+ * Get list of conflicted files from git.
+ * Runs `git diff --name-only --diff-filter=U` and returns array of file paths.
+ */
+export function getConflictedFiles(cwd: string): string[] {
+  try {
+    const output = execSync("git diff --name-only --diff-filter=U", {
+      cwd,
+      encoding: "utf-8",
+    }).trim();
+
+    if (!output) return [];
+    return output.split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Check if a file has only trivial whitespace conflicts using git.
+ * Compares ours (:2) and theirs (:3) versions with whitespace ignored.
+ */
+export function isTrivialWhitespaceConflict(filePath: string, cwd: string): boolean {
+  try {
+    // Use git diff-tree to compare index entries with whitespace ignored
+    // :2 = ours (current branch), :3 = theirs (incoming branch)
+    // -w flag ignores whitespace
+    const result = execSync(
+      `git diff-tree -p -w -- :2:"${filePath}" :3:"${filePath}"`,
+      { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
+    );
+
+    // If the diff output is empty or contains no actual changes, it's trivial
+    // The diff output will have headers but no +/- content lines for whitespace-only changes
+    const lines = result.split("\n");
+    const contentChanges = lines.filter(
+      (line: string) => (line.startsWith("+") || line.startsWith("-")) &&
+                !line.startsWith("+++") && !line.startsWith("---")
+    );
+    return contentChanges.length === 0;
+  } catch (error: any) {
+    // git diff-tree may exit with code 1 when there are differences
+    // Check if the error output indicates substantive changes
+    if (error.stdout && typeof error.stdout === "string") {
+      const lines = error.stdout.split("\n");
+      const contentChanges = lines.filter(
+        (line: string) => (line.startsWith("+") || line.startsWith("-")) &&
+                  !line.startsWith("+++") && !line.startsWith("---")
+      );
+      return contentChanges.length === 0;
+    }
+    // On other errors, assume complex conflict (don't fallback to isTrivialConflict
+    // which reads working directory files with conflict markers)
+    return false;
+  }
+}
+
+/**
+ * Classify a single conflicted file for auto-resolution.
+ * Returns one of: 'lockfile-ours', 'generated-theirs', 'trivial-whitespace', 'complex'
+ */
+export function classifyConflict(filePath: string, cwd: string): ConflictType {
+  // Check for lock files - always take "ours" (current branch's version)
+  if (LOCKFILE_PATTERNS.some((pattern) => matchGlob(filePath, pattern))) {
+    return "lockfile-ours";
+  }
+
+  // Check for generated files - take "theirs" (keep branch's fresh generation)
+  if (GENERATED_PATTERNS.some((pattern) => matchGlob(filePath, pattern))) {
+    return "generated-theirs";
+  }
+
+  // Check for trivial conflicts (whitespace-only)
+  if (isTrivialWhitespaceConflict(filePath, cwd)) {
+    return "trivial-whitespace";
+  }
+
+  // Complex conflicts require AI intervention
+  return "complex";
+}
+
+/**
+ * Resolve a conflicted file using "ours" (current branch's version).
+ * Runs `git checkout --ours` and `git add`.
+ */
+export function resolveWithOurs(filePath: string, cwd: string): void {
+  try {
+    execSync(`git checkout --ours "${filePath}"`, { cwd, stdio: "pipe" });
+    execSync(`git add "${filePath}"`, { cwd, stdio: "pipe" });
+    mergerLog.log(`Auto-resolved ${filePath} using --ours`);
+  } catch (error) {
+    throw new Error(`Failed to auto-resolve ${filePath} with ours: ${error}`);
+  }
+}
+
+/**
+ * Resolve a conflicted file using "theirs" (incoming branch's version).
+ * Runs `git checkout --theirs` and `git add`.
+ */
+export function resolveWithTheirs(filePath: string, cwd: string): void {
+  try {
+    execSync(`git checkout --theirs "${filePath}"`, { cwd, stdio: "pipe" });
+    execSync(`git add "${filePath}"`, { cwd, stdio: "pipe" });
+    mergerLog.log(`Auto-resolved ${filePath} using --theirs`);
+  } catch (error) {
+    throw new Error(`Failed to auto-resolve ${filePath} with theirs: ${error}`);
+  }
+}
+
+/**
+ * Resolve a trivial whitespace conflict.
+ * For trivial conflicts, we can just stage the file (git considers it resolved).
+ */
+export function resolveTrivialWhitespace(filePath: string, cwd: string): void {
+  try {
+    execSync(`git add "${filePath}"`, { cwd, stdio: "pipe" });
+    mergerLog.log(`Auto-resolved ${filePath} (trivial whitespace)`);
+  } catch (error) {
+    throw new Error(`Failed to auto-resolve ${filePath} trivial conflict: ${error}`);
+  }
+}
+
+// TODO(KB-023 Step 4): Consolidate with new API above. The following legacy API
+// (ConflictCategory, detectResolvableConflicts, isTrivialConflict, autoResolveFile,
+// resolveConflicts) duplicates functionality with the new Step 2 API. Migrate
+// callers to use classifyConflict, resolveWithOurs, resolveWithTheirs, etc.
+
+/** Conflict category for a file with merge conflicts - LEGACY API, see above */
 export type ConflictResolution = "ours" | "theirs";
 
 export interface ConflictCategory {
@@ -29,17 +238,22 @@ const LOCK_FILE_PATTERNS = [
   /Cargo\.lock$/,
   /composer\.lock$/,
   /poetry\.lock$/,
+  /bun\.lockb$/,
+  /go\.sum$/,
 ];
 
-/** Generated file patterns that should auto-resolve using "ours" */
+/** Generated file patterns that should auto-resolve using "theirs" (keep branch's fresh generation) */
 const GENERATED_FILE_PATTERNS = [
   /\.gen\.(ts|js|tsx|jsx|mjs|cjs)$/,
+  /\.min\.(js|css)$/,
   /dist\//,
+  /build\//,
   /coverage\//,
   /\.next\//,
   /\.nuxt\//,
   /\.output\//,
   /\.cache\//,
+  /out\//,
   /__generated__\//,
   /generated\//,
 ];
@@ -73,12 +287,12 @@ export function detectResolvableConflicts(rootDir: string): ConflictCategory[] {
         };
       }
 
-      // Check for generated files - take "ours" (regenerate after merge)
+      // Check for generated files - take "theirs" (keep branch's fresh generation)
       if (GENERATED_FILE_PATTERNS.some((pattern) => pattern.test(filePath))) {
         return {
           filePath,
           autoResolvable: true,
-          strategy: "ours",
+          strategy: "theirs",
           reason: "generated-file",
         };
       }
@@ -341,7 +555,8 @@ export async function aiMergeTask(
   // 2. Read settings
   const settings = await store.getSettings();
   const includeTaskId = settings.includeTaskIdInCommit !== false;
-  const autoResolveConflicts = settings.autoResolveConflicts !== false;
+  // Support both setting names: smartConflictResolution (new) and autoResolveConflicts (legacy)
+  const smartConflictResolution = (settings.smartConflictResolution ?? settings.autoResolveConflicts) !== false;
 
   // 3. Check branch exists
   try {
@@ -391,14 +606,16 @@ export async function aiMergeTask(
         commitLog,
         diffStat,
         includeTaskId,
-        autoResolveConflicts,
+        smartConflictResolution,
         attemptNum,
         options,
-      });
+        result,
+      }, aiTracker);
 
       if (success) {
         result.attemptsMade = attemptNum;
-        result.resolutionStrategy = getResolutionStrategy(attemptNum, autoResolveConflicts);
+        result.resolutionStrategy = getResolutionStrategy(attemptNum, smartConflictResolution);
+        result.resolutionMethod = getResolutionMethod(result.resolutionStrategy, result.autoResolvedCount, aiTracker.aiWasInvoked);
         result.merged = true;
         return true;
       }
@@ -414,7 +631,7 @@ export async function aiMergeTask(
       return false;
     } catch (error: any) {
       // Clean up on error before potentially rethrowing or retrying
-      if (attemptNum < 3 && autoResolveConflicts) {
+      if (attemptNum < 3 && smartConflictResolution) {
         mergerLog.log(`${taskId}: attempt ${attemptNum} error, cleaning up for retry...`);
         try {
           execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
@@ -425,6 +642,9 @@ export async function aiMergeTask(
     }
   };
 
+  // Track AI agent invocation for resolutionMethod calculation
+  const aiTracker: AiInvocationTracker = { aiWasInvoked: false };
+
   // Execute attempts with escalation
   let merged = false;
 
@@ -432,12 +652,12 @@ export async function aiMergeTask(
   merged = await mergeAttempt(1);
 
   // Attempt 2: Auto-resolve lock/generated files, then AI (if enabled)
-  if (!merged && autoResolveConflicts) {
+  if (!merged && smartConflictResolution) {
     merged = await mergeAttempt(2);
   }
 
   // Attempt 3: Use -X theirs merge strategy (if enabled)
-  if (!merged && autoResolveConflicts) {
+  if (!merged && smartConflictResolution) {
     merged = await mergeAttempt(3);
   }
 
@@ -489,15 +709,34 @@ export async function aiMergeTask(
 /** Get the resolution strategy based on attempt number and settings */
 function getResolutionStrategy(
   attemptNum: 1 | 2 | 3,
-  autoResolveConflicts: boolean,
+  smartConflictResolution: boolean,
 ): MergeResult["resolutionStrategy"] {
-  if (!autoResolveConflicts || attemptNum === 1) {
+  if (!smartConflictResolution || attemptNum === 1) {
     return "ai";
   }
   if (attemptNum === 2) {
     return "auto-resolve";
   }
   return "theirs";
+}
+
+/** Map resolutionStrategy and autoResolvedCount to resolutionMethod for metrics/debugging */
+function getResolutionMethod(
+  strategy: MergeResult["resolutionStrategy"],
+  autoResolvedCount?: number,
+  aiWasUsed?: boolean,
+): MergeResult["resolutionMethod"] {
+  if (strategy === "ai") return "ai";
+  if (strategy === "theirs") return "theirs";
+  if (strategy === "auto-resolve") {
+    // auto-resolve strategy: determine if pure auto or mixed with AI
+    if (autoResolvedCount && autoResolvedCount > 0) {
+      // If AI was actually invoked during auto-resolve attempt, it's mixed
+      return aiWasUsed ? "mixed" : "auto";
+    }
+    return "auto";
+  }
+  return undefined;
 }
 
 interface MergeAttemptParams {
@@ -508,9 +747,15 @@ interface MergeAttemptParams {
   commitLog: string;
   diffStat: string;
   includeTaskId: boolean;
-  autoResolveConflicts: boolean;
+  smartConflictResolution: boolean;
   attemptNum: 1 | 2 | 3;
   options: MergerOptions;
+  result: MergeResult;
+}
+
+/** Mutable flag to track AI agent invocation */
+interface AiInvocationTracker {
+  aiWasInvoked: boolean;
 }
 
 /**
@@ -518,7 +763,10 @@ interface MergeAttemptParams {
  * Returns true if merge succeeded, false if should retry (for attempts 1-2).
  * Throws on unrecoverable errors.
  */
-async function executeMergeAttempt(params: MergeAttemptParams): Promise<boolean> {
+async function executeMergeAttempt(
+  params: MergeAttemptParams,
+  aiTracker: AiInvocationTracker,
+): Promise<boolean> {
   const {
     store,
     rootDir,
@@ -527,9 +775,10 @@ async function executeMergeAttempt(params: MergeAttemptParams): Promise<boolean>
     commitLog,
     diffStat,
     includeTaskId,
-    autoResolveConflicts,
+    smartConflictResolution,
     attemptNum,
     options,
+    result,
   } = params;
 
   // Attempt 3: Use -X theirs strategy
@@ -540,8 +789,8 @@ async function executeMergeAttempt(params: MergeAttemptParams): Promise<boolean>
   // Attempt 1 & 2: Standard squash merge
   let hasConflicts = false;
   try {
-    // For attempt 2, try with auto-resolution first
-    if (attemptNum === 2 && autoResolveConflicts) {
+    // For attempt 2, try with smart auto-resolution first
+    if (attemptNum === 2 && smartConflictResolution) {
       // First, do a standard merge to get conflicts
       // Note: git merge --squash exits with code 1 when conflicts exist
       // This is expected - we catch it and proceed with auto-resolution
@@ -556,20 +805,46 @@ async function executeMergeAttempt(params: MergeAttemptParams): Promise<boolean>
         mergeExitedWithConflicts = true;
       }
 
-      // Check if we have conflicts (either from merge throwing or detected conflicts)
-      const conflictCategories = detectResolvableConflicts(rootDir);
-      if (conflictCategories.length > 0 || mergeExitedWithConflicts) {
-        const autoResolvable = conflictCategories.filter((c) => c.autoResolvable);
-        const complex = conflictCategories.filter((c) => !c.autoResolvable);
+      // Use new API: get conflicted files and classify them
+      const conflictedFiles = getConflictedFiles(rootDir);
+      if (conflictedFiles.length > 0 || mergeExitedWithConflicts) {
+        // Classify each conflicted file
+        const classified = conflictedFiles.map((file) => ({
+          file,
+          type: classifyConflict(file, rootDir),
+        }));
 
+        const autoResolvable = classified.filter(
+          (c) => c.type !== "complex",
+        );
+        const complex = classified.filter(
+          (c) => c.type === "complex",
+        );
+
+        // Auto-resolve each file based on its classification
         if (autoResolvable.length > 0) {
           mergerLog.log(
-            `${taskId}: auto-resolving ${autoResolvable.length} lock/generated file(s) before AI retry`,
+            `${taskId}: auto-resolving ${autoResolvable.length} lock/generated/trivial file(s) before AI retry`,
           );
-          resolveConflicts(conflictCategories, rootDir);
+          for (const { file, type } of autoResolvable) {
+            try {
+              if (type === "lockfile-ours") {
+                resolveWithOurs(file, rootDir);
+              } else if (type === "generated-theirs") {
+                resolveWithTheirs(file, rootDir);
+              } else if (type === "trivial-whitespace") {
+                resolveTrivialWhitespace(file, rootDir);
+              }
+              result.autoResolvedCount = (result.autoResolvedCount || 0) + 1;
+            } catch (error) {
+              // If auto-resolution fails, treat as complex conflict
+              mergerLog.warn(`${taskId}: auto-resolution failed for ${file}: ${error}`);
+              complex.push({ file, type: "complex" });
+            }
+          }
         }
 
-        // If only auto-resolvable conflicts, commit them directly
+        // If only auto-resolvable conflicts (or all were resolved), commit directly
         if (complex.length === 0) {
           // All conflicts auto-resolved, commit with fallback message
           const staged = execSync("git diff --cached --quiet 2>&1; echo $?", {
@@ -584,12 +859,12 @@ async function executeMergeAttempt(params: MergeAttemptParams): Promise<boolean>
               `git commit -m "${fallbackPrefix}: merge ${branch}" -m "${escapedLog}"`,
               { cwd: rootDir, stdio: "pipe" },
             );
-            mergerLog.log(`${taskId}: committed after auto-resolving conflicts`);
+            mergerLog.log(`${taskId}: committed after auto-resolving all conflicts`);
           }
           return true;
         }
 
-        // Has complex conflicts - continue to AI agent with simplified context
+        // Has complex conflicts - continue to AI agent
         hasConflicts = true;
       } else {
         // No conflicts - check if squash is empty
@@ -629,10 +904,10 @@ async function executeMergeAttempt(params: MergeAttemptParams): Promise<boolean>
       }).trim();
       hasConflicts = conflictedOutput.length > 0;
 
-      if (hasConflicts && !autoResolveConflicts) {
+      if (hasConflicts && !smartConflictResolution) {
         // No auto-resolve - AI will handle all conflicts
         mergerLog.log(`${taskId}: conflicts detected, AI will resolve`);
-      } else if (hasConflicts && autoResolveConflicts) {
+      } else if (hasConflicts && smartConflictResolution) {
         // Has conflicts and auto-resolve enabled - should be handled in attempt 2
         // Reset and return false to trigger attempt 2
         mergerLog.log(`${taskId}: conflicts detected, will retry with auto-resolution`);
@@ -644,6 +919,7 @@ async function executeMergeAttempt(params: MergeAttemptParams): Promise<boolean>
     // - No conflicts (attempt 1) - AI writes commit message
     // - Complex conflicts remain after attempt 2 auto-resolution - AI resolves them
     // Spawn AI agent
+    aiTracker.aiWasInvoked = true; // Track that AI was invoked
     return await runAiAgentForCommit({
       store,
       rootDir,
@@ -663,7 +939,7 @@ async function executeMergeAttempt(params: MergeAttemptParams): Promise<boolean>
     }
 
     // For attempt 1, return false to trigger attempt 2
-    if (attemptNum === 1 && autoResolveConflicts) {
+    if (attemptNum === 1 && smartConflictResolution) {
       return false;
     }
 
