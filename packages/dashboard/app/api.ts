@@ -60,7 +60,7 @@ export function createTask(input: TaskCreateInput): Promise<Task> {
   });
 }
 
-export function updateTask(id: string, updates: { title?: string; description?: string; prompt?: string; dependencies?: string[]; modelProvider?: string; modelId?: string; validatorModelProvider?: string; validatorModelId?: string }): Promise<Task> {
+export function updateTask(id: string, updates: { title?: string; description?: string; prompt?: string; dependencies?: string[]; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null }): Promise<Task> {
   return api<Task>(`/tasks/${id}`, {
     method: "PATCH",
     body: JSON.stringify(updates),
