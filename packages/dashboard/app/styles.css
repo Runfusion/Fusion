@@ -7410,7 +7410,40 @@ html .column.drag-over * {
 
 /* === New Task Modal === */
 .new-task-modal .modal-body {
-  padding: 16px 20px;
+  padding: 20px 24px;
+  overflow-y: auto;
+  max-height: calc(80vh - 120px);
+}
+
+.new-task-modal .form-group {
+  margin-top: 0;
+  margin-bottom: 20px;
+  padding: 0;
+}
+
+.new-task-modal .form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.new-task-modal .form-group label {
+  margin-bottom: 8px;
+}
+
+.new-task-modal .checkbox-label {
+  margin-bottom: 4px !important;
+}
+
+.new-task-modal .form-group small {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.new-task-modal textarea {
+  min-height: 80px;
+  transition: height 0.1s ease-out;
 }
 
 .selected-deps {
