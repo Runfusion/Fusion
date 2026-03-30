@@ -854,6 +854,7 @@ describe("ListView Column Visibility", () => {
   });
 });
 
+
 describe("ListView Hide Done Tasks", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1023,5 +1024,89 @@ describe("ListView Hide Done Tasks", () => {
     expect(screen.queryByText("KB-001")).toBeNull();
     // Filtered task should be visible
     expect(screen.getByText("KB-002")).toBeDefined();
+  });
+});
+
+describe("ListView Inline Create Card", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows InlineCreateCard when isCreating is true", () => {
+    renderListView({ isCreating: true, onCancelCreate: vi.fn(), onCreateTask: vi.fn() });
+
+    // The inline creation card should be visible with its textarea
+    expect(screen.getByPlaceholderText("What needs to be done?")).toBeDefined();
+  });
+
+  it("does not show InlineCreateCard when isCreating is false", () => {
+    renderListView({ isCreating: false, onCancelCreate: vi.fn(), onCreateTask: vi.fn() });
+
+    // The inline creation card should not be visible
+    expect(screen.queryByPlaceholderText("What needs to be done?")).toBeNull();
+  });
+
+  it("does not show InlineCreateCard when onCancelCreate is not provided", () => {
+    renderListView({ isCreating: true, onCreateTask: vi.fn() });
+
+    // The inline creation card should not be visible without onCancelCreate
+    expect(screen.queryByPlaceholderText("What needs to be done?")).toBeNull();
+  });
+
+  it("does not show InlineCreateCard when onCreateTask is not provided", () => {
+    renderListView({ isCreating: true, onCancelCreate: vi.fn() });
+
+    // The inline creation card should not be visible without onCreateTask
+    expect(screen.queryByPlaceholderText("What needs to be done?")).toBeNull();
+  });
+
+  it("calls onCreateTask with triage column when task is submitted from inline card", async () => {
+    const mockOnCreateTask = vi.fn().mockResolvedValue(createMockTask({ id: "KB-002" }));
+    renderListView({ isCreating: true, onCancelCreate: vi.fn(), onCreateTask: mockOnCreateTask });
+
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+    fireEvent.change(textarea, { target: { value: "New task description" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(mockOnCreateTask).toHaveBeenCalledWith({
+        description: "New task description",
+        column: "triage",
+      });
+    });
+  });
+
+  it("calls onCancelCreate when inline card is cancelled via blur", () => {
+    const mockOnCancelCreate = vi.fn();
+    renderListView({ isCreating: true, onCancelCreate: mockOnCancelCreate, onCreateTask: vi.fn() });
+
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+    textarea.focus();
+    fireEvent.focusOut(textarea, { relatedTarget: null });
+
+    expect(mockOnCancelCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onCancelCreate when inline card is cancelled via Escape key", () => {
+    const mockOnCancelCreate = vi.fn();
+    renderListView({ isCreating: true, onCancelCreate: mockOnCancelCreate, onCreateTask: vi.fn() });
+
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+    fireEvent.keyDown(textarea, { key: "Escape" });
+
+    expect(mockOnCancelCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders InlineCreateCard in triage section with correct colSpan", () => {
+    renderListView({ isCreating: true, onCancelCreate: vi.fn(), onCreateTask: vi.fn() });
+
+    // Find the inline create row
+    const inlineCreateRow = document.querySelector(".list-inline-create-row");
+    expect(inlineCreateRow).toBeTruthy();
+
+    // Check that the cell has the correct colSpan (8 columns by default)
+    const inlineCreateCell = document.querySelector(".list-inline-create-cell");
+    expect(inlineCreateCell).toBeTruthy();
+    expect(inlineCreateCell?.getAttribute("colspan")).toBe("8");
   });
 });

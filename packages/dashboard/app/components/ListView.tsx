@@ -3,6 +3,7 @@ import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Search, 
 import type { Task, TaskDetail, Column, TaskStep } from "@kb/core";
 import { COLUMN_LABELS, COLUMNS } from "@kb/core";
 import { fetchTaskDetail } from "../api";
+import { InlineCreateCard } from "./InlineCreateCard";
 import type { ToastType } from "../hooks/useToast";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
@@ -58,6 +59,9 @@ export function ListView({
   addToast,
   globalPaused,
   onNewTask,
+  isCreating,
+  onCancelCreate,
+  onCreateTask,
 }: ListViewProps) {
   const [sortField, setSortField] = useState<SortField>("createdAt");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -419,7 +423,7 @@ export function ListView({
       </div>
 
       <div className="list-table-container">
-        {filteredCount === 0 ? (
+        {filteredCount === 0 && !isCreating ? (
           <div className="list-empty">
             {filter ? "No tasks match your filter" : "No tasks yet"}
           </div>
@@ -473,8 +477,8 @@ export function ListView({
                 const columnTasks = groupedTasks[column];
                 const isEmpty = columnTasks.length === 0;
 
-                // When filtering, hide empty sections entirely
-                if (filter && isEmpty) return null;
+                // When filtering, hide empty sections entirely (except triage when creating)
+                if (filter && isEmpty && !(column === "triage" && isCreating)) return null;
 
                 return (
                   <Fragment key={column}>
@@ -486,6 +490,20 @@ export function ListView({
                         <span className="list-section-count">{columnTasks.length}</span>
                       </th>
                     </tr>
+
+                    {/* Inline Create Card for Triage column */}
+                    {column === "triage" && isCreating && onCancelCreate && onCreateTask && (
+                      <tr className="list-inline-create-row">
+                        <td colSpan={visibleColumns.size} className="list-inline-create-cell">
+                          <InlineCreateCard
+                            tasks={tasks}
+                            onSubmit={onCreateTask}
+                            onCancel={onCancelCreate}
+                            addToast={addToast}
+                          />
+                        </td>
+                      </tr>
+                    )}
 
                     {/* Task Rows */}
                     {isEmpty ? (
