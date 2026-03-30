@@ -43,6 +43,8 @@ kb task log KB-001 "Added context"  # Add a log entry
 kb task pause KB-001                # Pause a task (stops automation)
 kb task unpause KB-001              # Resume a paused task
 kb task attach KB-001 ./error.log   # Attach a file to a task
+kb task import owner/repo           # Import GitHub issues as tasks
+kb task import owner/repo --limit 10 --labels "bug,enhancement"
 ```
 
 ### Typical workflow
