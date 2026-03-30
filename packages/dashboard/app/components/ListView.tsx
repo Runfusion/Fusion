@@ -68,6 +68,7 @@ export function ListView({
   const [filter, setFilter] = useState("");
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<Column | null>(null);
+  const [selectedColumn, setSelectedColumn] = useState<Column | null>(null);
 
   // Column visibility state - initialize from localStorage or default to all columns
   const [visibleColumns, setVisibleColumns] = useState<Set<ListColumn>>(() => {
@@ -186,8 +187,16 @@ export function ListView({
     }
   }, [sortField]);
 
+  const handleColumnFilter = useCallback((column: Column) => {
+    setSelectedColumn((prev) => (prev === column ? null : column));
+  }, []);
+
+  const clearColumnFilter = useCallback(() => {
+    setSelectedColumn(null);
+  }, []);
+
   const groupedTasks = useMemo(() => {
-    // First filter by search filter
+    // First apply text filter
     let filtered = filter
       ? tasks.filter(
           (t) =>
@@ -202,7 +211,12 @@ export function ListView({
       filtered = filtered.filter((t) => t.column !== "done");
     }
 
-    const sorted = [...filtered].sort((a, b) => {
+    // Then apply column filter if selected
+    const columnFiltered = selectedColumn
+      ? filtered.filter((t) => t.column === selectedColumn)
+      : filtered;
+
+    const sorted = [...columnFiltered].sort((a, b) => {
       let comparison = 0;
       switch (sortField) {
         case "id":
@@ -237,7 +251,7 @@ export function ListView({
     };
     sorted.forEach(task => groups[task.column].push(task));
     return groups;
-  }, [tasks, filter, sortField, sortDirection, hideDoneTasks]);
+  }, [tasks, filter, sortField, sortDirection, hideDoneTasks, selectedColumn]);
 
   // Calculate total filtered count from groups
   const filteredCount = useMemo(() => {
@@ -385,9 +399,21 @@ export function ListView({
           {hideDoneTasks ? "Show Done" : "Hide Done"}
         </button>
         <div className="list-stats">
-          {filteredCount} of {tasks.length} tasks
-          {hiddenDoneCount > 0 && (
+          {selectedColumn
+            ? `${filteredCount} of ${tasks.length} tasks in ${COLUMN_LABELS[selectedColumn]}`
+            : `${filteredCount} of ${tasks.length} tasks`}
+          {hiddenDoneCount > 0 && !selectedColumn && (
             <span className="list-stats-hidden"> ({hiddenDoneCount} done hidden)</span>
+          )}
+          {selectedColumn && (
+            <button
+              className="btn btn-sm"
+              onClick={clearColumnFilter}
+              aria-label="Clear column filter"
+              style={{ marginLeft: "8px" }}
+            >
+              Clear
+            </button>
           )}
         </div>
         {onNewTask && (
@@ -406,7 +432,8 @@ export function ListView({
           return (
             <div
               key={column}
-              className={`list-drop-zone${dragOverColumn === column ? " drag-over" : ""}`}
+              className={`list-drop-zone${dragOverColumn === column ? " drag-over" : ""}${selectedColumn === column ? " active" : ""}`}
+              onClick={() => handleColumnFilter(column)}
               onDragOver={(e) => handleColumnDragOver(e, column)}
               onDragLeave={handleColumnDragLeave}
               onDrop={(e) => handleColumnDrop(e, column)}
@@ -471,13 +498,16 @@ export function ListView({
             </thead>
             <tbody>
               {COLUMNS.map((column) => {
-                // Skip done column section when hideDoneTasks is enabled
-                if (hideDoneTasks && column === "done") return null;
+                // When column filter is active, only show the selected column
+                if (selectedColumn && column !== selectedColumn) return null;
+                
+                // Skip done column section when hideDoneTasks is enabled (unless it's the selected column)
+                if (hideDoneTasks && column === "done" && !selectedColumn) return null;
 
                 const columnTasks = groupedTasks[column];
                 const isEmpty = columnTasks.length === 0;
 
-                // When filtering, hide empty sections entirely (except triage when creating)
+                // When text filtering, hide empty sections entirely (except triage when creating)
                 if (filter && isEmpty && !(column === "triage" && isCreating)) return null;
 
                 return (

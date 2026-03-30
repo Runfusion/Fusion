@@ -2407,6 +2407,12 @@ body {
   border-color: var(--text-muted);
 }
 
+.list-drop-zone.active {
+  border-color: var(--todo);
+  background: rgba(88, 166, 255, 0.15);
+  box-shadow: 0 0 0 1px var(--todo);
+}
+
 .list-drop-zone.drag-over {
   border-color: var(--todo);
   box-shadow: 0 0 0 1px var(--todo);

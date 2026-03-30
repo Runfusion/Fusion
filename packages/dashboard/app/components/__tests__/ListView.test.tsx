@@ -667,6 +667,185 @@ describe("ListView", () => {
   });
 });
 
+describe("ListView Column Filtering", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("filters tasks by column when drop zone is clicked", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
+      createMockTask({ id: "KB-003", column: "in-progress", title: "In Progress Task" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Click on the triage drop zone
+    const triageZone = document.querySelector('[data-column="triage"].list-drop-zone')!;
+    fireEvent.click(triageZone);
+
+    // Only triage task should be visible
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.queryByText("KB-003")).toBeNull();
+
+    // Only triage section header should be visible
+    const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
+    expect(sectionHeaders.length).toBe(1);
+    expect(sectionHeaders[0].textContent).toContain("Triage");
+  });
+
+  it("clears column filter when same drop zone is clicked again", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Click on the triage drop zone to filter
+    const triageZone = document.querySelector('[data-column="triage"].list-drop-zone')!;
+    fireEvent.click(triageZone);
+
+    // Verify filter is active - only triage task visible
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.queryByText("KB-002")).toBeNull();
+
+    // Click the same drop zone again to clear filter
+    fireEvent.click(triageZone);
+
+    // All tasks should be visible again
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.getByText("KB-002")).toBeDefined();
+
+    // All 5 section headers should be visible
+    const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
+    expect(sectionHeaders.length).toBe(5);
+  });
+
+  it("switches column filter when different drop zone is clicked", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Click on the triage drop zone to filter
+    const triageZone = document.querySelector('[data-column="triage"].list-drop-zone')!;
+    fireEvent.click(triageZone);
+
+    // Verify only triage task visible
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.queryByText("KB-002")).toBeNull();
+
+    // Click on the todo drop zone to switch filter
+    const todoZone = document.querySelector('[data-column="todo"].list-drop-zone')!;
+    fireEvent.click(todoZone);
+
+    // Only todo task should be visible now
+    expect(screen.queryByText("KB-001")).toBeNull();
+    expect(screen.getByText("KB-002")).toBeDefined();
+
+    // Only todo section header should be visible
+    const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
+    expect(sectionHeaders.length).toBe(1);
+    expect(sectionHeaders[0].textContent).toContain("Todo");
+  });
+
+  it("clears column filter when clear button is clicked", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Click on the triage drop zone to filter
+    const triageZone = document.querySelector('[data-column="triage"].list-drop-zone')!;
+    fireEvent.click(triageZone);
+
+    // Verify filter is active
+    expect(screen.queryByText("KB-002")).toBeNull();
+
+    // Click the clear button
+    const clearButton = screen.getByRole("button", { name: /clear column filter/i });
+    fireEvent.click(clearButton);
+
+    // All tasks should be visible again
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.getByText("KB-002")).toBeDefined();
+  });
+
+  it("shows correct filtered stats when column filter is active", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "KB-002", column: "triage", title: "Triage Task 2" }),
+      createMockTask({ id: "KB-003", column: "todo", title: "Todo Task" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Click on the triage drop zone to filter
+    const triageZone = document.querySelector('[data-column="triage"].list-drop-zone')!;
+    fireEvent.click(triageZone);
+
+    // Stats should show filtered count with column name
+    expect(screen.getByText("2 of 3 tasks in Triage")).toBeDefined();
+  });
+
+  it("applies text filter within column filter", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "triage", title: "Alpha Triage Task" }),
+      createMockTask({ id: "KB-002", column: "triage", title: "Beta Triage Task" }),
+      createMockTask({ id: "KB-003", column: "todo", title: "Alpha Todo Task" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Click on the triage drop zone to filter by column
+    const triageZone = document.querySelector('[data-column="triage"].list-drop-zone')!;
+    fireEvent.click(triageZone);
+
+    // Both triage tasks should be visible
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.queryByText("KB-003")).toBeNull();
+
+    // Apply text filter within the triage column
+    const filterInput = screen.getByPlaceholderText("Filter by ID or title...");
+    fireEvent.change(filterInput, { target: { value: "Alpha" } });
+
+    // Only Alpha triage task should be visible
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.queryByText("KB-003")).toBeNull();
+
+    // Stats should reflect combined filtering
+    expect(screen.getByText("1 of 3 tasks in Triage")).toBeDefined();
+  });
+
+  it("applies active class to selected column drop zone", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Click on the triage drop zone
+    const triageZone = document.querySelector('[data-column="triage"].list-drop-zone')!;
+    fireEvent.click(triageZone);
+
+    // Should have active class
+    expect(triageZone.classList.contains("active")).toBe(true);
+
+    // Other drop zones should not have active class
+    const todoZone = document.querySelector('[data-column="todo"].list-drop-zone')!;
+    expect(todoZone.classList.contains("active")).toBe(false);
+  });
+});
+
 describe("ListView Column Visibility", () => {
   beforeEach(() => {
     vi.clearAllMocks();
