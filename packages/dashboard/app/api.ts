@@ -152,6 +152,12 @@ export function updateSettings(settings: Partial<Settings>): Promise<Settings> {
   });
 }
 
+export function testNtfyNotification(): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>("/settings/test-ntfy", {
+    method: "POST",
+  });
+}
+
 export async function uploadAttachment(id: string, file: File): Promise<TaskAttachment> {
   const formData = new FormData();
   formData.append("file", file);

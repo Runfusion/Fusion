@@ -605,6 +605,53 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * POST /api/settings/test-ntfy
+   * Send a test notification to verify ntfy configuration.
+   * Returns: { success: true } on success, { error: string } on failure.
+   */
+  router.post("/settings/test-ntfy", async (_req, res) => {
+    try {
+      const settings = await store.getSettings();
+
+      // Validate ntfy is enabled
+      if (!settings.ntfyEnabled) {
+        res.status(400).json({ error: "ntfy notifications are not enabled" });
+        return;
+      }
+
+      // Validate topic exists and matches required format
+      const topic = settings.ntfyTopic;
+      if (!topic || !/^[a-zA-Z0-9_-]{1,64}$/.test(topic)) {
+        res.status(400).json({ error: "ntfy topic is not configured or invalid" });
+        return;
+      }
+
+      // Send test notification to ntfy.sh
+      const ntfyBaseUrl = "https://ntfy.sh";
+      const url = `${ntfyBaseUrl}/${topic}`;
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Title": "kb test notification",
+          "Priority": "default",
+          "Content-Type": "text/plain",
+        },
+        body: "kb test notification — your notifications are working!",
+      });
+
+      if (!response.ok) {
+        res.status(502).json({ error: `ntfy.sh returned ${response.status}: ${response.statusText}` });
+        return;
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Failed to send test notification" });
+    }
+  });
+
   // Models
   registerModelsRoute(router, options?.modelRegistry);
 

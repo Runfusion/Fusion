@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { THINKING_LEVELS } from "@kb/core";
 import type { Settings, ThemeMode, ColorTheme } from "@kb/core";
-import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels } from "../api";
+import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, testNtfyNotification } from "../api";
 import type { AuthProvider, ModelInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
@@ -78,6 +78,9 @@ export function SettingsModal({
   // Model state
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+
+  // Test notification state
+  const [testNotificationLoading, setTestNotificationLoading] = useState(false);
 
   useEffect(() => {
     fetchSettings()
@@ -167,6 +170,27 @@ export function SettingsModal({
       setAuthActionInProgress(null);
     }
   }, [addToast, loadAuthStatus]);
+
+  const handleTestNotification = useCallback(async () => {
+    // Validate ntfy is enabled and topic is valid
+    if (!form.ntfyEnabled || !form.ntfyTopic || !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic)) {
+      return;
+    }
+
+    setTestNotificationLoading(true);
+    try {
+      const result = await testNtfyNotification();
+      if (result.success) {
+        addToast("Test notification sent — check your ntfy app!", "success");
+      } else {
+        addToast("Failed to send test notification", "error");
+      }
+    } catch (err: any) {
+      addToast(err.message || "Failed to send test notification", "error");
+    } finally {
+      setTestNotificationLoading(false);
+    }
+  }, [addToast, form.ntfyEnabled, form.ntfyTopic]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -586,6 +610,18 @@ export function SettingsModal({
                     Topic must be 1–64 alphanumeric, hyphen, or underscore characters
                   </small>
                 )}
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={handleTestNotification}
+                  disabled={
+                    testNotificationLoading ||
+                    !form.ntfyTopic ||
+                    !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic)
+                  }
+                >
+                  {testNotificationLoading ? "Sending…" : "Test notification"}
+                </button>
               </div>
             )}
           </>

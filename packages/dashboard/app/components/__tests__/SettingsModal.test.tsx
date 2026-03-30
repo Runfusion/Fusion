@@ -31,9 +31,10 @@ vi.mock("../../api", () => ({
     { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
     { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
   ])),
+  testNtfyNotification: vi.fn(() => Promise.resolve({ success: true })),
 }));
 
-import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels } from "../../api";
+import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, testNtfyNotification } from "../../api";
 
 const onClose = vi.fn();
 const addToast = vi.fn();
@@ -1033,5 +1034,122 @@ describe("SettingsModal", () => {
     // Should show no results message
     expect(screen.getByText(/No models match/)).toBeTruthy();
     expect(screen.getByText("0 models")).toBeTruthy();
+  });
+
+  // --- Test notification button tests ---
+
+  it("Test notification button is disabled when ntfy is disabled", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Notifications"));
+
+    // When ntfy is disabled, the topic input (and test button) should not be visible
+    expect(screen.queryByLabelText("ntfy Topic")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Test notification/i })).toBeNull();
+  });
+
+  it("Test notification button is disabled when topic is invalid", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Notifications"));
+
+    // Enable ntfy
+    const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
+    fireEvent.click(checkbox);
+
+    // Enter invalid topic
+    const input = screen.getByLabelText("ntfy Topic") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "invalid topic with spaces!" } });
+
+    // Test button should be disabled
+    const testButton = screen.getByRole("button", { name: "Test notification" });
+    expect(testButton).toBeDisabled();
+  });
+
+  it("Test notification button is enabled when ntfy is enabled with valid topic", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Notifications"));
+
+    // Enable ntfy
+    const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
+    fireEvent.click(checkbox);
+
+    // Enter valid topic
+    const input = screen.getByLabelText("ntfy Topic") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "my-valid-topic" } });
+
+    // Test button should be enabled
+    const testButton = screen.getByRole("button", { name: "Test notification" });
+    expect(testButton).toBeEnabled();
+  });
+
+  it("Clicking test button calls testNtfyNotification API", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Notifications"));
+
+    // Enable ntfy
+    const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
+    fireEvent.click(checkbox);
+
+    // Enter valid topic
+    const input = screen.getByLabelText("ntfy Topic") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "my-valid-topic" } });
+
+    // Click test button
+    const testButton = screen.getByRole("button", { name: "Test notification" });
+    fireEvent.click(testButton);
+
+    await waitFor(() => expect(testNtfyNotification).toHaveBeenCalledTimes(1));
+  });
+
+  it("Success toast is shown when test notification succeeds", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Notifications"));
+
+    // Enable ntfy
+    const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
+    fireEvent.click(checkbox);
+
+    // Enter valid topic
+    const input = screen.getByLabelText("ntfy Topic") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "my-valid-topic" } });
+
+    // Click test button
+    const testButton = screen.getByRole("button", { name: "Test notification" });
+    fireEvent.click(testButton);
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Test notification sent — check your ntfy app!", "success"));
+  });
+
+  it("Error toast is shown when test notification fails", async () => {
+    // Mock the API to return an error
+    (testNtfyNotification as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network error"));
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Notifications"));
+
+    // Enable ntfy
+    const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
+    fireEvent.click(checkbox);
+
+    // Enter valid topic
+    const input = screen.getByLabelText("ntfy Topic") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "my-valid-topic" } });
+
+    // Click test button
+    const testButton = screen.getByRole("button", { name: "Test notification" });
+    fireEvent.click(testButton);
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Network error", "error"));
   });
 });
