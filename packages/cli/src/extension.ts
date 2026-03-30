@@ -341,6 +341,94 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── kb_task_import_github ─────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_import_github",
+    label: "KB: Import GitHub Issues",
+    description:
+      "Import GitHub issues as kb tasks. Fetches open issues from a repository " +
+      "and creates tasks in the triage column. Each task includes the issue title " +
+      "and body with a link to the source issue.",
+    promptSnippet: "Import GitHub issues as kb tasks",
+    promptGuidelines: [
+      "Use for syncing GitHub issue backlog to kb board",
+      "Requires GITHUB_TOKEN env var for private repositories",
+      "Use --limit to control how many issues to import (default: 30)",
+      "Use --labels to filter by specific labels",
+    ],
+    parameters: Type.Object({
+      ownerRepo: Type.String({
+        description: "Repository in owner/repo format (e.g., 'dustinbyrne/kb')",
+        pattern: "^[^/]+/[^/]+$",
+      }),
+      limit: Type.Optional(
+        Type.Number({
+          description: "Max issues to import (default: 30, max: 100)",
+          minimum: 1,
+          maximum: 100,
+        })
+      ),
+      labels: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Label names to filter by",
+        })
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // Import the function dynamically to avoid circular dependencies
+      const { runTaskImportFromGitHub } = await import("./commands/task.js");
+
+      const limit = params.limit ?? 30;
+      const labels = params.labels;
+
+      // Capture console output
+      const originalLog = console.log;
+      const originalError = console.error;
+      const logs: string[] = [];
+
+      console.log = (...args: unknown[]) => {
+        const line = args.map(String).join(" ");
+        logs.push(line);
+        originalLog.apply(console, args);
+      };
+      console.error = (...args: unknown[]) => {
+        const line = args.map(String).join(" ");
+        logs.push(line);
+        originalError.apply(console, args);
+      };
+
+      try {
+        await runTaskImportFromGitHub(params.ownerRepo, { limit, labels });
+      } finally {
+        console.log = originalLog;
+        console.error = originalError;
+      }
+
+      // Parse created task IDs from logs
+      const createdTasks: Array<{ id: string; title: string }> = [];
+      for (const line of logs) {
+        const match = line.match(/Created (KB-\d+):\s*(.+)$/);
+        if (match) {
+          createdTasks.push({ id: match[1], title: match[2].trim() });
+        }
+      }
+
+      const summary = logs.find((l) => l.includes("✓ Imported")) || "Import complete";
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${summary}\n\nCreated tasks:\n${createdTasks.map((t) => `  ${t.id}: ${t.title}`).join("\n") || "  None"}`,
+          },
+        ],
+        details: { createdTasks, summary },
+      };
+    },
+  });
+
   // ── /kb command — start the dashboard + engine ───────────────────
 
   let dashboardProcess: ChildProcess | null = null;
