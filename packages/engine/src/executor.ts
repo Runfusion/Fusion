@@ -526,7 +526,7 @@ export class TaskExecutor {
         }
         executorLog.error(`✗ ${task.id} execution failed:`, err.message);
         await this.store.logEntry(task.id, `Execution failed: ${err.message}`);
-        await this.store.updateTask(task.id, { status: "failed", error: err.message });
+        await this.store.updateTask(task.id, { status: "failed" });
         this.options.onError?.(task, err);
       }
     } finally {
