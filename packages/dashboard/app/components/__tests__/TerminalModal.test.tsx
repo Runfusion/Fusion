@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TerminalModal } from "../TerminalModal";
 import * as useTerminalModule from "../../hooks/useTerminal";
 
@@ -65,7 +65,6 @@ describe("TerminalModal", () => {
     const { container } = render(
       <TerminalModal isOpen={false} onClose={mockOnClose} />
     );
-
     expect(container.firstChild).toBeNull();
   });
 

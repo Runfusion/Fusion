@@ -61,17 +61,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     }
   }, [isOpen, initialCommand, executeCommand, showWelcome]);
 
-  // Handle escape key to close modal
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [isOpen, onClose]);
-
   // Handle overlay click to close
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
@@ -129,6 +118,17 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     },
     [isRunning, killCurrentCommand, clearHistory, navigateHistoryUp, navigateHistoryDown],
   );
+
+  // Handle escape key to close
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [isOpen, onClose]);
 
   // Handle clear button click
   const handleClear = useCallback(() => {
