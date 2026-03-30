@@ -158,6 +158,57 @@ describe("PlanningModeModal", () => {
 
       expect(screen.getByText(/Build a user authentication/)).toBeDefined();
     });
+
+    it("auto-starts planning when initialPlan prop is provided", async () => {
+      mockStartPlanning.mockResolvedValue({
+        sessionId: "session-123",
+        currentQuestion: mockQuestion,
+        summary: null,
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+          initialPlan="Build a login system from new task dialog"
+        />
+      );
+
+      // Wait for startPlanning to be called
+      await waitFor(() => {
+        expect(mockStartPlanning).toHaveBeenCalledWith("Build a login system from new task dialog");
+      });
+
+      // Should transition to question view
+      await waitFor(() => {
+        expect(screen.getByText("What is the scope?")).toBeDefined();
+      });
+    });
+
+    it("sets initial plan text in textarea when initialPlan prop is provided", async () => {
+      mockStartPlanning.mockResolvedValue({
+        sessionId: "session-123",
+        currentQuestion: mockQuestion,
+        summary: null,
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+          initialPlan="Pre-filled plan from new task"
+        />
+      );
+
+      // The auto-start should happen with the initial plan
+      await waitFor(() => {
+        expect(mockStartPlanning).toHaveBeenCalledWith("Pre-filled plan from new task");
+      });
+    });
   });
 
   describe("Planning flow", () => {

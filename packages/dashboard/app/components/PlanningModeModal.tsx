@@ -14,6 +14,7 @@ interface PlanningModeModalProps {
   onClose: () => void;
   onTaskCreated: (task: Task) => void;
   tasks: Task[];
+  initialPlan?: string;
 }
 
 interface QuestionResponse {
@@ -33,12 +34,13 @@ const EXAMPLE_PLANS = [
   "Refactor the task card component for better performance",
 ];
 
-export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks }: PlanningModeModalProps) {
+export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initialPlan: initialPlanProp }: PlanningModeModalProps) {
   const [initialPlan, setInitialPlan] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
   const [responseHistory, setResponseHistory] = useState<QuestionResponse[]>([]);
   const [editedSummary, setEditedSummary] = useState<PlanningSummary | null>(null);
+  const [hasAutoStarted, setHasAutoStarted] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Focus textarea when opening
@@ -47,6 +49,26 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks }: Pla
       textareaRef.current?.focus();
     }
   }, [isOpen, view.type]);
+
+  // Auto-start planning when initialPlan prop is provided
+  useEffect(() => {
+    if (isOpen && initialPlanProp && !hasAutoStarted && view.type === "initial") {
+      setInitialPlan(initialPlanProp);
+      setHasAutoStarted(true);
+      // Use a small timeout to allow state update to propagate before starting
+      const timer = setTimeout(() => {
+        handleStartPlanningWithPlan(initialPlanProp);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, initialPlanProp, hasAutoStarted, view.type]);
+
+  // Reset hasAutoStarted when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setHasAutoStarted(false);
+    }
+  }, [isOpen]);
 
   // Handle browser unload during active session
   useEffect(() => {
@@ -103,6 +125,28 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks }: Pla
       setView({ type: "initial" });
     }
   }, [initialPlan]);
+
+  // Helper for auto-start with a specific plan (from prop)
+  const handleStartPlanningWithPlan = useCallback(async (plan: string) => {
+    if (!plan.trim()) return;
+
+    setError(null);
+    setView({ type: "loading" });
+
+    try {
+      const session = await startPlanning(plan.trim());
+      if (session.currentQuestion) {
+        setView({ type: "question", session });
+      } else if (session.summary) {
+        setView({ type: "summary", session, summary: session.summary });
+        setEditedSummary(session.summary);
+      }
+      setResponseHistory([]);
+    } catch (err: any) {
+      setError(err.message || "Failed to start planning session");
+      setView({ type: "initial" });
+    }
+  }, []);
 
   const handleSubmitResponse = useCallback(
     async (responses: QuestionResponse) => {

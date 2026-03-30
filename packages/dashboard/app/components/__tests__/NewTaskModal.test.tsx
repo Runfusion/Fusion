@@ -262,4 +262,115 @@ describe("NewTaskModal", () => {
       );
     });
   });
+
+  // Planning mode tests
+  it("calls onPlanningMode when planning mode is checked and form is submitted", async () => {
+    const onPlanningMode = vi.fn();
+    const { props } = renderNewTaskModal({ onPlanningMode });
+    
+    const titleInput = screen.getByLabelText(/Title/i);
+    const descTextarea = screen.getByLabelText(/Description/i);
+    const checkbox = screen.getByLabelText(/Enable planning mode/i);
+    
+    fireEvent.change(titleInput, { target: { value: "My Task" } });
+    fireEvent.change(descTextarea, { target: { value: "Build a login system" } });
+    fireEvent.click(checkbox);
+    
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+    
+    await waitFor(() => {
+      expect(onPlanningMode).toHaveBeenCalledWith("Build a login system");
+    });
+  });
+
+  it("does NOT call onCreateTask when planning mode is checked", async () => {
+    const onPlanningMode = vi.fn();
+    const { props } = renderNewTaskModal({ onPlanningMode });
+    
+    const descTextarea = screen.getByLabelText(/Description/i);
+    const checkbox = screen.getByLabelText(/Enable planning mode/i);
+    
+    fireEvent.change(descTextarea, { target: { value: "Build a login system" } });
+    fireEvent.click(checkbox);
+    
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+    
+    await waitFor(() => {
+      expect(onPlanningMode).toHaveBeenCalled();
+    });
+    
+    expect(props.onCreateTask).not.toHaveBeenCalled();
+  });
+
+  it("calls onCreateTask normally when planning mode is unchecked", async () => {
+    const onPlanningMode = vi.fn();
+    const { props } = renderNewTaskModal({ onPlanningMode });
+    
+    const descTextarea = screen.getByLabelText(/Description/i);
+    fireEvent.change(descTextarea, { target: { value: "Normal task" } });
+    
+    // Ensure planning mode is unchecked
+    const checkbox = screen.getByLabelText(/Enable planning mode/i) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+    
+    await waitFor(() => {
+      expect(props.onCreateTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Normal task",
+        }),
+      );
+    });
+    
+    expect(onPlanningMode).not.toHaveBeenCalled();
+  });
+
+  it("closes modal after triggering planning mode", async () => {
+    const onPlanningMode = vi.fn();
+    const { props } = renderNewTaskModal({ onPlanningMode });
+    
+    const descTextarea = screen.getByLabelText(/Description/i);
+    const checkbox = screen.getByLabelText(/Enable planning mode/i);
+    
+    fireEvent.change(descTextarea, { target: { value: "Build a login system" } });
+    fireEvent.click(checkbox);
+    
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+    
+    await waitFor(() => {
+      expect(props.onClose).toHaveBeenCalled();
+    });
+  });
+
+  it("clears form state after triggering planning mode", async () => {
+    const onPlanningMode = vi.fn();
+    renderNewTaskModal({ onPlanningMode });
+    
+    const titleInput = screen.getByLabelText(/Title/i);
+    const descTextarea = screen.getByLabelText(/Description/i);
+    const checkbox = screen.getByLabelText(/Enable planning mode/i);
+    
+    fireEvent.change(titleInput, { target: { value: "My Task" } });
+    fireEvent.change(descTextarea, { target: { value: "Build a login system" } });
+    fireEvent.click(checkbox);
+    
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+    
+    await waitFor(() => {
+      expect(onPlanningMode).toHaveBeenCalled();
+    });
+    
+    // Re-open the modal and check that state is cleared
+    renderNewTaskModal({ 
+      isOpen: true, 
+      onPlanningMode,
+      onClose: vi.fn(),
+    });
+    
+    await waitFor(() => {
+      const newDescTextarea = screen.getAllByLabelText(/Description/i)[0];
+      expect(newDescTextarea).toHaveValue("");
+    });
+  });
 });

@@ -21,6 +21,7 @@ import { useTheme } from "./hooks/useTheme";
 function AppInner() {
   const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
   const [isPlanningOpen, setIsPlanningOpen] = useState(false);
+  const [planningInitialPlan, setPlanningInitialPlan] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [githubImportOpen, setGitHubImportOpen] = useState(false);
@@ -126,11 +127,21 @@ function AppInner() {
 
   // Planning mode handlers
   const handlePlanningOpen = useCallback(() => setIsPlanningOpen(true), []);
-  const handlePlanningClose = useCallback(() => setIsPlanningOpen(false), []);
+  const handlePlanningClose = useCallback(() => {
+    setIsPlanningOpen(false);
+    setPlanningInitialPlan(null);
+  }, []);
   const handlePlanningTaskCreated = useCallback((task: Task) => {
     addToast(`Created ${task.id} from planning mode`, "success");
     setIsPlanningOpen(false);
+    setPlanningInitialPlan(null);
   }, [addToast]);
+
+  // Handle planning mode from new task dialog
+  const handleNewTaskPlanningMode = useCallback((initialPlan: string) => {
+    setPlanningInitialPlan(initialPlan);
+    setIsPlanningOpen(true);
+  }, []);
 
   // Usage indicator handlers
   const handleOpenUsage = useCallback(() => setUsageOpen(true), []);
@@ -273,6 +284,7 @@ function AppInner() {
         onClose={handlePlanningClose}
         onTaskCreated={handlePlanningTaskCreated}
         tasks={tasks}
+        initialPlan={planningInitialPlan ?? undefined}
       />
       <TerminalModal
         isOpen={terminalOpen}
@@ -288,6 +300,7 @@ function AppInner() {
         tasks={tasks}
         onCreateTask={handleModalCreate}
         addToast={addToast}
+        onPlanningMode={handleNewTaskPlanningMode}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>

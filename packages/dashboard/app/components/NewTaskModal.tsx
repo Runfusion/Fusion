@@ -18,6 +18,7 @@ interface NewTaskModalProps {
   tasks: Task[]; // for dependency selection
   onCreateTask: (input: TaskCreateInput) => Promise<Task>;
   addToast: (message: string, type?: ToastType) => void;
+  onPlanningMode?: (initialPlan: string) => void;
 }
 
 /**
@@ -285,7 +286,7 @@ function ModelCombobox({
   );
 }
 
-export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast }: NewTaskModalProps) {
+export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, onPlanningMode }: NewTaskModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dependencies, setDependencies] = useState<string[]>([]);
@@ -415,6 +416,31 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast }:
     const trimmedDesc = description.trim();
     if (!trimmedDesc || isSubmitting) return;
 
+    // Planning mode flow: skip task creation, open planning modal instead
+    if (enablePlanningMode && onPlanningMode) {
+      setIsSubmitting(true);
+      try {
+        // Clean up object URLs before closing
+        pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+        
+        // Clear form state
+        setPendingImages([]);
+        setTitle("");
+        setDescription("");
+        setDependencies([]);
+        setExecutorModel("");
+        setValidatorModel("");
+        setEnablePlanningMode(false);
+        
+        // Close modal and trigger planning mode
+        onClose();
+        onPlanningMode(trimmedDesc);
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       // Create the base task
@@ -444,7 +470,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast }:
       const executorSlashIdx = executorModel.indexOf("/");
       const validatorSlashIdx = validatorModel.indexOf("/");
       
-      if (executorModel || validatorModel || enablePlanningMode) {
+      if (executorModel || validatorModel) {
         const updates: Parameters<typeof updateTask>[1] = {};
         
         if (executorModel && executorSlashIdx !== -1) {
@@ -456,9 +482,6 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast }:
           updates.validatorModelProvider = validatorModel.slice(0, validatorSlashIdx);
           updates.validatorModelId = validatorModel.slice(validatorSlashIdx + 1);
         }
-        
-        // Note: enablePlanningMode would need backend support
-        // TODO: Add backend support for per-task planning mode
         
         if (Object.keys(updates).length > 0) {
           await updateTask(task.id, updates);
@@ -482,7 +505,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast }:
     } finally {
       setIsSubmitting(false);
     }
-  }, [description, title, dependencies, pendingImages, executorModel, validatorModel, enablePlanningMode, isSubmitting, onCreateTask, addToast, onClose]);
+  }, [description, title, dependencies, pendingImages, executorModel, validatorModel, enablePlanningMode, isSubmitting, onCreateTask, addToast, onClose, onPlanningMode]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
