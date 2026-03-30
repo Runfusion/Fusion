@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import type { ToastType } from "../hooks/useToast";
 
 interface QuickEntryBoxProps {
-  onCreate: (description: string) => Promise<void>;
+  onCreate?: (description: string) => Promise<void>;
   addToast: (message: string, type?: ToastType) => void;
 }
 
@@ -12,6 +12,9 @@ export function QuickEntryBox({ onCreate, addToast }: QuickEntryBoxProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // If onCreate is not provided, the component is disabled
+  const isDisabled = !onCreate;
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -54,7 +57,7 @@ export function QuickEntryBox({ onCreate, addToast }: QuickEntryBoxProps) {
 
   const handleSubmit = useCallback(async () => {
     const trimmed = description.trim();
-    if (!trimmed || isSubmitting) return;
+    if (!trimmed || isSubmitting || !onCreate) return;
 
     setIsSubmitting(true);
     try {
@@ -144,7 +147,7 @@ export function QuickEntryBox({ onCreate, addToast }: QuickEntryBoxProps) {
         onKeyDown={handleKeyDown}
         onFocus={handleFocus}
         onBlur={handleBlur}
-        disabled={isSubmitting}
+        disabled={isSubmitting || isDisabled}
         data-testid="quick-entry-input"
         rows={1}
       />

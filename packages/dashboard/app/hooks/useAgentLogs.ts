@@ -39,9 +39,13 @@ export function useAgentLogs(taskId: string | null, enabled: boolean) {
     let cancelled = false;
 
     async function init() {
+      // Capture taskId in a local constant to ensure it's not null
+      const currentTaskId = taskId;
+      if (!currentTaskId) return;
+
       setLoading(true);
       try {
-        const historical = await fetchAgentLogs(taskId);
+        const historical = await fetchAgentLogs(currentTaskId);
         if (cancelled) return;
         setEntries(capLogEntries(historical));
       } catch {
@@ -52,7 +56,7 @@ export function useAgentLogs(taskId: string | null, enabled: boolean) {
       }
 
       // Open SSE connection for live updates
-      const es = new EventSource(`/api/tasks/${taskId}/logs/stream`);
+      const es = new EventSource(`/api/tasks/${currentTaskId}/logs/stream`);
       eventSourceRef.current = es;
 
       es.addEventListener("agent:log", (e) => {
