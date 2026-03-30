@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PrCommentHandler } from "./pr-comment-handler.js";
-import type { TaskStore } from "@kb/core";
+import type { TaskStore, Task } from "@kb/core";
 
 const mockStore = {
-  addSteeringComment: vi.fn(),
-  createTask: vi.fn().mockResolvedValue({ id: "KB-123" }),
+  addSteeringComment: vi.fn<(id: string, text: string, author?: "user" | "agent") => Promise<Task>>(),
+  createTask: vi.fn<(input: Parameters<TaskStore["createTask"]>[0]) => Promise<Task>>().mockResolvedValue({ id: "KB-123" } as Task),
 } as unknown as TaskStore;
 
 describe("PrCommentHandler", () => {
@@ -126,7 +126,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const call = mockStore.addSteeringComment.mock.calls[0];
+      const call = (mockStore.addSteeringComment as ReturnType<typeof vi.fn>).mock.calls[0];
       const text = call[1] as string;
 
       expect(text).toContain("PR Review Feedback");
@@ -151,7 +151,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const call = mockStore.addSteeringComment.mock.calls[0];
+      const call = (mockStore.addSteeringComment as ReturnType<typeof vi.fn>).mock.calls[0];
       const text = call[1] as string;
 
       expect(text.length).toBeLessThan(longBody.length);
@@ -189,7 +189,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const text = mockStore.addSteeringComment.mock.calls[0][1] as string;
+      const text = (mockStore.addSteeringComment as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
       expect(text).toContain("This PR is already merged");
       expect(text).toContain("follow-up work");
     });
@@ -242,7 +242,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const call = mockStore.createTask.mock.calls[0];
+      const call = (mockStore.createTask as ReturnType<typeof vi.fn>).mock.calls[0];
       const description = call[0].description as string;
 
       expect(description).toContain("@reviewer1");

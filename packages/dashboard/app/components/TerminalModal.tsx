@@ -3,6 +3,7 @@ import { X, Trash2, Terminal as TerminalIcon, RefreshCw } from "lucide-react";
 import { useTerminal } from "../hooks/useTerminal";
 import { createTerminalSession, killPtyTerminalSession } from "../api";
 import type { Terminal as XTerm, ITerminalAddon } from "@xterm/xterm";
+import type { FitAddon } from "@xterm/addon-fit";
 
 import "@xterm/xterm/css/xterm.css";
 

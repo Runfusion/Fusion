@@ -4,12 +4,12 @@
   "type": "module",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
     },
     "./gh-cli": {
-      "import": "./dist/gh-cli.js",
-      "types": "./dist/gh-cli.d.ts"
+      "types": "./src/gh-cli.ts",
+      "import": "./dist/gh-cli.js"
     }
   },
   "publishConfig": {

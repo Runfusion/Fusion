@@ -222,7 +222,17 @@ pnpm dev
 
 ### Strict TypeScript Verification
 
-The dashboard enforces strict type-checking via `src/__tests__/typecheck.test.ts`, which runs `tsc --noEmit --skipLibCheck false`. This ensures type safety across the workspace and catches missing or incompatible types in dependencies. The test verifies that dashboard source code (which imports from `@kb/engine`) satisfies all TypeScript constraints without skipping library type definitions.
+The dashboard enforces strict type-checking via `src/__tests__/typecheck.test.ts`, which runs `pnpm typecheck` to verify the workspace type-checks cleanly from a clean checkout. The test temporarily moves any existing `dist/` directories to ensure type resolution happens against source files, not stale build artifacts. This ensures type safety across the workspace and catches missing or incompatible types in dependencies without requiring a full build first.
+
+### Workspace Type Checking
+
+From the repository root, validate all packages without building:
+
+```bash
+pnpm typecheck                  # Type-check all packages from clean checkout
+```
+
+This works by configuring packages to resolve their workspace dependencies via TypeScript's module resolution against source files. The dashboard's own `typecheck` script runs both server (`src/`) and client (`app/`) type checks.
 
 ## API Endpoints
 

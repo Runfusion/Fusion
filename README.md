@@ -163,6 +163,16 @@ pnpm dev dashboard              # Board + AI engine
 pnpm dev task list              # CLI commands
 ```
 
+### Type Checking
+
+The workspace supports clean-checkout type checking — no build artifacts required:
+
+```bash
+pnpm typecheck                  # Type-check all packages
+```
+
+This command validates TypeScript across all packages using source file resolution, without requiring `dist/` output from prior builds. Run it after cloning or before committing to catch type errors early.
+
 ## Building a standalone executable
 
 You can build a single self-contained `kb` binary using [Bun](https://bun.sh/):

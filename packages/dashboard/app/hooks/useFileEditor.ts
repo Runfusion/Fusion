@@ -56,7 +56,7 @@ export function useFileEditor(
       setError(null);
 
       try {
-        const response: FileContentResponse = await fetchFileContent(taskId, filePath);
+        const response: FileContentResponse = await fetchFileContent(taskId, filePath!);
 
         if (!cancelled) {
           setContentState(response.content);

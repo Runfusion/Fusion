@@ -379,7 +379,7 @@ describe("PlanningModeModal", () => {
       const onDeleteTask = vi.fn<(_: string) => Promise<Task>>().mockResolvedValue(mockTasks[0]);
       const onMergeTask = vi
         .fn<(_: string) => Promise<MergeResult>>()
-        .mockResolvedValue({ merged: true, branch: "kb/kb-999" });
+        .mockResolvedValue({ merged: true, branch: "kb/kb-999", task: mockTasks[0], worktreeRemoved: true, branchDeleted: true });
 
       const { container } = render(
         <TaskDetailModal

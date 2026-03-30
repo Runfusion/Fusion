@@ -1,9 +1,17 @@
 import type { TaskStore, Task, Column, Settings, MergeResult } from "@kb/core";
+import { EventEmitter } from "node:events";
 import { schedulerLog } from "./logger.js";
 
 export interface NtfyNotifierOptions {
   /** Base URL for ntfy.sh. Default: https://ntfy.sh */
   ntfyBaseUrl?: string;
+}
+
+/** Minimal store interface needed by NtfyNotifier */
+interface NtfyNotifierStore {
+  getSettings(): Promise<Settings> | Settings;
+  on(event: string, listener: (...args: any[]) => void): void;
+  off(event: string, listener: (...args: any[]) => void): void;
 }
 
 interface NtfyConfig {
@@ -34,7 +42,7 @@ export class NtfyNotifier {
   private abortController: AbortController | null = null;
 
   constructor(
-    private store: TaskStore,
+    private store: NtfyNotifierStore,
     options: NtfyNotifierOptions = {},
   ) {
     this.ntfyBaseUrl = options.ntfyBaseUrl ?? "https://ntfy.sh";

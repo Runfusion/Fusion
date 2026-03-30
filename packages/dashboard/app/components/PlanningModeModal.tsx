@@ -334,7 +334,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
                 // Reset to question mode for more refinement
                 setView({ type: "question", session: view.session });
               }}
-              isLoading={view.type === "loading"}
+              isLoading={false}
             />
           )}
         </div>
@@ -377,7 +377,7 @@ function QuestionForm({ question, progress, onSubmit, onBack }: QuestionFormProp
       case "single_select":
         return response[question.id] !== undefined;
       case "multi_select":
-        return Array.isArray(response[question.id]) && response[question.id].length > 0;
+        return Array.isArray(response[question.id] as unknown) && (response[question.id] as unknown[]).length > 0;
       case "confirm":
         return response[question.id] !== undefined;
       default:

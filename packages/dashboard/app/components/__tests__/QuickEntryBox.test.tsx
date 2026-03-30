@@ -16,7 +16,7 @@ describe("QuickEntryBox", () => {
     renderQuickEntryBox();
     const input = screen.getByTestId("quick-entry-input");
     expect(input).toBeTruthy();
-    expect(input.placeholder).toBe("Add a task...");
+    expect((input as HTMLInputElement).placeholder).toBe("Add a task...");
   });
 
   it("creates task on Enter key", async () => {
@@ -42,7 +42,7 @@ describe("QuickEntryBox", () => {
 
     // Check loading placeholder
     await waitFor(() => {
-      expect(input.placeholder).toBe("Creating...");
+      expect((input as HTMLInputElement).placeholder).toBe("Creating...");
     });
 
     // Input should be disabled during creation
@@ -60,7 +60,7 @@ describe("QuickEntryBox", () => {
       expect(props.onCreate).toHaveBeenCalled();
     });
 
-    expect(input.value).toBe("");
+    expect((input as HTMLInputElement).value).toBe("");
   });
 
   it("shows error toast on failure and keeps input content", async () => {
@@ -76,7 +76,7 @@ describe("QuickEntryBox", () => {
     });
 
     // Input content should be preserved for retry
-    expect(input.value).toBe("Failed task");
+    expect((input as HTMLInputElement).value).toBe("Failed task");
   });
 
   it("clears non-empty input on Escape key", () => {
@@ -84,10 +84,10 @@ describe("QuickEntryBox", () => {
     const input = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(input, { target: { value: "Some text" } });
-    expect(input.value).toBe("Some text");
+    expect((input as HTMLInputElement).value).toBe("Some text");
 
     fireEvent.keyDown(input, { key: "Escape" });
-    expect(input.value).toBe("");
+    expect((input as HTMLInputElement).value).toBe("");
   });
 
   it("does not clear empty input on Escape key", () => {
@@ -95,7 +95,7 @@ describe("QuickEntryBox", () => {
     const input = screen.getByTestId("quick-entry-input");
 
     fireEvent.keyDown(input, { key: "Escape" });
-    expect(input.value).toBe("");
+    expect((input as HTMLInputElement).value).toBe("");
   });
 
   it("does not submit on Enter if input is empty", async () => {
@@ -137,7 +137,7 @@ describe("QuickEntryBox", () => {
     const input = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(input, { target: { value: "Updated text" } });
-    expect(input.value).toBe("Updated text");
+    expect((input as HTMLInputElement).value).toBe("Updated text");
   });
 
   it("trims whitespace when creating task", async () => {

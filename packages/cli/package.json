@@ -60,6 +60,7 @@
     "@kb/dashboard": "workspace:*",
     "@kb/engine": "workspace:*",
     "@sinclair/typebox": "^0.34.0",
+    "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.1.0",
     "tsup": "^8.5.1",
     "tsx": "^4.19.0",
