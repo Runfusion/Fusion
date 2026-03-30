@@ -109,6 +109,7 @@ export function useTerminal(): TerminalState & TerminalActions {
   const currentEntryRef = useRef<TerminalHistoryEntry | null>(null);
   const historyRef = useRef(history);
   const currentDirRef = useRef(currentDirectory);
+  const historyIndexRef = useRef(historyIndex);  // Track historyIndex in ref for navigation
   
   // Keep history ref in sync for access in event handlers
   useEffect(() => {
@@ -119,6 +120,11 @@ export function useTerminal(): TerminalState & TerminalActions {
   useEffect(() => {
     currentDirRef.current = currentDirectory;
   }, [currentDirectory]);
+  
+  // Keep historyIndex ref in sync
+  useEffect(() => {
+    historyIndexRef.current = historyIndex;
+  }, [historyIndex]);
 
   /**
    * Handle local commands (cd, clear, cls) without API call.
@@ -387,63 +393,84 @@ export function useTerminal(): TerminalState & TerminalActions {
   }, [isRunning, currentSessionId]);
 
   /**
-   * Navigate to previous command in history (Up arrow).
-   * Returns the command string or null if no history.
+   * Navigate command history with direction parameter.
+   * This is the interface expected by TerminalModal component.
+   * Also handles setting the input value.
    */
-  const navigateHistoryUp = useCallback(() => {
+  const navigateHistory = useCallback((direction: "up" | "down", currentInput?: string): string | null => {
     if (historyRef.current.length === 0) return null;
     
-    // Store original input on first navigation up
-    if (historyIndex === -1) {
-      setOriginalInput(inputValue);
+    // Read current index from the ref (most up-to-date value)
+    const currentIndex = historyIndexRef.current;
+    
+    if (direction === "up") {
+      // Store original input on first navigation up
+      if (currentIndex === -1 && currentInput !== undefined) {
+        setOriginalInput(currentInput);
+      } else if (currentIndex === -1) {
+        setOriginalInput(inputValue);
+      }
+      
+      const newIndex = currentIndex + 1;
+      if (newIndex >= historyRef.current.length) return null;
+      
+      // Update both state and ref immediately
+      setHistoryIndex(newIndex);
+      historyIndexRef.current = newIndex;
+      
+      // Calculate which command to return (most recent first)
+      // history = [first, second], length = 2
+      // newIndex = 0: return history[2 - 1 - 0] = history[1] = "second" 
+      // newIndex = 1: return history[2 - 1 - 1] = history[0] = "first"
+      const commandIndex = historyRef.current.length - 1 - newIndex;
+      const command = historyRef.current[commandIndex]?.command || "";
+      
+      setInputValue(command);
+      return command;
+    } else {
+      // Down direction
+      if (currentIndex <= 0) {
+        // Restore original input and reset index
+        setHistoryIndex(-1);
+        historyIndexRef.current = -1;
+        setInputValue(originalInput);
+        return originalInput;
+      }
+      
+      const newIndex = currentIndex - 1;
+      setHistoryIndex(newIndex);
+      historyIndexRef.current = newIndex;
+      
+      const commandIndex = historyRef.current.length - 1 - newIndex;
+      const command = historyRef.current[commandIndex]?.command || "";
+      
+      setInputValue(command);
+      return command;
     }
-    
-    const newIndex = historyIndex + 1;
-    if (newIndex >= historyRef.current.length) return null;
-    
-    setHistoryIndex(newIndex);
-    const command = historyRef.current[historyRef.current.length - 1 - newIndex]?.command || "";
-    setInputValue(command);
-    return command;
-  }, [historyIndex, inputValue]);
+  }, [inputValue, originalInput]);
+
+  /**
+   * Navigate to previous command in history (Up arrow).
+   * Wrapper around navigateHistory for direct use.
+   */
+  const navigateHistoryUp = useCallback((): string | null => {
+    return navigateHistory("up", inputValue);
+  }, [navigateHistory, inputValue]);
 
   /**
    * Navigate to next command in history (Down arrow).
-   * Returns the command string or null if at end.
+   * Wrapper around navigateHistory for direct use.
    */
-  const navigateHistoryDown = useCallback(() => {
-    if (historyIndex <= 0) {
-      setHistoryIndex(-1);
-      // Restore original input that was typed before navigating
-      const restored = originalInput;
-      setInputValue(restored);
-      return restored;
-    }
-    
-    const newIndex = historyIndex - 1;
-    setHistoryIndex(newIndex);
-    const command = historyRef.current[historyRef.current.length - 1 - newIndex]?.command || "";
-    setInputValue(command);
-    return command;
-  }, [historyIndex, originalInput]);
-
-  /**
-   * Navigate command history with direction parameter.
-   * This is the interface expected by TerminalModal component.
-   */
-  const navigateHistory = useCallback((direction: "up" | "down", _currentInput?: string): string | null => {
-    if (direction === "up") {
-      return navigateHistoryUp();
-    } else {
-      return navigateHistoryDown();
-    }
-  }, [navigateHistoryUp, navigateHistoryDown]);
+  const navigateHistoryDown = useCallback((): string | null => {
+    return navigateHistory("down");
+  }, [navigateHistory]);
 
   /**
    * Reset history navigation to default state.
    */
   const resetHistoryNavigation = useCallback(() => {
     setHistoryIndex(-1);
+    historyIndexRef.current = -1;
   }, []);
 
   /**
