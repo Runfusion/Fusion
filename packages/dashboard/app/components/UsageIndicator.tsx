@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { X, RefreshCw, Activity } from "lucide-react";
 import type { ProviderUsage, UsageWindow } from "../api";
 import { useUsageData } from "../hooks/useUsageData";
+import { ProviderIcon } from "./ProviderIcon";
 
 interface UsageIndicatorProps {
   isOpen: boolean;
@@ -20,31 +21,42 @@ function getUsageColorClass(percentUsed: number): string {
   return "usage-progress-fill--low";
 }
 
+interface UsageWindowRowProps {
+  window: UsageWindow;
+  viewMode: 'used' | 'remaining';
+}
+
 /**
  * Single usage window row with progress bar
  */
-function UsageWindowRow({ window }: { window: UsageWindow }) {
+function UsageWindowRow({ window, viewMode }: UsageWindowRowProps) {
   const colorClass = getUsageColorClass(window.percentUsed);
+  const isRemainingMode = viewMode === 'remaining';
+  
+  // Display percentage based on view mode, but color always based on actual usage
+  const displayPercent = isRemainingMode ? window.percentLeft : window.percentUsed;
+  const headerText = isRemainingMode ? `${window.percentLeft}% remaining` : `${window.percentUsed}% used`;
+  const footerText = isRemainingMode ? `${window.percentUsed}% used` : `${window.percentLeft}% left`;
 
   return (
     <div className="usage-window">
       <div className="usage-window-header">
         <span className="usage-window-label">{window.label}</span>
-        <span className="usage-window-percentage">{window.percentUsed}% used</span>
+        <span className="usage-window-percentage">{headerText}</span>
       </div>
       <div className="usage-progress-bar">
         <div
           className={`usage-progress-fill ${colorClass}`}
-          style={{ width: `${window.percentUsed}%` }}
+          style={{ width: `${displayPercent}%` }}
           role="progressbar"
-          aria-valuenow={window.percentUsed}
+          aria-valuenow={displayPercent}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-label={`${window.label} usage: ${window.percentUsed}%`}
+          aria-label={`${window.label}: ${headerText}`}
         />
       </div>
       <div className="usage-window-footer">
-        <span className="usage-window-left">{window.percentLeft}% left</span>
+        <span className="usage-window-left">{footerText}</span>
         {window.resetText && (
           <span className="usage-window-reset">{window.resetText}</span>
         )}
@@ -53,10 +65,39 @@ function UsageWindowRow({ window }: { window: UsageWindow }) {
   );
 }
 
+interface ProviderCardProps {
+  provider: ProviderUsage;
+  viewMode: 'used' | 'remaining';
+}
+
+/**
+ * Map provider names to ProviderIcon provider keys
+ */
+function getProviderIconKey(providerName: string): string {
+  const normalized = providerName.toLowerCase();
+  
+  // Map common provider names to their icon keys
+  if (normalized.includes('claude') || normalized.includes('anthropic')) {
+    return 'anthropic';
+  }
+  if (normalized.includes('codex') || normalized.includes('openai') || normalized.includes('gpt')) {
+    return 'openai';
+  }
+  if (normalized.includes('gemini') || normalized.includes('google')) {
+    return 'google';
+  }
+  if (normalized.includes('ollama')) {
+    return 'ollama';
+  }
+  
+  // Return the original name as fallback (ProviderIcon will show a default icon)
+  return providerName;
+}
+
 /**
  * Provider card showing status and usage windows
  */
-function ProviderCard({ provider }: { provider: ProviderUsage }) {
+function ProviderCard({ provider, viewMode }: ProviderCardProps) {
   const getStatusBadge = () => {
     switch (provider.status) {
       case "ok":
@@ -85,9 +126,7 @@ function ProviderCard({ provider }: { provider: ProviderUsage }) {
     <div className="usage-provider" data-provider={provider.name} data-status={provider.status}>
       <div className="usage-provider-header">
         <div className="usage-provider-info">
-          <span className="usage-provider-icon" role="img" aria-label={provider.name}>
-            {provider.icon}
-          </span>
+          <ProviderIcon provider={getProviderIconKey(provider.name)} size="md" />
           <span className="usage-provider-name">{provider.name}</span>
         </div>
         {getStatusBadge()}
@@ -109,7 +148,7 @@ function ProviderCard({ provider }: { provider: ProviderUsage }) {
       {provider.windows.length > 0 ? (
         <div className="usage-provider-windows">
           {provider.windows.map((window, index) => (
-            <UsageWindowRow key={`${provider.name}-${window.label}-${index}`} window={window} />
+            <UsageWindowRow key={`${provider.name}-${window.label}-${index}`} window={window} viewMode={viewMode} />
           ))}
         </div>
       ) : provider.status === "ok" ? (
@@ -153,7 +192,22 @@ export function UsageIndicator({ isOpen, onClose }: UsageIndicatorProps) {
   });
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [viewMode, setViewMode] = useState<'used' | 'remaining'>('used');
   const contentRef = useRef<HTMLDivElement>(null);
+
+  // Load view mode preference from localStorage on mount
+  useEffect(() => {
+    const savedMode = localStorage.getItem('kb-usage-view-mode');
+    if (savedMode === 'used' || savedMode === 'remaining') {
+      setViewMode(savedMode);
+    }
+  }, []);
+
+  // Persist view mode to localStorage when it changes
+  const handleViewModeChange = useCallback((mode: 'used' | 'remaining') => {
+    setViewMode(mode);
+    localStorage.setItem('kb-usage-view-mode', mode);
+  }, []);
 
   // Handle manual refresh
   const handleRefresh = useCallback(async () => {
@@ -196,14 +250,34 @@ export function UsageIndicator({ isOpen, onClose }: UsageIndicatorProps) {
             <Activity size={18} className="usage-header-icon" />
             <h3>Usage</h3>
           </div>
-          <button
-            className="modal-close"
-            onClick={onClose}
-            aria-label="Close usage modal"
-            data-testid="usage-modal-close"
-          >
-            <X size={20} />
-          </button>
+          <div className="usage-header-actions">
+            <div className="usage-view-toggle" role="group" aria-label="Usage view mode">
+              <button
+                className={`usage-view-toggle-btn ${viewMode === 'used' ? 'active' : ''}`}
+                onClick={() => handleViewModeChange('used')}
+                aria-pressed={viewMode === 'used'}
+                data-testid="usage-view-toggle-used"
+              >
+                Used
+              </button>
+              <button
+                className={`usage-view-toggle-btn ${viewMode === 'remaining' ? 'active' : ''}`}
+                onClick={() => handleViewModeChange('remaining')}
+                aria-pressed={viewMode === 'remaining'}
+                data-testid="usage-view-toggle-remaining"
+              >
+                Remaining
+              </button>
+            </div>
+            <button
+              className="modal-close"
+              onClick={onClose}
+              aria-label="Close usage modal"
+              data-testid="usage-modal-close"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="usage-content" ref={contentRef}>
@@ -227,7 +301,7 @@ export function UsageIndicator({ isOpen, onClose }: UsageIndicatorProps) {
           ) : (
             <div className="usage-providers">
               {providers.map((provider) => (
-                <ProviderCard key={provider.name} provider={provider} />
+                <ProviderCard key={provider.name} provider={provider} viewMode={viewMode} />
               ))}
             </div>
           )}

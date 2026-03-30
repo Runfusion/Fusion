@@ -374,4 +374,199 @@ describe("UsageIndicator", () => {
     expect(screen.getByText("55% left")).toBeInTheDocument();
     expect(screen.getByText("resets in 2h")).toBeInTheDocument();
   });
+
+  // View mode toggle tests
+  it("renders view mode toggle buttons with correct initial state", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    const usedBtn = screen.getByTestId("usage-view-toggle-used");
+    const remainingBtn = screen.getByTestId("usage-view-toggle-remaining");
+
+    expect(usedBtn).toBeInTheDocument();
+    expect(remainingBtn).toBeInTheDocument();
+    expect(usedBtn).toHaveClass("active");
+    expect(remainingBtn).not.toHaveClass("active");
+  });
+
+  it("switches view mode when toggle buttons are clicked", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "TestProvider",
+          icon: "🧪",
+          status: "ok",
+          windows: [
+            { label: "Session", percentUsed: 45, percentLeft: 55, resetText: "resets in 2h" },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    const usedBtn = screen.getByTestId("usage-view-toggle-used");
+    const remainingBtn = screen.getByTestId("usage-view-toggle-remaining");
+
+    // Initially shows "used" view
+    expect(screen.getByText("45% used")).toBeInTheDocument();
+
+    // Click remaining button
+    fireEvent.click(remainingBtn);
+
+    // Now should show "remaining" view
+    expect(remainingBtn).toHaveClass("active");
+    expect(usedBtn).not.toHaveClass("active");
+    expect(screen.getByText("55% remaining")).toBeInTheDocument();
+    expect(screen.getByText("45% used")).toBeInTheDocument(); // Footer text
+
+    // Click back to used
+    fireEvent.click(usedBtn);
+
+    expect(usedBtn).toHaveClass("active");
+    expect(remainingBtn).not.toHaveClass("active");
+    expect(screen.getByText("45% used")).toBeInTheDocument();
+  });
+
+  it("reads view mode from localStorage on mount", () => {
+    // Set localStorage to 'remaining' before rendering
+    localStorage.setItem("kb-usage-view-mode", "remaining");
+
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "TestProvider",
+          icon: "🧪",
+          status: "ok",
+          windows: [
+            { label: "Session", percentUsed: 45, percentLeft: 55, resetText: "resets in 2h" },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    const usedBtn = screen.getByTestId("usage-view-toggle-used");
+    const remainingBtn = screen.getByTestId("usage-view-toggle-remaining");
+
+    // Should initialize to 'remaining' from localStorage
+    expect(remainingBtn).toHaveClass("active");
+    expect(usedBtn).not.toHaveClass("active");
+    expect(screen.getByText("55% remaining")).toBeInTheDocument();
+
+    // Clean up
+    localStorage.removeItem("kb-usage-view-mode");
+  });
+
+  it("persists view mode to localStorage when changed", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    const remainingBtn = screen.getByTestId("usage-view-toggle-remaining");
+
+    // Click remaining button
+    fireEvent.click(remainingBtn);
+
+    // Should save to localStorage
+    expect(localStorage.getItem("kb-usage-view-mode")).toBe("remaining");
+
+    // Clean up
+    localStorage.removeItem("kb-usage-view-mode");
+  });
+
+  // ProviderIcon integration tests
+  it("renders SVG provider icons instead of emoji", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        { name: "Anthropic", icon: "🅰️", status: "ok", windows: [] },
+        { name: "OpenAI", icon: "🤖", status: "ok", windows: [] },
+        { name: "Google", icon: "🔍", status: "ok", windows: [] },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    // Should render SVG icons with correct provider data attributes
+    expect(document.querySelector('[data-provider="anthropic"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-provider="openai"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-provider="google"]')).toBeInTheDocument();
+  });
+
+  it("maps Claude provider to anthropic icon", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        { name: "Claude", icon: "🅰️", status: "ok", windows: [] },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    expect(document.querySelector('[data-provider="anthropic"]')).toBeInTheDocument();
+    expect(document.querySelector("svg[aria-label='Anthropic']")).toBeInTheDocument();
+  });
+
+  it("maps Codex provider to openai icon", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        { name: "Codex", icon: "🤖", status: "ok", windows: [] },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    expect(document.querySelector('[data-provider="openai"]')).toBeInTheDocument();
+    expect(document.querySelector("svg[aria-label='OpenAI']")).toBeInTheDocument();
+  });
+
+  it("maps Gemini provider to google icon", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        { name: "Gemini", icon: "🔍", status: "ok", windows: [] },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    expect(document.querySelector('[data-provider="google"]')).toBeInTheDocument();
+    expect(document.querySelector("svg[aria-label='Google Gemini']")).toBeInTheDocument();
+  });
 });
