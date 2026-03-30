@@ -419,7 +419,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
@@ -486,6 +486,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.validatorModelId = undefined;
       } else if (updates.validatorModelId !== undefined) {
         task.validatorModelId = updates.validatorModelId;
+      }
+      if (updates.error === null) {
+        task.error = undefined;
+      } else if (updates.error !== undefined) {
+        task.error = updates.error;
       }
       task.updatedAt = new Date().toISOString();
 

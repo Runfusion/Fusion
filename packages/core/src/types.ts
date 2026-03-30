@@ -151,6 +151,8 @@ export interface Task {
   /** ISO-8601 timestamp of when the task last entered its current column.
    *  Used to sort cards within a column so that recently-moved cards appear at the top. */
   columnMovedAt?: string;
+  /** Error message from the last failure, if the task failed during execution */
+  error?: string;
   createdAt: string;
   updatedAt: string;
 }
