@@ -1,3 +1,20 @@
+/**
+ * EventSource Mock Cleanup Requirements:
+ * 
+ * This test file uses a MockEventSource class that tracks all instances in a static
+ * `instances` array. To prevent test isolation issues, we must ensure:
+ * 
+ * 1. `MockEventSource.instances` is reset to empty before each test
+ * 2. Any lingering EventSource instances are closed and removed after each test
+ * 3. Fake timers are restored to real timers after each test (in case a test failed
+ *    before it could restore them)
+ * 4. The reconnectTimer from useTasks hook (3000ms) is cleared by closing all
+ *    EventSources in afterEach
+ * 
+ * Without proper cleanup, fake timers from one test can leak to subsequent tests,
+ * causing `waitFor()` calls to hang indefinitely.
+ */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useTasks } from "../useTasks";
@@ -55,13 +72,27 @@ class MockEventSource {
 const originalEventSource = globalThis.EventSource;
 
 beforeEach(() => {
+  // Reset all mock state
   MockEventSource.instances = [];
   (globalThis as any).EventSource = MockEventSource;
   mockFetchTasks.mockReset().mockResolvedValue([]);
+  
+  // Ensure we start with real timers for every test
+  vi.useRealTimers();
 });
 
 afterEach(() => {
+  // Close all lingering EventSource instances to clear reconnect timers
+  for (const instance of MockEventSource.instances) {
+    instance.close();
+  }
+  MockEventSource.instances = [];
+  
+  // Restore original EventSource
   (globalThis as any).EventSource = originalEventSource;
+  
+  // Safety: ensure real timers are restored even if a test failed
+  vi.useRealTimers();
 });
 
 function createMockTask(overrides: Partial<Task> = {}): Task {
@@ -195,32 +226,32 @@ describe("useTasks", () => {
   });
 
   it("closes the broken SSE connection and reconnects after an error", async () => {
-    vi.useFakeTimers();
-    try {
-      renderHook(() => useTasks());
+    // Note: We use real timers here because React Testing Library's waitFor
+    // doesn't play well with fake timers - it can hang waiting for promises.
+    // The test relies on the actual 3-second reconnect delay being processed.
+    const { unmount } = renderHook(() => useTasks());
 
-      await waitFor(() => {
-        expect(MockEventSource.instances).toHaveLength(1);
-      });
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
 
-      const first = MockEventSource.instances[0];
+    const first = MockEventSource.instances[0];
 
-      act(() => {
-        first._emit("error");
-      });
+    act(() => {
+      first._emit("error");
+    });
 
-      expect(first.close).toHaveBeenCalledTimes(1);
+    expect(first.close).toHaveBeenCalledTimes(1);
 
-      act(() => {
-        vi.advanceTimersByTime(3000);
-      });
-
-      await waitFor(() => {
+    // Wait for reconnect timer (3s) to create a second EventSource
+    await waitFor(
+      () => {
         expect(MockEventSource.instances).toHaveLength(2);
-      });
-    } finally {
-      vi.useRealTimers();
-    }
+      },
+      { timeout: 5000 }
+    );
+
+    unmount();
   });
 
   describe("SSE event: task:updated", () => {
