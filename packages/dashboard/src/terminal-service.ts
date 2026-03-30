@@ -5,11 +5,22 @@
  * Supports cross-platform shell detection and secure session management.
  */
 
-import * as pty from "node-pty";
+// Static type-only import for types (no runtime code)
+import type { IPty, IPtyForkOptions, IWindowsPtyForkOptions } from "node-pty";
 import { EventEmitter } from "events";
 import * as os from "os";
 import * as path from "path";
 import { existsSync } from "node:fs";
+
+// Lazy-loaded node-pty module (only loaded when terminal is actually used)
+let ptyModule: typeof import("node-pty") | null = null;
+
+async function getPtyModule(): Promise<typeof import("node-pty")> {
+  if (!ptyModule) {
+    ptyModule = await import("node-pty");
+  }
+  return ptyModule;
+}
 
 // Maximum scrollback buffer size (characters)
 const MAX_SCROLLBACK_SIZE = 50000; // ~50KB per terminal
@@ -50,7 +61,7 @@ const STRIP_ENV_VARS = [
 
 export interface TerminalSession {
   id: string;
-  pty: pty.IPty;
+  pty: IPty;
   cwd: string;
   createdAt: Date;
   shell: string;
@@ -90,7 +101,7 @@ export class TerminalService extends EventEmitter {
    * Kill a PTY process with platform-specific handling.
    * Windows doesn't support Unix signals like SIGTERM/SIGKILL.
    */
-  private killPtyProcess(ptyProcess: pty.IPty, signal: string = "SIGTERM"): void {
+  private killPtyProcess(ptyProcess: IPty, signal: string = "SIGTERM"): void {
     if (this.isWindows) {
       ptyProcess.kill();
     } else {
@@ -284,8 +295,11 @@ export class TerminalService extends EventEmitter {
 
     console.info(`Creating session ${id} with shell: ${shell} in ${cwd}`);
 
+    // Lazy-load node-pty module
+    const pty = await getPtyModule();
+
     // Build PTY spawn options
-    const ptyOptions: pty.IPtyForkOptions = {
+    const ptyOptions: IPtyForkOptions = {
       name: "xterm-256color",
       cols: options.cols || 80,
       rows: options.rows || 24,
@@ -295,10 +309,10 @@ export class TerminalService extends EventEmitter {
 
     // On Windows, use winpty instead of ConPTY for compatibility
     if (this.isWindows) {
-      (ptyOptions as pty.IWindowsPtyForkOptions).useConpty = false;
+      (ptyOptions as IWindowsPtyForkOptions).useConpty = false;
     }
 
-    let ptyProcess: pty.IPty;
+    let ptyProcess: IPty;
     try {
       ptyProcess = pty.spawn(shell, shellArgs, ptyOptions);
     } catch (spawnError) {
@@ -340,7 +354,7 @@ export class TerminalService extends EventEmitter {
     };
 
     // Forward data events with throttling
-    ptyProcess.onData((data) => {
+    ptyProcess.onData((data: string) => {
       if (session.resizeInProgress) {
         return;
       }
@@ -360,7 +374,7 @@ export class TerminalService extends EventEmitter {
     });
 
     // Handle exit
-    ptyProcess.onExit(({ exitCode }) => {
+    ptyProcess.onExit(({ exitCode }: { exitCode: number; signal?: number }) => {
       console.info(`Session exited with code ${exitCode ?? 0} (${id})`);
       this.sessions.delete(id);
       this.exitCallbacks.forEach((cb) => cb(id, exitCode ?? 0));
