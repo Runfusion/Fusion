@@ -74,7 +74,7 @@ export function TaskDetailModal({
   addToast,
   githubTokenConfigured,
 }: TaskDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<"definition" | "agent-log" | "steering">("definition");
+  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "steering">("definition");
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
@@ -307,6 +307,12 @@ export function TaskDetailModal({
               Definition
             </button>
             <button
+              className={`detail-tab${activeTab === "activity" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("activity")}
+            >
+              Activity
+            </button>
+            <button
               className={`detail-tab${activeTab === "agent-log" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("agent-log")}
             >
@@ -325,6 +331,29 @@ export function TaskDetailModal({
             </div>
           ) : activeTab === "steering" ? (
             <SteeringTab task={task} addToast={addToast} />
+          ) : activeTab === "activity" ? (
+            <div className="detail-section detail-activity">
+              <h4>Activity</h4>
+              {task.log && task.log.length > 0 ? (
+                <div className="detail-activity-list">
+                  {[...task.log].reverse().map((entry, i) => (
+                    <div key={i} className="detail-log-entry">
+                      <div className="detail-log-header">
+                        <span className="detail-log-timestamp">
+                          {formatTimestamp(entry.timestamp)}
+                        </span>
+                        <span className="detail-log-action">{entry.action}</span>
+                      </div>
+                      {entry.outcome && (
+                        <div className="detail-log-outcome">{entry.outcome}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="detail-log-empty">(no activity)</div>
+              )}
+            </div>
           ) : (
           <>
           <div className="detail-section">
@@ -514,28 +543,6 @@ export function TaskDetailModal({
               </div>
             ) : (
               <div className="step-progress-empty">(no steps defined)</div>
-            )}
-          </div>
-          <div className="detail-section detail-activity">
-            <h4>Activity</h4>
-            {task.log && task.log.length > 0 ? (
-              <div className="detail-activity-list">
-                {[...task.log].reverse().map((entry, i) => (
-                  <div key={i} className="detail-log-entry">
-                    <div className="detail-log-header">
-                      <span className="detail-log-timestamp">
-                        {formatTimestamp(entry.timestamp)}
-                      </span>
-                      <span className="detail-log-action">{entry.action}</span>
-                    </div>
-                    {entry.outcome && (
-                      <div className="detail-log-outcome">{entry.outcome}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="detail-log-empty">(no activity)</div>
             )}
           </div>
           {/* PR Section - only for in-review tasks */}

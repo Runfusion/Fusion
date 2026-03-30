@@ -506,6 +506,9 @@ describe("TaskDetailModal", () => {
       />,
     );
 
+    // Click on Activity tab to show activity list
+    fireEvent.click(screen.getByText("Activity"));
+
     const activityList = container.querySelector(".detail-activity-list");
     expect(activityList).toBeTruthy();
     const style = (activityList as HTMLElement).style;
@@ -583,11 +586,142 @@ describe("TaskDetailModal", () => {
       );
 
       expect(screen.getByText("Definition")).toBeTruthy();
+      expect(screen.getByText("Activity")).toBeTruthy();
       expect(screen.getByText("Agent Log")).toBeTruthy();
       // Definition content should be visible
       expect(container.querySelector(".markdown-body")).toBeTruthy();
+      // Activity section should NOT be visible initially
+      expect(container.querySelector(".detail-activity")).toBeNull();
       // Agent log viewer should not be visible
       expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeNull();
+    });
+
+    it("switches to Activity tab and shows activity feed", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            prompt: "# Hello\n\nContent",
+            log: [
+              { timestamp: "2026-01-01T00:00:00Z", action: "Created task" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      // Click Activity tab
+      fireEvent.click(screen.getByText("Activity"));
+
+      // Activity section should be visible
+      expect(container.querySelector(".detail-activity")).toBeTruthy();
+      // Activity list should be visible
+      expect(container.querySelector(".detail-activity-list")).toBeTruthy();
+      // Definition content should be hidden
+      expect(container.querySelector(".markdown-body")).toBeNull();
+    });
+
+    it("activity tab renders log entries correctly", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            log: [
+              { timestamp: "2026-01-01T00:00:00Z", action: "Created task" },
+              { timestamp: "2026-01-01T00:01:00Z", action: "Started work", outcome: "Success" },
+              { timestamp: "2026-01-01T00:02:00Z", action: "Completed step 1" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      // Click Activity tab
+      fireEvent.click(screen.getByText("Activity"));
+
+      const activityList = container.querySelector(".detail-activity-list");
+      expect(activityList).toBeTruthy();
+
+      // Check log entries are rendered (in reverse order - newest first)
+      const logEntries = container.querySelectorAll(".detail-log-entry");
+      expect(logEntries).toHaveLength(3);
+
+      // Most recent entry should be first
+      expect(logEntries[0].textContent).toContain("Completed step 1");
+      expect(logEntries[1].textContent).toContain("Started work");
+      expect(logEntries[1].textContent).toContain("Success"); // outcome
+      expect(logEntries[2].textContent).toContain("Created task");
+    });
+
+    it("activity tab shows empty state when no logs", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ log: [] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      // Click Activity tab
+      fireEvent.click(screen.getByText("Activity"));
+
+      // Activity section should be visible
+      expect(container.querySelector(".detail-activity")).toBeTruthy();
+      // Empty state should be shown
+      expect(container.querySelector(".detail-log-empty")).toBeTruthy();
+      expect(screen.getByText("(no activity)")).toBeTruthy();
+      // Activity list should NOT be present when empty
+      expect(container.querySelector(".detail-activity-list")).toBeNull();
+    });
+
+    it("can switch between all four tabs", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            prompt: "# Hello\n\nContent",
+            log: [{ timestamp: "2026-01-01T00:00:00Z", action: "Test" }],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      // Start on Definition tab
+      expect(container.querySelector(".markdown-body")).toBeTruthy();
+      expect(container.querySelector(".detail-activity")).toBeNull();
+
+      // Switch to Activity tab
+      fireEvent.click(screen.getByText("Activity"));
+      expect(container.querySelector(".detail-activity")).toBeTruthy();
+      expect(container.querySelector(".markdown-body")).toBeNull();
+
+      // Switch to Agent Log tab
+      fireEvent.click(screen.getByText("Agent Log"));
+      expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeTruthy();
+      expect(container.querySelector(".detail-activity")).toBeNull();
+
+      // Switch to Steering tab
+      fireEvent.click(screen.getByText("Steering"));
+      expect(screen.getByText("Steering Comments")).toBeTruthy();
+      expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeNull();
+
+      // Switch back to Definition tab
+      fireEvent.click(screen.getByText("Definition"));
+      expect(container.querySelector(".markdown-body")).toBeTruthy();
+      expect(container.querySelector(".detail-activity")).toBeNull();
+      expect(screen.queryByText("Steering Comments")).toBeNull();
     });
 
     it("switches to Agent Log tab and back", async () => {
@@ -683,10 +817,11 @@ describe("TaskDetailModal", () => {
       );
 
       const tabs = screen.getAllByRole("button").filter((b) =>
-        ["Definition", "Agent Log", "Steering"].includes(b.textContent || "")
+        ["Definition", "Activity", "Agent Log", "Steering"].includes(b.textContent || "")
       );
-      expect(tabs.length).toBe(3);
-      expect(tabs[2].textContent).toBe("Steering");
+      expect(tabs.length).toBe(4);
+      expect(tabs[1].textContent).toBe("Activity");
+      expect(tabs[3].textContent).toBe("Steering");
     });
   });
 
@@ -964,12 +1099,13 @@ describe("TaskDetailModal", () => {
       );
 
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(3);
+      expect(tabs.length).toBe(4);
       // Tabs should use class-based styling, not inline styles
       expect(tabs[0].classList.contains("detail-tab")).toBe(true);
       expect(tabs[0].classList.contains("detail-tab-active")).toBe(true); // Definition is default active
       expect(tabs[1].classList.contains("detail-tab-active")).toBe(false);
       expect(tabs[2].classList.contains("detail-tab-active")).toBe(false);
+      expect(tabs[3].classList.contains("detail-tab-active")).toBe(false);
       // Verify no inline padding/fontSize (responsive CSS controls this)
       expect((tabs[0] as HTMLElement).style.padding).toBe("");
       expect((tabs[0] as HTMLElement).style.fontSize).toBe("");
