@@ -443,6 +443,37 @@ body {
   color: #da3633;
 }
 
+/* Size badge: positioned in card header, subtle color coding for effort estimation */
+.card-size-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: auto;
+}
+
+/* Size S: subtle green tint (low effort) */
+.card-size-badge.size-s {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--color-success);
+}
+
+/* Size M: neutral tint (medium effort) */
+.card-size-badge.size-m {
+  background: rgba(139, 148, 158, 0.15);
+  color: var(--text-muted);
+}
+
+/* Size L: subtle amber tint (higher effort) */
+.card-size-badge.size-l {
+  background: rgba(210, 153, 34, 0.15);
+  color: var(--triage);
+}
+
 .card.failed {
   border-left: 3px solid #da3633;
 }

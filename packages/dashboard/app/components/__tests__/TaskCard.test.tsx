@@ -439,3 +439,99 @@ describe("TaskCard clickable dependencies", () => {
     expect(depBadge.classList.contains("clickable")).toBe(true);
   });
 });
+
+/**
+ * Component tests for size badge rendering in TaskCard.
+ */
+describe("TaskCard size badge", () => {
+  const noopToast = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders size badge when task.size is 'S'", () => {
+    const task = makeTask({ size: "S" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const sizeBadge = screen.getByText("S");
+    expect(sizeBadge).toBeDefined();
+    expect(sizeBadge.classList.contains("card-size-badge")).toBe(true);
+    expect(sizeBadge.classList.contains("size-s")).toBe(true);
+  });
+
+  it("renders size badge when task.size is 'M'", () => {
+    const task = makeTask({ size: "M" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const sizeBadge = screen.getByText("M");
+    expect(sizeBadge).toBeDefined();
+    expect(sizeBadge.classList.contains("card-size-badge")).toBe(true);
+    expect(sizeBadge.classList.contains("size-m")).toBe(true);
+  });
+
+  it("renders size badge when task.size is 'L'", () => {
+    const task = makeTask({ size: "L" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const sizeBadge = screen.getByText("L");
+    expect(sizeBadge).toBeDefined();
+    expect(sizeBadge.classList.contains("card-size-badge")).toBe(true);
+    expect(sizeBadge.classList.contains("size-l")).toBe(true);
+  });
+
+  it("does NOT render size badge when task.size is undefined", () => {
+    const task = makeTask({ size: undefined });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const sizeBadge = screen.queryByText(/^[SML]$/);
+    expect(sizeBadge).toBeNull();
+  });
+
+  it("positioned in card-header with other badges", () => {
+    const task = makeTask({ size: "M", status: "executing" });
+
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const cardHeader = container.querySelector(".card-header");
+    expect(cardHeader).toBeDefined();
+    
+    const sizeBadge = cardHeader?.querySelector(".card-size-badge");
+    expect(sizeBadge).toBeDefined();
+    expect(sizeBadge?.textContent).toBe("M");
+  });
+});

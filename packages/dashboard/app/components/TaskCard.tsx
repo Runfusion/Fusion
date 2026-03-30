@@ -167,6 +167,12 @@ export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused, t
             #{task.prInfo.number}
           </span>
         )}
+        {/* Size Indicator */}
+        {task.size && (
+          <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
+            {task.size}
+          </span>
+        )}
       </div>
       <div className="card-title">
         {task.title || (task.description ? task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "") : task.id)}
