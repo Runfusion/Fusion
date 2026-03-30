@@ -492,9 +492,9 @@ describe("TaskDetailModal", () => {
       <TaskDetailModal
         task={makeTask({
           log: [
-            { timestamp: "2026-01-01T00:00:00Z", message: "Created task" },
-            { timestamp: "2026-01-01T00:01:00Z", message: "Started work" },
-            { timestamp: "2026-01-01T00:02:00Z", message: "Completed step 1" },
+            { timestamp: "2026-01-01T00:00:00Z", action: "Created task" },
+            { timestamp: "2026-01-01T00:01:00Z", action: "Started work" },
+            { timestamp: "2026-01-01T00:02:00Z", action: "Completed step 1" },
           ],
         })}
         onClose={noop}
@@ -686,6 +686,214 @@ describe("TaskDetailModal", () => {
       );
       expect(tabs.length).toBe(3);
       expect(tabs[2].textContent).toBe("Steering");
+    });
+  });
+
+  describe("step progress", () => {
+    it("renders step progress section when steps exist", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "in-progress" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(container.querySelector(".detail-step-progress")).toBeTruthy();
+      expect(screen.getByText("Progress")).toBeTruthy();
+    });
+
+    it("shows '(no steps defined)' when steps array is empty", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ steps: [] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(container.querySelector(".detail-step-progress")).toBeTruthy();
+      expect(screen.getByText("(no steps defined)")).toBeTruthy();
+    });
+
+    it("renders correct number of segments matching step count", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "in-progress" },
+              { name: "Step 3", status: "pending" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const segments = container.querySelectorAll(".step-progress-segment");
+      expect(segments).toHaveLength(3);
+    });
+
+    it("segments have correct status modifier classes", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "in-progress" },
+              { name: "Step 3", status: "pending" },
+              { name: "Step 4", status: "skipped" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const segments = container.querySelectorAll(".step-progress-segment");
+      expect(segments[0].classList.contains("step-progress-segment--done")).toBe(true);
+      expect(segments[1].classList.contains("step-progress-segment--in-progress")).toBe(true);
+      expect(segments[2].classList.contains("step-progress-segment--pending")).toBe(true);
+      expect(segments[3].classList.contains("step-progress-segment--skipped")).toBe(true);
+    });
+
+    it("segments have correct inline background colors based on status", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "in-progress" },
+              { name: "Step 3", status: "pending" },
+              { name: "Step 4", status: "skipped" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const segments = container.querySelectorAll(".step-progress-segment");
+      expect((segments[0] as HTMLElement).style.backgroundColor).toBe("var(--color-success, #3fb950)");
+      expect((segments[1] as HTMLElement).style.backgroundColor).toBe("var(--todo, #58a6ff)");
+      expect((segments[2] as HTMLElement).style.backgroundColor).toBe("var(--border, #30363d)");
+      expect((segments[3] as HTMLElement).style.backgroundColor).toBe("var(--text-dim, #484f58)");
+    });
+
+    it("displays correct completion count", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "done" },
+              { name: "Step 3", status: "pending" },
+              { name: "Step 4", status: "in-progress" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("2/4 steps")).toBeTruthy();
+    });
+
+    it("has data-tooltip attribute with step name and status on each segment", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Initialize project", status: "done" },
+              { name: "Add tests", status: "in-progress" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const segments = container.querySelectorAll(".step-progress-segment");
+      expect(segments[0].getAttribute("data-tooltip")).toBe("Initialize project (done)");
+      expect(segments[1].getAttribute("data-tooltip")).toBe("Add tests (in-progress)");
+    });
+
+    it("step progress only renders in Definition tab, not Agent Log tab", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            prompt: "# Test",
+            steps: [
+              { name: "Step 1", status: "done" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      // Should be visible in Definition tab
+      expect(container.querySelector(".detail-step-progress")).toBeTruthy();
+
+      // Switch to Agent Log tab
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      // Should not be visible in Agent Log tab
+      expect(container.querySelector(".detail-step-progress")).toBeNull();
+    });
+
+    it("step progress is hidden in Steering tab", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            prompt: "# Test",
+            steps: [
+              { name: "Step 1", status: "done" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      // Switch to Steering tab
+      fireEvent.click(screen.getByText("Steering"));
+
+      // Should not be visible in Steering tab
+      expect(container.querySelector(".detail-step-progress")).toBeNull();
     });
   });
 
