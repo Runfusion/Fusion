@@ -634,17 +634,32 @@ async function continueAgentConversation(session: Session, message: string): Pro
 
   try {
     // Clear thinking output for this turn
-    const previousThinking = session.thinkingOutput;
     session.thinkingOutput = "";
 
-    // Send message to agent - it will stream thinking via onThinking callback
-    const response = await session.agent.session.send(message);
+    // Send message to agent using .prompt() - it will stream thinking via onThinking callback
+    await session.agent.session.prompt(message);
 
-    // Combine any thinking output with the response text
-    const fullResponse = session.thinkingOutput + (response?.text || "");
+    // Get the response text from the agent's state
+    const lastMessage = session.agent.session.state.messages
+      .filter(m => m.role === "assistant")
+      .pop();
+    
+    let responseText = session.thinkingOutput;
+    if (lastMessage?.content) {
+      // Handle both string and array content types
+      if (typeof lastMessage.content === "string") {
+        responseText = lastMessage.content;
+      } else if (Array.isArray(lastMessage.content)) {
+        // Extract text from content blocks
+        responseText = lastMessage.content
+          .filter((c): c is { type: "text"; text: string } => c.type === "text")
+          .map(c => c.text)
+          .join("");
+      }
+    }
 
     // Parse the JSON response
-    const parsed = parseAgentResponse(fullResponse);
+    const parsed = parseAgentResponse(responseText);
 
     if (parsed.type === "question") {
       session.currentQuestion = parsed.data;

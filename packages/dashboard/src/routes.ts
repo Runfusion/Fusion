@@ -2170,6 +2170,44 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
+   * POST /api/planning/start-streaming
+   * Start a new planning session with AI agent streaming.
+   * Body: { initialPlan: string }
+   * Returns: { sessionId: string }
+   * 
+   * After receiving sessionId, connect to GET /api/planning/:sessionId/stream
+   * for real-time thinking output and questions.
+   */
+  router.post("/planning/start-streaming", async (req, res) => {
+    try {
+      const { initialPlan } = req.body;
+
+      if (!initialPlan || typeof initialPlan !== "string") {
+        res.status(400).json({ error: "initialPlan is required and must be a string" });
+        return;
+      }
+
+      if (initialPlan.length > 500) {
+        res.status(400).json({ error: "initialPlan must be 500 characters or less" });
+        return;
+      }
+
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const rootDir = store.getRootDir();
+
+      const { createSessionWithAgent, RateLimitError } = await import("./planning.js");
+      const sessionId = await createSessionWithAgent(ip, initialPlan, rootDir);
+      res.status(201).json({ sessionId });
+    } catch (err: any) {
+      if (err.name === "RateLimitError") {
+        res.status(429).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message || "Failed to start planning session" });
+      }
+    }
+  });
+
+  /**
    * POST /api/planning/respond
    * Submit a response to the current planning question.
    * Body: { sessionId: string, responses: Record<string, unknown> }
@@ -2322,7 +2360,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Subscribe to session events
       const unsubscribe = planningStreamManager.subscribe(sessionId, (event) => {
         try {
-          res.write(`event: ${event.type}\ndata: ${JSON.stringify(event.data ?? {})}\n\n`);
+          const data = (event as { data?: unknown }).data;
+          res.write(`event: ${event.type}\ndata: ${JSON.stringify(data ?? {})}\n\n`);
           
           // End stream on complete or error
           if (event.type === "complete" || event.type === "error") {

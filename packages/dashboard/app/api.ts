@@ -649,9 +649,25 @@ export interface PlanningSession {
   summary: PlanningSummary | null;
 }
 
+/** SSE event types for planning session streaming */
+export type PlanningStreamEvent =
+  | { type: "thinking"; data: string }
+  | { type: "question"; data: PlanningQuestion }
+  | { type: "summary"; data: PlanningSummary }
+  | { type: "error"; data: string }
+  | { type: "complete"; data: Record<string, never> };
+
 /** Start a new planning session with an initial plan */
 export function startPlanning(initialPlan: string): Promise<PlanningSession> {
   return api<PlanningSession>("/planning/start", {
+    method: "POST",
+    body: JSON.stringify({ initialPlan }),
+  });
+}
+
+/** Start a new planning session with AI streaming support */
+export function startPlanningStreaming(initialPlan: string): Promise<{ sessionId: string }> {
+  return api<{ sessionId: string }>("/planning/start-streaming", {
     method: "POST",
     body: JSON.stringify({ initialPlan }),
   });
@@ -682,4 +698,108 @@ export function createTaskFromPlanning(sessionId: string): Promise<Task> {
     method: "POST",
     body: JSON.stringify({ sessionId }),
   });
+}
+
+/** Get the SSE stream URL for a planning session */
+export function getPlanningStreamUrl(sessionId: string): string {
+  return `/api/planning/${encodeURIComponent(sessionId)}/stream`;
+}
+
+/** Connect to planning session SSE stream and handle events
+ * 
+ * Returns an object with:
+ * - close: function to close the connection
+ * - reconnect: function to reconnect after error
+ */
+export function connectPlanningStream(
+  sessionId: string,
+  handlers: {
+    onThinking?: (data: string) => void;
+    onQuestion?: (data: PlanningQuestion) => void;
+    onSummary?: (data: PlanningSummary) => void;
+    onError?: (data: string) => void;
+    onComplete?: () => void;
+  }
+): { close: () => void; isConnected: () => boolean } {
+  const url = getPlanningStreamUrl(sessionId);
+  const eventSource = new EventSource(url);
+  let isClosed = false;
+
+  eventSource.onopen = () => {
+    isClosed = false;
+  };
+
+  eventSource.onmessage = (event) => {
+    // Handle comment events (heartbeats)
+    if (event.data.startsWith(":")) return;
+  };
+
+  // Handle specific event types
+  eventSource.addEventListener("thinking", (event: Event) => {
+    try {
+      const messageEvent = event as MessageEvent;
+      const data = JSON.parse(messageEvent.data);
+      handlers.onThinking?.(data);
+    } catch {
+      const messageEvent = event as MessageEvent;
+      handlers.onThinking?.(messageEvent.data);
+    }
+  });
+
+  eventSource.addEventListener("question", (event: Event) => {
+    try {
+      const messageEvent = event as MessageEvent;
+      const data = JSON.parse(messageEvent.data) as PlanningQuestion;
+      handlers.onQuestion?.(data);
+    } catch (err) {
+      console.error("[planning] Failed to parse question event:", err);
+    }
+  });
+
+  eventSource.addEventListener("summary", (event: Event) => {
+    try {
+      const messageEvent = event as MessageEvent;
+      const data = JSON.parse(messageEvent.data) as PlanningSummary;
+      handlers.onSummary?.(data);
+    } catch (err) {
+      console.error("[planning] Failed to parse summary event:", err);
+    }
+  });
+
+  eventSource.addEventListener("error", (event: Event) => {
+    try {
+      const messageEvent = event as MessageEvent;
+      const data = JSON.parse(messageEvent.data);
+      handlers.onError?.(data.message || data);
+    } catch {
+      const messageEvent = event as MessageEvent;
+      handlers.onError?.(messageEvent.data || "Stream error");
+    }
+    close();
+  });
+
+  eventSource.addEventListener("complete", () => {
+    handlers.onComplete?.();
+    close();
+  });
+
+  // Handle connection errors
+  eventSource.onerror = () => {
+    if (!isClosed) {
+      handlers.onError?.("Connection lost");
+      close();
+    }
+  };
+
+  function close() {
+    if (!isClosed) {
+      isClosed = true;
+      eventSource.close();
+    }
+  }
+
+  return {
+    close,
+    isConnected: () => !isClosed && eventSource.readyState === EventSource.OPEN,
+  };
 }

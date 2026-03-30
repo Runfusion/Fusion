@@ -2,9 +2,11 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import type { Task, PlanningQuestion, PlanningSummary } from "@kb/core";
 import {
   startPlanning,
+  startPlanningStreaming,
   respondToPlanning,
   cancelPlanning,
   createTaskFromPlanning,
+  connectPlanningStream,
   type PlanningSession,
 } from "../api";
 import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles } from "lucide-react";
@@ -41,7 +43,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
   const [responseHistory, setResponseHistory] = useState<QuestionResponse[]>([]);
   const [editedSummary, setEditedSummary] = useState<PlanningSummary | null>(null);
   const [hasAutoStarted, setHasAutoStarted] = useState(false);
+  const [streamingOutput, setStreamingOutput] = useState<string>("");
+  const [showThinking, setShowThinking] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
+  const currentSessionIdRef = useRef<string | null>(null);
 
   // Focus textarea when opening
   useEffect(() => {
@@ -70,6 +76,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
     }
   }, [isOpen]);
 
+  // Cleanup stream connection on unmount
+  useEffect(() => {
+    return () => {
+      streamConnectionRef.current?.close();
+      streamConnectionRef.current = null;
+    };
+  }, []);
+
   // Handle browser unload during active session
   useEffect(() => {
     if (!isOpen) return;
@@ -79,6 +93,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
         e.preventDefault();
         e.returnValue = "";
       }
+      // Close stream connection
+      streamConnectionRef.current?.close();
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
@@ -109,20 +125,52 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
     if (!initialPlan.trim()) return;
 
     setError(null);
+    setStreamingOutput("");
     setView({ type: "loading" });
 
     try {
-      const session = await startPlanning(initialPlan.trim());
-      if (session.currentQuestion) {
-        setView({ type: "question", session });
-      } else if (session.summary) {
-        setView({ type: "summary", session, summary: session.summary });
-        setEditedSummary(session.summary);
-      }
+      // Use streaming mode for real-time AI thinking display
+      const { sessionId } = await startPlanningStreaming(initialPlan.trim());
+      currentSessionIdRef.current = sessionId;
+
+      // Connect to SSE stream
+      const connection = connectPlanningStream(sessionId, {
+        onThinking: (data) => {
+          setStreamingOutput((prev) => prev + data);
+        },
+        onQuestion: (question) => {
+          setView({
+            type: "question",
+            session: { sessionId, currentQuestion: question, summary: null },
+          });
+          setStreamingOutput("");
+        },
+        onSummary: (summary) => {
+          setView({
+            type: "summary",
+            session: { sessionId, currentQuestion: null, summary },
+            summary,
+          });
+          setEditedSummary(summary);
+          setStreamingOutput("");
+        },
+        onError: (message) => {
+          setError(message);
+          setView({ type: "initial" });
+          setStreamingOutput("");
+          currentSessionIdRef.current = null;
+        },
+        onComplete: () => {
+          currentSessionIdRef.current = null;
+        },
+      });
+
+      streamConnectionRef.current = connection;
       setResponseHistory([]);
     } catch (err: any) {
       setError(err.message || "Failed to start planning session");
       setView({ type: "initial" });
+      currentSessionIdRef.current = null;
     }
   }, [initialPlan]);
 
@@ -131,20 +179,50 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
     if (!plan.trim()) return;
 
     setError(null);
+    setStreamingOutput("");
     setView({ type: "loading" });
 
     try {
-      const session = await startPlanning(plan.trim());
-      if (session.currentQuestion) {
-        setView({ type: "question", session });
-      } else if (session.summary) {
-        setView({ type: "summary", session, summary: session.summary });
-        setEditedSummary(session.summary);
-      }
+      const { sessionId } = await startPlanningStreaming(plan.trim());
+      currentSessionIdRef.current = sessionId;
+
+      const connection = connectPlanningStream(sessionId, {
+        onThinking: (data) => {
+          setStreamingOutput((prev) => prev + data);
+        },
+        onQuestion: (question) => {
+          setView({
+            type: "question",
+            session: { sessionId, currentQuestion: question, summary: null },
+          });
+          setStreamingOutput("");
+        },
+        onSummary: (summary) => {
+          setView({
+            type: "summary",
+            session: { sessionId, currentQuestion: null, summary },
+            summary,
+          });
+          setEditedSummary(summary);
+          setStreamingOutput("");
+        },
+        onError: (message) => {
+          setError(message);
+          setView({ type: "initial" });
+          setStreamingOutput("");
+          currentSessionIdRef.current = null;
+        },
+        onComplete: () => {
+          currentSessionIdRef.current = null;
+        },
+      });
+
+      streamConnectionRef.current = connection;
       setResponseHistory([]);
     } catch (err: any) {
       setError(err.message || "Failed to start planning session");
       setView({ type: "initial" });
+      currentSessionIdRef.current = null;
     }
   }, []);
 
@@ -153,19 +231,59 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
       if (view.type !== "question") return;
 
       const { session } = view;
+      const sessionId = session.sessionId;
       setError(null);
+      setStreamingOutput("");
       setView({ type: "loading" });
 
       try {
-        const updatedSession = await respondToPlanning(session.sessionId, responses);
+        // Close previous connection if any
+        streamConnectionRef.current?.close();
+
+        // Submit response - this will trigger the AI to process and stream
+        const updatedSession = await respondToPlanning(sessionId, responses);
         setResponseHistory((prev) => [...prev, responses]);
 
+        // If we got an immediate response (non-streaming mode), use it
         if (updatedSession.summary) {
           setView({ type: "summary", session: updatedSession, summary: updatedSession.summary });
           setEditedSummary(updatedSession.summary);
-        } else if (updatedSession.currentQuestion) {
-          setView({ type: "question", session: updatedSession });
+          return;
         }
+        if (updatedSession.currentQuestion) {
+          setView({ type: "question", session: updatedSession });
+          return;
+        }
+
+        // Otherwise, set up streaming for the next question
+        const connection = connectPlanningStream(sessionId, {
+          onThinking: (data) => {
+            setStreamingOutput((prev) => prev + data);
+          },
+          onQuestion: (question) => {
+            setView({
+              type: "question",
+              session: { sessionId, currentQuestion: question, summary: null },
+            });
+            setStreamingOutput("");
+          },
+          onSummary: (summary) => {
+            setView({
+              type: "summary",
+              session: { sessionId, currentQuestion: null, summary },
+              summary,
+            });
+            setEditedSummary(summary);
+            setStreamingOutput("");
+          },
+          onError: (message) => {
+            setError(message);
+            setView({ type: "question", session });
+            setStreamingOutput("");
+          },
+        });
+
+        streamConnectionRef.current = connection;
       } catch (err: any) {
         setError(err.message || "Failed to submit response");
         setView({ type: "question", session });
@@ -175,6 +293,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
   );
 
   const handleCancel = useCallback(async () => {
+    // Always close the stream connection
+    streamConnectionRef.current?.close();
+    streamConnectionRef.current = null;
+
     if (view.type === "question" || view.type === "summary") {
       try {
         await cancelPlanning(view.session.sessionId);
@@ -187,6 +309,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
     setError(null);
     setResponseHistory([]);
     setEditedSummary(null);
+    setStreamingOutput("");
+    currentSessionIdRef.current = null;
     onClose();
   }, [view, onClose]);
 
@@ -309,7 +433,23 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
           {view.type === "loading" && (
             <div className="planning-loading">
               <Loader2 size={40} className="spin" style={{ color: "var(--todo)" }} />
-              <p>Thinking...</p>
+              <p>{streamingOutput ? "AI is thinking..." : "Connecting..."}</p>
+              {streamingOutput && (
+                <div className="planning-thinking-container">
+                  <button
+                    className="planning-thinking-toggle"
+                    onClick={() => setShowThinking(!showThinking)}
+                    type="button"
+                  >
+                    {showThinking ? "Hide thinking" : "Show thinking"}
+                  </button>
+                  {showThinking && (
+                    <div className="planning-thinking-output">
+                      <pre>{streamingOutput}</pre>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
