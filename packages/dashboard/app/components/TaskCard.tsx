@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { Link, Clock, Layers, GitPullRequest } from "lucide-react";
+import { useCallback, useState, useRef, useEffect } from "react";
+import { Link, Clock, Layers, GitPullRequest, Pencil } from "lucide-react";
 import type { Task, TaskDetail, Column } from "@kb/core";
 import { fetchTaskDetail, uploadAttachment } from "../api";
 import type { ToastType } from "../hooks/useToast";
@@ -20,6 +20,8 @@ const COLUMN_TEXT_COLOR_MAP: Record<Column, string> = {
   done: "var(--done)",
 };
 
+const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
+
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "specifying"]);
 
 interface TaskCardProps {
@@ -29,11 +31,44 @@ interface TaskCardProps {
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   tasks?: Task[]; // All tasks for dependency lookup
+  onUpdateTask?: (
+    id: string,
+    updates: { title?: string; description?: string; dependencies?: string[] }
+  ) => Promise<Task>;
 }
 
-export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused, tasks = [] }: TaskCardProps) {
+export function TaskCard({
+  task,
+  queued,
+  onOpenDetail,
+  addToast,
+  globalPaused,
+  tasks = [],
+  onUpdateTask,
+}: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(task.title || "");
+  const [editDescription, setEditDescription] = useState(task.description || "");
+  const [isSaving, setIsSaving] = useState(false);
+
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const descTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Reset edit state when task changes
+  useEffect(() => {
+    setEditTitle(task.title || "");
+    setEditDescription(task.description || "");
+  }, [task.id, task.title, task.description]);
+
+  // Auto-focus on title when entering edit mode
+  useEffect(() => {
+    if (isEditing) {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    }
+  }, [isEditing]);
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
     e.dataTransfer.setData("text/plain", task.id);
@@ -82,13 +117,14 @@ export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused, t
   }, [task.id, isFileDrag, addToast]);
 
   const handleClick = useCallback(async () => {
+    if (isEditing) return; // Don't open detail when editing
     try {
       const detail = await fetchTaskDetail(task.id);
       onOpenDetail(detail);
     } catch (err: any) {
       addToast("Failed to load task details", "error");
     }
-  }, [task.id, onOpenDetail, addToast]);
+  }, [task.id, onOpenDetail, addToast, isEditing]);
 
   const handleDepClick = useCallback(async (e: React.MouseEvent, depId: string) => {
     e.stopPropagation(); // Prevent card click
@@ -103,8 +139,155 @@ export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused, t
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
   const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
-  const isDraggable = !queued && !isPaused;
-  const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${fileDragOver ? " file-drop-target" : ""}`;
+  const isDraggable = !queued && !isPaused && !isEditing; // Disable drag during edit
+
+  // Check if this card can be edited inline
+  const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
+
+  const enterEditMode = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!canEdit || isSaving) return;
+    setIsEditing(true);
+    setEditTitle(task.title || "");
+    setEditDescription(task.description || "");
+  }, [canEdit, isSaving, task.title, task.description]);
+
+  const exitEditMode = useCallback(() => {
+    setIsEditing(false);
+    setEditTitle(task.title || "");
+    setEditDescription(task.description || "");
+  }, [task.title, task.description]);
+
+  const hasChanges = useCallback(() => {
+    return editTitle !== (task.title || "") || editDescription !== (task.description || "");
+  }, [editTitle, editDescription, task.title, task.description]);
+
+  const saveChanges = useCallback(async () => {
+    if (!onUpdateTask || isSaving) return;
+    if (!hasChanges()) {
+      exitEditMode();
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await onUpdateTask(task.id, {
+        title: editTitle.trim() || undefined,
+        description: editDescription.trim() || undefined,
+      });
+      addToast(`Updated ${task.id}`, "success");
+      setIsEditing(false);
+    } catch (err: any) {
+      addToast(`Failed to update ${task.id}: ${err.message}`, "error");
+      // Stay in edit mode on error so user can retry
+    } finally {
+      setIsSaving(false);
+    }
+  }, [onUpdateTask, task.id, editTitle, editDescription, isSaving, hasChanges, exitEditMode, addToast]);
+
+  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      // Move focus to description textarea
+      descTextareaRef.current?.focus();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      exitEditMode();
+    }
+  }, [exitEditMode]);
+
+  const handleDescKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      saveChanges();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      exitEditMode();
+    }
+  }, [saveChanges, exitEditMode]);
+
+  const handleBlur = useCallback(() => {
+    // Small delay to allow focus to move between title and description inputs
+    // before checking if we should save or cancel
+    setTimeout(() => {
+      const activeElement = document.activeElement;
+      const isFocusInEditArea =
+        activeElement === titleInputRef.current ||
+        activeElement === descTextareaRef.current ||
+        activeElement?.closest(".card-editing-content");
+
+      if (!isFocusInEditArea) {
+        if (hasChanges()) {
+          saveChanges();
+        } else {
+          exitEditMode();
+        }
+      }
+    }, 0);
+  }, [hasChanges, saveChanges, exitEditMode]);
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (canEdit) {
+      e.stopPropagation();
+      enterEditMode(e);
+    }
+  }, [canEdit, enterEditMode]);
+
+  const handleEditClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    enterEditMode(e);
+  }, [enterEditMode]);
+
+  // Auto-resize textarea (similar to InlineCreateCard)
+  const handleDescChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setEditDescription(e.target.value);
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, []);
+
+  const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
+
+  if (isEditing) {
+    return (
+      <div
+        className={cardClass}
+        data-id={task.id}
+        onDoubleClick={handleDoubleClick}
+      >
+        <div className="card-editing-content">
+          <input
+            ref={titleInputRef}
+            type="text"
+            className="card-edit-title-input"
+            placeholder="Task title (optional)"
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            onKeyDown={handleTitleKeyDown}
+            onBlur={handleBlur}
+            disabled={isSaving}
+          />
+          <textarea
+            ref={descTextareaRef}
+            className="card-edit-desc-textarea"
+            placeholder="Task description"
+            value={editDescription}
+            onChange={handleDescChange}
+            onKeyDown={handleDescKeyDown}
+            onBlur={handleBlur}
+            disabled={isSaving}
+            rows={1}
+          />
+          {isSaving && (
+            <div className="card-edit-loading">
+              <span className="card-edit-loading-spinner" />
+              <span className="card-edit-loading-text">Saving...</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -117,6 +300,7 @@ export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused, t
       onDragLeave={handleFileDragLeave}
       onDrop={handleFileDrop}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
     >
       <div className="card-header">
         <span className="card-id">{task.id}</span>
@@ -172,6 +356,17 @@ export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused, t
           <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
             {task.size}
           </span>
+        )}
+        {/* Edit button - visible on hover for editable cards */}
+        {canEdit && (
+          <button
+            className="card-edit-btn"
+            onClick={handleEditClick}
+            title="Edit task"
+            aria-label="Edit task"
+          >
+            <Pencil size={12} />
+          </button>
         )}
       </div>
       <div className="card-title">

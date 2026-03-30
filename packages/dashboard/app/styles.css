@@ -1432,6 +1432,159 @@ body {
   color: var(--todo);
 }
 
+/* === Card Inline Editing === */
+
+/* Card in edit mode - highlighted border matching column theme */
+.card.card-editing {
+  border: 1px solid var(--todo);
+  border-left: 3px solid var(--todo);
+  background: var(--card);
+  cursor: default;
+}
+
+.card.card-editing[data-column="triage"] {
+  border-color: var(--triage);
+  border-left-color: var(--triage);
+}
+
+.card.card-editing[data-column="todo"] {
+  border-color: var(--todo);
+  border-left-color: var(--todo);
+}
+
+/* Edit content container */
+.card-editing-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Title input in edit mode */
+.card-edit-title-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.card-edit-title-input:focus {
+  border-color: var(--todo);
+  border-bottom-color: var(--todo);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
+  border-radius: var(--radius);
+}
+
+.card-edit-title-input::placeholder {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.card-edit-title-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Description textarea in edit mode - follows InlineCreateCard patterns */
+.card-edit-desc-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+  min-height: 38px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.card-edit-desc-textarea:focus {
+  border-color: var(--todo);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
+  border-radius: var(--radius);
+}
+
+.card-edit-desc-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.card-edit-desc-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Edit button - visible on hover */
+.card-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.card:hover .card-edit-btn {
+  opacity: 1;
+}
+
+.card-edit-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.card-edit-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+/* Loading state during save */
+.card-edit-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.card-edit-loading-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--todo);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.card-edit-loading-text {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Card saving state */
+.card.card-saving {
+  opacity: 0.7;
+}
+
 /* === Inline Create Card === */
 .inline-create-card {
   background: var(--card);

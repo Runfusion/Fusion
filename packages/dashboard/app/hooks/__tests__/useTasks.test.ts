@@ -12,9 +12,11 @@ vi.mock("../../api", () => ({
   deleteTask: vi.fn(),
   mergeTask: vi.fn(),
   retryTask: vi.fn(),
+  updateTask: vi.fn(),
 }));
 
 const mockFetchTasks = vi.mocked(api.fetchTasks);
+const mockUpdateTask = vi.mocked(api.updateTask);
 
 // Mock EventSource
 class MockEventSource {
@@ -401,6 +403,164 @@ describe("useTasks", () => {
       unmount();
 
       expect(es.close).toHaveBeenCalled();
+    });
+  });
+
+  describe("updateTask", () => {
+    it("updates task optimistically and returns server response", async () => {
+      const initialTask = createMockTask({
+        id: "KB-001",
+        title: "Old Title",
+        description: "Old Description",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      const updatedTask = createMockTask({
+        id: "KB-001",
+        title: "New Title",
+        description: "New Description",
+        updatedAt: "2026-01-02T00:00:00Z",
+      });
+      mockUpdateTask.mockResolvedValueOnce(updatedTask);
+
+      let returnedTask: Task | undefined;
+      await act(async () => {
+        returnedTask = await result.current.updateTask("KB-001", {
+          title: "New Title",
+          description: "New Description",
+        });
+      });
+
+      expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+        title: "New Title",
+        description: "New Description",
+      });
+      expect(returnedTask).toEqual(updatedTask);
+      expect(result.current.tasks[0].title).toBe("New Title");
+      expect(result.current.tasks[0].description).toBe("New Description");
+    });
+
+    it("rolls back on error and rethrows", async () => {
+      const initialTask = createMockTask({
+        id: "KB-001",
+        title: "Original Title",
+        description: "Original Description",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      mockUpdateTask.mockRejectedValueOnce(new Error("Update failed"));
+
+      await expect(
+        act(async () => {
+          await result.current.updateTask("KB-001", {
+            title: "New Title",
+            description: "New Description",
+          });
+        })
+      ).rejects.toThrow("Update failed");
+
+      // Should have rolled back to original
+      expect(result.current.tasks[0].title).toBe("Original Title");
+      expect(result.current.tasks[0].description).toBe("Original Description");
+    });
+
+    it("supports updating only title", async () => {
+      const initialTask = createMockTask({
+        id: "KB-001",
+        title: "Old Title",
+        description: "Description",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      const updatedTask = createMockTask({
+        id: "KB-001",
+        title: "New Title",
+        description: "Description",
+        updatedAt: "2026-01-02T00:00:00Z",
+      });
+      mockUpdateTask.mockResolvedValueOnce(updatedTask);
+
+      await act(async () => {
+        await result.current.updateTask("KB-001", { title: "New Title" });
+      });
+
+      expect(result.current.tasks[0].title).toBe("New Title");
+      expect(result.current.tasks[0].description).toBe("Description");
+    });
+
+    it("supports updating only description", async () => {
+      const initialTask = createMockTask({
+        id: "KB-001",
+        title: "Title",
+        description: "Old Description",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      const updatedTask = createMockTask({
+        id: "KB-001",
+        title: "Title",
+        description: "New Description",
+        updatedAt: "2026-01-02T00:00:00Z",
+      });
+      mockUpdateTask.mockResolvedValueOnce(updatedTask);
+
+      await act(async () => {
+        await result.current.updateTask("KB-001", { description: "New Description" });
+      });
+
+      expect(result.current.tasks[0].title).toBe("Title");
+      expect(result.current.tasks[0].description).toBe("New Description");
+    });
+
+    it("supports updating dependencies", async () => {
+      const initialTask = createMockTask({
+        id: "KB-001",
+        dependencies: ["KB-002"],
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      const updatedTask = createMockTask({
+        id: "KB-001",
+        dependencies: ["KB-002", "KB-003"],
+        updatedAt: "2026-01-02T00:00:00Z",
+      });
+      mockUpdateTask.mockResolvedValueOnce(updatedTask);
+
+      await act(async () => {
+        await result.current.updateTask("KB-001", { dependencies: ["KB-002", "KB-003"] });
+      });
+
+      expect(result.current.tasks[0].dependencies).toEqual(["KB-002", "KB-003"]);
     });
   });
 });

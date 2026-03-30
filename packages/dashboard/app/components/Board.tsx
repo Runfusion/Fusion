@@ -16,9 +16,13 @@ interface BoardProps {
   autoMerge: boolean;
   onToggleAutoMerge: () => void;
   globalPaused?: boolean;
+  onUpdateTask?: (
+    id: string,
+    updates: { title?: string; description?: string; dependencies?: string[] }
+  ) => Promise<Task>;
 }
 
-export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask, autoMerge, onToggleAutoMerge, globalPaused }: BoardProps) {
+export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask }: BoardProps) {
   return (
     <main className="board" id="board">
       {COLUMNS.map((col) => (
@@ -43,6 +47,7 @@ export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast
           onOpenDetail={onOpenDetail}
           addToast={addToast}
           globalPaused={globalPaused}
+          onUpdateTask={onUpdateTask}
           {...(col === "triage" ? { isCreating, onCancelCreate, onCreateTask, onNewTask } : {})}
           {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
         />

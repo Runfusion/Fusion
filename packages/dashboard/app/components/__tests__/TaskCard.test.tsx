@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Column, Task, TaskDetail } from "@kb/core";
 import { TaskCard } from "../TaskCard";
 
@@ -533,5 +534,497 @@ describe("TaskCard size badge", () => {
     const sizeBadge = cardHeader?.querySelector(".card-size-badge");
     expect(sizeBadge).toBeDefined();
     expect(sizeBadge?.textContent).toBe("M");
+  });
+});
+
+/**
+ * Tests for inline editing functionality in TaskCard.
+ */
+describe("TaskCard inline editing", () => {
+  const noopToast = vi.fn();
+  const noopUpdateTask = vi.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Helper to make editable task (triage or todo column)
+  function makeEditableTask(overrides: Partial<Task> = {}): Task {
+    return makeTask({
+      column: "triage",
+      status: undefined,
+      paused: false,
+      ...overrides,
+    });
+  }
+
+  // Helper to make non-editable task (in-progress, in-review, done, or agent active)
+  function makeNonEditableTask(overrides: Partial<Task> = {}): Task {
+    return makeTask({
+      column: "in-progress",
+      status: "executing",
+      paused: false,
+      ...overrides,
+    });
+  }
+
+  it("shows edit button on hover for editable cards", () => {
+    const task = makeEditableTask({ column: "triage" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const editBtn = screen.getByRole("button", { name: /Edit task/i });
+    expect(editBtn).toBeDefined();
+    expect(editBtn.classList.contains("card-edit-btn")).toBe(true);
+  });
+
+  it("shows edit button for todo column tasks", () => {
+    const task = makeEditableTask({ column: "todo" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const editBtn = screen.getByRole("button", { name: /Edit task/i });
+    expect(editBtn).toBeDefined();
+  });
+
+  it("does NOT show edit button for in-progress column", () => {
+    const task = makeTask({
+      column: "in-progress",
+      status: "executing",
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const editBtn = screen.queryByRole("button", { name: /Edit task/i });
+    expect(editBtn).toBeNull();
+  });
+
+  it("does NOT show edit button for in-review column", () => {
+    const task = makeTask({
+      column: "in-review",
+      status: undefined,
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const editBtn = screen.queryByRole("button", { name: /Edit task/i });
+    expect(editBtn).toBeNull();
+  });
+
+  it("does NOT show edit button for done column", () => {
+    const task = makeTask({
+      column: "done",
+      status: undefined,
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const editBtn = screen.queryByRole("button", { name: /Edit task/i });
+    expect(editBtn).toBeNull();
+  });
+
+  it("does NOT show edit button when agent is active", () => {
+    const task = makeTask({
+      column: "in-progress",
+      status: "executing",
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const editBtn = screen.queryByRole("button", { name: /Edit task/i });
+    expect(editBtn).toBeNull();
+  });
+
+  it("does NOT show edit button when task is paused", () => {
+    const task = makeEditableTask({ paused: true });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const editBtn = screen.queryByRole("button", { name: /Edit task/i });
+    expect(editBtn).toBeNull();
+  });
+
+  it("does NOT show edit button when onUpdateTask callback is not provided", () => {
+    const task = makeEditableTask();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const editBtn = screen.queryByRole("button", { name: /Edit task/i });
+    expect(editBtn).toBeNull();
+  });
+
+  it("enters edit mode on double-click for editable cards", () => {
+    const task = makeEditableTask({ title: "Test Title", description: "Test Description" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const card = document.querySelector('[data-id="KB-099"]');
+    expect(card).toBeDefined();
+    fireEvent.doubleClick(card!);
+
+    // Should show editing UI
+    const titleInput = screen.getByPlaceholderText(/Task title/i);
+    const descTextarea = screen.getByPlaceholderText(/Task description/i);
+
+    expect(titleInput).toBeDefined();
+    expect(descTextarea).toBeDefined();
+    expect((titleInput as HTMLInputElement).value).toBe("Test Title");
+    expect((descTextarea as HTMLTextAreaElement).value).toBe("Test Description");
+  });
+
+  it("enters edit mode when clicking edit button", () => {
+    const task = makeEditableTask();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const editBtn = screen.getByRole("button", { name: /Edit task/i });
+    fireEvent.click(editBtn);
+
+    const titleInput = screen.getByPlaceholderText(/Task title/i);
+    expect(titleInput).toBeDefined();
+  });
+
+  it("does NOT enter edit mode on double-click for non-editable cards", () => {
+    const task = makeNonEditableTask();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const card = document.querySelector('[data-id="KB-099"]');
+    fireEvent.doubleClick(card!);
+
+    // Should NOT show editing UI
+    const titleInput = screen.queryByPlaceholderText(/Task title/i);
+    expect(titleInput).toBeNull();
+  });
+
+  it("Escape key cancels edit mode", () => {
+    const task = makeEditableTask({ title: "Original Title" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="KB-099"]');
+    fireEvent.doubleClick(card!);
+
+    const titleInput = screen.getByPlaceholderText(/Task title/i) as HTMLInputElement;
+    fireEvent.change(titleInput, { target: { value: "Changed Title" } });
+
+    // Press Escape
+    fireEvent.keyDown(titleInput, { key: "Escape" });
+
+    // Should exit edit mode without saving
+    expect(screen.queryByPlaceholderText(/Task title/i)).toBeNull();
+    expect(noopUpdateTask).not.toHaveBeenCalled();
+  });
+
+  it("blurring with no changes cancels edit mode", async () => {
+    const user = userEvent.setup();
+    const task = makeEditableTask({ title: "Original Title", description: "Original Desc" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="KB-099"]');
+    await user.dblClick(card!);
+
+    const titleInput = screen.getByPlaceholderText(/Task title/i);
+
+    // Tab out to move focus outside the editing area
+    await user.tab();
+    await user.tab(); // Second tab to move past the textarea
+
+    // Wait for the blur handler to execute
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Should have exited edit mode
+    expect(screen.queryByPlaceholderText(/Task title/i)).toBeNull();
+    expect(noopUpdateTask).not.toHaveBeenCalled();
+  });
+
+  it("Enter in description saves changes", async () => {
+    const task = makeEditableTask({ title: "Title", description: "Old Desc" });
+    const mockUpdateTask = vi.fn().mockResolvedValue({ ...task, description: "New Desc" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={mockUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="KB-099"]');
+    fireEvent.doubleClick(card!);
+
+    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
+    fireEvent.change(descTextarea, { target: { value: "New Desc" } });
+
+    // Press Enter (not Shift+Enter)
+    fireEvent.keyDown(descTextarea, { key: "Enter", shiftKey: false });
+
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenCalledWith("KB-099", {
+        title: "Title",
+        description: "New Desc",
+      });
+    });
+  });
+
+  it("Enter in title moves focus to description", () => {
+    const task = makeEditableTask();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="KB-099"]');
+    fireEvent.doubleClick(card!);
+
+    const titleInput = screen.getByPlaceholderText(/Task title/i) as HTMLInputElement;
+    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
+
+    // Press Enter in title - should move focus to description
+    fireEvent.keyDown(titleInput, { key: "Enter" });
+
+    // Description should receive focus
+    expect(document.activeElement).toBe(descTextarea);
+  });
+
+  it("Shift+Enter in description adds newline", () => {
+    const task = makeEditableTask({ description: "Line 1" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="KB-099"]');
+    fireEvent.doubleClick(card!);
+
+    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
+
+    // Press Shift+Enter - should not trigger save
+    fireEvent.keyDown(descTextarea, { key: "Enter", shiftKey: true });
+
+    // updateTask should not be called
+    expect(noopUpdateTask).not.toHaveBeenCalled();
+  });
+
+  it("shows loading state during save", async () => {
+    const task = makeEditableTask({ title: "Title" });
+    // Create a promise that we can resolve manually
+    let resolveUpdate: (value: Task) => void;
+    const updatePromise = new Promise<Task>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    const mockUpdateTask = vi.fn().mockReturnValue(updatePromise);
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={mockUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="KB-099"]');
+    fireEvent.doubleClick(card!);
+
+    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
+    fireEvent.change(descTextarea, { target: { value: "New Desc" } });
+
+    // Trigger save
+    fireEvent.keyDown(descTextarea, { key: "Enter" });
+
+    // Should show loading state
+    await waitFor(() => {
+      expect(screen.getByText(/Saving/i)).toBeDefined();
+    });
+
+    // Resolve the update
+    resolveUpdate!({ ...task, description: "New Desc" });
+
+    // Wait for save to complete
+    await waitFor(() => {
+      expect(screen.queryByText(/Saving/i)).toBeNull();
+    });
+  });
+
+  it("shows error toast when save fails", async () => {
+    const task = makeEditableTask({ title: "Title" });
+    const mockUpdateTask = vi.fn().mockRejectedValue(new Error("Network error"));
+    const addToast = vi.fn();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={addToast}
+        onUpdateTask={mockUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="KB-099"]');
+    fireEvent.doubleClick(card!);
+
+    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
+    fireEvent.change(descTextarea, { target: { value: "New Desc" } });
+
+    // Trigger save
+    fireEvent.keyDown(descTextarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Failed to update"), "error");
+    });
+
+    // Should stay in edit mode on error
+    expect(screen.getByPlaceholderText(/Task description/i)).toBeDefined();
+  });
+
+  it("prevents drag during edit mode", () => {
+    const task = makeEditableTask();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="KB-099"]') as HTMLElement;
+    fireEvent.doubleClick(card);
+
+    // Card should have editing class
+    expect(card.classList.contains("card-editing")).toBe(true);
+  });
+
+  it("card has card-editing class when in edit mode", () => {
+    const task = makeEditableTask();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    const card = document.querySelector('[data-id="KB-099"]') as HTMLElement;
+    expect(card.classList.contains("card-editing")).toBe(false);
+
+    fireEvent.doubleClick(card);
+
+    const editingCard = document.querySelector(".card-editing");
+    expect(editingCard).toBeDefined();
   });
 });

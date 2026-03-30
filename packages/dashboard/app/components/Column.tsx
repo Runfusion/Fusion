@@ -23,9 +23,13 @@ interface ColumnProps {
   autoMerge?: boolean;
   onToggleAutoMerge?: () => void;
   globalPaused?: boolean;
+  onUpdateTask?: (
+    id: string,
+    updates: { title?: string; description?: string; dependencies?: string[] }
+  ) => Promise<Task>;
 }
 
-export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask, autoMerge, onToggleAutoMerge, globalPaused }: ColumnProps) {
+export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const countFlashing = useFlashOnIncrease(tasks.length);
 
@@ -110,6 +114,7 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
                   addToast={addToast}
                   globalPaused={globalPaused}
                   tasks={allTasks}
+                  onUpdateTask={onUpdateTask}
                 />
               ))
             );
@@ -118,7 +123,7 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
           <div className="empty-column">No tasks</div>
         ) : (
           tasks.map((task) => (
-            <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} tasks={allTasks} />
+            <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} tasks={allTasks} onUpdateTask={onUpdateTask} />
           ))
         )}
       </div>

@@ -36,7 +36,7 @@ function AppInner() {
     return "board";
   });
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
-  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask } = useTasks();
+  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask } = useTasks();
 
   useEffect(() => {
     fetchConfig()
@@ -160,6 +160,7 @@ function AppInner() {
           autoMerge={autoMerge}
           onToggleAutoMerge={handleToggleAutoMerge}
           globalPaused={globalPaused}
+          onUpdateTask={updateTask}
         />
       ) : (
         <ListView

@@ -6,6 +6,7 @@ Web-based dashboard for managing kb tasks. Provides a visual kanban board, list 
 
 ### Task Management
 - **Kanban Board**: Drag-and-drop task management across columns (Triage, Todo, In Progress, In Review, Done)
+- **Inline Editing**: Quick-edit task title and description directly on the board for Triage and Todo columns. Double-click a card or use the pencil icon that appears on hover.
 - **List View**: Alternative tabular view for tasks with sorting and filtering
 - **Task Details**: View full task specifications, agent logs, and attachments
 - **GitHub Import**: Import issues directly from GitHub repositories

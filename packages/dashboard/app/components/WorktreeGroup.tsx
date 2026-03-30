@@ -11,6 +11,10 @@ interface WorktreeGroupProps {
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   tasks?: Task[]; // All tasks for dependency lookup
+  onUpdateTask?: (
+    id: string,
+    updates: { title?: string; description?: string; dependencies?: string[] }
+  ) => Promise<Task>;
 }
 
 export function WorktreeGroup({
@@ -21,6 +25,7 @@ export function WorktreeGroup({
   addToast,
   globalPaused,
   tasks = [],
+  onUpdateTask,
 }: WorktreeGroupProps) {
   return (
     <div className="worktree-group">
@@ -31,7 +36,7 @@ export function WorktreeGroup({
         <span className="worktree-label">{label}</span>
       </div>
       {activeTasks.map((task) => (
-        <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} tasks={tasks} />
+        <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} tasks={tasks} onUpdateTask={onUpdateTask} />
       ))}
       {queuedTasks.map((task) => (
         <TaskCard
@@ -42,6 +47,7 @@ export function WorktreeGroup({
           addToast={addToast}
           globalPaused={globalPaused}
           tasks={tasks}
+          onUpdateTask={onUpdateTask}
         />
       ))}
     </div>

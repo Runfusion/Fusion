@@ -118,5 +118,39 @@ export function useTasks() {
     return api.retryTask(id);
   }, []);
 
-  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask };
+  const updateTask = useCallback(async (
+    id: string,
+    updates: { title?: string; description?: string; dependencies?: string[] }
+  ): Promise<Task> => {
+    // Optimistic update: apply changes immediately
+    const previousTask = tasksRef.current.find((t) => t.id === id);
+    const optimisticTask = previousTask
+      ? { ...previousTask, ...updates, updatedAt: new Date().toISOString() }
+      : undefined;
+
+    if (optimisticTask) {
+      setTasks((prev) =>
+        prev.map((t) => (t.id === id ? optimisticTask : t))
+      );
+    }
+
+    try {
+      const updatedTask = await api.updateTask(id, updates);
+      // Replace with server response
+      setTasks((prev) =>
+        prev.map((t) => (t.id === id ? updatedTask : t))
+      );
+      return updatedTask;
+    } catch (err) {
+      // Rollback on error: restore previous state
+      if (previousTask) {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === id ? previousTask : t))
+        );
+      }
+      throw err;
+    }
+  }, []);
+
+  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask };
 }
