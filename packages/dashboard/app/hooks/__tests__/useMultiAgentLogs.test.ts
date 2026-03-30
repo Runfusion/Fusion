@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { MAX_LOG_ENTRIES, useMultiAgentLogs } from "../useMultiAgentLogs";
 import { fetchAgentLogs } from "../../api";
+import { MockEventSource } from "../../../vitest.setup";
 
 // Mock the api module
 vi.mock("../../api", () => ({
@@ -10,67 +11,26 @@ vi.mock("../../api", () => ({
 
 const mockFetchAgentLogs = vi.mocked(fetchAgentLogs);
 
-// Mock EventSource - track instances per hook render, not globally
-class MockEventSource {
-  url: string;
-  listeners: Record<string, ((e: { data: string }) => void)[]> = {};
-  readyState = 0;
-  close = vi.fn(() => {
-    this.readyState = 2;
-  });
-
-  constructor(url: string) {
-    this.url = url;
-    this.readyState = 1;
-  }
-
-  addEventListener(event: string, fn: (e: { data: string }) => void) {
-    if (!this.listeners[event]) this.listeners[event] = [];
-    this.listeners[event].push(fn);
-  }
-
-  removeEventListener(event: string, fn: (e: { data: string }) => void) {
-    this.listeners[event] = (this.listeners[event] || []).filter((listener) => listener !== fn);
-  }
-
-  // Helper to simulate a server event
-  _emit(event: string, data?: unknown) {
-    for (const fn of this.listeners[event] || []) {
-      fn(data === undefined ? ({ } as { data: string }) : { data: JSON.stringify(data) });
-    }
-  }
+// Helper to get the last connection for a specific task ID
+function getConnection(taskId: string): MockEventSource | undefined {
+  const url = `/api/tasks/${taskId}/logs/stream`;
+  const matching = MockEventSource.instances.filter((e) => e.url === url);
+  return matching[matching.length - 1];
 }
 
-const originalEventSource = globalThis.EventSource;
+// Helper to get all connections for a task ID
+function getConnections(taskId: string): MockEventSource[] {
+  const url = `/api/tasks/${taskId}/logs/stream`;
+  return MockEventSource.instances.filter((e) => e.url === url);
+}
 
 beforeEach(() => {
-  (globalThis as unknown as Record<string, unknown>).EventSource = MockEventSource;
   mockFetchAgentLogs.mockReset().mockResolvedValue([]);
 });
 
 afterEach(() => {
-  (globalThis as unknown as Record<string, unknown>).EventSource = originalEventSource;
+  // Clean up is handled by global afterEach in vitest.setup.ts
 });
-
-function getActiveConnections(): MockEventSource[] {
-  // Get all MockEventSource instances that haven't been closed
-  // We need to track this ourselves since the mock is recreated each time
-  const allSources: MockEventSource[] = [];
-  
-  // Hook into the constructor to track instances
-  const OriginalMock = MockEventSource;
-  const instances: MockEventSource[] = [];
-  
-  // Override to capture instances
-  (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-    constructor(url: string) {
-      super(url);
-      instances.push(this);
-    }
-  };
-  
-  return instances;
-}
 
 describe("useMultiAgentLogs", () => {
   it("initializes with empty entries for all provided task IDs", () => {
@@ -119,21 +79,11 @@ describe("useMultiAgentLogs", () => {
   it("opens SSE EventSource for each task ID", async () => {
     mockFetchAgentLogs.mockResolvedValue([]);
 
-    const instances: MockEventSource[] = [];
-    
-    // Override to capture instances
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
-
     renderHook(() => useMultiAgentLogs(["KB-001", "KB-002"]));
 
     await waitFor(() => {
       // Filter to unique URLs (Strict Mode may create duplicates)
-      const urls = [...new Set(instances.map((es) => es.url))];
+      const urls = [...new Set(MockEventSource.instances.map((es) => es.url))];
       expect(urls).toContain("/api/tasks/KB-001/logs/stream");
       expect(urls).toContain("/api/tasks/KB-002/logs/stream");
     });
@@ -146,21 +96,13 @@ describe("useMultiAgentLogs", () => {
     // Use mockResolvedValue (not Once) to handle Strict Mode double-run
     mockFetchAgentLogs.mockResolvedValue(historical);
 
-    const instances: MockEventSource[] = [];
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
-
     const { result } = renderHook(() => useMultiAgentLogs(["KB-001"]));
 
     await waitFor(() => {
       expect(result.current["KB-001"].entries).toHaveLength(1);
     });
 
-    const es = instances.find((e) => e.url.includes("KB-001"));
+    const es = getConnection("KB-001");
     expect(es).toBeDefined();
 
     act(() => {
@@ -182,24 +124,16 @@ describe("useMultiAgentLogs", () => {
   it("closes all SSE connections on unmount (memory leak prevention)", async () => {
     mockFetchAgentLogs.mockResolvedValue([]);
 
-    const instances: MockEventSource[] = [];
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
-
     const { unmount } = renderHook(() => useMultiAgentLogs(["KB-001", "KB-002"]));
 
     // Wait for connections to be established
     await waitFor(() => {
-      expect(instances.length).toBeGreaterThanOrEqual(2);
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2);
     });
 
     // Get unique instances by URL (handling Strict Mode duplicates)
     const uniqueByUrl = new Map<string, MockEventSource>();
-    for (const es of instances) {
+    for (const es of MockEventSource.instances) {
       if (!uniqueByUrl.has(es.url) || !es.close.mock?.calls?.length) {
         uniqueByUrl.set(es.url, es);
       }
@@ -217,29 +151,14 @@ describe("useMultiAgentLogs", () => {
   it("closes specific connection when task ID removed from array", async () => {
     mockFetchAgentLogs.mockResolvedValue([]);
 
-    const instances: MockEventSource[] = [];
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
-
     const { rerender } = renderHook(
       ({ taskIds }: { taskIds: string[] }) => useMultiAgentLogs(taskIds),
       { initialProps: { taskIds: ["KB-001", "KB-002"] } },
     );
 
     await waitFor(() => {
-      expect(instances.length).toBeGreaterThanOrEqual(2);
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2);
     });
-
-    // Get the last connection for each URL
-    const getConnection = (taskId: string) => {
-      const url = `/api/tasks/${taskId}/logs/stream`;
-      const matching = instances.filter((e) => e.url === url);
-      return matching[matching.length - 1];
-    };
 
     const es1 = getConnection("KB-001");
     const es2 = getConnection("KB-002");
@@ -247,22 +166,14 @@ describe("useMultiAgentLogs", () => {
     rerender({ taskIds: ["KB-001"] });
 
     await waitFor(() => {
-      expect(es2.close).toHaveBeenCalled();
+      expect(es2!.close).toHaveBeenCalled();
     });
 
-    expect(es1.close).not.toHaveBeenCalled();
+    expect(es1!.close).not.toHaveBeenCalled();
   });
 
   it("opens new connection when task ID added to array", async () => {
     mockFetchAgentLogs.mockResolvedValue([]);
-
-    const instances: MockEventSource[] = [];
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
 
     const { rerender } = renderHook(
       ({ taskIds }: { taskIds: string[] }) => useMultiAgentLogs(taskIds),
@@ -270,13 +181,13 @@ describe("useMultiAgentLogs", () => {
     );
 
     await waitFor(() => {
-      expect(instances.length).toBeGreaterThanOrEqual(1);
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(1);
     });
 
     rerender({ taskIds: ["KB-001", "KB-002"] });
 
     await waitFor(() => {
-      const urls = [...new Set(instances.map((es) => es.url))];
+      const urls = [...new Set(MockEventSource.instances.map((es) => es.url))];
       expect(urls).toContain("/api/tasks/KB-002/logs/stream");
     });
   });
@@ -325,28 +236,24 @@ describe("useMultiAgentLogs", () => {
       }),
     );
 
-    const instances: MockEventSource[] = [];
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
-
     const { rerender } = renderHook(
       ({ taskIds }: { taskIds: string[] }) => useMultiAgentLogs(taskIds),
       { initialProps: { taskIds: ["KB-001"] } },
     );
 
     await waitFor(() => {
-      expect(instances.filter((es) => es.url === "/api/tasks/KB-001/logs/stream")).toHaveLength(1);
+      // Allow for Strict Mode double-rendering
+      expect(getConnections("KB-001").length).toBeGreaterThanOrEqual(1);
     });
+
+    const initialCount = getConnections("KB-001").length;
 
     rerender({ taskIds: ["KB-001"] });
 
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(instances.filter((es) => es.url === "/api/tasks/KB-001/logs/stream")).toHaveLength(1);
+    // Should not create additional connections on rerender with same IDs
+    expect(getConnections("KB-001").length).toBe(initialCount);
 
     resolveFetch?.([]);
 
@@ -358,27 +265,20 @@ describe("useMultiAgentLogs", () => {
   it("closes a task connection when its stream emits an error", async () => {
     mockFetchAgentLogs.mockResolvedValue([]);
 
-    const instances: MockEventSource[] = [];
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
-
     renderHook(() => useMultiAgentLogs(["KB-001"]));
 
     await waitFor(() => {
-      expect(instances).toHaveLength(1);
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(1);
     });
 
-    const es = instances[0];
+    const es = getConnection("KB-001");
+    expect(es).toBeDefined();
 
     act(() => {
-      es._emit("error");
+      es!._emit("error");
     });
 
-    expect(es.close).toHaveBeenCalledTimes(1);
+    expect(es!.close).toHaveBeenCalledTimes(1);
   });
 
   it("truncates oversized historical logs per task to the most recent entries", async () => {
@@ -409,22 +309,17 @@ describe("useMultiAgentLogs", () => {
       }),
     );
 
-    const instances: MockEventSource[] = [];
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
-
     const { result } = renderHook(() => useMultiAgentLogs(["KB-001"]));
 
     await waitFor(() => {
-      expect(instances).toHaveLength(1);
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(1);
     });
 
+    const es = getConnection("KB-001");
+    expect(es).toBeDefined();
+
     act(() => {
-      instances[0]._emit("agent:log", {
+      es!._emit("agent:log", {
         timestamp: "2026-01-01T00:01:00Z",
         taskId: "KB-001",
         text: "live-before-history",
@@ -454,23 +349,18 @@ describe("useMultiAgentLogs", () => {
   it("truncates live SSE entries per task to the most recent entries", async () => {
     mockFetchAgentLogs.mockResolvedValue([]);
 
-    const instances: MockEventSource[] = [];
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
-
     const { result } = renderHook(() => useMultiAgentLogs(["KB-001"]));
 
     await waitFor(() => {
-      expect(instances).toHaveLength(1);
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(1);
     });
+
+    const es = getConnection("KB-001");
+    expect(es).toBeDefined();
 
     act(() => {
       for (let index = 0; index < MAX_LOG_ENTRIES + 15; index++) {
-        instances[0]._emit("agent:log", {
+        es!._emit("agent:log", {
           timestamp: `2026-01-01T00:${String(index).padStart(2, "0")}:00Z`,
           taskId: "KB-001",
           text: `live-${index}`,
@@ -501,14 +391,6 @@ describe("useMultiAgentLogs", () => {
       return Promise.resolve([]);
     });
 
-    const instances: MockEventSource[] = [];
-    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
-      constructor(url: string) {
-        super(url);
-        instances.push(this);
-      }
-    };
-
     const { result } = renderHook(() => useMultiAgentLogs(["KB-001", "KB-002"]));
 
     await waitFor(() => {
@@ -516,20 +398,13 @@ describe("useMultiAgentLogs", () => {
       expect(result.current["KB-002"].entries).toHaveLength(1);
     });
 
-    // Get the last connection for each URL
-    const getConnection = (taskId: string) => {
-      const url = `/api/tasks/${taskId}/logs/stream`;
-      const matching = instances.filter((e) => e.url === url);
-      return matching[matching.length - 1];
-    };
-
     const es1 = getConnection("KB-001");
     const es2 = getConnection("KB-002");
     expect(es1).toBeDefined();
     expect(es2).toBeDefined();
 
     act(() => {
-      es1._emit("agent:log", {
+      es1!._emit("agent:log", {
         timestamp: "2026-01-01T00:01:00Z",
         taskId: "KB-001",
         text: "task1-new",
@@ -543,7 +418,7 @@ describe("useMultiAgentLogs", () => {
     });
 
     act(() => {
-      es2._emit("agent:log", {
+      es2!._emit("agent:log", {
         timestamp: "2026-01-01T00:01:00Z",
         taskId: "KB-002",
         text: "task2-new",

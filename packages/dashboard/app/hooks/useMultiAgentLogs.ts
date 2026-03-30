@@ -59,6 +59,9 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
     };
   }, []);
 
+  // Stable comparison of task IDs to prevent effect re-runs on every render
+  const taskIdsKey = taskIds.join(",");
+
   // Main effect to manage connections
   useEffect(() => {
     const currentIds = new Set(taskIds);
@@ -66,7 +69,30 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
     const initializing = initializingRef.current;
     const cancelled = cancelledRef.current;
 
+    // Track which task IDs need state initialization (not already in stateMap)
+    const newTaskIds: string[] = [];
+    for (const taskId of taskIds) {
+      if (!stateMap[taskId]) {
+        newTaskIds.push(taskId);
+      }
+    }
+    
+    // Only initialize state for new tasks that aren't already in stateMap
+    if (newTaskIds.length > 0) {
+      setStateMap((prev) => {
+        const updates: Record<string, InitState> = {};
+        for (const taskId of newTaskIds) {
+          if (!prev[taskId]) {
+            updates[taskId] = { entries: [], loading: true };
+          }
+        }
+        if (Object.keys(updates).length === 0) return prev;
+        return { ...prev, ...updates };
+      });
+    }
+
     // Close connections for tasks no longer in the list
+    const removedTaskIds: string[] = [];
     for (const [taskId, es] of Object.entries(sources)) {
       if (!currentIds.has(taskId)) {
         cancelled[taskId] = true;
@@ -75,13 +101,29 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
         initializing.delete(taskId);
         delete cancelled[taskId];
         delete pendingLiveEntriesRef.current[taskId];
-
-        // Remove state for disconnected task
-        setStateMap((prev) => {
-          const { [taskId]: _, ...rest } = prev;
-          return rest;
-        });
+        removedTaskIds.push(taskId);
       }
+    }
+    
+    // Only remove state for disconnected tasks if there are any
+    if (removedTaskIds.length > 0) {
+      setStateMap((prev) => {
+        let hasChanges = false;
+        for (const taskId of removedTaskIds) {
+          if (taskId in prev) {
+            hasChanges = true;
+            break;
+          }
+        }
+        if (!hasChanges) return prev;
+        const newState: Record<string, InitState> = {};
+        for (const [id, state] of Object.entries(prev)) {
+          if (!removedTaskIds.includes(id)) {
+            newState[id] = state;
+          }
+        }
+        return newState;
+      });
     }
 
     // Mark removed pending initializations as cancelled even if EventSource not created yet
@@ -93,14 +135,8 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
       }
     }
 
-    // Initialize state and connections for current tasks
+    // Initialize connections for current tasks
     for (const taskId of taskIds) {
-      // Initialize state if not present
-      setStateMap((prev) => {
-        if (prev[taskId]) return prev;
-        return { ...prev, [taskId]: { entries: [], loading: true } };
-      });
-
       // Skip if already connected or currently initializing
       if (sources[taskId] || initializing.has(taskId)) continue;
 
@@ -179,22 +215,28 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
           initializingRef.current.delete(taskId);
         });
     }
+    
+    // Update previous task IDs ref for cleanup comparison
+    const initialTaskIds = [...taskIds];
 
     // Cleanup on effect re-run or unmount
     return () => {
-      for (const taskId of taskIds) {
-        cancelledRef.current[taskId] = true;
+      // Only close connections for tasks that were removed (not in current taskIds)
+      for (const taskId of initialTaskIds) {
+        if (!currentIds.has(taskId)) {
+          cancelledRef.current[taskId] = true;
 
-        const es = sourcesRef.current[taskId];
-        if (es) {
-          es.close();
-          delete sourcesRef.current[taskId];
+          const es = sourcesRef.current[taskId];
+          if (es) {
+            es.close();
+            delete sourcesRef.current[taskId];
+          }
+
+          initializingRef.current.delete(taskId);
         }
-
-        initializingRef.current.delete(taskId);
       }
     };
-  }, [taskIds]);
+  }, [taskIdsKey]); // Use stable string key instead of array reference
 
   // Close all connections on unmount
   useEffect(() => {
