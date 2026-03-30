@@ -2,234 +2,106 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TerminalModal } from "../TerminalModal";
 import * as useTerminalModule from "../../hooks/useTerminal";
+import * as apiModule from "../../api";
 
-// Mock the useTerminal hook
+// Mock hooks and API
 vi.mock("../../hooks/useTerminal", () => ({
   useTerminal: vi.fn(),
 }));
 
+vi.mock("../../api", () => ({
+  createTerminalSession: vi.fn(),
+  killTerminalSession: vi.fn(),
+}));
+
 const mockUseTerminal = vi.mocked(useTerminalModule.useTerminal);
+const mockCreateTerminalSession = vi.mocked(apiModule.createTerminalSession);
+const mockKillTerminalSession = vi.mocked(apiModule.killTerminalSession);
 
 describe("TerminalModal", () => {
   const mockOnClose = vi.fn();
-  const mockExecuteCommand = vi.fn();
-  const mockClearHistory = vi.fn();
-  const mockKillCurrentCommand = vi.fn();
-  const mockSetInputValue = vi.fn();
-  const mockNavigateHistoryUp = vi.fn();
-  const mockNavigateHistoryDown = vi.fn();
-  const mockResetHistoryNavigation = vi.fn();
+  const mockSendInput = vi.fn();
+  const mockResize = vi.fn();
+  const mockReconnect = vi.fn();
 
   const createMockTerminalState = (overrides = {}) => ({
-    history: [],
-    currentSessionId: null,
-    isRunning: false,
-    inputValue: "",
-    historyIndex: -1,
-    error: null,
-    executeCommand: mockExecuteCommand,
-    clearHistory: mockClearHistory,
-    killCurrentCommand: mockKillCurrentCommand,
-    setInputValue: mockSetInputValue,
-    navigateHistoryUp: mockNavigateHistoryUp,
-    navigateHistoryDown: mockNavigateHistoryDown,
-    resetHistoryNavigation: mockResetHistoryNavigation,
+    connectionStatus: "disconnected" as const,
+    sendInput: mockSendInput,
+    resize: mockResize,
+    onData: vi.fn(() => vi.fn()),
+    onExit: vi.fn(() => vi.fn()),
+    onConnect: vi.fn(() => vi.fn()),
+    onScrollback: vi.fn(() => vi.fn()),
+    reconnect: mockReconnect,
     ...overrides,
   });
 
   beforeEach(() => {
-    mockOnClose.mockClear();
-    mockExecuteCommand.mockClear();
-    mockClearHistory.mockClear();
-    mockKillCurrentCommand.mockClear();
-    mockSetInputValue.mockClear();
-    mockNavigateHistoryUp.mockClear();
-    mockNavigateHistoryDown.mockClear();
-    mockResetHistoryNavigation.mockClear();
-    
+    vi.clearAllMocks();
+    mockCreateTerminalSession.mockResolvedValue({
+      sessionId: "test-session-123",
+      shell: "/bin/bash",
+      cwd: "/project",
+    });
+    mockKillTerminalSession.mockResolvedValue({ killed: true });
     mockUseTerminal.mockReturnValue(createMockTerminalState());
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
-  it("renders without crashing when open", () => {
+  it("renders without crashing when open", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    expect(screen.getByTestId("terminal-modal")).toBeTruthy();
-    expect(screen.getByTestId("terminal-welcome")).toBeTruthy();
-  });
-
-  it("does not render when closed", () => {
-    const { container } = render(
-      <TerminalModal isOpen={false} onClose={mockOnClose} />
-    );
-    expect(container.firstChild).toBeNull();
-  });
-
-  it("shows welcome message when empty", () => {
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    expect(screen.getByTestId("terminal-welcome")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Interactive Terminal" })).toBeTruthy();
-  });
-
-  it("executes command on form submit", async () => {
-    const { rerender } = render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-    
-    // Update mock to provide a value
-    mockUseTerminal.mockReturnValue(createMockTerminalState({ inputValue: "ls -la" }));
-    rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    const form = screen.getByTestId("terminal-input").closest("form");
-    fireEvent.submit(form!);
-
-    expect(mockExecuteCommand).toHaveBeenCalledWith("ls -la");
-  });
-
-  it("executes initial command when provided", async () => {
-    mockUseTerminal.mockReturnValue(createMockTerminalState({ inputValue: "" }));
-    
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="git status" />
-    );
 
     await waitFor(() => {
-      expect(mockExecuteCommand).toHaveBeenCalledWith("git status");
+      expect(screen.getByTestId("terminal-modal")).toBeTruthy();
     });
   });
 
-  it("clears history when clear button clicked", () => {
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    fireEvent.click(screen.getByTestId("terminal-clear-btn"));
-
-    expect(mockClearHistory).toHaveBeenCalled();
+  it("does not render when closed", () => {
+    const { container } = render(<TerminalModal isOpen={false} onClose={mockOnClose} />);
+    expect(container.firstChild).toBeNull();
   });
 
-  it("kills process when kill button clicked while running", () => {
-    mockUseTerminal.mockReturnValue(
-      createMockTerminalState({ isRunning: true, currentSessionId: "session-123" })
-    );
-
+  it("creates terminal session on open", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    fireEvent.click(screen.getByTestId("terminal-kill-btn"));
-
-    expect(mockKillCurrentCommand).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mockCreateTerminalSession).toHaveBeenCalled();
+    });
   });
 
-  it("shows running indicator when command is executing", () => {
-    mockUseTerminal.mockReturnValue(
-      createMockTerminalState({
-        isRunning: true,
-        currentSessionId: "session-123",
-        history: [
-          {
-            id: "entry-1",
-            command: "sleep 10",
-            output: "",
-            exitCode: null,
-            timestamp: new Date(),
-            isRunning: true,
-          },
-        ],
-      })
-    );
-
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    expect(screen.getByTestId("terminal-entry-entry-1")).toBeTruthy();
-    expect(screen.getByText("Running...")).toBeTruthy();
-  });
-
-  it("displays command history with output", () => {
-    mockUseTerminal.mockReturnValue(
-      createMockTerminalState({
-        history: [
-          {
-            id: "entry-1",
-            command: "echo hello",
-            output: "hello\n",
-            exitCode: 0,
-            timestamp: new Date(),
-            isRunning: false,
-          },
-          {
-            id: "entry-2",
-            command: "ls",
-            output: "file1.txt\nfile2.txt\n",
-            exitCode: 0,
-            timestamp: new Date(),
-            isRunning: false,
-          },
-        ],
-      })
-    );
-
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    expect(screen.getByTestId("terminal-entry-entry-1")).toBeTruthy();
-    expect(screen.getByTestId("terminal-entry-entry-2")).toBeTruthy();
-    expect(screen.getByText("echo hello")).toBeTruthy();
-    expect(screen.getByText("ls")).toBeTruthy();
-  });
-
-  it("disables input while command is running", () => {
-    mockUseTerminal.mockReturnValue(
-      createMockTerminalState({ isRunning: true })
-    );
-
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    const input = screen.getByTestId("terminal-input");
-    expect(input).toBeDisabled();
-    expect(input).toHaveAttribute("placeholder", "Command running...");
-  });
-
-  it("handles Ctrl+C to kill running process", () => {
-    const { rerender } = render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+  it("shows loading state while creating session", async () => {
+    mockCreateTerminalSession.mockImplementation(() => new Promise(() => {}));
     
-    mockUseTerminal.mockReturnValue(
-      createMockTerminalState({ isRunning: true })
-    );
-    rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-    
-    const input = screen.getByTestId("terminal-input");
-    fireEvent.keyDown(input, { key: "c", ctrlKey: true });
-    
-    expect(mockKillCurrentCommand).toHaveBeenCalled();
-  });
-
-  it("handles Ctrl+L to clear history", () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    const input = screen.getByTestId("terminal-input");
-    fireEvent.keyDown(input, { key: "l", ctrlKey: true });
-
-    expect(mockClearHistory).toHaveBeenCalled();
+    expect(screen.getByTestId("terminal-loading")).toBeTruthy();
   });
 
-  it("handles Up arrow to navigate history", () => {
+  it("shows error when session creation fails", async () => {
+    mockCreateTerminalSession.mockRejectedValue(new Error("Failed to create session"));
+
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    const input = screen.getByTestId("terminal-input");
-    fireEvent.keyDown(input, { key: "ArrowUp" });
-
-    expect(mockNavigateHistoryUp).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-error")).toBeTruthy();
+    });
   });
 
-  it("handles Down arrow to navigate history", () => {
+  it("closes modal on close button click", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    const input = screen.getByTestId("terminal-input");
-    fireEvent.keyDown(input, { key: "ArrowDown" });
+    await waitFor(() => {
+      const closeBtn = screen.getByTestId("terminal-close-btn");
+      fireEvent.click(closeBtn);
+    });
 
-    expect(mockNavigateHistoryDown).toHaveBeenCalled();
+    expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it("modal closes on Escape key press", () => {
+  it("closes modal on escape key", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -237,69 +109,67 @@ describe("TerminalModal", () => {
     expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it("modal closes on overlay click", () => {
+  it("closes modal on overlay click", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    const overlay = screen.getByTestId("terminal-modal-overlay");
-    fireEvent.click(overlay);
+    await waitFor(() => {
+      const overlay = screen.getByTestId("terminal-modal-overlay");
+      fireEvent.click(overlay);
+    });
 
     expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it("modal does not close when clicking inside modal content", () => {
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+  it("kills session on modal close", async () => {
+    const { rerender } = render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    const modal = screen.getByTestId("terminal-modal");
-    fireEvent.click(modal);
+    await waitFor(() => {
+      expect(mockCreateTerminalSession).toHaveBeenCalled();
+    });
 
-    expect(mockOnClose).not.toHaveBeenCalled();
+    rerender(<TerminalModal isOpen={false} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(mockKillTerminalSession).toHaveBeenCalledWith("test-session-123");
+    });
   });
 
-  it("modal closes on close button click", () => {
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    fireEvent.click(screen.getByTestId("terminal-close-btn"));
-
-    expect(mockOnClose).toHaveBeenCalled();
-  });
-
-  it("updates input value on change", () => {
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    const input = screen.getByTestId("terminal-input");
-    fireEvent.change(input, { target: { value: "git status" } });
-
-    expect(mockSetInputValue).toHaveBeenCalledWith("git status");
-  });
-
-  it("marks error output with error class", () => {
+  it("shows reconnect button when disconnected", async () => {
     mockUseTerminal.mockReturnValue(
-      createMockTerminalState({
-        history: [
-          {
-            id: "entry-1",
-            command: "exit 1",
-            output: "Error occurred",
-            exitCode: 1,
-            timestamp: new Date(),
-            isRunning: false,
-          },
-        ],
+      createMockTerminalState({ 
+        connectionStatus: "disconnected",
       })
     );
 
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    const output = screen.getByText("Error occurred");
-    expect(output.className).toContain("terminal-output-error");
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-reconnect-btn")).toBeTruthy();
+    });
   });
 
-  it("focuses input when modal opens", async () => {
+  it("reconnects when reconnect button clicked", async () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({ 
+        connectionStatus: "disconnected",
+      })
+    );
+
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     await waitFor(() => {
-      const input = screen.getByTestId("terminal-input");
-      expect(document.activeElement).toBe(input);
+      const reconnectBtn = screen.getByTestId("terminal-reconnect-btn");
+      fireEvent.click(reconnectBtn);
+    });
+
+    expect(mockReconnect).toHaveBeenCalled();
+  });
+
+  it("WebSocket connects on mount with sessionId", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(mockUseTerminal).toHaveBeenCalledWith("test-session-123");
     });
   });
 });
