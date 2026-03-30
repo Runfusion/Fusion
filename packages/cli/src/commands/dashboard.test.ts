@@ -12,6 +12,7 @@ function makeMockStore() {
     init: vi.fn().mockResolvedValue(undefined),
     watch: vi.fn().mockResolvedValue(undefined),
     stopWatching: vi.fn(),
+    updateSettings: vi.fn().mockResolvedValue(undefined),
     getSettings: vi.fn().mockResolvedValue({
       maxConcurrent: 1,
       maxWorktrees: 2,
@@ -611,5 +612,117 @@ describe("runDashboard — enginePaused (soft pause)", () => {
       (call: any[]) => call[2],
     );
     expect(mergedIds).toContain("KB-EP2");
+  });
+});
+
+describe("runDashboard — --paused flag", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@kb/core");
+    (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@kb/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
+    consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  it("calls store.updateSettings({ enginePaused: true }) when paused: true is passed", async () => {
+    await runDashboard(0, { open: false, paused: true });
+
+    expect(mockStore.updateSettings).toHaveBeenCalledWith({ enginePaused: true });
+  });
+
+  it("logs a message when starting in paused mode", async () => {
+    await runDashboard(0, { open: false, paused: true });
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "[engine] Starting in paused mode — automation disabled",
+    );
+  });
+
+  it("does NOT set enginePaused when paused option is absent", async () => {
+    await runDashboard(0, { open: false });
+
+    // updateSettings should not be called with enginePaused during normal startup
+    const enginePausedCalls = mockStore.updateSettings.mock.calls.filter(
+      (call: any[]) => call[0]?.enginePaused !== undefined,
+    );
+    expect(enginePausedCalls).toHaveLength(0);
+  });
+
+  it("does NOT log paused message when starting normally", async () => {
+    await runDashboard(0, { open: false });
+
+    const pausedMessageCalls = consoleSpy.mock.calls.filter(
+      (args) => args[0] === "[engine] Starting in paused mode — automation disabled",
+    );
+    expect(pausedMessageCalls).toHaveLength(0);
+  });
+});
+
+describe("runDashboard — --paused flag", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@kb/core");
+    (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@kb/engine");
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ resumeOrphaned: vi.fn().mockResolvedValue(undefined) }),
+    );
+    consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  it("calls store.updateSettings({ enginePaused: true }) when paused: true is passed", async () => {
+    await runDashboard(0, { open: false, paused: true });
+
+    expect(mockStore.updateSettings).toHaveBeenCalledWith({ enginePaused: true });
+    expect(mockStore.updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT call store.updateSettings when paused flag is absent", async () => {
+    await runDashboard(0, { open: false });
+
+    expect(mockStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("logs paused mode message when starting with paused: true", async () => {
+    await runDashboard(0, { open: false, paused: true });
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "[engine] Starting in paused mode — automation disabled",
+    );
+  });
+
+  it("does NOT log paused mode message when paused flag is absent", async () => {
+    await runDashboard(0, { open: false });
+
+    const pausedMessageCalls = consoleSpy.mock.calls.filter(
+      (args) => typeof args[0] === "string" && args[0].includes("paused mode"),
+    );
+    expect(pausedMessageCalls).toHaveLength(0);
   });
 });

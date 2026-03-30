@@ -46,6 +46,7 @@ kb — AI-orchestrated task board
 
 Usage:
   kb dashboard                        Start the board web UI
+  kb dashboard --paused               Start with automation paused
   kb task create [desc] [opts]         Create a new task (goes to triage)
   kb task list                        List all tasks
   kb task show <id>                   Show task details, steps, log
@@ -60,6 +61,7 @@ Usage:
 
 Options:
   --port, -p <port>          Dashboard port (default: 4040)
+  --paused                   Start with engine paused (automation disabled)
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
   --limit, -l <n>            Max issues to import (default: 30, max: 100)
@@ -92,7 +94,8 @@ async function main() {
         const pi = portIdx !== -1 ? portIdx : portIdxShort;
         const port = pi !== -1 ? parseInt(args[pi + 1], 10) : 4040;
         const open = !args.includes("--no-open");
-        await runDashboard(port, { open });
+        const paused = args.includes("--paused");
+        await runDashboard(port, { open, paused });
         break;
       }
 

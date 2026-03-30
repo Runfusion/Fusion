@@ -23,6 +23,7 @@ Launch the web UI and AI engine:
 ```bash
 kb dashboard
 kb dashboard --port 8080
+kb dashboard --paused        # Start with automation paused (review before work begins)
 ```
 
 ### Create a task

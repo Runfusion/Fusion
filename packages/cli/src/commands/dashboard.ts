@@ -13,11 +13,17 @@ function openBrowser(url: string): void {
   exec(cmd, () => {});
 }
 
-export async function runDashboard(port: number, opts: { open?: boolean } = {}) {
+export async function runDashboard(port: number, opts: { open?: boolean; paused?: boolean } = {}) {
   const cwd = process.cwd();
   const store = new TaskStore(cwd);
   await store.init();
   await store.watch();
+
+  // Set enginePaused if starting in paused mode
+  if (opts.paused) {
+    await store.updateSettings({ enginePaused: true });
+    console.log("[engine] Starting in paused mode — automation disabled");
+  }
 
   // ── Shared concurrency semaphore ──────────────────────────────────
   //
