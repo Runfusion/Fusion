@@ -28,7 +28,7 @@ vi.mock("@kb/engine", () => ({ aiMergeTask: vi.fn() }));
 
 import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@kb/core";
-import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine, runTaskDelete } from "./task.js";
+import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry } from "./task.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -1173,5 +1173,88 @@ describe("runTaskDelete", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
 
     exitSpy.mockRestore();
+  });
+});
+
+// --- Retry Tests ---
+
+describe("runTaskRetry", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let mockGetTask: ReturnType<typeof vi.fn>;
+  let mockUpdateTask: ReturnType<typeof vi.fn>;
+  let mockMoveTask: ReturnType<typeof vi.fn>;
+  let mockLogEntry: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    mockGetTask = vi.fn();
+    mockUpdateTask = vi.fn();
+    mockMoveTask = vi.fn();
+    mockLogEntry = vi.fn();
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      getTask: mockGetTask,
+      updateTask: mockUpdateTask,
+      moveTask: mockMoveTask,
+      logEntry: mockLogEntry,
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("retries failed task successfully", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ 
+      id: "KB-001", 
+      status: "failed",
+      error: "Some error",
+      column: "in-progress"
+    }));
+    mockUpdateTask.mockResolvedValueOnce(makeTask({ id: "KB-001", status: undefined, error: undefined }));
+    mockMoveTask.mockResolvedValueOnce(makeTask({ id: "KB-001", column: "todo" }));
+    mockLogEntry.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+
+    await runTaskRetry("KB-001");
+
+    expect(mockGetTask).toHaveBeenCalledWith("KB-001");
+    expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", { status: null, error: null });
+    expect(mockMoveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(mockLogEntry).toHaveBeenCalledWith("KB-001", "Retry requested from CLI", "Task reset to todo for retry");
+
+    const successLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("✓ Retried"),
+    );
+    expect(successLine).toBeDefined();
+    expect(successLine![0]).toContain("KB-001");
+    expect(successLine![0]).toContain("todo");
+  });
+
+  it("throws error when task not found", async () => {
+    mockGetTask.mockRejectedValueOnce(new Error("Task not found"));
+
+    await expect(runTaskRetry("KB-999")).rejects.toThrow("Task KB-999 not found");
+  });
+
+  it("throws error when task is not failed", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ 
+      id: "KB-001", 
+      status: undefined,
+      column: "in-progress"
+    }));
+
+    await expect(runTaskRetry("KB-001")).rejects.toThrow("Task KB-001 is not failed (status: none)");
+  });
+
+  it("throws error with correct status when task has different status", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ 
+      id: "KB-001", 
+      status: "paused",
+      column: "in-progress"
+    }));
+
+    await expect(runTaskRetry("KB-001")).rejects.toThrow("Task KB-001 is not failed (status: paused)");
   });
 });

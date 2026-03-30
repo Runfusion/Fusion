@@ -341,6 +341,63 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── kb_task_retry ────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_retry",
+    label: "KB: Retry Task",
+    description:
+      "Retry a failed task — clears the error state and moves it back to the todo column for re-execution.",
+    promptSnippet: "Retry a failed kb task (clears error, moves to todo)",
+    promptGuidelines: [
+      "Use when a task has failed and needs to be retried from the beginning",
+      "Only tasks in 'failed' state can be retried",
+      "The task will be moved to the todo column with error state cleared",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID to retry (e.g. KB-001). Must be in 'failed' state." }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      
+      // Validate task exists
+      let task;
+      try {
+        task = await store.getTask(params.id);
+      } catch {
+        return {
+          content: [{ type: "text", text: `Task ${params.id} not found` }],
+          isError: true,
+          details: { error: "Task not found" },
+        };
+      }
+      
+      // Validate task is in failed state
+      if (task.status !== 'failed') {
+        return {
+          content: [{ type: "text", text: `Task ${params.id} is not failed (status: ${task.status || 'none'})` }],
+          isError: true,
+          details: { taskId: params.id, currentStatus: task.status },
+        };
+      }
+      
+      // Clear failure state
+      await store.updateTask(params.id, { status: null, error: null });
+      
+      // Move to todo column
+      await store.moveTask(params.id, 'todo');
+      
+      // Log the retry action
+      await store.logEntry(params.id, "Retry requested via Pi extension", "Task reset to todo for retry");
+      
+      return {
+        content: [{ type: "text", text: `Retried ${params.id} → todo (failure state cleared)` }],
+        details: { taskId: params.id, newColumn: 'todo' },
+      };
+    },
+  });
+
   // ── kb_task_duplicate ─────────────────────────────────────────────
 
   pi.registerTool({

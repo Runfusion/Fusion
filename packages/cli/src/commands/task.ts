@@ -339,6 +339,36 @@ export async function runTaskArchive(id: string) {
   console.log();
 }
 
+export async function runTaskRetry(id: string) {
+  const store = await getStore();
+  
+  // Fetch task and validate it exists
+  let task;
+  try {
+    task = await store.getTask(id);
+  } catch {
+    throw new Error(`Task ${id} not found`);
+  }
+  
+  // Validate task is in failed state
+  if (task.status !== 'failed') {
+    throw new Error(`Task ${id} is not failed (status: ${task.status || 'none'})`);
+  }
+  
+  // Clear failure state
+  await store.updateTask(id, { status: null, error: null });
+  
+  // Move to todo column
+  await store.moveTask(id, 'todo');
+  
+  // Log the retry action
+  await store.logEntry(id, "Retry requested from CLI", "Task reset to todo for retry");
+  
+  console.log();
+  console.log(`  ✓ Retried ${id} → todo (failure state cleared)`);
+  console.log();
+}
+
 export async function runTaskDelete(id: string, force?: boolean) {
   const store = await getStore();
 
