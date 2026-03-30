@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo } from "@kb/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@kb/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -49,6 +49,7 @@ interface TaskDetailModalProps {
   task: TaskDetail;
   tasks?: Task[];
   onClose: () => void;
+  onOpenDetail: (task: TaskDetail) => void; // For clicking dependencies
   onMoveTask: (id: string, column: Column) => Promise<Task>;
   onDeleteTask: (id: string) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
@@ -65,6 +66,7 @@ export function TaskDetailModal({
   task,
   tasks = [],
   onClose,
+  onOpenDetail,
   onMoveTask,
   onDeleteTask,
   onMergeTask,
@@ -244,7 +246,8 @@ export function TaskDetailModal({
     }
   }, [task.id, dependencies, addToast]);
 
-  const handleRemoveDep = useCallback(async (depId: string) => {
+  const handleRemoveDep = useCallback(async (e: React.MouseEvent, depId: string) => {
+    e.stopPropagation(); // Prevent triggering dependency click
     const newDeps = dependencies.filter((d) => d !== depId);
     setDependencies(newDeps);
     try {
@@ -254,6 +257,15 @@ export function TaskDetailModal({
       addToast(err.message, "error");
     }
   }, [task.id, dependencies, addToast]);
+
+  const handleDepClick = useCallback(async (depId: string) => {
+    try {
+      const detail = await fetchTaskDetail(depId);
+      onOpenDetail(detail);
+    } catch (err: any) {
+      addToast(`Failed to load dependency ${depId}`, "error");
+    }
+  }, [onOpenDetail, addToast]);
 
   const availableTasks = tasks
     .filter((t) => t.id !== task.id && !dependencies.includes(t.id))
@@ -403,11 +415,17 @@ export function TaskDetailModal({
             {dependencies.length > 0 ? (
               <ul className="detail-dep-list">
                 {dependencies.map((dep) => (
-                  <li key={dep}>
-                    {dep}
+                  <li key={dep} className="detail-dep-item">
+                    <span
+                      className="detail-dep-link"
+                      onClick={() => handleDepClick(dep)}
+                      title={`Click to view ${dep}`}
+                    >
+                      {dep}
+                    </span>
                     <button
                       className="dep-remove-btn"
-                      onClick={() => handleRemoveDep(dep)}
+                      onClick={(e) => handleRemoveDep(e, dep)}
                       title={`Remove dependency ${dep}`}
                       style={{
                         marginLeft: "6px",

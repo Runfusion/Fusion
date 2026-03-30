@@ -109,6 +109,7 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
                   onOpenDetail={onOpenDetail}
                   addToast={addToast}
                   globalPaused={globalPaused}
+                  tasks={allTasks}
                 />
               ))
             );
@@ -117,7 +118,7 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
           <div className="empty-column">No tasks</div>
         ) : (
           tasks.map((task) => (
-            <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} />
+            <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} tasks={allTasks} />
           ))
         )}
       </div>

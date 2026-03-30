@@ -28,9 +28,10 @@ interface TaskCardProps {
   onOpenDetail: (task: TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
+  tasks?: Task[]; // All tasks for dependency lookup
 }
 
-export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused }: TaskCardProps) {
+export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused, tasks = [] }: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
 
@@ -88,6 +89,16 @@ export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused }:
       addToast("Failed to load task details", "error");
     }
   }, [task.id, onOpenDetail, addToast]);
+
+  const handleDepClick = useCallback(async (e: React.MouseEvent, depId: string) => {
+    e.stopPropagation(); // Prevent card click
+    try {
+      const detail = await fetchTaskDetail(depId);
+      onOpenDetail(detail);
+    } catch (err: any) {
+      addToast(`Failed to load dependency ${depId}`, "error");
+    }
+  }, [onOpenDetail, addToast]);
 
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
@@ -180,11 +191,20 @@ export function TaskCard({ task, queued, onOpenDetail, addToast, globalPaused }:
       })()}
       {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy) && (
         <div className="card-meta">
-          {task.dependencies && task.dependencies.length > 0 && (
-            <span className="card-dep-badge" data-tooltip={task.dependencies.join(", ")}>
-              <Link size={12} style={{ verticalAlign: 'middle' }} /> {task.dependencies.length} dep{task.dependencies.length > 1 ? "s" : ""}
+      {task.dependencies && task.dependencies.length > 0 && (
+        <div className="card-dep-list">
+          {task.dependencies.map((depId) => (
+            <span
+              key={depId}
+              className="card-dep-badge clickable"
+              onClick={(e) => handleDepClick(e, depId)}
+              title={`Click to view ${depId}`}
+            >
+              <Link size={12} style={{ verticalAlign: 'middle' }} /> {depId}
             </span>
-          )}
+          ))}
+        </div>
+      )}
           {task.blockedBy && (
             <span className="card-scope-badge" data-tooltip={`Blocked by ${task.blockedBy} (file overlap)`}>
               <Layers size={12} style={{ verticalAlign: 'middle' }} /> {task.blockedBy}

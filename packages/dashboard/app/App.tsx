@@ -164,6 +164,7 @@ function AppInner() {
           task={detailTask}
           tasks={tasks}
           onClose={handleDetailClose}
+          onOpenDetail={handleDetailOpen}
           onMoveTask={moveTask}
           onDeleteTask={deleteTask}
           onMergeTask={mergeTask}

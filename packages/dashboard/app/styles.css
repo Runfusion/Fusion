@@ -473,23 +473,21 @@ body {
   cursor: default;
 }
 
-.card-dep-badge[data-tooltip]:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 11px;
-  white-space: nowrap;
-  z-index: 10;
-  pointer-events: none;
-  margin-bottom: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+.card-dep-badge.clickable {
+  cursor: pointer;
+  transition: color var(--transition-fast), text-decoration var(--transition-fast);
+}
+
+.card-dep-badge.clickable:hover {
+  color: var(--todo);
+  text-decoration: underline;
+}
+
+.card-dep-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
 .card-scope-badge {
@@ -1111,10 +1109,22 @@ body {
   list-style: none;
   font-size: 13px;
 }
-.detail-dep-list li {
+
+.detail-dep-item {
+  display: flex;
+  align-items: center;
   padding: 4px 0;
+}
+
+.detail-dep-link {
   color: var(--todo);
   font-family: "SF Mono", Monaco, Consolas, monospace;
+  cursor: pointer;
+  transition: text-decoration var(--transition-fast);
+}
+
+.detail-dep-link:hover {
+  text-decoration: underline;
 }
 
 /* === Step Progress === */

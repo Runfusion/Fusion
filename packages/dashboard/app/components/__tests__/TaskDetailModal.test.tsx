@@ -7,6 +7,7 @@ vi.mock("../../api", () => ({
   uploadAttachment: vi.fn(),
   deleteAttachment: vi.fn(),
   updateTask: vi.fn().mockResolvedValue({}),
+  fetchTaskDetail: vi.fn(),
   fetchAgentLogs: vi.fn().mockResolvedValue([]),
 }));
 
@@ -1133,6 +1134,117 @@ describe("TaskDetailModal", () => {
       expect(newInput.value).toBe("");
       // All items visible again
       expect(document.querySelectorAll(".dep-dropdown-item")).toHaveLength(3);
+    });
+  });
+
+  describe("clickable dependency links", () => {
+    it("renders dependency list items with clickable class", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["KB-001", "KB-002"] })}
+          onOpenDetail={noop}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const depLinks = container.querySelectorAll(".detail-dep-link");
+      expect(depLinks).toHaveLength(2);
+      expect(depLinks[0].textContent).toBe("KB-001");
+      expect(depLinks[1].textContent).toBe("KB-002");
+    });
+
+    it("calls fetchTaskDetail and onOpenDetail when clicking a dependency", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      const mockDetail: TaskDetail = {
+        ...makeTask({ id: "KB-001", description: "Dep 1" }),
+        prompt: "",
+        attachments: [],
+      };
+      mockFetch.mockResolvedValueOnce(mockDetail);
+      const onOpenDetail = vi.fn();
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["KB-001"] })}
+          onOpenDetail={onOpenDetail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const depLink = container.querySelector(".detail-dep-link")!;
+      fireEvent.click(depLink);
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith("KB-001");
+        expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
+      });
+    });
+
+    it("shows error toast when dependency fetch fails", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      mockFetch.mockRejectedValueOnce(new Error("Task not found"));
+      const onOpenDetail = vi.fn();
+      const addToast = vi.fn();
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["KB-001"] })}
+          onOpenDetail={onOpenDetail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={addToast}
+        />,
+      );
+
+      const depLink = container.querySelector(".detail-dep-link")!;
+      fireEvent.click(depLink);
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Failed to load dependency KB-001", "error");
+      });
+      expect(onOpenDetail).not.toHaveBeenCalled();
+    });
+
+    it("remove button click does not trigger dependency click", async () => {
+      const { updateTask } = await import("../../api");
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      mockFetch.mockRejectedValueOnce(new Error("Should not be called"));
+      const onOpenDetail = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["KB-001"] })}
+          onOpenDetail={onOpenDetail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const removeButton = screen.getByTitle(/Remove dependency/);
+      fireEvent.click(removeButton);
+
+      // onOpenDetail should not be called when clicking remove
+      expect(onOpenDetail).not.toHaveBeenCalled();
+      // updateTask should be called to remove the dependency
+      await waitFor(() => {
+        expect(updateTask).toHaveBeenCalledWith("KB-099", { dependencies: [] });
+      });
     });
   });
 });
