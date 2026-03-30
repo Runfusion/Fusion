@@ -11,17 +11,26 @@ vi.mock("node:child_process", () => ({
 
 vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
+  readFileSync: vi.fn(),
 }));
 
-import { aiMergeTask, findWorktreeUser } from "./merger.js";
+import {
+  aiMergeTask,
+  findWorktreeUser,
+  detectResolvableConflicts,
+  autoResolveFile,
+  resolveConflicts,
+  type ConflictCategory,
+} from "./merger.js";
 import { createKbAgent } from "./pi.js";
 import { execSync } from "node:child_process";
 import { type TaskStore, type Task, type MergeResult, DEFAULT_SETTINGS } from "@kb/core";
 
 const mockedCreateHaiAgent = vi.mocked(createKbAgent);
 const mockedExecSync = vi.mocked(execSync);
-const { existsSync: mockedExistsSyncRaw } = await import("node:fs");
+const { existsSync: mockedExistsSyncRaw, readFileSync: mockedReadFileSyncRaw } = await import("node:fs");
 const mockedExistsSync = vi.mocked(mockedExistsSyncRaw);
+const mockedReadFileSync = vi.mocked(mockedReadFileSyncRaw);
 
 function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = []) {
   const baseTask: Task = {
@@ -677,5 +686,695 @@ describe("aiMergeTask — onSession callback", () => {
 
     // Should not crash without onSession
     await expect(aiMergeTask(store, "/tmp/root", "KB-050")).resolves.toBeDefined();
+  });
+});
+
+// ── Conflict Detection & Auto-Resolution ─────────────────────────────────
+
+describe("detectResolvableConflicts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns empty array when no conflicts exist", () => {
+    mockedExecSync.mockReturnValue(""); // Empty output = no conflicts
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toEqual([]);
+  });
+
+  it("detects package-lock.json as auto-resolvable with 'theirs' strategy", () => {
+    mockedExecSync.mockReturnValue("package-lock.json\n");
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      filePath: "package-lock.json",
+      autoResolvable: true,
+      strategy: "ours",
+      reason: "lock-file",
+    });
+  });
+
+  it("detects pnpm-lock.yaml as lock file with 'ours' strategy", () => {
+    mockedExecSync.mockReturnValue("pnpm-lock.yaml\n");
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      filePath: "pnpm-lock.yaml",
+      autoResolvable: true,
+      strategy: "ours",
+      reason: "lock-file",
+    });
+  });
+
+  it("detects yarn.lock as lock file with 'ours' strategy", () => {
+    mockedExecSync.mockReturnValue("yarn.lock\n");
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result[0]).toMatchObject({
+      autoResolvable: true,
+      strategy: "ours",
+      reason: "lock-file",
+    });
+  });
+
+  it("detects Gemfile.lock as lock file with 'ours' strategy", () => {
+    mockedExecSync.mockReturnValue("Gemfile.lock\n");
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result[0]).toMatchObject({
+      autoResolvable: true,
+      strategy: "ours",
+      reason: "lock-file",
+    });
+  });
+
+  it("detects .gen.ts files as generated files with 'ours' strategy", () => {
+    mockedExecSync.mockReturnValue("src/types.gen.ts\n");
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result[0]).toMatchObject({
+      autoResolvable: true,
+      strategy: "ours",
+      reason: "generated-file",
+    });
+  });
+
+  it("detects dist/ paths as generated files", () => {
+    mockedExecSync.mockReturnValue("dist/index.js\n");
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result[0]).toMatchObject({
+      autoResolvable: true,
+      strategy: "ours",
+      reason: "generated-file",
+    });
+  });
+
+  it("detects coverage/ paths as generated files", () => {
+    mockedExecSync.mockReturnValue("coverage/lcov-report/index.html\n");
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result[0]).toMatchObject({
+      autoResolvable: true,
+      strategy: "ours",
+      reason: "generated-file",
+    });
+  });
+
+  it("marks regular source files as complex conflicts", () => {
+    mockedExecSync.mockReturnValue("src/components/App.tsx\n");
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result[0]).toMatchObject({
+      filePath: "src/components/App.tsx",
+      autoResolvable: false,
+      reason: "complex",
+    });
+  });
+
+  it("handles multiple conflicted files with mixed categories", () => {
+    mockedExecSync.mockReturnValue(
+      "package-lock.json\nsrc/components/App.tsx\ndist/bundle.js\n",
+    );
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toHaveLength(3);
+
+    const lockFile = result.find((r) => r.filePath === "package-lock.json");
+    const sourceFile = result.find((r) => r.filePath === "src/components/App.tsx");
+    const distFile = result.find((r) => r.filePath === "dist/bundle.js");
+
+    expect(lockFile).toMatchObject({ autoResolvable: true, reason: "lock-file" });
+    expect(sourceFile).toMatchObject({ autoResolvable: false, reason: "complex" });
+    expect(distFile).toMatchObject({ autoResolvable: true, reason: "generated-file" });
+  });
+
+  it("returns empty array on git command failure", () => {
+    mockedExecSync.mockImplementation(() => {
+      throw new Error("git command failed");
+    });
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toEqual([]);
+  });
+});
+
+describe("autoResolveFile", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default mock returns empty buffer for all git commands
+    mockedExecSync.mockReturnValue(Buffer.from(""));
+  });
+
+  it("calls git checkout --theirs for 'theirs' resolution", () => {
+    autoResolveFile("package-lock.json", "theirs", "/tmp/root");
+
+    const checkoutCall = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("git checkout --theirs"),
+    );
+    expect(checkoutCall).toBeDefined();
+    expect(String(checkoutCall![0])).toContain("package-lock.json");
+  });
+
+  it("calls git checkout --ours for 'ours' resolution", () => {
+    autoResolveFile("config.json", "ours", "/tmp/root");
+
+    const checkoutCall = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("git checkout --ours"),
+    );
+    expect(checkoutCall).toBeDefined();
+    expect(String(checkoutCall![0])).toContain("config.json");
+  });
+
+  it("stages the resolved file with git add", () => {
+    autoResolveFile("package-lock.json", "theirs", "/tmp/root");
+
+    const addCall = mockedExecSync.mock.calls.find((call) =>
+      String(call[0]).includes("git add"),
+    );
+    expect(addCall).toBeDefined();
+    expect(String(addCall![0])).toContain("package-lock.json");
+  });
+
+  it("throws error when git checkout fails", () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd).includes("checkout")) {
+        throw new Error("checkout failed");
+      }
+      return Buffer.from("");
+    });
+
+    expect(() => autoResolveFile("file.ts", "theirs", "/tmp/root")).toThrow(
+      "Failed to auto-resolve",
+    );
+  });
+});
+
+describe("resolveConflicts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default mock - success
+    mockedExecSync.mockReturnValue(Buffer.from(""));
+  });
+
+  it("resolves lock files and returns remaining complex conflicts", () => {
+    const categories: ConflictCategory[] = [
+      { filePath: "package-lock.json", autoResolvable: true, strategy: "ours", reason: "lock-file" },
+      { filePath: "src/App.tsx", autoResolvable: false, reason: "complex" },
+      { filePath: "dist/bundle.js", autoResolvable: true, strategy: "ours", reason: "generated-file" },
+    ];
+
+    const remaining = resolveConflicts(categories, "/tmp/root");
+
+    // Should have resolved package-lock.json and dist/bundle.js
+    expect(remaining).toEqual(["src/App.tsx"]);
+
+    // Should have called checkout and add for resolved files
+    const checkoutCalls = mockedExecSync.mock.calls.filter((call) =>
+      String(call[0]).includes("checkout"),
+    );
+    expect(checkoutCalls).toHaveLength(2);
+  });
+
+  it("returns all files when none are auto-resolvable", () => {
+    const categories: ConflictCategory[] = [
+      { filePath: "src/App.tsx", autoResolvable: false, reason: "complex" },
+      { filePath: "src/utils.ts", autoResolvable: false, reason: "complex" },
+    ];
+
+    const remaining = resolveConflicts(categories, "/tmp/root");
+
+    expect(remaining).toEqual(["src/App.tsx", "src/utils.ts"]);
+    // No checkout calls should be made
+    const checkoutCalls = mockedExecSync.mock.calls.filter((call) =>
+      String(call[0]).includes("checkout"),
+    );
+    expect(checkoutCalls).toHaveLength(0);
+  });
+
+  it("returns empty array when all conflicts are resolved", () => {
+    const categories: ConflictCategory[] = [
+      { filePath: "package-lock.json", autoResolvable: true, strategy: "ours", reason: "lock-file" },
+      { filePath: "yarn.lock", autoResolvable: true, strategy: "ours", reason: "lock-file" },
+    ];
+
+    const remaining = resolveConflicts(categories, "/tmp/root");
+
+    expect(remaining).toEqual([]);
+  });
+});
+
+// ── Trivial Conflict Detection Tests ──────────────────────────────────────
+
+describe("trivial conflict detection (isTrivialConflict via detectResolvableConflicts)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("detects whitespace-only conflicts as trivial", () => {
+    mockedExecSync.mockReturnValue("src/utils.ts\n");
+
+    const fileContent = `function foo() {
+<<<<<<< HEAD
+    return 1;
+=======
+        return 1;
+>>>>>>> feature-branch
+}`;
+
+    mockedReadFileSync.mockReturnValue(fileContent);
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      filePath: "src/utils.ts",
+      autoResolvable: true,
+      strategy: "ours",
+      reason: "trivial",
+    });
+  });
+
+  it("detects conflicts with different line endings as trivial", () => {
+    mockedExecSync.mockReturnValue("src/utils.ts\n");
+
+    // Same content but different line ending style - CRLF vs LF
+    const fileContent = "const x = 1;\r\n<<<<<<< HEAD\r\nconst y = 2;\r\n=======\r\nconst y = 2;\n>>>>>>> feature-branch";
+
+    mockedReadFileSync.mockReturnValue(fileContent);
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      autoResolvable: true,
+      reason: "trivial",
+    });
+  });
+
+  it("marks conflicts with actual content differences as complex", () => {
+    mockedExecSync.mockReturnValue("src/utils.ts\n");
+
+    const fileContent = `function foo() {
+<<<<<<< HEAD
+    return 1;
+=======
+    return 2;
+>>>>>>> feature-branch
+}`;
+
+    mockedReadFileSync.mockReturnValue(fileContent);
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      filePath: "src/utils.ts",
+      autoResolvable: false,
+      reason: "complex",
+    });
+  });
+
+  it("handles multiple conflict sections - all trivial", () => {
+    mockedExecSync.mockReturnValue("src/utils.ts\n");
+
+    const fileContent = `function foo() {
+<<<<<<< HEAD
+    return 1;
+=======
+        return 1;
+>>>>>>> feature-branch
+}
+function bar() {
+<<<<<<< Updated upstream
+    const x = 2;
+=======
+        const x = 2;
+>>>>>>> feature-branch
+}`;
+
+    mockedReadFileSync.mockReturnValue(fileContent);
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      autoResolvable: true,
+      reason: "trivial",
+    });
+  });
+
+  it("handles multiple conflict sections - one non-trivial makes complex", () => {
+    mockedExecSync.mockReturnValue("src/utils.ts\n");
+
+    const fileContent = `function foo() {
+<<<<<<< HEAD
+    return 1;
+=======
+        return 1;
+>>>>>>> feature-branch
+}
+function bar() {
+<<<<<<< Updated upstream
+    const x = 2;
+=======
+    const x = 999;
+>>>>>>> feature-branch
+}`;
+
+    mockedReadFileSync.mockReturnValue(fileContent);
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      autoResolvable: false,
+      reason: "complex",
+    });
+  });
+
+  it("handles file read errors as complex conflicts", () => {
+    mockedExecSync.mockReturnValue("src/utils.ts\n");
+    mockedReadFileSync.mockImplementation(() => {
+      throw new Error("ENOENT: no such file");
+    });
+
+    const result = detectResolvableConflicts("/tmp/root");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      autoResolvable: false,
+      reason: "complex",
+    });
+  });
+});
+
+// ── Retry Logic Tests ───────────────────────────────────────────────────
+
+describe("aiMergeTask — retry logic with escalating strategies", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+
+    // Default mock: successful happy path
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash") || cmdStr.includes("merge -X")) return Buffer.from("");
+      // Post-squash check: "1" = has staged changes
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      // Post-agent check: "0" = committed
+      if (cmdStr.includes("diff --cached") && !cmdStr.includes("--quiet")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr.includes("reset --merge")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+  });
+
+  it("attempt 1 success: sets resolutionStrategy to 'ai' and attemptsMade to 1", async () => {
+    const store = createMockStore(
+      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    // Clean merge with no conflicts - simulate empty diff for conflicts
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("--stat")) return "1 file changed";
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      // No conflicts
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "";
+      // Has staged changes that need committing
+      if (cmdStr.includes("diff --cached --quiet")) return "1";
+      if (cmdStr.includes("git commit")) return Buffer.from("");
+      if (cmdStr.includes("branch -d")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+
+    expect(result.merged).toBe(true);
+    expect(result.resolutionStrategy).toBe("ai");
+    expect(result.attemptsMade).toBe(1);
+  });
+
+  it("with autoResolveConflicts disabled: only makes 1 attempt on conflict", async () => {
+    const store = createMockStore(
+      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      autoResolveConflicts: false, // Disabled
+    });
+
+    let agentCallCount = 0;
+
+    // Simulate: merge succeeds but leaves conflicts, agent is called but fails
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("--stat")) return "1 file changed";
+
+      if (cmdStr.includes("merge --squash")) {
+        // Merge command succeeds but leaves conflict markers
+        return Buffer.from("");
+      }
+
+      // Conflict detection returns conflicts
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) {
+        return "src/file.ts\n";
+      }
+
+      // Staged changes check after merge (conflicts present but not staged)
+      if (cmdStr.includes("diff --cached --quiet")) {
+        return "1"; // Has staged changes from the merge
+      }
+
+      if (cmdStr.includes("reset --merge")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    // Agent will be called and will fail
+    mockedCreateHaiAgent.mockImplementation(() => {
+      agentCallCount++;
+      return Promise.resolve({
+        session: {
+          prompt: vi.fn().mockRejectedValue(new Error("Agent failed")),
+          dispose: vi.fn(),
+        },
+      } as any);
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "KB-050")).rejects.toThrow();
+
+    // Should have called agent exactly once (no retries since autoResolve is disabled)
+    expect(agentCallCount).toBe(1);
+  });
+
+  it("attempt 1 fails, attempt 2 auto-resolves lock files: sets resolutionStrategy to 'auto-resolve'", async () => {
+    const store = createMockStore(
+      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    let mergeCallCount = 0;
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("--stat")) return "1 file changed";
+
+      if (cmdStr.includes("merge --squash")) {
+        mergeCallCount++;
+        if (mergeCallCount === 1) {
+          // First attempt: conflict
+          throw new Error("Merge conflict");
+        }
+        // Second attempt succeeds after auto-resolution
+      }
+
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) {
+        // First time: return lock file, second time: empty
+        if (mergeCallCount === 1) return "package-lock.json\n";
+        return "";
+      }
+
+      if (cmdStr.includes("checkout --ours")) return Buffer.from("");
+      if (cmdStr.includes("git add")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "0"; // All resolved
+      if (cmdStr.includes("branch -d")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr.includes("reset --merge")) return Buffer.from("");
+
+      return Buffer.from("");
+    });
+
+    // Agent should not be called since all conflicts are auto-resolved
+    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+
+    expect(result.merged).toBe(true);
+    expect(result.resolutionStrategy).toBe("auto-resolve");
+    expect(result.attemptsMade).toBe(2);
+  });
+
+  it("attempt 3 uses -X theirs strategy: sets resolutionStrategy to 'theirs'", async () => {
+    const store = createMockStore(
+      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    let squashCallCount = 0;
+    let theirsCallCount = 0;
+    let hasConflicts = true;
+    let agentCallCount = 0;
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("--stat")) return "1 file changed";
+
+      // First two regular squash merges fail with conflicts
+      if (cmdStr.includes("merge --squash") && !cmdStr.includes("-X")) {
+        squashCallCount++;
+        throw new Error("Merge conflict");
+      }
+
+      // Third attempt with -X theirs succeeds (no conflicts)
+      if (cmdStr.includes("merge -X theirs --squash")) {
+        theirsCallCount++;
+        hasConflicts = false;
+        return Buffer.from("");
+      }
+
+      // After -X theirs, no conflicts
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) {
+        return hasConflicts ? "src/complex.ts\n" : "";
+      }
+
+      if (cmdStr.includes("diff --cached --quiet")) return hasConflicts ? "1" : "0";
+      if (cmdStr.includes("git commit")) return Buffer.from("");
+      if (cmdStr.includes("branch -d")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr.includes("reset --merge")) return Buffer.from("");
+
+      return Buffer.from("");
+    });
+
+    // Agent fails on attempt 2 (when called to resolve complex conflicts)
+    mockedCreateHaiAgent.mockImplementation(() => {
+      agentCallCount++;
+      if (agentCallCount === 1) {
+        // First agent call (attempt 2) fails
+        return Promise.resolve({
+          session: {
+            prompt: vi.fn().mockRejectedValue(new Error("Agent failed")),
+            dispose: vi.fn(),
+          },
+        } as any);
+      }
+      // Should not reach here
+      return Promise.resolve({
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+        },
+      } as any);
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+
+    expect(result.merged).toBe(true);
+    expect(result.resolutionStrategy).toBe("theirs");
+    expect(result.attemptsMade).toBe(3);
+    expect(theirsCallCount).toBe(1); // -X theirs was used once
+    expect(agentCallCount).toBe(1); // Agent was called once (on attempt 2, which failed)
+  });
+
+  it("all 3 attempts fail: throws error and calls git reset --merge", async () => {
+    const store = createMockStore(
+      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    const resetCalls: string[] = [];
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("--stat")) return "1 file changed";
+
+      if (cmdStr.includes("merge --squash") || cmdStr.includes("merge -X theirs")) {
+        // All merge attempts fail with conflicts
+        throw new Error("Merge conflict");
+      }
+
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) {
+        return "src/always-conflicts.ts\n"; // Always has conflicts
+      }
+
+      if (cmdStr.includes("reset --merge")) {
+        resetCalls.push(cmdStr);
+        return Buffer.from("");
+      }
+
+      return Buffer.from("");
+    });
+
+    // Agent will also fail
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockRejectedValue(new Error("Agent failed")),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    await expect(aiMergeTask(store, "/tmp/root", "KB-050")).rejects.toThrow(
+      "all 3 attempts exhausted",
+    );
+
+    // Should have cleanup calls after each failed attempt plus final cleanup
+    expect(resetCalls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("tracks resolutionStrategy as 'ai' when attempt 1 succeeds even with autoResolve enabled", async () => {
+    const store = createMockStore(
+      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    // Clean merge with no conflicts
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("--stat")) return "1 file changed";
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return ""; // No conflicts
+      if (cmdStr.includes("diff --cached --quiet")) return "1"; // Has staged changes
+      if (cmdStr.includes("git commit")) return Buffer.from("");
+      if (cmdStr.includes("branch -d")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+
+    expect(result.merged).toBe(true);
+    expect(result.resolutionStrategy).toBe("ai");
+    expect(result.attemptsMade).toBe(1);
   });
 });

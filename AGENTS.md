@@ -61,3 +61,33 @@ The extension has no skills — tool descriptions, `promptSnippet`, and `promptG
 - Commit messages: `feat(KB-XXX):`, `fix(KB-XXX):`, `test(KB-XXX):`
 - One commit per step (not per file change)
 - Always include the task ID prefix
+
+## Settings
+
+The following settings are available in the kb configuration (stored in `.kb/config.json`):
+
+### `autoResolveConflicts` (default: `true`)
+
+When enabled, the auto-merge system will intelligently resolve common merge conflict patterns without requiring manual intervention:
+
+- **Lock files** (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `Gemfile.lock`, etc.) — automatically resolved using the current branch's version ("ours")
+- **Generated files** (`*.gen.ts`, `dist/*`, `coverage/*`, etc.) — automatically resolved using the current branch's version
+- **Trivial conflicts** (whitespace-only differences) — automatically resolved
+
+When a merge encounters conflicts and the AI agent fails to resolve them on the first attempt, the system implements a 3-attempt retry logic with escalating strategies:
+
+1. **Attempt 1**: Standard merge with AI agent using full context
+2. **Attempt 2**: Auto-resolve lock/generated files, then retry AI with simplified context
+3. **Attempt 3**: Use `git merge -X theirs` strategy for remaining conflicts
+
+If all 3 attempts fail, the task remains in "in-review" for manual resolution. The per-task retry counter (`mergeRetries`) tracks how many attempts have been made.
+
+To disable automatic conflict resolution and require manual intervention for all conflicts:
+
+```json
+{
+  "settings": {
+    "autoResolveConflicts": false
+  }
+}
+```

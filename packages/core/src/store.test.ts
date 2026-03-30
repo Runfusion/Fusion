@@ -345,6 +345,19 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("autoResolveConflicts setting", () => {
+    it("persists autoResolveConflicts and returns it via getSettings", async () => {
+      await store.updateSettings({ autoResolveConflicts: false });
+      const settings = await store.getSettings();
+      expect(settings.autoResolveConflicts).toBe(false);
+    });
+
+    it("default settings have autoResolveConflicts set to true", async () => {
+      const settings = await store.getSettings();
+      expect(settings.autoResolveConflicts).toBe(true);
+    });
+  });
+
   // ── Concurrent stress test ───────────────────────────────────────
 
   describe("concurrent stress", () => {

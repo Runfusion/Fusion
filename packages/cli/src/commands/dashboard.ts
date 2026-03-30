@@ -164,12 +164,53 @@ export async function runDashboard(port: number, opts: { open?: boolean; paused?
           console.log(`[auto-merge] Merging ${taskId}...`);
           await onMerge(taskId);
           console.log(`[auto-merge] ✓ ${taskId} merged`);
+          // Clear mergeRetries on success
+          if (task.mergeRetries && task.mergeRetries > 0) {
+            await store.updateTask(taskId, { mergeRetries: 0 });
+          }
         } catch (err: any) {
-          console.log(`[auto-merge] ✗ ${taskId}: ${err.message ?? err}`);
-          // Reset task status so it doesn't appear stuck as "merging" in the UI
-          try {
-            await store.updateTask(taskId, { status: null });
-          } catch { /* best-effort */ }
+          const errorMsg = err.message ?? String(err);
+          console.log(`[auto-merge] ✗ ${taskId}: ${errorMsg}`);
+
+          // Check if this is a conflict error and if we should retry
+          const isConflictError = errorMsg.includes("conflict") || errorMsg.includes("Conflict");
+          const task = await store.getTask(taskId).catch(() => null);
+
+          if (task && isConflictError) {
+            const settings = await store.getSettings().catch(() => ({ autoResolveConflicts: true }));
+            const currentRetries = task.mergeRetries ?? 0;
+            const maxRetries = 3;
+
+            if (settings.autoResolveConflicts !== false && currentRetries < maxRetries) {
+              // Increment retry counter and re-enqueue with delay
+              const newRetryCount = currentRetries + 1;
+              await store.updateTask(taskId, { mergeRetries: newRetryCount, status: null });
+
+              // Calculate exponential backoff delay: 5s, 10s, 20s
+              const delayMs = 5000 * Math.pow(2, currentRetries);
+              console.log(`[auto-merge] ↻ ${taskId}: retry ${newRetryCount}/${maxRetries} in ${delayMs / 1000}s`);
+
+              setTimeout(() => {
+                enqueueMerge(taskId);
+              }, delayMs);
+            } else {
+              // Max retries exceeded or auto-resolve disabled - keep in in-review
+              if (currentRetries >= maxRetries) {
+                console.log(`[auto-merge] ⊘ ${taskId}: max retries (${maxRetries}) exceeded — manual resolution required`);
+              } else {
+                console.log(`[auto-merge] ⊘ ${taskId}: autoResolveConflicts disabled — manual resolution required`);
+              }
+              // Reset task status so it doesn't appear stuck as "merging" in the UI
+              try {
+                await store.updateTask(taskId, { status: null });
+              } catch { /* best-effort */ }
+            }
+          } else {
+            // Non-conflict error - reset task status
+            try {
+              await store.updateTask(taskId, { status: null });
+            } catch { /* best-effort */ }
+          }
         } finally {
           mergeActive.delete(taskId);
         }

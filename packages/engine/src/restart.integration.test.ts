@@ -351,7 +351,7 @@ describe("In-review merge handling after restart", () => {
     } as any);
 
     await expect(aiMergeTask(store, "/tmp/root", "KB-055")).rejects.toThrow(
-      "AI merge failed for KB-055: merge agent crashed",
+      "AI merge failed for KB-055: all 3 attempts exhausted",
     );
 
     // Should have attempted git reset --merge cleanup

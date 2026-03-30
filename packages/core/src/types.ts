@@ -100,6 +100,8 @@ export interface Task {
   log: TaskLogEntry[];
   size?: "S" | "M" | "L";
   reviewLevel?: number;
+  /** Number of merge retry attempts made for this task (auto-merge conflict recovery) */
+  mergeRetries?: number;
   /** ISO-8601 timestamp of when the task last entered its current column.
    *  Used to sort cards within a column so that recently-moved cards appear at the top. */
   columnMovedAt?: string;
@@ -177,6 +179,11 @@ export interface Settings {
    *  produce better results but cost more. When undefined, the engine
    *  uses the model's default thinking level. */
   defaultThinkingLevel?: ThinkingLevel;
+  /** When true, auto-merge will automatically resolve common conflict patterns
+   *  (lock files, generated files, trivial conflicts) without requiring AI
+   *  intervention. When AI resolution fails, the system will retry with escalating
+   *  strategies. Default: true. */
+  autoResolveConflicts?: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -194,6 +201,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultProvider: undefined,
   defaultModelId: undefined,
   defaultThinkingLevel: undefined,
+  autoResolveConflicts: true,
 };
 
 export interface BoardConfig {
@@ -208,6 +216,10 @@ export interface MergeResult {
   worktreeRemoved: boolean;
   branchDeleted: boolean;
   error?: string;
+  /** Strategy that successfully resolved the merge, if any */
+  resolutionStrategy?: "ai" | "auto-resolve" | "theirs";
+  /** Number of retry attempts made (1 = first attempt succeeded, 2-3 = retries needed) */
+  attemptsMade?: 1 | 2 | 3;
 }
 
 export const COLUMN_LABELS: Record<Column, string> = {
