@@ -963,19 +963,58 @@ export class TaskExecutor {
       executorLog.log(`Worktree already exists: ${path}`);
       return;
     }
-    try {
+
+    const createWithBranch = () => {
       const cmd = startPoint
         ? `git worktree add -b "${branch}" "${path}" "${startPoint}"`
         : `git worktree add -b "${branch}" "${path}"`;
       execSync(cmd, { cwd: this.rootDir, stdio: "pipe" });
-    } catch {
-      try {
-        execSync(`git worktree add "${path}" "${branch}"`, { cwd: this.rootDir, stdio: "pipe" });
-      } catch (e: any) {
-        throw new Error(`Failed to create worktree: ${e.message}`);
+    };
+
+    const createFromExistingBranch = () => {
+      execSync(`git worktree add "${path}" "${branch}"`, { cwd: this.rootDir, stdio: "pipe" });
+    };
+
+    try {
+      createWithBranch();
+    } catch (initialError: any) {
+      const conflictPath = this.extractWorktreeConflictPath(initialError);
+
+      if (conflictPath) {
+        try {
+          execSync(`git worktree remove "${conflictPath}" --force`, {
+            cwd: this.rootDir,
+            stdio: "pipe",
+          });
+          execSync(`git branch -D "${branch}"`, {
+            cwd: this.rootDir,
+            stdio: "pipe",
+          });
+          createWithBranch();
+        } catch (cleanupError: any) {
+          throw new Error(
+            `Failed to create worktree: ${initialError.message} ` +
+            `(automatic cleanup failed: ${cleanupError.message})`,
+          );
+        }
+      } else {
+        try {
+          createFromExistingBranch();
+        } catch (e: any) {
+          throw new Error(`Failed to create worktree: ${e.message}`);
+        }
       }
     }
+
     executorLog.log(`Worktree created: ${path}${startPoint ? ` (from ${startPoint})` : ""}`);
+  }
+
+  private extractWorktreeConflictPath(error: any): string | null {
+    const output = [error?.message, error?.stderr?.toString?.(), error?.stdout?.toString?.()]
+      .filter(Boolean)
+      .join("\n");
+    const match = output.match(/already used by worktree at '([^']+)'/);
+    return match?.[1] ?? null;
   }
 
   /**

@@ -680,6 +680,80 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     expect(logCalls[0][1]).not.toContain("based on");
   });
 
+  it("retries worktree creation after cleaning up conflicting worktree", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const conflictingPath = "/tmp/test/.worktrees/sharp-stone";
+
+    let firstAttempt = true;
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (cmd === 'git worktree add -b "kb/kb-064" "/tmp/test/.worktrees/swift-falcon"' && firstAttempt) {
+        firstAttempt = false;
+        const err: any = new Error(
+          `fatal: 'kb/kb-064' is already used by worktree at '${conflictingPath}'`,
+        );
+        err.stderr = Buffer.from(
+          `fatal: 'kb/kb-064' is already used by worktree at '${conflictingPath}'`,
+        );
+        throw err;
+      }
+      return Buffer.from("");
+    });
+
+    await executor.execute(makeTask({ id: "KB-064" }));
+
+    expect(mockedExecSync).toHaveBeenCalledWith(
+      `git worktree remove "${conflictingPath}" --force`,
+      expect.objectContaining({ cwd: "/tmp/test", stdio: "pipe" }),
+    );
+    expect(mockedExecSync).toHaveBeenCalledWith(
+      'git branch -D "kb/kb-064"',
+      expect.objectContaining({ cwd: "/tmp/test", stdio: "pipe" }),
+    );
+
+    const worktreeCreateCalls = mockedExecSync.mock.calls.filter(
+      (call) => call[0] === 'git worktree add -b "kb/kb-064" "/tmp/test/.worktrees/swift-falcon"',
+    );
+    expect(worktreeCreateCalls).toHaveLength(2);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "KB-064",
+      expect.stringContaining("Worktree created at /tmp/test/.worktrees/swift-falcon"),
+    );
+  });
+
+  it("throws original error if cleanup also fails", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const conflictingPath = "/tmp/test/.worktrees/sharp-stone";
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (cmd === 'git worktree add -b "kb/kb-065" "/tmp/test/.worktrees/swift-falcon"') {
+        const err: any = new Error(
+          `fatal: 'kb/kb-065' is already used by worktree at '${conflictingPath}'`,
+        );
+        err.stderr = Buffer.from(
+          `fatal: 'kb/kb-065' is already used by worktree at '${conflictingPath}'`,
+        );
+        throw err;
+      }
+      if (cmd === `git worktree remove "${conflictingPath}" --force`) {
+        throw new Error("remove failed");
+      }
+      return Buffer.from("");
+    });
+
+    await executor.execute(makeTask({ id: "KB-065" }));
+
+    expect(store.updateTask).toHaveBeenCalledWith("KB-065", {
+      status: "failed",
+      error: expect.stringContaining("already used by worktree"),
+    });
+    expect(store.updateTask).toHaveBeenCalledWith("KB-065", {
+      status: "failed",
+      error: expect.stringContaining("automatic cleanup failed: remove failed"),
+    });
+  });
+
   it("passes baseBranch to pool prepareForTask when using pooled worktree", async () => {
     const pool = new WorktreePool();
     pool.release("/tmp/test/.worktrees/idle-wt");
