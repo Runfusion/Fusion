@@ -1,8 +1,30 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Header } from "../Header";
 
+// Mock matchMedia for mobile/desktop viewport tests
+const mockMatchMedia = (matches: boolean) => {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+};
+
 describe("Header", () => {
+  beforeEach(() => {
+    // Default to desktop viewport
+    mockMatchMedia(false);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("renders a logo image with correct src and alt", () => {
     render(<Header />);
     const logo = screen.getByAltText("Fusion logo");
@@ -209,5 +231,231 @@ describe("Header", () => {
     render(<Header onToggleTerminal={vi.fn()} />);
     const btn = screen.getByTitle("Open Terminal");
     expect((btn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  // ── Mobile Viewport Behavior ─────────────────────────────────────
+
+  describe("mobile viewport", () => {
+    beforeEach(() => {
+      mockMatchMedia(true); // Mobile viewport
+    });
+
+    it("renders mobile search trigger instead of inline search on mobile", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery=""
+          onSearchChange={onSearchChange}
+        />
+      );
+      // Should show the trigger button, not the inline search
+      expect(screen.getByTitle("Open search")).toBeDefined();
+      // The expanded search should not be visible initially
+      expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    });
+
+    it("mobile search trigger has stable accessible name", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery=""
+          onSearchChange={onSearchChange}
+        />
+      );
+      const trigger = screen.getByLabelText("Open search");
+      expect(trigger).toBeDefined();
+    });
+
+    it("mobile search trigger exposes aria-expanded state", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery=""
+          onSearchChange={onSearchChange}
+        />
+      );
+      const trigger = screen.getByLabelText("Open search");
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("expands mobile search when trigger is clicked", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery=""
+          onSearchChange={onSearchChange}
+        />
+      );
+      const trigger = screen.getByTitle("Open search");
+      fireEvent.click(trigger);
+      // Search input should now be visible
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+    });
+
+    it("mobile search stays expanded when searchQuery is non-empty", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery="active query"
+          onSearchChange={onSearchChange}
+        />
+      );
+      // Even without clicking, search should be visible due to active query
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+      expect(screen.getByDisplayValue("active query")).toBeDefined();
+    });
+
+    it("closes mobile search and clears query when close button clicked", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery="test query"
+          onSearchChange={onSearchChange}
+        />
+      );
+      // Close the search
+      const closeBtn = screen.getByLabelText("Close search");
+      fireEvent.click(closeBtn);
+      expect(onSearchChange).toHaveBeenCalledWith("");
+    });
+
+    it("renders mobile overflow menu trigger on mobile", () => {
+      render(<Header onOpenSettings={vi.fn()} />);
+      const overflowBtn = screen.getByTitle("More header actions");
+      expect(overflowBtn).toBeDefined();
+    });
+
+    it("overflow trigger has correct ARIA attributes", () => {
+      render(<Header onOpenSettings={vi.fn()} />);
+      const overflowBtn = screen.getByLabelText("More header actions");
+      expect(overflowBtn.getAttribute("aria-haspopup")).toBe("menu");
+      expect(overflowBtn.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("opens overflow menu when trigger is clicked", () => {
+      render(<Header onOpenSettings={vi.fn()} onOpenPlanning={vi.fn()} />);
+      const overflowBtn = screen.getByTitle("More header actions");
+      fireEvent.click(overflowBtn);
+      // Menu items should be visible
+      expect(screen.getByRole("menu")).toBeDefined();
+      expect(screen.getByText("Settings")).toBeDefined();
+      expect(screen.getByText("Create a task with AI planning")).toBeDefined();
+    });
+
+    it("overflow menu items dispatch correct callbacks", () => {
+      const onOpenSettings = vi.fn();
+      const onOpenPlanning = vi.fn();
+      const onOpenGitHubImport = vi.fn();
+      render(
+        <Header
+          onOpenSettings={onOpenSettings}
+          onOpenPlanning={onOpenPlanning}
+          onOpenGitHubImport={onOpenGitHubImport}
+        />
+      );
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByText("Settings"));
+      expect(onOpenSettings).toHaveBeenCalled();
+
+      // Re-open menu and test planning button
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByText("Create a task with AI planning"));
+      expect(onOpenPlanning).toHaveBeenCalled();
+    });
+
+    it("closes overflow menu after selecting an action", () => {
+      const onOpenSettings = vi.fn();
+      render(<Header onOpenSettings={onOpenSettings} />);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByText("Settings"));
+      // Menu should be closed
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("closes overflow menu on outside click", () => {
+      render(<Header onOpenSettings={vi.fn()} />);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      expect(screen.getByRole("menu")).toBeDefined();
+      // Click outside (on header)
+      fireEvent.mouseDown(document.body);
+      // Menu should be closed
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("closes overflow menu on Escape key", () => {
+      render(<Header onOpenSettings={vi.fn()} />);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      expect(screen.getByRole("menu")).toBeDefined();
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("hides desktop-only actions on mobile", () => {
+      render(
+        <Header
+          onOpenSettings={vi.fn()}
+          onOpenGitHubImport={vi.fn()}
+          onOpenPlanning={vi.fn()}
+        />
+      );
+      // These buttons should not be directly visible (they're in overflow menu)
+      expect(screen.queryByTitle("Import from GitHub")).toBeNull();
+      expect(screen.queryByTitle("Create a task with AI planning")).toBeNull();
+      expect(screen.queryByTitle("Settings")).toBeNull();
+    });
+
+    it("shows view toggle inline on mobile", () => {
+      render(<Header view="board" onChangeView={vi.fn()} />);
+      // View toggle should still be visible inline
+      expect(screen.getByTitle("Board view")).toBeDefined();
+      expect(screen.getByTitle("List view")).toBeDefined();
+    });
+
+    it("shows terminal and pause controls inline on mobile", () => {
+      render(
+        <Header
+          onToggleTerminal={vi.fn()}
+          onToggleEnginePause={vi.fn()}
+          onToggleGlobalPause={vi.fn()}
+        />
+      );
+      expect(screen.getByTitle("Open Terminal")).toBeDefined();
+      expect(screen.getByTitle("Pause scheduling")).toBeDefined();
+      expect(screen.getByTitle("Stop AI engine")).toBeDefined();
+    });
+
+    it("overflow menu includes usage button when onOpenUsage provided", () => {
+      render(<Header onOpenSettings={vi.fn()} onOpenUsage={vi.fn()} />);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      expect(screen.getByText("View usage")).toBeDefined();
+    });
+
+    it("mobile search input dispatches onSearchChange when typing", () => {
+      const onSearchChange = vi.fn();
+      render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          searchQuery=""
+          onSearchChange={onSearchChange}
+        />
+      );
+      fireEvent.click(screen.getByTitle("Open search"));
+      const input = screen.getByPlaceholderText("Search tasks...");
+      fireEvent.change(input, { target: { value: "test" } });
+      expect(onSearchChange).toHaveBeenCalledWith("test");
+    });
   });
 });

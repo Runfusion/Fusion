@@ -1,4 +1,5 @@
-import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal } from "lucide-react";
 
 interface HeaderProps {
   onOpenSettings?: () => void;
@@ -16,6 +17,23 @@ interface HeaderProps {
   onSearchChange?: (query: string) => void;
 }
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 768px)").matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mediaQuery = window.matchMedia("(max-width: 768px)");
+    const handleChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  return isMobile;
+}
+
 export function Header({
   onOpenSettings,
   onOpenGitHubImport,
@@ -31,6 +49,74 @@ export function Header({
   searchQuery = "",
   onSearchChange,
 }: HeaderProps) {
+  const isMobile = useIsMobile();
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
+  const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false);
+  const overflowButtonRef = useRef<HTMLButtonElement>(null);
+  const overflowMenuRef = useRef<HTMLDivElement>(null);
+  const mobileSearchRef = useRef<HTMLDivElement>(null);
+  const mobileSearchInputRef = useRef<HTMLInputElement>(null);
+
+  // Keep mobile search open if there's an active search query
+  const shouldShowMobileSearch = isMobileSearchOpen || searchQuery.length > 0;
+
+  // Close overflow menu on outside click
+  useEffect(() => {
+    if (!isOverflowMenuOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        overflowMenuRef.current &&
+        !overflowMenuRef.current.contains(e.target as Node) &&
+        overflowButtonRef.current &&
+        !overflowButtonRef.current.contains(e.target as Node)
+      ) {
+        setIsOverflowMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isOverflowMenuOpen]);
+
+  // Close menus on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsOverflowMenuOpen(false);
+        setIsMobileSearchOpen(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Focus input when mobile search opens
+  useEffect(() => {
+    if (isMobileSearchOpen && mobileSearchInputRef.current) {
+      setTimeout(() => mobileSearchInputRef.current?.focus(), 0);
+    }
+  }, [isMobileSearchOpen]);
+
+  const handleMobileSearchToggle = useCallback(() => {
+    setIsMobileSearchOpen((prev) => !prev);
+  }, []);
+
+  const handleOverflowToggle = useCallback(() => {
+    setIsOverflowMenuOpen((prev) => !prev);
+  }, []);
+
+  const handleOverflowAction = useCallback((callback?: () => void) => {
+    if (callback) callback();
+    setIsOverflowMenuOpen(false);
+  }, []);
+
+  const handleMobileSearchClose = useCallback(() => {
+    setIsMobileSearchOpen(false);
+    if (onSearchChange) onSearchChange("");
+  }, [onSearchChange]);
+
   return (
     <header className="header">
       <div className="header-left">
@@ -39,7 +125,7 @@ export function Header({
         <span className="logo-sub">tasks</span>
       </div>
       <div className="header-actions">
-        {/* View Toggle */}
+        {/* View Toggle - always inline, even on mobile */}
         {onChangeView && (
           <div className="view-toggle">
             <button
@@ -62,8 +148,9 @@ export function Header({
             </button>
           </div>
         )}
-        {/* Search - only show in board view */}
-        {onSearchChange && view === "board" && (
+
+        {/* Desktop Search - only show in board view */}
+        {onSearchChange && view === "board" && !isMobile && (
           <div className="header-search">
             <Search size={14} className="header-search-icon" />
             <input
@@ -84,25 +171,71 @@ export function Header({
             )}
           </div>
         )}
-        {onOpenUsage && (
+
+        {/* Mobile Search Trigger - only show in board view on mobile */}
+        {onSearchChange && view === "board" && isMobile && (
+          <>
+            {!shouldShowMobileSearch ? (
+              <button
+                className="btn-icon mobile-search-trigger"
+                onClick={handleMobileSearchToggle}
+                title="Open search"
+                aria-label="Open search"
+                aria-expanded={false}
+              >
+                <Search size={16} />
+              </button>
+            ) : (
+              <div
+                ref={mobileSearchRef}
+                className="header-search mobile-search-expanded"
+              >
+                <Search size={14} className="header-search-icon" />
+                <input
+                  ref={mobileSearchInputRef}
+                  type="text"
+                  placeholder="Search tasks..."
+                  value={searchQuery}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  className="header-search-input"
+                />
+                <button
+                  className="header-search-clear"
+                  onClick={handleMobileSearchClose}
+                  aria-label="Close search"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Desktop actions */}
+        {!isMobile && onOpenUsage && (
           <button className="btn-icon" onClick={onOpenUsage} title="View usage">
             <Activity size={16} />
           </button>
         )}
-        {/* Import from GitHub */}
-        <button className="btn-icon" onClick={onOpenGitHubImport} title="Import from GitHub">
-          <Download size={16} />
-        </button>
-        {/* Plan button - AI-guided task creation */}
-        <button
-          className="btn-icon"
-          onClick={onOpenPlanning}
-          title="Create a task with AI planning"
-          data-testid="planning-btn"
-        >
-          <Lightbulb size={16} />
-        </button>
-        {/* Terminal button - always available for interactive shell access */}
+
+        {!isMobile && (
+          <button className="btn-icon" onClick={onOpenGitHubImport} title="Import from GitHub">
+            <Download size={16} />
+          </button>
+        )}
+
+        {!isMobile && (
+          <button
+            className="btn-icon"
+            onClick={onOpenPlanning}
+            title="Create a task with AI planning"
+            data-testid="planning-btn"
+          >
+            <Lightbulb size={16} />
+          </button>
+        )}
+
+        {/* Terminal button - always inline */}
         <button
           className="btn-icon btn-icon--terminal"
           onClick={onToggleTerminal}
@@ -111,7 +244,8 @@ export function Header({
         >
           <Terminal size={16} />
         </button>
-        {/* Pause button (soft pause): stops new work, lets agents finish */}
+
+        {/* Pause button (soft pause) - always inline */}
         <button
           className={`btn-icon${enginePaused ? " btn-icon--paused" : ""}`}
           onClick={onToggleEnginePause}
@@ -120,7 +254,8 @@ export function Header({
         >
           {enginePaused ? <Play size={16} /> : <Pause size={16} />}
         </button>
-        {/* Stop button (hard stop): kills all agents immediately */}
+
+        {/* Stop button (hard stop) - always inline */}
         <button
           className={`btn-icon${globalPaused ? " btn-icon--stopped" : ""}`}
           onClick={onToggleGlobalPause}
@@ -128,9 +263,74 @@ export function Header({
         >
           {globalPaused ? <Play size={16} /> : <Square size={16} />}
         </button>
-        <button className="btn-icon" onClick={onOpenSettings} title="Settings">
-          <Settings size={16} />
-        </button>
+
+        {/* Mobile overflow menu trigger */}
+        {isMobile && (
+          <button
+            ref={overflowButtonRef}
+            className="btn-icon mobile-overflow-trigger"
+            onClick={handleOverflowToggle}
+            title="More header actions"
+            aria-label="More header actions"
+            aria-expanded={isOverflowMenuOpen}
+            aria-haspopup="menu"
+          >
+            <MoreHorizontal size={16} />
+          </button>
+        )}
+
+        {/* Settings - always inline on desktop */}
+        {!isMobile && (
+          <button className="btn-icon" onClick={onOpenSettings} title="Settings">
+            <Settings size={16} />
+          </button>
+        )}
+
+        {/* Mobile overflow menu */}
+        {isMobile && isOverflowMenuOpen && (
+          <div
+            ref={overflowMenuRef}
+            className="mobile-overflow-menu"
+            role="menu"
+            aria-label="Additional header actions"
+          >
+            {onOpenUsage && (
+              <button
+                className="mobile-overflow-item"
+                onClick={() => handleOverflowAction(onOpenUsage)}
+                role="menuitem"
+              >
+                <Activity size={16} />
+                <span>View usage</span>
+              </button>
+            )}
+            <button
+              className="mobile-overflow-item"
+              onClick={() => handleOverflowAction(onOpenGitHubImport)}
+              role="menuitem"
+            >
+              <Download size={16} />
+              <span>Import from GitHub</span>
+            </button>
+            <button
+              className="mobile-overflow-item"
+              onClick={() => handleOverflowAction(onOpenPlanning)}
+              role="menuitem"
+              data-testid="overflow-planning-btn"
+            >
+              <Lightbulb size={16} />
+              <span>Create a task with AI planning</span>
+            </button>
+            <button
+              className="mobile-overflow-item"
+              onClick={() => handleOverflowAction(onOpenSettings)}
+              role="menuitem"
+            >
+              <Settings size={16} />
+              <span>Settings</span>
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

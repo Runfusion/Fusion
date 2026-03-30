@@ -47,6 +47,14 @@ AI-guided interactive planning for creating well-specified tasks from high-level
 - **GitHub Import**: Import issues directly from GitHub repositories
 - **PR Management**: Create, monitor, and merge pull requests for in-review tasks
 
+### Responsive Header
+The dashboard header adapts to small screens to remain usable without wrapping or dropping controls:
+
+- **Mobile Overflow Menu**: On screens narrower than 768px, lower-priority actions (GitHub Import, Planning, Settings, and optionally Usage) move into an accessible overflow menu triggered by a "More actions" button. The menu closes on outside click, Escape key, or after selecting an action.
+- **Collapsible Board Search**: On mobile board view, the search input collapses to an icon button. Tapping the icon expands a focused search field. If a search query is already active, the search stays expanded until cleared or explicitly closed so active filters remain visible.
+- **Always-Visible Controls**: View toggle (Board/List), Terminal, Pause, and Stop buttons remain inline on mobile for immediate access.
+- **Keyboard Accessible**: All mobile controls expose proper ARIA attributes (aria-expanded, aria-haspopup, aria-label) and support keyboard navigation.
+
 ### Interactive Terminal
 Access a fully functional PTY (pseudo-terminal) shell directly from the dashboard. Click the terminal icon in the header to open the interactive terminal modal.
 

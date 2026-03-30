@@ -113,6 +113,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  position: relative;
 }
 
 .btn-icon {
@@ -271,32 +272,6 @@ body {
 .header-search-clear:hover {
   color: var(--text);
   background: var(--border);
-}
-
-/* Mobile responsive: hide search on very small screens */
-@media (max-width: 640px) {
-  .header-search {
-    max-width: 160px;
-    min-width: 120px;
-    padding: 6px 8px;
-  }
-  
-  .header-search-input {
-    font-size: 12px;
-  }
-}
-
-@media (max-width: 480px) {
-  .header-search {
-    order: 1;
-    width: 100%;
-    max-width: none;
-    margin-top: 8px;
-  }
-  
-  .header-actions {
-    flex-wrap: wrap;
-  }
 }
 
 .logo {
@@ -2477,6 +2452,73 @@ body {
   /* Reduce header padding to reclaim horizontal space */
   .header {
     padding: 12px 12px;
+  }
+
+  /* Mobile header: collapsible search and overflow menu */
+  .mobile-search-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mobile-search-expanded {
+    position: absolute;
+    right: 140px;
+    left: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 200px;
+    max-width: 200px;
+    min-width: 160px;
+    z-index: 10;
+    background: var(--surface);
+    box-shadow: var(--shadow-md);
+  }
+
+  .mobile-overflow-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mobile-overflow-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 12px;
+    min-width: 220px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    z-index: 100;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .mobile-overflow-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--transition-fast);
+  }
+
+  .mobile-overflow-item:hover {
+    background: var(--card);
+  }
+
+  .mobile-overflow-item svg {
+    color: var(--text-muted);
+    flex-shrink: 0;
   }
 
   /* Modal: full-screen on mobile */
