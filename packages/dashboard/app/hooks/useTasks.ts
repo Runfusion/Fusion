@@ -118,6 +118,10 @@ export function useTasks() {
     return api.retryTask(id);
   }, []);
 
+  const duplicateTask = useCallback(async (id: string): Promise<Task> => {
+    return api.duplicateTask(id);
+  }, []);
+
   const updateTask = useCallback(async (
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
@@ -152,5 +156,5 @@ export function useTasks() {
     }
   }, []);
 
-  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask };
+  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, duplicateTask, updateTask };
 }

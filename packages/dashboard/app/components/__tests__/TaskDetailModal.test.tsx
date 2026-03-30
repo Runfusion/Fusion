@@ -12,6 +12,7 @@ vi.mock("../../api", () => ({
   requestSpecRevision: vi.fn().mockResolvedValue({}),
   approvePlan: vi.fn().mockResolvedValue({}),
   rejectPlan: vi.fn().mockResolvedValue({}),
+  duplicateTask: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({
@@ -1802,6 +1803,181 @@ describe("TaskDetailModal", () => {
 
       await waitFor(() => {
         expect(addToast).toHaveBeenCalledWith("Server error", "error");
+      });
+
+      window.confirm = originalConfirm;
+    });
+  });
+
+  describe("Duplicate button", () => {
+    it("renders Duplicate button in modal actions when onDuplicateTask is provided", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onDuplicateTask={vi.fn()}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Duplicate")).toBeTruthy();
+    });
+
+    it("does NOT render Duplicate button when onDuplicateTask is not provided", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Duplicate")).toBeNull();
+    });
+
+    it("clicking Duplicate shows confirmation dialog", () => {
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => false);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onDuplicateTask={vi.fn()}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Duplicate"));
+
+      expect(window.confirm).toHaveBeenCalledWith(
+        "Duplicate KB-001? This will create a new task in Triage with the same description and prompt."
+      );
+
+      window.confirm = originalConfirm;
+    });
+
+    it("confirming duplicate calls onDuplicateTask and closes modal", async () => {
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => true);
+
+      const mockDuplicate = vi.fn().mockResolvedValue({ id: "KB-002" } as Task);
+      const onClose = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001" })}
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onDuplicateTask={mockDuplicate}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Duplicate"));
+
+      await waitFor(() => {
+        expect(mockDuplicate).toHaveBeenCalledWith("KB-001");
+        expect(onClose).toHaveBeenCalled();
+      });
+
+      window.confirm = originalConfirm;
+    });
+
+    it("successful duplicate shows success toast with new task ID", async () => {
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => true);
+
+      const mockDuplicate = vi.fn().mockResolvedValue({ id: "KB-002" } as Task);
+      const addToast = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onDuplicateTask={mockDuplicate}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Duplicate"));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Duplicated KB-001 → KB-002", "success");
+      });
+
+      window.confirm = originalConfirm;
+    });
+
+    it("cancelling confirmation does not call onDuplicateTask", () => {
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => false);
+
+      const mockDuplicate = vi.fn().mockResolvedValue({ id: "KB-002" } as Task);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onDuplicateTask={mockDuplicate}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Duplicate"));
+
+      expect(mockDuplicate).not.toHaveBeenCalled();
+
+      window.confirm = originalConfirm;
+    });
+
+    it("shows error toast when duplicate fails", async () => {
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => true);
+
+      const mockDuplicate = vi.fn().mockRejectedValue(new Error("Duplicate failed"));
+      const addToast = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onDuplicateTask={mockDuplicate}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Duplicate"));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Duplicate failed", "error");
       });
 
       window.confirm = originalConfirm;

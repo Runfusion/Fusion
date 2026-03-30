@@ -36,7 +36,7 @@ function AppInner() {
     return "board";
   });
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
-  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask } = useTasks();
+  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask } = useTasks();
 
   useEffect(() => {
     fetchConfig()
@@ -185,6 +185,7 @@ function AppInner() {
           onDeleteTask={deleteTask}
           onMergeTask={mergeTask}
           onRetryTask={retryTask}
+          onDuplicateTask={duplicateTask}
           addToast={addToast}
           githubTokenConfigured={githubTokenConfigured}
         />

@@ -56,6 +56,7 @@ interface TaskDetailModalProps {
   onDeleteTask: (id: string) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onDuplicateTask?: (id: string) => Promise<Task>;
   addToast: (message: string, type?: ToastType) => void;
   githubTokenConfigured?: boolean;
 }
@@ -73,6 +74,7 @@ export function TaskDetailModal({
   onDeleteTask,
   onMergeTask,
   onRetryTask,
+  onDuplicateTask,
   addToast,
   githubTokenConfigured,
 }: TaskDetailModalProps) {
@@ -157,6 +159,18 @@ export function TaskDetailModal({
       addToast(err.message, "error");
     }
   }, [task.id, onRetryTask, onClose, addToast]);
+
+  const handleDuplicate = useCallback(async () => {
+    if (!onDuplicateTask) return;
+    if (!confirm(`Duplicate ${task.id}? This will create a new task in Triage with the same description and prompt.`)) return;
+    try {
+      const newTask = await onDuplicateTask(task.id);
+      onClose();
+      addToast(`Duplicated ${task.id} → ${newTask.id}`, "success");
+    } catch (err: any) {
+      addToast(err.message, "error");
+    }
+  }, [task.id, onDuplicateTask, onClose, addToast]);
 
   const handleTogglePause = useCallback(async () => {
     try {
@@ -661,6 +675,11 @@ export function TaskDetailModal({
           <button className="btn btn-danger btn-sm" onClick={handleDelete}>
             Delete
           </button>
+          {onDuplicateTask && (
+            <button className="btn btn-sm" onClick={handleDuplicate}>
+              Duplicate
+            </button>
+          )}
           {task.status === "failed" && onRetryTask && (
             <button className="btn btn-warning btn-sm" onClick={handleRetry}>
               Retry
