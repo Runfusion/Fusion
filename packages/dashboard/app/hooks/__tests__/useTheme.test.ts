@@ -182,7 +182,7 @@ describe("useTheme", () => {
   it("supports all valid color themes", () => {
     const { result } = renderHook(() => useTheme());
 
-    const themes = ["default", "ocean", "forest", "sunset", "berry", "monochrome", "high-contrast", "solarized"];
+    const themes = ["default", "ocean", "forest", "sunset", "berry", "monochrome", "high-contrast", "solarized", "ayu", "one-dark"];
 
     themes.forEach((theme) => {
       act(() => result.current.setColorTheme(theme as typeof themes[number]));

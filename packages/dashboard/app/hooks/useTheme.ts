@@ -72,6 +72,8 @@ export function useTheme(): UseThemeReturn {
         "monochrome",
         "high-contrast",
         "solarized",
+        "ayu",
+        "one-dark",
       ];
       if (saved && validThemes.includes(saved as ColorTheme)) {
         return saved as ColorTheme;

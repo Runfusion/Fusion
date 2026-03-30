@@ -24,6 +24,8 @@ const COLOR_THEMES: { value: ColorTheme; label: string; className: string }[] = 
   { value: "monochrome", label: "Mono", className: "theme-swatch-monochrome" },
   { value: "high-contrast", label: "High Contrast", className: "theme-swatch-high-contrast" },
   { value: "solarized", label: "Solarized", className: "theme-swatch-solarized" },
+  { value: "ayu", label: "Ayu", className: "theme-swatch-ayu" },
+  { value: "one-dark", label: "One Dark", className: "theme-swatch-one-dark" },
 ];
 
 /**

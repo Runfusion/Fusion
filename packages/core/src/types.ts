@@ -19,6 +19,8 @@ export const COLOR_THEMES = [
   "monochrome",
   "high-contrast",
   "solarized",
+  "ayu",
+  "one-dark",
 ] as const;
 export type ColorTheme = (typeof COLOR_THEMES)[number];
 

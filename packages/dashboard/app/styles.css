@@ -4282,6 +4282,71 @@ html .column.drag-over * {
   --color-error: #dc322f;
 }
 
+/* AYU - Popular code editor theme with dark and light variants */
+[data-color-theme="ayu"] {
+  --bg: #0f1419;
+  --surface: #131d27;
+  --card: #1a2634;
+  --card-hover: #232d3b;
+  --border: #304357;
+  --text: #bfbdb6;
+  --text-muted: #565b66;
+  --text-dim: #4d5666;
+
+  --todo: #39bae6;
+  --in-progress: #ffb454;
+  --in-progress-rgb: 255, 180, 84;
+  --in-review: #7ee787;
+  --triage: #f2966b;
+  --done: #6c7986;
+  --color-success: #7ee787;
+  --color-error: #f07178;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
+[data-color-theme="ayu"][data-theme="light"] {
+  --bg: #fafafa;
+  --surface: #f3f3f3;
+  --card: #ffffff;
+  --card-hover: #f0f0f0;
+  --border: #e0e0e0;
+  --text: #5c6166;
+  --text-muted: #8a9199;
+  --text-dim: #a0a0a0;
+
+  --todo: #007acc;
+  --in-progress: #ff8f40;
+  --in-progress-rgb: 255, 143, 64;
+  --in-review: #86b300;
+  --triage: #fa8d3e;
+  --done: #8a9199;
+  --color-success: #86b300;
+  --color-error: #f07178;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+}
+
+/* ONE DARK - Atom's iconic dark theme */
+[data-color-theme="one-dark"] {
+  --bg: #282c34;
+  --surface: #21252b;
+  --card: #2c313a;
+  --card-hover: #353b45;
+  --border: #3e4451;
+  --text: #abb2bf;
+  --text-muted: #636d83;
+  --text-dim: #5c6370;
+
+  --todo: #61afef;
+  --in-progress: #c678dd;
+  --in-progress-rgb: 198, 120, 221;
+  --in-review: #98c379;
+  --triage: #e5c07b;
+  --done: #828997;
+  --color-success: #98c379;
+  --color-error: #e06c75;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+
 /* ============================================================
    THEME SELECTOR COMPONENT STYLES
    ============================================================ */
@@ -4439,6 +4504,22 @@ html .column.drag-over * {
 .theme-swatch-solarized {
   --bg: #002b36;
   --surface: #073642;
+}
+
+.theme-swatch-ayu {
+  --bg: #0f1419;
+  --surface: #131d27;
+}
+
+.theme-swatch-one-dark {
+  --bg: #282c34;
+  --surface: #21252b;
+}
+
+/* Light mode swatch overrides */
+[data-theme="light"] .theme-swatch-ayu {
+  --bg: #fafafa;
+  --surface: #f3f3f3;
 }
 
 /* Reset to defaults button */
