@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { TaskStore, Task, TaskDetail, Settings } from "@kb/core";
 import {
   TriageProcessor,
+  TRIAGE_SYSTEM_PROMPT,
   buildSpecificationPrompt,
   readAttachmentContents,
 } from "./triage.js";
@@ -170,6 +171,46 @@ describe("buildSpecificationPrompt", () => {
     );
 
     expect(prompt).toContain("(none)");
+  });
+
+  it("includes proactive subtask guidance when breakdown was not explicitly requested", () => {
+    const prompt = buildSpecificationPrompt(
+      baseTask,
+      ".kb/tasks/KB-001/PROMPT.md",
+    );
+
+    expect(prompt).toContain("## Subtask Consideration");
+    expect(prompt).toContain("Size M or L");
+    expect(prompt).toContain("Subtask creation is OPTIONAL");
+    expect(prompt).not.toContain("## Subtask Breakdown Requested");
+  });
+
+  it("keeps explicit breakIntoSubtasks flow mandatory when requested", () => {
+    const prompt = buildSpecificationPrompt(
+      {
+        ...baseTask,
+        breakIntoSubtasks: true,
+      },
+      ".kb/tasks/KB-001/PROMPT.md",
+    );
+
+    expect(prompt).toContain("## Subtask Breakdown Requested");
+    expect(prompt).toContain("If splitting: use the \\\`task_create\\\` tool");
+    expect(prompt).not.toContain("## Subtask Consideration");
+  });
+});
+
+describe("TRIAGE_SYSTEM_PROMPT", () => {
+  it("includes proactive M/L subtask breakdown guidance", () => {
+    expect(TRIAGE_SYSTEM_PROMPT).toContain(
+      "## Proactive Subtask Breakdown for M/L Tasks",
+    );
+    expect(TRIAGE_SYSTEM_PROMPT).toContain(
+      "Even when `breakIntoSubtasks` is not set to `true`",
+    );
+    expect(TRIAGE_SYSTEM_PROMPT).toContain(
+      "Size S tasks should generally NOT be split",
+    );
   });
 });
 
