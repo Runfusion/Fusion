@@ -39,7 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub } = await import("./commands/task.js");
 
 const HELP = `
 kb — AI-orchestrated task board
@@ -56,11 +56,14 @@ Usage:
   kb task attach <id> <file>          Attach a file to a task
   kb task pause <id>                  Pause a task (stops all automation)
   kb task unpause <id>                Unpause a task (resumes automation)
+  kb task import <owner/repo> [opts]  Import GitHub issues as tasks
 
 Options:
   --port, -p <port>          Dashboard port (default: 4040)
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
+  --limit, -l <n>            Max issues to import (default: 30, max: 100)
+  --labels, -L <labels>      Comma-separated label filter for import
   --help, -h                 Show this help
 
 Columns: triage, todo, in-progress, in-review, done
@@ -176,6 +179,38 @@ async function main() {
             const id = args[2];
             if (!id) { console.error("Usage: kb task unpause <id>"); process.exit(1); }
             await runTaskUnpause(id);
+            break;
+          }
+          case "import": {
+            const ownerRepo = args[2];
+            if (!ownerRepo) {
+              console.error("Usage: kb task import <owner/repo> [options]");
+              console.error("Options: --limit <n>, -l <n>  (default: 30, max: 100)");
+              console.error("         --labels <labels>, -L <labels>  (comma-separated)");
+              process.exit(1);
+            }
+
+            // Parse options
+            let limit = 30;
+            const limitIdx = args.indexOf("--limit");
+            const limitIdxShort = args.indexOf("-l");
+            const li = limitIdx !== -1 ? limitIdx : limitIdxShort;
+            if (li !== -1 && li + 1 < args.length) {
+              const parsed = parseInt(args[li + 1], 10);
+              if (!isNaN(parsed)) {
+                limit = Math.min(Math.max(parsed, 1), 100);
+              }
+            }
+
+            let labels: string[] | undefined;
+            const labelsIdx = args.indexOf("--labels");
+            const labelsIdxShort = args.indexOf("-L");
+            const labi = labelsIdx !== -1 ? labelsIdx : labelsIdxShort;
+            if (labi !== -1 && labi + 1 < args.length) {
+              labels = args[labi + 1].split(",").map(l => l.trim()).filter(Boolean);
+            }
+
+            await runTaskImportFromGitHub(ownerRepo, { limit, labels });
             break;
           }
           default:
