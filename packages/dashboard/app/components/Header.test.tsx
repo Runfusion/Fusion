@@ -97,6 +97,49 @@ describe("Header", () => {
     });
   });
 
+  describe("terminal button", () => {
+    it("renders terminal button with correct title", () => {
+      renderHeader({ onToggleTerminal: noop });
+      expect(screen.getByTitle("Open Terminal View")).toBeDefined();
+    });
+
+    it("calls onToggleTerminal when terminal button is clicked", () => {
+      const onToggleTerminal = vi.fn();
+      renderHeader({ onToggleTerminal, inProgressCount: 1 });
+      fireEvent.click(screen.getByTitle("Open Terminal View"));
+      expect(onToggleTerminal).toHaveBeenCalled();
+    });
+
+    it("shows badge with count when in-progress tasks exist", () => {
+      renderHeader({ onToggleTerminal: noop, inProgressCount: 3 });
+      expect(screen.getByTestId("terminal-badge")).toBeDefined();
+      expect(screen.getByTestId("terminal-badge").textContent).toBe("3");
+    });
+
+    it("shows badge with 9+ when count exceeds 9", () => {
+      renderHeader({ onToggleTerminal: noop, inProgressCount: 15 });
+      expect(screen.getByTestId("terminal-badge")).toBeDefined();
+      expect(screen.getByTestId("terminal-badge").textContent).toBe("9+");
+    });
+
+    it("does not show badge when no in-progress tasks", () => {
+      renderHeader({ onToggleTerminal: noop, inProgressCount: 0 });
+      expect(screen.queryByTestId("terminal-badge")).toBeNull();
+    });
+
+    it("is disabled when no in-progress tasks", () => {
+      renderHeader({ onToggleTerminal: noop, inProgressCount: 0 });
+      const btn = screen.getByTitle("Open Terminal View");
+      expect(btn.hasAttribute("disabled")).toBe(true);
+    });
+
+    it("is enabled when in-progress tasks exist", () => {
+      renderHeader({ onToggleTerminal: noop, inProgressCount: 2 });
+      const btn = screen.getByTitle("Open Terminal View");
+      expect(btn.hasAttribute("disabled")).toBe(false);
+    });
+  });
+
   describe("pause controls", () => {
     it("renders pause button for engine pause", () => {
       renderHeader();

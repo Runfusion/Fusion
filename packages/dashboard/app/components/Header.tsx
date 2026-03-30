@@ -1,9 +1,10 @@
-import { Settings, Pause, Play, Square, Download, LayoutGrid, List, GitBranch } from "lucide-react";
+import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal } from "lucide-react";
 
 interface HeaderProps {
   onOpenSettings?: () => void;
   onOpenGitHubImport?: () => void;
-  onOpenGitManager?: () => void;
+  onToggleTerminal?: () => void;
+  inProgressCount?: number;
   globalPaused?: boolean;
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
@@ -15,7 +16,8 @@ interface HeaderProps {
 export function Header({
   onOpenSettings,
   onOpenGitHubImport,
-  onOpenGitManager,
+  onToggleTerminal,
+  inProgressCount = 0,
   globalPaused,
   enginePaused,
   onToggleGlobalPause,
@@ -23,6 +25,8 @@ export function Header({
   view = "board",
   onChangeView,
 }: HeaderProps) {
+  const hasInProgressTasks = inProgressCount > 0;
+
   return (
     <header className="header">
       <div className="header-left">
@@ -58,9 +62,20 @@ export function Header({
         <button className="btn-icon" onClick={onOpenGitHubImport} title="Import from GitHub">
           <Download size={16} />
         </button>
-        {/* Git Manager */}
-        <button className="btn-icon" onClick={onOpenGitManager} title="Git Manager">
-          <GitBranch size={16} />
+        {/* Terminal button - shows badge with count when in-progress tasks exist */}
+        <button
+          className={`btn-icon btn-icon--terminal${hasInProgressTasks ? " has-badge" : ""}`}
+          onClick={onToggleTerminal}
+          title="Open Terminal View"
+          disabled={!hasInProgressTasks}
+          data-testid="terminal-toggle-btn"
+        >
+          <Terminal size={16} />
+          {hasInProgressTasks && (
+            <span className="btn-badge" data-testid="terminal-badge">
+              {inProgressCount > 9 ? "9+" : inProgressCount}
+            </span>
+          )}
         </button>
         {/* Pause button (soft pause): stops new work, lets agents finish */}
         <button

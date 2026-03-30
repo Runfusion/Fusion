@@ -5,6 +5,7 @@ import { Header } from "./components/Header";
 import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
 import { TaskDetailModal } from "./components/TaskDetailModal";
+import { TerminalModal } from "./components/TerminalModal";
 import { SettingsModal } from "./components/SettingsModal";
 import type { SectionId } from "./components/SettingsModal";
 import { ToastContainer } from "./components/ToastContainer";
@@ -18,7 +19,7 @@ function AppInner() {
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [githubImportOpen, setGitHubImportOpen] = useState(false);
-  const [gitManagerOpen, setGitManagerOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [autoMerge, setAutoMerge] = useState(true);
@@ -121,20 +122,23 @@ function AppInner() {
     addToast(`Imported ${task.id} from GitHub`, "success");
   }, [addToast]);
 
-  const handleOpenGitManager = useCallback(() => {
-    setGitManagerOpen(true);
+  const handleToggleTerminal = useCallback(() => {
+    setTerminalOpen((prev) => !prev);
   }, []);
 
-  const handleCloseGitManager = useCallback(() => {
-    setGitManagerOpen(false);
+  const handleTerminalClose = useCallback(() => {
+    setTerminalOpen(false);
   }, []);
 
+  // Filter tasks to get only in-progress tasks for terminal
+  const inProgressTasks = tasks.filter((t) => t.column === "in-progress");
   return (
     <>
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenGitHubImport={() => setGitHubImportOpen(true)}
-        onOpenGitManager={handleOpenGitManager}
+        onToggleTerminal={handleToggleTerminal}
+        inProgressCount={inProgressTasks.length}
         globalPaused={globalPaused}
         enginePaused={enginePaused}
         onToggleGlobalPause={handleToggleGlobalPause}
@@ -200,11 +204,10 @@ function AppInner() {
         onImport={handleGitHubImport}
         tasks={tasks}
       />
-      <GitManagerModal
-        isOpen={gitManagerOpen}
-        onClose={handleCloseGitManager}
-        tasks={tasks}
-        addToast={addToast}
+      <TerminalModal
+        isOpen={terminalOpen}
+        onClose={handleTerminalClose}
+        tasks={inProgressTasks}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>
