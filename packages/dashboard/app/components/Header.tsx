@@ -127,30 +127,6 @@ export function Header({
         <span className="logo-sub">tasks</span>
       </div>
       <div className="header-actions">
-        {/* View Toggle - always inline, even on mobile */}
-        {onChangeView && (
-          <div className="view-toggle">
-            <button
-              className={`view-toggle-btn${view === "board" ? " active" : ""}`}
-              onClick={() => onChangeView("board")}
-              title="Board view"
-              aria-label="Board view"
-              aria-pressed={view === "board"}
-            >
-              <LayoutGrid size={16} />
-            </button>
-            <button
-              className={`view-toggle-btn${view === "list" ? " active" : ""}`}
-              onClick={() => onChangeView("list")}
-              title="List view"
-              aria-label="List view"
-              aria-pressed={view === "list"}
-            >
-              <List size={16} />
-            </button>
-          </div>
-        )}
-
         {/* Desktop Search - only show in board view */}
         {onSearchChange && view === "board" && !isMobile && (
           <div className="header-search">
@@ -211,6 +187,30 @@ export function Header({
               </div>
             )}
           </>
+        )}
+
+        {/* View Toggle - always inline, even on mobile */}
+        {onChangeView && (
+          <div className="view-toggle">
+            <button
+              className={`view-toggle-btn${view === "board" ? " active" : ""}`}
+              onClick={() => onChangeView("board")}
+              title="Board view"
+              aria-label="Board view"
+              aria-pressed={view === "board"}
+            >
+              <LayoutGrid size={16} />
+            </button>
+            <button
+              className={`view-toggle-btn${view === "list" ? " active" : ""}`}
+              onClick={() => onChangeView("list")}
+              title="List view"
+              aria-label="List view"
+              aria-pressed={view === "list"}
+            >
+              <List size={16} />
+            </button>
+          </div>
         )}
 
         {/* Usage button - inline on all screens when onOpenUsage provided */}
