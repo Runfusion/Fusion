@@ -278,4 +278,205 @@ describe("ModelSelectorTab", () => {
       expect(mockAddToast).toHaveBeenCalledWith("Save failed", "error");
     });
   });
+
+  // Filter functionality tests
+  it("renders filter input for executor and validator selectors", async () => {
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Both filter inputs should be present (placeholder text)
+    const filterInputs = screen.getAllByPlaceholderText("Filter models…");
+    expect(filterInputs.length).toBe(2);
+  });
+
+  it("filters executor models by provider name", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Type "openai" in the executor filter
+    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
+    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "openai");
+
+    // Should show result count
+    expect(within(executorSection!).getByText("1 model")).toBeInTheDocument();
+
+    // The select should only show openai models
+    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
+    const options = Array.from(executorSelect.options).map((o) => o.textContent);
+    expect(options).toContain("Use default");
+    expect(options).toContain("GPT-4o");
+    expect(options).not.toContain("Claude Sonnet 4.5");
+    expect(options).not.toContain("Claude Opus 4");
+  });
+
+  it("filters models by model ID", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Type "gpt-4o" in the executor filter
+    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
+    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "gpt-4o");
+
+    // Should show only GPT-4o
+    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
+    const options = Array.from(executorSelect.options).map((o) => o.textContent);
+    expect(options).toContain("GPT-4o");
+    expect(options).not.toContain("Claude Sonnet 4.5");
+  });
+
+  it("filters models by display name", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Type "opus" (case insensitive)
+    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
+    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "opus");
+
+    // Should show only Claude Opus 4
+    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
+    const options = Array.from(executorSelect.options).map((o) => o.textContent);
+    expect(options).toContain("Claude Opus 4");
+    expect(options).not.toContain("Claude Sonnet 4.5");
+    expect(options).not.toContain("GPT-4o");
+  });
+
+  it("supports multi-word filter (AND logic)", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Type "anthropic claude" - both terms must match
+    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
+    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "anthropic claude");
+
+    // Should show only anthropic claude models
+    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
+    const options = Array.from(executorSelect.options).map((o) => o.textContent);
+    expect(options).toContain("Claude Sonnet 4.5");
+    expect(options).toContain("Claude Opus 4");
+    expect(options).not.toContain("GPT-4o");
+  });
+
+  it("Use default option remains visible regardless of filter", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Type a filter that matches nothing
+    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
+    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "nonexistent");
+
+    // Use default should still be visible
+    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
+    const options = Array.from(executorSelect.options).map((o) => o.textContent);
+    expect(options).toContain("Use default");
+  });
+
+  it("clear button clears filter and restores full list", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Type a filter
+    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
+    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "openai");
+
+    // Verify filter is applied
+    expect(within(executorSection!).getByText("1 model")).toBeInTheDocument();
+
+    // Click clear button
+    const clearButton = within(executorSection!).getByLabelText("Clear filter");
+    await user.click(clearButton);
+
+    // Filter should be cleared and all models should be visible
+    expect(filterInput).toHaveValue("");
+    expect(within(executorSection!).getByText("3 models")).toBeInTheDocument();
+
+    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
+    const options = Array.from(executorSelect.options).map((o) => o.textContent);
+    expect(options).toContain("Claude Sonnet 4.5");
+    expect(options).toContain("Claude Opus 4");
+    expect(options).toContain("GPT-4o");
+  });
+
+  it("shows empty state message when filter matches nothing", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Type a filter that matches nothing
+    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
+    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "xyz123");
+
+    // Should show no results message
+    expect(within(executorSection!).getByText("No models match 'xyz123'")).toBeInTheDocument();
+    expect(within(executorSection!).getByText("0 models")).toBeInTheDocument();
+  });
+
+  it("selecting a model from filtered list works correctly", async () => {
+    const user = userEvent.setup();
+    mockUpdateTask.mockResolvedValue({ ...FAKE_TASK });
+
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Filter to show only openai
+    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
+    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "openai");
+
+    // Select the filtered model
+    const executorSelect = screen.getByLabelText("Executor Model");
+    await user.selectOptions(executorSelect, "openai/gpt-4o");
+
+    // Save
+    await user.click(screen.getByText("Save"));
+
+    // Verify correct model was saved
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+        validatorModelProvider: undefined,
+        validatorModelId: undefined,
+      });
+    });
+  });
 });

@@ -5,6 +5,7 @@ import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutPr
 import type { AuthProvider, ModelInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
+import { filterModels } from "../utils/modelFilter";
 
 /**
  * Settings sections configuration.
@@ -77,6 +78,7 @@ export function SettingsModal({
   // Model state
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelFilter, setModelFilter] = useState("");
 
   useEffect(() => {
     fetchSettings()
@@ -241,8 +243,9 @@ export function SettingsModal({
           </>
         );
       case "model": {
-        // Group models by provider
-        const modelsByProvider = availableModels.reduce<Record<string, ModelInfo[]>>((acc, m) => {
+        // Filter and group models by provider
+        const filteredModels = filterModels(availableModels, modelFilter);
+        const modelsByProvider = filteredModels.reduce<Record<string, ModelInfo[]>>((acc, m) => {
           (acc[m.provider] ??= []).push(m);
           return acc;
         }, {});
@@ -261,6 +264,29 @@ export function SettingsModal({
             ) : (
               <div className="form-group">
                 <label htmlFor="defaultModel">Default Model</label>
+                {/* Filter input */}
+                <div className="model-selector-filter">
+                  <input
+                    type="text"
+                    className="model-selector-filter-input"
+                    placeholder="Filter models…"
+                    value={modelFilter}
+                    onChange={(e) => setModelFilter(e.target.value)}
+                  />
+                  {modelFilter && (
+                    <button
+                      type="button"
+                      className="model-selector-filter-clear"
+                      onClick={() => setModelFilter("")}
+                      aria-label="Clear filter"
+                    >
+                      ×
+                    </button>
+                  )}
+                  <span className="model-selector-results-count">
+                    {filteredModels.length} model{filteredModels.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
                 <select
                   id="defaultModel"
                   value={selectedValue}
@@ -289,7 +315,12 @@ export function SettingsModal({
                     </optgroup>
                   ))}
                 </select>
-                <small>Select the AI model used for agent sessions. "Use default" lets the engine choose automatically.</small>
+                {filteredModels.length === 0 && modelFilter && (
+                  <div className="model-selector-no-results">
+                    No models match &apos;{modelFilter}&apos;
+                  </div>
+                )}
+                <small>Select the AI model used for agent sessions. &quot;Use default&quot; lets the engine choose automatically.</small>
               </div>
             )}
             {(() => {

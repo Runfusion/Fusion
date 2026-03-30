@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { SettingsModal } from "../SettingsModal";
 import type { Settings } from "@kb/core";
 
@@ -877,5 +878,87 @@ describe("SettingsModal", () => {
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications") as HTMLInputElement;
     expect(checkbox.checked).toBe(true);
     expect(screen.getByLabelText("ntfy Topic")).toBeTruthy();
+  });
+
+  // Model filter tests
+  it("renders filter input in Model section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Filter input should be present
+    expect(screen.getByPlaceholderText("Filter models…")).toBeTruthy();
+  });
+
+  it("filters default model options in Model section", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Type a filter - only claude model should match
+    const filterInput = screen.getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "claude");
+
+    // Should show result count (1 model matches "claude")
+    expect(screen.getByText("1 model")).toBeTruthy();
+
+    // The select should be updated (Use default + 1 filtered model)
+    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
+    const options = Array.from(select.options).map((o) => o.textContent);
+    expect(options).toContain("Use default");
+    expect(options).toContain("Claude Sonnet 4.5");
+    expect(options).not.toContain("GPT-4o");
+  });
+
+  it("clear button resets filter in Model section", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Type a filter
+    const filterInput = screen.getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "openai");
+
+    // Should show filtered count
+    expect(screen.getByText("1 model")).toBeTruthy();
+
+    // Click clear button
+    const clearButton = screen.getByLabelText("Clear filter");
+    await user.click(clearButton);
+
+    // Filter should be cleared
+    expect(filterInput).toHaveValue("");
+    expect(screen.getByText("2 models")).toBeTruthy();
+
+    // All models should be visible again
+    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
+    const options = Array.from(select.options).map((o) => o.textContent);
+    expect(options).toContain("GPT-4o");
+    expect(options).toContain("Claude Sonnet 4.5");
+  });
+
+  it("shows empty state in Model section when filter matches nothing", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Type a filter that matches nothing
+    const filterInput = screen.getByPlaceholderText("Filter models…");
+    await user.type(filterInput, "nonexistent");
+
+    // Should show no results message
+    expect(screen.getByText("No models match 'nonexistent'")).toBeTruthy();
+    expect(screen.getByText("0 models")).toBeTruthy();
   });
 });

@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { fetchModels, updateTask } from "../api";
 import type { ModelInfo } from "../api";
 import type { Task, TaskDetail } from "@kb/core";
 import type { ToastType } from "../hooks/useToast";
+import { filterModels } from "../utils/modelFilter";
 
 interface ModelSelectorTabProps {
   task: Task | TaskDetail;
@@ -13,6 +14,10 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
+
+  // Filter states for executor and validator
+  const [executorFilter, setExecutorFilter] = useState("");
+  const [validatorFilter, setValidatorFilter] = useState("");
 
   // Local state for selections (not saved until user clicks Save)
   const [executorProvider, setExecutorProvider] = useState<string | undefined>(task.modelProvider);
@@ -50,11 +55,24 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
     setHasChanges(executorChanged || validatorChanged);
   }, [executorProvider, executorModelId, validatorProvider, validatorModelId, task]);
 
-  // Group models by provider
-  const modelsByProvider = availableModels.reduce<Record<string, ModelInfo[]>>((acc, m) => {
-    (acc[m.provider] ??= []).push(m);
-    return acc;
-  }, {});
+  // Filtered models for executor and validator
+  const filteredExecutorModels = useMemo(() => filterModels(availableModels, executorFilter), [availableModels, executorFilter]);
+  const filteredValidatorModels = useMemo(() => filterModels(availableModels, validatorFilter), [availableModels, validatorFilter]);
+
+  // Group filtered models by provider
+  const executorModelsByProvider = useMemo(() => {
+    return filteredExecutorModels.reduce<Record<string, ModelInfo[]>>((acc, m) => {
+      (acc[m.provider] ??= []).push(m);
+      return acc;
+    }, {});
+  }, [filteredExecutorModels]);
+
+  const validatorModelsByProvider = useMemo(() => {
+    return filteredValidatorModels.reduce<Record<string, ModelInfo[]>>((acc, m) => {
+      (acc[m.provider] ??= []).push(m);
+      return acc;
+    }, {});
+  }, [filteredValidatorModels]);
 
   // Build select values (provider/id combination or empty for default)
   const executorValue = executorProvider && executorModelId
@@ -160,6 +178,31 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
                 </span>
               )}
             </div>
+            {/* Filter input for executor */}
+            <div className="model-selector-filter">
+              <input
+                type="text"
+                className="model-selector-filter-input"
+                placeholder="Filter models…"
+                value={executorFilter}
+                onChange={(e) => setExecutorFilter(e.target.value)}
+                disabled={isSaving}
+              />
+              {executorFilter && (
+                <button
+                  type="button"
+                  className="model-selector-filter-clear"
+                  onClick={() => setExecutorFilter("")}
+                  disabled={isSaving}
+                  aria-label="Clear filter"
+                >
+                  ×
+                </button>
+              )}
+              <span className="model-selector-results-count">
+                {filteredExecutorModels.length} model{filteredExecutorModels.length !== 1 ? "s" : ""}
+              </span>
+            </div>
             <select
               id="executorModel"
               value={executorValue}
@@ -167,7 +210,7 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
               disabled={isSaving}
             >
               <option value="">Use default</option>
-              {Object.entries(modelsByProvider).map(([provider, models]) => (
+              {Object.entries(executorModelsByProvider).map(([provider, models]) => (
                 <optgroup key={provider} label={provider}>
                   {models.map((m) => (
                     <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
@@ -177,6 +220,11 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
                 </optgroup>
               ))}
             </select>
+            {filteredExecutorModels.length === 0 && executorFilter && (
+              <div className="model-selector-no-results">
+                No models match &apos;{executorFilter}&apos;
+              </div>
+            )}
             <small>The AI model used to implement this task.</small>
           </div>
 
@@ -192,6 +240,31 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
                 </span>
               )}
             </div>
+            {/* Filter input for validator */}
+            <div className="model-selector-filter">
+              <input
+                type="text"
+                className="model-selector-filter-input"
+                placeholder="Filter models…"
+                value={validatorFilter}
+                onChange={(e) => setValidatorFilter(e.target.value)}
+                disabled={isSaving}
+              />
+              {validatorFilter && (
+                <button
+                  type="button"
+                  className="model-selector-filter-clear"
+                  onClick={() => setValidatorFilter("")}
+                  disabled={isSaving}
+                  aria-label="Clear filter"
+                >
+                  ×
+                </button>
+              )}
+              <span className="model-selector-results-count">
+                {filteredValidatorModels.length} model{filteredValidatorModels.length !== 1 ? "s" : ""}
+              </span>
+            </div>
             <select
               id="validatorModel"
               value={validatorValue}
@@ -199,7 +272,7 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
               disabled={isSaving}
             >
               <option value="">Use default</option>
-              {Object.entries(modelsByProvider).map(([provider, models]) => (
+              {Object.entries(validatorModelsByProvider).map(([provider, models]) => (
                 <optgroup key={provider} label={provider}>
                   {models.map((m) => (
                     <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
@@ -209,6 +282,11 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
                 </optgroup>
               ))}
             </select>
+            {filteredValidatorModels.length === 0 && validatorFilter && (
+              <div className="model-selector-no-results">
+                No models match &apos;{validatorFilter}&apos;
+              </div>
+            )}
             <small>The AI model used to review code and plans for this task.</small>
           </div>
 
