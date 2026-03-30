@@ -190,4 +190,52 @@ describe("Header", () => {
       expect(screen.getByTestId("planning-btn")).toBeDefined();
     });
   });
+
+  describe("search functionality", () => {
+    it("does not render search input when onSearchChange is not provided", () => {
+      renderHeader({ view: "board" });
+      expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    });
+
+    it("renders search input when onSearchChange and view='board' are provided", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
+    });
+
+    it("does not render search input when view is 'list'", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "list" });
+      expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
+    });
+
+    it("calls onSearchChange when typing in search input", () => {
+      const onSearchChange = vi.fn();
+      renderHeader({ onSearchChange, view: "board" });
+      const input = screen.getByPlaceholderText("Search tasks...");
+      fireEvent.change(input, { target: { value: "test query" } });
+      expect(onSearchChange).toHaveBeenCalledWith("test query");
+    });
+
+    it("shows clear button when search query is not empty", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board", searchQuery: "test" });
+      expect(screen.getByLabelText("Clear search")).toBeDefined();
+    });
+
+    it("does not show clear button when search query is empty", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board", searchQuery: "" });
+      expect(screen.queryByLabelText("Clear search")).toBeNull();
+    });
+
+    it("calls onSearchChange with empty string when clear button is clicked", () => {
+      const onSearchChange = vi.fn();
+      renderHeader({ onSearchChange, view: "board", searchQuery: "test" });
+      fireEvent.click(screen.getByLabelText("Clear search"));
+      expect(onSearchChange).toHaveBeenCalledWith("");
+    });
+
+    it("search input has correct placeholder text", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "board" });
+      const input = screen.getByPlaceholderText("Search tasks...");
+      expect(input).toBeDefined();
+    });
+  });
 });
