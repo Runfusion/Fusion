@@ -407,6 +407,47 @@ export function getTerminalStreamUrl(sessionId: string): string {
   return `/api/terminal/sessions/${encodeURIComponent(sessionId)}/stream`;
 }
 
+// --- PTY Terminal API (WebSocket-based) ---
+
+/** PTY Terminal session response */
+export interface PtyTerminalSession {
+  sessionId: string;
+  shell: string;
+  cwd: string;
+}
+
+/** PTY Terminal session info for listing */
+export interface PtyTerminalSessionInfo {
+  id: string;
+  cwd: string;
+  shell: string;
+  createdAt: string;
+}
+
+/** Create a new PTY terminal session */
+export function createTerminalSession(
+  cwd?: string,
+  cols?: number,
+  rows?: number
+): Promise<PtyTerminalSession> {
+  return api<PtyTerminalSession>("/terminal/sessions", {
+    method: "POST",
+    body: JSON.stringify({ cwd, cols, rows }),
+  });
+}
+
+/** Kill a PTY terminal session */
+export function killTerminalSession(sessionId: string): Promise<{ killed: boolean }> {
+  return api<{ killed: boolean }>(`/terminal/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  });
+}
+
+/** List active PTY terminal sessions */
+export function listTerminalSessions(): Promise<PtyTerminalSessionInfo[]> {
+  return api<PtyTerminalSessionInfo[]>("/terminal/sessions");
+}
+
 // --- Git Management API ---
 
 /** Current git status */
