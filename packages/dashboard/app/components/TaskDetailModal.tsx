@@ -14,6 +14,29 @@ import { PrSection } from "./PrSection";
 import { SpecEditor } from "./SpecEditor";
 import { FileBrowserModal } from "./FileBrowserModal";
 
+interface ModelSelection {
+  provider?: string;
+  modelId?: string;
+}
+
+function normalizeModelField(value: string | null | undefined): string | undefined {
+  return value ?? undefined;
+}
+
+function getExecutorSelection(task: Task | TaskDetail): ModelSelection {
+  return {
+    provider: normalizeModelField(task.modelProvider),
+    modelId: normalizeModelField(task.modelId),
+  };
+}
+
+function getValidatorSelection(task: Task | TaskDetail): ModelSelection {
+  return {
+    provider: normalizeModelField(task.validatorModelProvider),
+    modelId: normalizeModelField(task.validatorModelId),
+  };
+}
+
 function getStepStatusColor(status: string): string {
   switch (status) {
     case "done":
@@ -642,7 +665,12 @@ export function TaskDetailModal({
             </div>
           ) : activeTab === "agent-log" ? (
             <div className="detail-section">
-              <AgentLogViewer entries={agentLogEntries} loading={agentLogLoading} />
+              <AgentLogViewer
+                entries={agentLogEntries}
+                loading={agentLogLoading}
+                executorModel={getExecutorSelection(task)}
+                validatorModel={getValidatorSelection(task)}
+              />
             </div>
           ) : activeTab === "steering" ? (
             <SteeringTab task={task} addToast={addToast} />

@@ -1,15 +1,23 @@
 import type { AgentLogEntry } from "@kb/core";
+import { ProviderIcon } from "./ProviderIcon";
+
+interface ModelInfo {
+  provider?: string;
+  modelId?: string;
+}
 
 interface AgentLogViewerProps {
   entries: AgentLogEntry[];
   loading: boolean;
+  executorModel?: ModelInfo | null;
+  validatorModel?: ModelInfo | null;
 }
 
 /**
  * Renders agent log entries in a scrollable, monospace container.
  * Displays entries in reverse chronological order (newest first).
  */
-export function AgentLogViewer({ entries, loading }: AgentLogViewerProps) {
+export function AgentLogViewer({ entries, loading, executorModel, validatorModel }: AgentLogViewerProps) {
   if (loading && entries.length === 0) {
     return (
       <div className="agent-log-viewer" data-testid="agent-log-viewer">
@@ -29,6 +37,9 @@ export function AgentLogViewer({ entries, loading }: AgentLogViewerProps) {
   // Reverse entries so newest appear first
   const reversedEntries = [...entries].reverse();
 
+  const hasExecutorOverride = executorModel?.provider && executorModel?.modelId;
+  const hasValidatorOverride = validatorModel?.provider && validatorModel?.modelId;
+
   return (
     <div
       className="agent-log-viewer"
@@ -46,6 +57,48 @@ export function AgentLogViewer({ entries, loading }: AgentLogViewerProps) {
         wordBreak: "break-word",
       }}
     >
+      {/* Model info header */}
+      <div
+        className="agent-log-model-header"
+        style={{
+          display: "flex",
+          gap: "16px",
+          padding: "8px 12px",
+          marginBottom: "12px",
+          background: "var(--bg-tertiary, #252536)",
+          borderRadius: "4px",
+          fontSize: "12px",
+          color: "var(--text-muted, #888)",
+        }}
+        data-testid="agent-log-model-header"
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ fontWeight: 600 }}>Executor:</span>
+          {hasExecutorOverride ? (
+            <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <ProviderIcon provider={executorModel.provider!} size="sm" />
+              <span style={{ color: "var(--text-secondary, #aaa)" }}>
+                {executorModel.provider}/{executorModel.modelId}
+              </span>
+            </span>
+          ) : (
+            <span className="model-badge-default">Using default</span>
+          )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ fontWeight: 600 }}>Validator:</span>
+          {hasValidatorOverride ? (
+            <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <ProviderIcon provider={validatorModel.provider!} size="sm" />
+              <span style={{ color: "var(--text-secondary, #aaa)" }}>
+                {validatorModel.provider}/{validatorModel.modelId}
+              </span>
+            </span>
+          ) : (
+            <span className="model-badge-default">Using default</span>
+          )}
+        </div>
+      </div>
       {reversedEntries.map((entry, i) => {
         // Look at previous entry in reversed array (= next chronologically) for deduplication
         const prev = reversedEntries[i - 1];

@@ -193,4 +193,141 @@ describe("AgentLogViewer", () => {
       expect(badges).toHaveLength(0);
     });
   });
+
+  describe("model info header", () => {
+    it("renders model info header with executor model when set", () => {
+      const entries = [makeEntry()];
+      const { container } = render(
+        <AgentLogViewer
+          entries={entries}
+          loading={false}
+          executorModel={{ provider: "anthropic", modelId: "claude-sonnet-4-5" }}
+        />
+      );
+      const header = container.querySelector("[data-testid='agent-log-model-header']");
+      expect(header).toBeTruthy();
+      expect(header!.textContent).toContain("Executor:");
+      expect(header!.textContent).toContain("anthropic/claude-sonnet-4-5");
+      expect(header!.textContent).toContain("Validator:");
+      expect(header!.textContent).toContain("Using default");
+      // Verify ProviderIcon is rendered for executor
+      expect(container.querySelector('[data-provider="anthropic"]')).toBeTruthy();
+    });
+
+    it("renders 'Using default' when no executor model override is set", () => {
+      const entries = [makeEntry()];
+      const { container } = render(
+        <AgentLogViewer entries={entries} loading={false} executorModel={null} />
+      );
+      const header = container.querySelector("[data-testid='agent-log-model-header']");
+      expect(header).toBeTruthy();
+      expect(header!.textContent).toContain("Executor:");
+      expect(header!.textContent).toContain("Using default");
+    });
+
+    it("renders 'Using default' when executorModel is undefined", () => {
+      const entries = [makeEntry()];
+      const { container } = render(
+        <AgentLogViewer entries={entries} loading={false} />
+      );
+      const header = container.querySelector("[data-testid='agent-log-model-header']");
+      expect(header).toBeTruthy();
+      expect(header!.textContent).toContain("Executor:");
+      expect(header!.textContent).toContain("Using default");
+    });
+
+    it("renders model info header with validator model when set", () => {
+      const entries = [makeEntry()];
+      const { container } = render(
+        <AgentLogViewer
+          entries={entries}
+          loading={false}
+          validatorModel={{ provider: "openai", modelId: "gpt-4o" }}
+        />
+      );
+      const header = container.querySelector("[data-testid='agent-log-model-header']");
+      expect(header).toBeTruthy();
+      expect(header!.textContent).toContain("Validator:");
+      expect(header!.textContent).toContain("openai/gpt-4o");
+      expect(header!.textContent).toContain("Executor:");
+      expect(header!.textContent).toContain("Using default");
+      // Verify ProviderIcon is rendered for validator
+      expect(container.querySelector('[data-provider="openai"]')).toBeTruthy();
+    });
+
+    it("renders 'Using default' when no validator model override is set", () => {
+      const entries = [makeEntry()];
+      const { container } = render(
+        <AgentLogViewer entries={entries} loading={false} validatorModel={null} />
+      );
+      const header = container.querySelector("[data-testid='agent-log-model-header']");
+      expect(header).toBeTruthy();
+      expect(header!.textContent).toContain("Validator:");
+      expect(header!.textContent).toContain("Using default");
+    });
+
+    it("renders both models when both are configured", () => {
+      const entries = [makeEntry()];
+      const { container } = render(
+        <AgentLogViewer
+          entries={entries}
+          loading={false}
+          executorModel={{ provider: "anthropic", modelId: "claude-opus-4" }}
+          validatorModel={{ provider: "openai", modelId: "gpt-4o" }}
+        />
+      );
+      const header = container.querySelector("[data-testid='agent-log-model-header']");
+      expect(header).toBeTruthy();
+      expect(header!.textContent).toContain("Executor:");
+      expect(header!.textContent).toContain("anthropic/claude-opus-4");
+      expect(header!.textContent).toContain("Validator:");
+      expect(header!.textContent).toContain("openai/gpt-4o");
+      // Verify both ProviderIcons are rendered
+      expect(container.querySelector('[data-provider="anthropic"]')).toBeTruthy();
+      expect(container.querySelector('[data-provider="openai"]')).toBeTruthy();
+    });
+
+    it("renders header with 'Using default' for both models when both are null/undefined", () => {
+      const entries = [makeEntry()];
+      const { container } = render(
+        <AgentLogViewer entries={entries} loading={false} />
+      );
+      const header = container.querySelector("[data-testid='agent-log-model-header']");
+      expect(header).toBeTruthy();
+      expect(header!.textContent).toContain("Executor:");
+      expect(header!.textContent).toContain("Using default");
+      expect(header!.textContent).toContain("Validator:");
+      expect(header!.textContent).toContain("Using default");
+    });
+
+    it("shows 'Using default' when executorModel has only provider but no modelId", () => {
+      const entries = [makeEntry()];
+      const { container } = render(
+        <AgentLogViewer
+          entries={entries}
+          loading={false}
+          executorModel={{ provider: "anthropic" }}
+        />
+      );
+      const header = container.querySelector("[data-testid='agent-log-model-header']");
+      expect(header).toBeTruthy();
+      expect(header!.textContent).toContain("Executor:");
+      expect(header!.textContent).toContain("Using default");
+    });
+
+    it("shows 'Using default' when executorModel has only modelId but no provider", () => {
+      const entries = [makeEntry()];
+      const { container } = render(
+        <AgentLogViewer
+          entries={entries}
+          loading={false}
+          executorModel={{ modelId: "claude-sonnet-4-5" }}
+        />
+      );
+      const header = container.querySelector("[data-testid='agent-log-model-header']");
+      expect(header).toBeTruthy();
+      expect(header!.textContent).toContain("Executor:");
+      expect(header!.textContent).toContain("Using default");
+    });
+  });
 });
