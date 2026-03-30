@@ -131,6 +131,13 @@ export function TaskDetailModal({
     setIsEditing(false);
   }, [task.id, task.title, task.description]);
 
+  // Reset dependency search when dropdown closes
+  useEffect(() => {
+    if (!showDepDropdown) {
+      setDepSearch("");
+    }
+  }, [showDepDropdown]);
+
   // Auto-focus title when entering edit mode
   useEffect(() => {
     if (isEditing) {
