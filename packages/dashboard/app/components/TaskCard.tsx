@@ -1,5 +1,5 @@
 import { useCallback, useState, useRef, useEffect } from "react";
-import { Link, Clock, Layers, GitPullRequest, Pencil } from "lucide-react";
+import { Link, Clock, Layers, GitPullRequest, Pencil, ChevronDown } from "lucide-react";
 import type { Task, TaskDetail, Column } from "@kb/core";
 import { fetchTaskDetail, uploadAttachment } from "../api";
 import type { ToastType } from "../hooks/useToast";
@@ -52,6 +52,7 @@ export function TaskCard({
   const [editTitle, setEditTitle] = useState(task.title || "");
   const [editDescription, setEditDescription] = useState(task.description || "");
   const [isSaving, setIsSaving] = useState(false);
+  const [showSteps, setShowSteps] = useState(false);
 
   const titleInputRef = useRef<HTMLInputElement>(null);
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -376,18 +377,51 @@ export function TaskCard({
         const completedSteps = task.steps.filter(s => s.status === "done").length;
         const totalSteps = task.steps.length;
         return (
-          <div className="card-progress">
-            <div className="card-progress-bar">
-              <div
-                className="card-progress-fill"
-                style={{
-                  width: `${(completedSteps / totalSteps) * 100}%`,
-                  backgroundColor: COLUMN_TEXT_COLOR_MAP[task.column],
-                }}
-              />
+          <>
+            <div className="card-progress">
+              <div className="card-progress-bar">
+                <div
+                  className="card-progress-fill"
+                  style={{
+                    width: `${(completedSteps / totalSteps) * 100}%`,
+                    backgroundColor: COLUMN_TEXT_COLOR_MAP[task.column],
+                  }}
+                />
+              </div>
+              <span className="card-progress-label">{completedSteps}/{totalSteps}</span>
             </div>
-            <span className="card-progress-label">{completedSteps}/{totalSteps}</span>
-          </div>
+            <button
+              type="button"
+              className="card-steps-toggle"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSteps(!showSteps);
+              }}
+              aria-expanded={showSteps}
+              aria-label={showSteps ? "Hide steps" : "Show steps"}
+            >
+              <span>{totalSteps} steps</span>
+              <ChevronDown
+                size={14}
+                className={`card-steps-toggle-icon${showSteps ? " expanded" : ""}`}
+              />
+            </button>
+            {showSteps && (
+              <div className="card-steps-list">
+                {task.steps.map((step, index) => (
+                  <div key={index} className="card-step-item">
+                    <span
+                      className={`card-step-dot card-step-dot--${step.status}`}
+                      aria-hidden="true"
+                    />
+                    <span className={`card-step-name${step.status === "done" ? " completed" : ""}`}>
+                      {step.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         );
       })()}
       {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy) && (

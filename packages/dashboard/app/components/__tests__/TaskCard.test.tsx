@@ -1028,3 +1028,213 @@ describe("TaskCard inline editing", () => {
     expect(editingCard).toBeDefined();
   });
 });
+
+/**
+ * Tests for collapsible steps toggle in TaskCard.
+ */
+describe("TaskCard steps toggle", () => {
+  const noopToast = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("does not show steps toggle when task has no steps", () => {
+    const task = makeTask({ steps: [] });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const toggle = screen.queryByRole("button", { name: /steps/i });
+    expect(toggle).toBeNull();
+  });
+
+  it("shows steps toggle with count when task has steps", () => {
+    const task = makeTask({
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "pending" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    expect(toggle).toBeDefined();
+    expect(toggle.textContent).toContain("2 steps");
+  });
+
+  it("clicking toggle expands and shows step list", () => {
+    const task = makeTask({
+      steps: [
+        { name: "First step", status: "done" },
+        { name: "Second step", status: "in-progress" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    fireEvent.click(toggle);
+
+    // Step list should be visible
+    expect(screen.getByText("First step")).toBeDefined();
+    expect(screen.getByText("Second step")).toBeDefined();
+  });
+
+  it("clicking toggle again collapses step list", () => {
+    const task = makeTask({
+      steps: [{ name: "Single step", status: "pending" }],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+
+    // Expand
+    fireEvent.click(toggle);
+    expect(screen.getByText("Single step")).toBeDefined();
+
+    // Collapse
+    fireEvent.click(toggle);
+    expect(screen.queryByText("Single step")).toBeNull();
+  });
+
+  it("step list renders correct number of steps", () => {
+    const task = makeTask({
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "in-progress" },
+        { name: "Step 3", status: "pending" },
+        { name: "Step 4", status: "skipped" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    fireEvent.click(toggle);
+
+    // Should show all 4 steps
+    const stepItems = document.querySelectorAll(".card-step-item");
+    expect(stepItems.length).toBe(4);
+  });
+
+  it("completed steps have strikethrough style", () => {
+    const task = makeTask({
+      steps: [
+        { name: "Done step", status: "done" },
+        { name: "Pending step", status: "pending" },
+      ],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    fireEvent.click(toggle);
+
+    const doneStepName = screen.getByText("Done step");
+    expect(doneStepName.classList.contains("completed")).toBe(true);
+
+    const pendingStepName = screen.getByText("Pending step");
+    expect(pendingStepName.classList.contains("completed")).toBe(false);
+  });
+
+  it("toggle does not trigger card click when clicked", () => {
+    const task = makeTask({
+      steps: [{ name: "Test step", status: "pending" }],
+    });
+    const onOpenDetail = vi.fn();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={onOpenDetail}
+        addToast={noopToast}
+      />
+    );
+
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    fireEvent.click(toggle);
+
+    // Card click should not be triggered
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("aria-expanded reflects toggle state", () => {
+    const task = makeTask({
+      steps: [{ name: "Test step", status: "pending" }],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("chevron icon rotates when expanded", () => {
+    const task = makeTask({
+      steps: [{ name: "Test step", status: "pending" }],
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const toggle = screen.getByRole("button", { name: /Show steps/i });
+    const chevron = toggle.querySelector(".card-steps-toggle-icon");
+    expect(chevron).toBeDefined();
+    expect(chevron?.classList.contains("expanded")).toBe(false);
+
+    fireEvent.click(toggle);
+    expect(chevron?.classList.contains("expanded")).toBe(true);
+  });
+});
