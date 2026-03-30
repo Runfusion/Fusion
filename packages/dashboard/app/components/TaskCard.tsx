@@ -412,6 +412,12 @@ export function TaskCard({
           </button>
         )}
       </div>
+      {isFailed && task.error && (
+        <div className="card-error" title={task.error}>
+          <span className="card-error-icon">⚠</span>
+          <span className="card-error-text">{task.error.length > 60 ? task.error.slice(0, 60) + "…" : task.error}</span>
+        </div>
+      )}
       <div className="card-title">
         {task.title || (task.description ? task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "") : task.id)}
       </div>

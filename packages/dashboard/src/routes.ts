@@ -8,6 +8,7 @@ import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo } from "./github.js";
 import { terminalSessionManager } from "./terminal.js";
 import { listFiles, readFile, writeFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse } from "./file-service.js";
+import { fetchAllProviderUsage } from "./usage.js";
 
 /**
  * Minimal interface matching pi-coding-agent's ModelRegistry API surface
@@ -2040,6 +2041,23 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.status(201).json(task);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to create task" });
+    }
+  });
+
+  /**
+   * GET /api/usage
+   * Fetch AI provider subscription usage (Claude, Codex, Gemini).
+   * Returns: { providers: ProviderUsage[] }
+   * 
+   * Cached for 30 seconds to avoid hitting provider API rate limits.
+   * Each provider's status is independent — one failure doesn't break all.
+   */
+  router.get("/usage", async (_req, res) => {
+    try {
+      const providers = await fetchAllProviderUsage();
+      res.json({ providers });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to fetch usage data" });
     }
   });
 
