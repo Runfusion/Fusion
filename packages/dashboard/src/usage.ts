@@ -110,11 +110,11 @@ export function calculatePace(
 
 /**
  * Apply pace calculation to a usage window if applicable.
- * Only applies to weekly windows with valid timing data.
+ * Applies to any window with valid timing data (resetMs and windowDurationMs).
  */
 function applyPaceToWindow(window: UsageWindow): UsageWindow {
-  // Only apply pace to weekly windows
-  if (!window.label.toLowerCase().includes("weekly")) {
+  // Apply pace to any window that has both resetMs and windowDurationMs
+  if (window.resetMs === undefined || window.windowDurationMs === undefined) {
     return window;
   }
 
@@ -514,7 +514,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
     const buckets: any[] = data.buckets || [];
     if (Array.isArray(buckets) && buckets.length > 0) {
       // Group by model family, pick lowest remainingFraction per family
-      const modelGroups = new Map<string, { pctLeft: number; resetText: string | null; models: string[] }>();
+      const modelGroups = new Map<string, { pctLeft: number; resetText: string | null; resetMs: number | undefined; models: string[] }>();
 
       for (const b of buckets) {
         const modelId: string = b.modelId || "unknown";
@@ -522,9 +522,11 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
         const pctLeft = remainFrac * 100;
 
         let resetText: string | null = null;
+        let resetMs: number | undefined;
         if (b.resetTime) {
-          const resetMs = new Date(b.resetTime).getTime() - Date.now();
-          resetText = resetMs > 0 ? `resets in ${formatDuration(resetMs)}` : "resetting now";
+          const msLeft = new Date(b.resetTime).getTime() - Date.now();
+          resetMs = msLeft > 0 ? msLeft : 0;
+          resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
         }
 
         // Skip _vertex duplicates, classify by family
@@ -541,6 +543,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
           modelGroups.set(family, {
             pctLeft,
             resetText,
+            resetMs,
             models: existing ? [...existing.models, modelId] : [modelId],
           });
         } else {
@@ -548,12 +551,17 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
         }
       }
 
+      // Gemini rate limits reset daily (24 hours)
+      const DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
       for (const [family, info] of modelGroups) {
         usage.windows.push({
           label: family,
           percentUsed: Math.min(100, Math.max(0, 100 - info.pctLeft)),
           percentLeft: Math.min(100, Math.max(0, info.pctLeft)),
           resetText: info.resetText,
+          resetMs: info.resetMs,
+          windowDurationMs: DAILY_WINDOW_MS,
         });
       }
     }
