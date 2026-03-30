@@ -1,43 +1,111 @@
-import { useState, useEffect, useCallback } from "react";
-import { X, Trash2 } from "lucide-react";
-import type { Task, AgentLogEntry } from "@kb/core";
-import { useMultiAgentLogs } from "../hooks/useMultiAgentLogs";
-import { AgentLogViewer } from "./AgentLogViewer";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { X, Trash2, Terminal as TerminalIcon } from "lucide-react";
+import { useTerminal } from "../hooks/useTerminal";
 
 interface TerminalModalProps {
   isOpen: boolean;
   onClose: () => void;
-  tasks: Task[];
+  initialCommand?: string;
 }
 
-interface LogEntryWithTask extends AgentLogEntry {
-  taskId: string;
-}
+export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModalProps) {
+  const {
+    history,
+    input,
+    isRunning,
+    currentDirectory,
+    executeCommand,
+    clearHistory,
+    setInput,
+    killCurrentCommand,
+    navigateHistory,
+  } = useTerminal();
 
-export function TerminalModal({ isOpen, onClose, tasks }: TerminalModalProps) {
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  
-  // Get task IDs for all in-progress tasks
-  const inProgressTaskIds = tasks.map((t) => t.id);
-  
-  // Get log state for all tasks
-  const logState = useMultiAgentLogs(inProgressTaskIds);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const outputRef = useRef<HTMLDivElement>(null);
+  const [historyOffset, setHistoryOffset] = useState(-1);
 
-  // Set initial active task when modal opens
+  // Auto-scroll to bottom when history changes
   useEffect(() => {
-    if (isOpen && tasks.length > 0) {
-      // If no active task or active task not in current list, set first task
-      if (!activeTaskId || !tasks.find((t) => t.id === activeTaskId)) {
-        setActiveTaskId(tasks[0].id);
-      }
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-    // Reset when modal closes
-    if (!isOpen) {
-      setActiveTaskId(null);
-    }
-  }, [isOpen, tasks, activeTaskId]);
+  }, [history]);
 
-  // Handle escape key to close modal
+  // Focus input when modal opens
+  useEffect(() => {
+    if (isOpen && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isOpen]);
+
+  // Execute initial command if provided
+  useEffect(() => {
+    if (isOpen && initialCommand && !isRunning && history.length === 0) {
+      executeCommand(initialCommand);
+    }
+  }, [isOpen, initialCommand, isRunning, history.length, executeCommand]);
+
+  // Handle keyboard shortcuts
+  const handleKeyDown = useCallback(
+    async (e: React.KeyboardEvent) => {
+      // Ctrl+C - Kill running command
+      if (e.ctrlKey && e.key === "c" && isRunning) {
+        e.preventDefault();
+        await killCurrentCommand();
+        return;
+      }
+
+      // Ctrl+L - Clear screen
+      if (e.ctrlKey && e.key === "l") {
+        e.preventDefault();
+        clearHistory();
+        return;
+      }
+
+      // Enter - Execute command
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const command = input.trim();
+        if (command) {
+          await executeCommand(command);
+          setHistoryOffset(-1);
+        }
+        return;
+      }
+
+      // Up arrow - Navigate history backward (older)
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const historyCmd = navigateHistory("up", input);
+        if (historyCmd !== null) {
+          setInput(historyCmd);
+        }
+        return;
+      }
+
+      // Down arrow - Navigate history forward (newer)
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const historyCmd = navigateHistory("down", input);
+        if (historyCmd !== null) {
+          setInput(historyCmd);
+        }
+        return;
+      }
+    },
+    [input, isRunning, executeCommand, killCurrentCommand, clearHistory, navigateHistory, setInput]
+  );
+
+  // Handle overlay click to close
+  const handleOverlayClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget) onClose();
+    },
+    [onClose]
+  );
+
+  // Handle escape key
   useEffect(() => {
     if (!isOpen) return;
 
@@ -48,88 +116,114 @@ export function TerminalModal({ isOpen, onClose, tasks }: TerminalModalProps) {
     return () => document.removeEventListener("keydown", handleKey);
   }, [isOpen, onClose]);
 
-  // Handle overlay click to close
-  const handleOverlayClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
   if (!isOpen) return null;
-
-  // Get active task info
-  const activeTask = tasks.find((t) => t.id === activeTaskId);
-  const activeLogState = activeTaskId ? logState[activeTaskId] : null;
 
   return (
     <div className="modal-overlay open" onClick={handleOverlayClick} data-testid="terminal-modal-overlay">
-      <div className="modal terminal-modal" data-testid="terminal-modal">
-        {/* Header with tabs and close button */}
+      <div className="modal terminal-modal interactive" data-testid="terminal-modal">
+        {/* Header */}
         <div className="terminal-header">
-          <div className="terminal-tabs" data-testid="terminal-tabs">
-            {tasks.length === 0 ? (
-              <div className="terminal-tab terminal-tab--empty" data-testid="terminal-no-tasks">
-                No active tasks
-              </div>
-            ) : (
-              tasks.map((task) => (
-                <button
-                  key={task.id}
-                  className={`terminal-tab ${activeTaskId === task.id ? "terminal-tab--active" : ""}`}
-                  onClick={() => setActiveTaskId(task.id)}
-                  data-testid={`terminal-tab-${task.id}`}
-                  title={task.title || task.description}
-                >
-                  <span className="terminal-tab-label">{task.id}</span>
-                  {activeTaskId === task.id && (
-                    <span
-                      className="terminal-tab-indicator"
-                      data-testid={`terminal-tab-indicator-${task.id}`}
-                    />
-                  )}
-                </button>
-              ))
-            )}
+          <div className="terminal-title">
+            <TerminalIcon size={16} />
+            <span>Terminal</span>
           </div>
-          <button className="terminal-close" onClick={onClose} data-testid="terminal-close-btn" title="Close terminal">
-            <X size={20} />
-          </button>
+          <div className="terminal-actions">
+            <button
+              className="terminal-clear-btn"
+              onClick={clearHistory}
+              disabled={history.length === 0}
+              title="Clear history (Ctrl+L)"
+              data-testid="terminal-clear-btn"
+            >
+              <Trash2 size={14} />
+              <span>Clear</span>
+            </button>
+            <button
+              className="terminal-close"
+              onClick={onClose}
+              data-testid="terminal-close-btn"
+              title="Close terminal (Esc)"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
-        {/* Log content area */}
-        <div className="terminal-content" data-testid="terminal-content">
-          {tasks.length === 0 ? (
-            <div className="terminal-empty-state" data-testid="terminal-empty-state">
-              <p>No tasks currently in progress.</p>
-              <p>Start a task to see live logs here.</p>
+        {/* Output area */}
+        <div className="terminal-content" ref={outputRef} data-testid="terminal-content">
+          {history.length === 0 ? (
+            <div className="terminal-welcome" data-testid="terminal-welcome">
+              <p>Interactive Terminal</p>
+              <p>Type commands and press Enter to execute.</p>
+              <div className="terminal-shortcuts">
+                <span>Ctrl+C</span> Kill process
+                <span>Ctrl+L</span> Clear screen
+                <span>↑/↓</span> Command history
+                <span>Esc</span> Close
+              </div>
             </div>
-          ) : activeTask && activeLogState ? (
-            <>
-              <div className="terminal-toolbar" data-testid="terminal-toolbar">
-                <div className="terminal-task-info">
-                  <span className="terminal-task-id" data-testid="terminal-active-task-id">
-                    {activeTask.id}
-                  </span>
-                  <span className="terminal-task-title" data-testid="terminal-active-task-title">
-                    {activeTask.title || activeTask.description}
-                  </span>
+          ) : (
+            <div className="terminal-output" data-testid="terminal-output">
+              {history.map((entry, index) => (
+                <div key={index} className="terminal-entry" data-testid={`terminal-entry-${index}`}>
+                  <div className="terminal-prompt-line">
+                    <span className="terminal-prompt">$</span>
+                    <span className="terminal-command">{entry.command}</span>
+                    {entry.isRunning && <span className="terminal-running-indicator">●</span>}
+                  </div>
+                  {entry.output && (
+                    <pre className="terminal-output-text" data-testid={`terminal-output-${index}`}>
+                      {entry.output}
+                    </pre>
+                  )}
+                  {!entry.isRunning && entry.exitCode !== null && (
+                    <div
+                      className={`terminal-exit-code ${entry.exitCode !== 0 ? "error" : ""}`}
+                      data-testid={`terminal-exit-${index}`}
+                    >
+                      {entry.exitCode === 0 ? "✓" : `✗ Exit code: ${entry.exitCode}`}
+                    </div>
+                  )}
                 </div>
-                <button
-                  className="terminal-clear-btn"
-                  onClick={activeLogState.clear}
-                  data-testid="terminal-clear-btn"
-                  title="Clear log buffer"
-                >
-                  <Trash2 size={14} />
-                  <span>Clear</span>
-                </button>
-              </div>
-              <div className="terminal-log-container" data-testid="terminal-log-container">
-                <AgentLogViewer entries={activeLogState.entries} loading={activeLogState.loading} />
-              </div>
-            </>
-          ) : null}
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Input area */}
+        <div className="terminal-input-area" data-testid="terminal-input-area">
+          <div className="terminal-input-line">
+            <span className="terminal-prompt">$</span>
+            <input
+              ref={inputRef}
+              type="text"
+              className="terminal-input"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a command..."
+              disabled={isRunning}
+              data-testid="terminal-input"
+              autoFocus
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+            />
+            {isRunning && (
+              <button
+                className="terminal-kill-btn"
+                onClick={killCurrentCommand}
+                title="Kill process (Ctrl+C)"
+                data-testid="terminal-kill-btn"
+              >
+                Stop
+              </button>
+            )}
+          </div>
+          <div className="terminal-status">
+            {currentDirectory}
+            {isRunning && <span className="terminal-status-running">Running...</span>}
+          </div>
         </div>
       </div>
     </div>

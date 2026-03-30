@@ -1,349 +1,319 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TerminalModal } from "../TerminalModal";
-import type { Task } from "@kb/core";
-import * as useMultiAgentLogsModule from "../../hooks/useMultiAgentLogs";
+import * as useTerminalModule from "../../hooks/useTerminal";
 
-// Mock the useMultiAgentLogs hook
-vi.mock("../../hooks/useMultiAgentLogs", () => ({
-  useMultiAgentLogs: vi.fn(),
+// Mock the useTerminal hook
+vi.mock("../../hooks/useTerminal", () => ({
+  useTerminal: vi.fn(),
 }));
 
-const mockUseMultiAgentLogs = vi.mocked(useMultiAgentLogsModule.useMultiAgentLogs);
+const mockUseTerminal = vi.mocked(useTerminalModule.useTerminal);
 
 describe("TerminalModal", () => {
   const mockOnClose = vi.fn();
+  const mockExecuteCommand = vi.fn();
+  const mockClearHistory = vi.fn();
+  const mockSetInput = vi.fn();
+  const mockKillCurrentCommand = vi.fn();
+  const mockNavigateHistory = vi.fn();
 
-  const createMockTask = (id: string, title?: string): Task => ({
-    id,
-    title: title || `Task ${id}`,
-    description: `Description for ${id}`,
-    column: "in-progress",
-    dependencies: [],
-    steps: [],
-    currentStep: 0,
-    status: undefined,
-    log: [],
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
+  const createMockTerminalState = (overrides = {}) => ({
+    history: [],
+    input: "",
+    isRunning: false,
+    currentSessionId: null,
+    currentDirectory: "~/project",
+    executeCommand: mockExecuteCommand,
+    clearHistory: mockClearHistory,
+    setInput: mockSetInput,
+    killCurrentCommand: mockKillCurrentCommand,
+    navigateHistory: mockNavigateHistory,
+    ...overrides,
   });
 
   beforeEach(() => {
     mockOnClose.mockClear();
-    mockUseMultiAgentLogs.mockReturnValue({});
+    mockExecuteCommand.mockClear();
+    mockClearHistory.mockClear();
+    mockSetInput.mockClear();
+    mockKillCurrentCommand.mockClear();
+    mockNavigateHistory.mockClear();
+    mockUseTerminal.mockReturnValue(createMockTerminalState());
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it("renders without crashing when open with empty task list", () => {
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={[]} />
-    );
-
-    expect(screen.getByTestId("terminal-modal")).toBeTruthy();
-    expect(screen.getByTestId("terminal-no-tasks").textContent).toContain("No active tasks");
-    expect(screen.getByTestId("terminal-empty-state").textContent).toContain("No tasks currently in progress");
-  });
-
-  it("renders without crashing when open with multiple in-progress tasks", () => {
-    const tasks = [
-      createMockTask("KB-001", "First Task"),
-      createMockTask("KB-002", "Second Task"),
-    ];
-
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-      "KB-002": { entries: [], loading: false, clear: vi.fn() },
-    });
-
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
-    );
-
-    expect(screen.getByTestId("terminal-modal")).toBeTruthy();
-    expect(screen.getByTestId("terminal-tab-KB-001")).toBeTruthy();
-    expect(screen.getByTestId("terminal-tab-KB-002")).toBeTruthy();
-  });
-
   it("does not render when closed", () => {
-    const tasks = [createMockTask("KB-001")];
-
     const { container } = render(
-      <TerminalModal isOpen={false} onClose={mockOnClose} tasks={tasks} />
+      <TerminalModal isOpen={false} onClose={mockOnClose} />
     );
-
     expect(container.firstChild).toBeNull();
   });
 
-  it("shows appropriate empty state when no in-progress tasks", () => {
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={[]} />
-    );
+  it("renders when open", () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    expect(screen.getByText("No active tasks")).toBeTruthy();
-    expect(screen.getByText("No tasks currently in progress.")).toBeTruthy();
-    expect(screen.getByText("Start a task to see live logs here.")).toBeTruthy();
+    expect(screen.getByTestId("terminal-modal")).toBeTruthy();
+    expect(screen.getByTestId("terminal-content")).toBeTruthy();
+    expect(screen.getByTestId("terminal-input")).toBeTruthy();
   });
 
-  it("tab switching changes which task's logs are displayed", async () => {
-    const tasks = [
-      createMockTask("KB-001", "First Task"),
-      createMockTask("KB-002", "Second Task"),
-    ];
+  it("shows welcome message when history is empty", () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-      "KB-002": { entries: [], loading: false, clear: vi.fn() },
-    });
-
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
-    );
-
-    // First task should be active by default
-    expect(screen.getByTestId("terminal-active-task-id").textContent).toBe("KB-001");
-
-    // Click on second tab
-    fireEvent.click(screen.getByTestId("terminal-tab-KB-002"));
-
-    // Second task should now be active
-    await waitFor(() => {
-      expect(screen.getByTestId("terminal-active-task-id").textContent).toBe("KB-002");
-    });
+    expect(screen.getByTestId("terminal-welcome")).toBeTruthy();
+    expect(screen.getByText("Interactive Terminal")).toBeTruthy();
   });
 
-  it("active tab has correct styling with indicator", () => {
-    const tasks = [
-      createMockTask("KB-001", "First Task"),
-      createMockTask("KB-002", "Second Task"),
-    ];
-
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-      "KB-002": { entries: [], loading: false, clear: vi.fn() },
-    });
-
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
+  it("displays command history", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        history: [
+          { command: "ls -la", output: "file1\nfile2", exitCode: 0, isRunning: false, timestamp: new Date() },
+        ],
+      })
     );
 
-    // First tab should be active by default
-    const tab1 = screen.getByTestId("terminal-tab-KB-001");
-    const tab2 = screen.getByTestId("terminal-tab-KB-002");
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    expect(tab1.className).toContain("terminal-tab--active");
-    expect(tab2.className).not.toContain("terminal-tab--active");
-
-    // Active tab should have indicator
-    expect(screen.getByTestId("terminal-tab-indicator-KB-001")).toBeTruthy();
+    expect(screen.getByTestId("terminal-output")).toBeTruthy();
+    expect(screen.getByText("ls -la")).toBeTruthy();
+    expect(screen.getByTestId("terminal-output-0").textContent).toContain("file1");
   });
 
-  it("clicking clear button clears that tab's log entries", () => {
-    const mockClear = vi.fn();
-    const tasks = [createMockTask("KB-001")];
+  it("calls onClose when clicking overlay", () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [{ timestamp: "2026-01-01T00:00:00Z", taskId: "KB-001", text: "log", type: "text" as const }], loading: false, clear: mockClear },
-    });
+    fireEvent.click(screen.getByTestId("terminal-modal-overlay"));
 
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
-    );
-
-    const clearBtn = screen.getByTestId("terminal-clear-btn");
-    fireEvent.click(clearBtn);
-
-    expect(mockClear).toHaveBeenCalled();
+    expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it("modal closes on Escape key press", () => {
-    const tasks = [createMockTask("KB-001")];
+  it("calls onClose when clicking close button", () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-    });
+    fireEvent.click(screen.getByTestId("terminal-close-btn"));
 
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
-    );
+    expect(mockOnClose).toHaveBeenCalled();
+  });
+
+  it("closes on escape key", () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     fireEvent.keyDown(document, { key: "Escape" });
 
     expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it("modal closes on overlay click", () => {
-    const tasks = [createMockTask("KB-001")];
+  it("updates input value on type", () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-    });
+    const input = screen.getByTestId("terminal-input");
+    fireEvent.change(input, { target: { value: "ls" } });
 
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
-    );
-
-    const overlay = screen.getByTestId("terminal-modal-overlay");
-    fireEvent.click(overlay);
-
-    expect(mockOnClose).toHaveBeenCalled();
+    expect(mockSetInput).toHaveBeenCalledWith("ls");
   });
 
-  it("modal does not close when clicking inside modal content", () => {
-    const tasks = [createMockTask("KB-001")];
-
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-    });
-
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
+  it("executes command on Enter key", async () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        input: "ls -la",
+      })
     );
 
-    const modal = screen.getByTestId("terminal-modal");
-    fireEvent.click(modal);
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    expect(mockOnClose).not.toHaveBeenCalled();
+    const input = screen.getByTestId("terminal-input");
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(mockExecuteCommand).toHaveBeenCalledWith("ls -la");
+    });
   });
 
-  it("modal closes on close button click", () => {
-    const tasks = [createMockTask("KB-001")];
+  it("does not execute empty command on Enter", () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-    });
+    const input = screen.getByTestId("terminal-input");
+    fireEvent.keyDown(input, { key: "Enter" });
 
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
-    );
-
-    const closeBtn = screen.getByTestId("terminal-close-btn");
-    fireEvent.click(closeBtn);
-
-    expect(mockOnClose).toHaveBeenCalled();
+    expect(mockExecuteCommand).not.toHaveBeenCalled();
   });
 
-  it("displays task information in toolbar", () => {
-    const tasks = [createMockTask("KB-001", "My Test Task")];
-
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-    });
-
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
+  it("navigates history on up arrow", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        input: "current",
+      })
     );
+    mockNavigateHistory.mockReturnValue("previous");
 
-    expect(screen.getByTestId("terminal-active-task-id").textContent).toBe("KB-001");
-    expect(screen.getByTestId("terminal-active-task-title").textContent).toBe("My Test Task");
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const input = screen.getByTestId("terminal-input");
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+
+    expect(mockNavigateHistory).toHaveBeenCalledWith("up", "current");
+    expect(mockSetInput).toHaveBeenCalledWith("previous");
   });
 
-  it("uses description as title fallback when title is not provided", () => {
-    const tasks = [{
-      ...createMockTask("KB-001"),
-      title: undefined,
-      description: "My Description",
-    }];
-
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-    });
-
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
+  it("navigates history on down arrow", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        input: "current",
+      })
     );
+    mockNavigateHistory.mockReturnValue("next");
 
-    expect(screen.getByTestId("terminal-active-task-title").textContent).toBe("My Description");
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const input = screen.getByTestId("terminal-input");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+
+    expect(mockNavigateHistory).toHaveBeenCalledWith("down", "current");
+    expect(mockSetInput).toHaveBeenCalledWith("next");
   });
 
-  it("passes correct entries to AgentLogViewer", () => {
-    const tasks = [createMockTask("KB-001")];
-    const entries = [
-      { timestamp: "2026-01-01T00:00:00Z", taskId: "KB-001", text: "log1", type: "text" as const },
-      { timestamp: "2026-01-01T00:01:00Z", taskId: "KB-001", text: "log2", type: "tool" as const },
-    ];
+  it("clears history on Ctrl+L", () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries, loading: false, clear: vi.fn() },
-    });
+    const input = screen.getByTestId("terminal-input");
+    fireEvent.keyDown(input, { key: "l", ctrlKey: true });
 
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
-    );
-
-    expect(screen.getByTestId("agent-log-viewer")).toBeTruthy();
+    expect(mockClearHistory).toHaveBeenCalled();
   });
 
-  it("passes loading state to AgentLogViewer", () => {
-    const tasks = [createMockTask("KB-001")];
-
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: true, clear: vi.fn() },
-    });
-
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
+  it("kills running command on Ctrl+C when running", async () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        isRunning: true,
+      })
     );
 
-    expect(screen.getByTestId("agent-log-viewer")).toBeTruthy();
-    expect(screen.getByText("Loading agent logs…")).toBeTruthy();
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const input = screen.getByTestId("terminal-input");
+    fireEvent.keyDown(input, { key: "c", ctrlKey: true });
+
+    await waitFor(() => {
+      expect(mockKillCurrentCommand).toHaveBeenCalled();
+    });
   });
 
-  it("switches to first task when active task is removed from list", () => {
-    const tasks = [
-      createMockTask("KB-001"),
-      createMockTask("KB-002"),
-    ];
-
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-      "KB-002": { entries: [], loading: false, clear: vi.fn() },
-    });
-
-    const { rerender } = render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
+  it("shows kill button when command is running", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        isRunning: true,
+      })
     );
 
-    // Initially KB-001 should be active
-    expect(screen.getByTestId("terminal-active-task-id").textContent).toBe("KB-001");
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    // Click KB-002 to make it active
-    act(() => {
-      screen.getByTestId("terminal-tab-KB-002").click();
-    });
-
-    expect(screen.getByTestId("terminal-active-task-id").textContent).toBe("KB-002");
-
-    // Rerender with only KB-001
-    rerender(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={[tasks[0]]} />
-    );
-
-    // Should switch back to KB-001
-    expect(screen.getByTestId("terminal-active-task-id").textContent).toBe("KB-001");
+    expect(screen.getByTestId("terminal-kill-btn")).toBeTruthy();
   });
 
-  it("tab labels show task IDs", () => {
-    const tasks = [
-      createMockTask("KB-001"),
-      createMockTask("KB-002"),
-    ];
-
-    mockUseMultiAgentLogs.mockReturnValue({
-      "KB-001": { entries: [], loading: false, clear: vi.fn() },
-      "KB-002": { entries: [], loading: false, clear: vi.fn() },
-    });
-
-    render(
-      <TerminalModal isOpen={true} onClose={mockOnClose} tasks={tasks} />
+  it("hides kill button when not running", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        isRunning: false,
+      })
     );
 
-    const tab1 = screen.getByTestId("terminal-tab-KB-001");
-    const tab2 = screen.getByTestId("terminal-tab-KB-002");
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
-    expect(tab1.textContent).toContain("KB-001");
-    expect(tab2.textContent).toContain("KB-002");
+    expect(screen.queryByTestId("terminal-kill-btn")).toBeNull();
+  });
+
+  it("disables input when command is running", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        isRunning: true,
+      })
+    );
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByTestId("terminal-input")).toBeDisabled();
+  });
+
+  it("shows running indicator for running commands", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        history: [
+          { command: "sleep 10", output: "", exitCode: null, isRunning: true, timestamp: new Date() },
+        ],
+        isRunning: true,
+      })
+    );
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const entry = screen.getByTestId("terminal-entry-0");
+    expect(entry.textContent).toContain("●");
+  });
+
+  it("shows exit code for completed commands", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        history: [
+          { command: "ls", output: "", exitCode: 0, isRunning: false, timestamp: new Date() },
+        ],
+      })
+    );
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByTestId("terminal-exit-0")).toBeTruthy();
+  });
+
+  it("shows error exit code for failed commands", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        history: [
+          { command: "false", output: "", exitCode: 1, isRunning: false, timestamp: new Date() },
+        ],
+      })
+    );
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const exitCode = screen.getByTestId("terminal-exit-0");
+    expect(exitCode.textContent).toContain("1");
+  });
+
+  it("disables clear button when history is empty", () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByTestId("terminal-clear-btn")).toBeDisabled();
+  });
+
+  it("shows current directory in status bar", () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        currentDirectory: "/home/user/project",
+      })
+    );
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByText("/home/user/project")).toBeTruthy();
+  });
+
+  it("executes initial command on mount when provided", async () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        history: [],
+        isRunning: false,
+      })
+    );
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm install" />);
+
+    await waitFor(() => {
+      expect(mockExecuteCommand).toHaveBeenCalledWith("npm install");
+    });
   });
 });
