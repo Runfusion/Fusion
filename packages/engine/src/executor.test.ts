@@ -154,7 +154,7 @@ describe("TaskExecutor with semaphore", () => {
     expect(onError).toHaveBeenCalled();
   });
 
-  it("sets task status to 'failed' when execution throws", async () => {
+  it("sets task status to 'failed' with error message when execution throws", async () => {
     const store = createMockStore();
 
     mockedCreateHaiAgent.mockRejectedValue(new Error("agent crashed"));
@@ -175,7 +175,7 @@ describe("TaskExecutor with semaphore", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: "failed" });
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: "failed", error: "agent crashed" });
     expect(onError).toHaveBeenCalled();
   });
 

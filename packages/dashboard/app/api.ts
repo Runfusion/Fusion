@@ -164,6 +164,34 @@ export function fetchModels(): Promise<ModelInfo[]> {
   return api<ModelInfo[]>("/models");
 }
 
+// --- Usage API ---
+
+/** Usage window for a provider (e.g., "Session (5h)", "Weekly") */
+export interface UsageWindow {
+  label: string;
+  percentUsed: number; // 0-100
+  percentLeft: number; // 0-100
+  resetText: string | null; // e.g., "resets in 2h"
+  resetMs?: number; // ms until reset
+  windowDurationMs?: number; // total window length
+}
+
+/** Provider usage data */
+export interface ProviderUsage {
+  name: string;
+  icon: string; // emoji
+  status: "ok" | "error" | "no-auth";
+  error?: string;
+  plan?: string | null;
+  email?: string | null;
+  windows: UsageWindow[];
+}
+
+/** Fetch usage data from all configured AI providers */
+export function fetchUsageData(): Promise<{ providers: ProviderUsage[] }> {
+  return api<{ providers: ProviderUsage[] }>("/usage");
+}
+
 // --- Auth API ---
 
 /** OAuth provider with current authentication status */
