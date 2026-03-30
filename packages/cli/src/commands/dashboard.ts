@@ -1,4 +1,4 @@
-import { exec, execSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
 import { TaskStore } from "@kb/core";
@@ -6,14 +6,6 @@ import type { Settings, TaskDetail, PrInfo } from "@kb/core";
 import { createServer, GitHubClient } from "@kb/dashboard";
 import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler } from "@kb/engine";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
-
-function openBrowser(url: string): void {
-  const cmd =
-    process.platform === "darwin" ? `open "${url}"`
-    : process.platform === "win32" ? `start "" "${url}"`
-    : `xdg-open "${url}"`;
-  exec(cmd, () => {});
-}
 
 /**
  * Prompt the user for a port number interactively.
@@ -192,7 +184,7 @@ export async function processPullRequestMergeTask(
   return "merged";
 }
 
-export async function runDashboard(port: number, opts: { open?: boolean; paused?: boolean; dev?: boolean; interactive?: boolean } = {}) {
+export async function runDashboard(port: number, opts: { paused?: boolean; dev?: boolean; interactive?: boolean } = {}) {
   // Handle interactive port selection
   let selectedPort = port;
   if (opts.interactive) {
@@ -648,9 +640,5 @@ export async function runDashboard(port: number, opts: { open?: boolean; paused?
     console.log(`  File watcher: ✓ active`);
     console.log(`  Press Ctrl+C to stop`);
     console.log();
-
-    if (opts.open !== false) {
-      openBrowser(`http://localhost:${actualPort}`);
-    }
   });
 }

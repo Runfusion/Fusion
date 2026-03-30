@@ -89,7 +89,7 @@ describe("build-exe", () => {
     const port = 14040 + Math.floor(Math.random() * 1000);
     try {
       const output = await new Promise<string>((resolve, reject) => {
-        const child = spawn(binary, ["dashboard", "--no-open", "-p", String(port)], {
+        const child = spawn(binary, ["dashboard", "-p", String(port)], {
           cwd: dir,
           stdio: ["ignore", "pipe", "pipe"],
         });

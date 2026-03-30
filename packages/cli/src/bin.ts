@@ -102,11 +102,10 @@ async function main() {
         const portIdxShort = args.indexOf("-p");
         const pi = portIdx !== -1 ? portIdx : portIdxShort;
         const port = pi !== -1 ? parseInt(args[pi + 1], 10) : 4040;
-        const open = !args.includes("--no-open");
         const paused = args.includes("--paused");
         const dev = args.includes("--dev");
         const interactive = args.includes("--interactive");
-        await runDashboard(port, { open, paused, dev, interactive });
+        await runDashboard(port, { paused, dev, interactive });
         break;
       }
 

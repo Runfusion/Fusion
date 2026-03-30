@@ -866,7 +866,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const port = trimmed ? parseInt(trimmed, 10) || 4040 : 4040;
 
       // Find the kb binary: prefer local node_modules, then global
-      const child = spawn("kb", ["dashboard", "--port", String(port), "--no-open"], {
+      const child = spawn("kb", ["dashboard", "--port", String(port)], {
         cwd: ctx.cwd,
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,

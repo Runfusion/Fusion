@@ -117,7 +117,7 @@ describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
   it("passes authStorage and modelRegistry to createServer", async () => {
     const { createServer } = await import("@kb/dashboard");
 
-    await runDashboard(0, { open: false });
+    await runDashboard(0, {});
 
     expect(createServer).toHaveBeenCalledTimes(1);
     const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
@@ -128,7 +128,7 @@ describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
   it("creates AuthStorage via AuthStorage.create()", async () => {
     const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
 
-    await runDashboard(0, { open: false });
+    await runDashboard(0, {});
 
     expect(AuthStorage.create).toHaveBeenCalledTimes(1);
   });
@@ -136,7 +136,7 @@ describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
   it("creates ModelRegistry with the authStorage instance", async () => {
     const { ModelRegistry } = await import("@mariozechner/pi-coding-agent");
 
-    await runDashboard(0, { open: false });
+    await runDashboard(0, {});
 
     expect(ModelRegistry).toHaveBeenCalledTimes(1);
     expect(ModelRegistry).toHaveBeenCalledWith(mockAuthStorage);
