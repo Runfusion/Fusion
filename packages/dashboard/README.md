@@ -15,6 +15,25 @@ Web-based dashboard for managing kb tasks. Provides a visual kanban board, list 
 ### Git Manager
 The Git Manager provides comprehensive repository visualization and management directly from the web UI. Access it via the Git Branch icon in the header.
 
+### Interactive Terminal
+The dashboard includes a fully interactive shell terminal for executing commands directly in the project's working directory. Access it via the Terminal icon in the header (always enabled, independent of task state).
+
+**Features**:
+- **Real-time Execution**: Commands execute with live output streaming via Server-Sent Events
+- **Command History**: Navigate previous commands with Up/Down arrows
+- **Local Commands**: Special handling for `cd`, `clear`, and `cls` commands
+- **Safety Validation**: Dangerous commands (rm -rf /, etc.) are automatically blocked
+- **Keyboard Shortcuts**:
+  - `Enter` - Execute command
+  - `Up/Down` - Navigate command history
+  - `Ctrl+C` - Kill running process
+  - `Ctrl+L` - Clear screen
+  - `Esc` - Close terminal
+
+**Supported Commands**: git, npm/pnpm/yarn, ls, cat, echo, pwd, cd, mkdir, touch, cp, mv, rm, head, tail, find, grep, curl, wget, node, npx, python, make, and more.
+
+**Status Badge**: When tasks are "in-progress", the terminal button shows a badge with the count.
+
 **Status Tab**: View current repository state including:
 - Current branch name and commit hash
 - Working directory status (clean/dirty)
@@ -136,6 +155,12 @@ The dashboard server exposes a REST API at `/api`:
 - `POST /api/tasks/:id/pr/create` - Create PR
 - `GET /api/tasks/:id/pr/status` - Get PR status
 - `POST /api/tasks/:id/pr/refresh` - Refresh PR status
+
+### Terminal
+- `POST /api/terminal/exec` - Execute command (`{ command }`) - returns `{ sessionId }`
+- `GET /api/terminal/sessions/:id` - Get session status and output
+- `POST /api/terminal/sessions/:id/kill` - Kill running session
+- `GET /api/terminal/sessions/:id/stream` - SSE stream for real-time output
 
 ### Configuration
 - `GET /api/config` - Server configuration
