@@ -14,5 +14,12 @@ export default defineConfig({
     globals: true,
     include: ["app/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
     setupFiles: ["./vitest.setup.ts"],
+    coverage: {
+      enabled: false,
+      reporter: ["text", "html", "json"],
+      reportsDirectory: "./coverage",
+      include: ["app/**/*.{ts,tsx}", "src/**/*.{ts,tsx}"],
+      exclude: ["**/*.test.{ts,tsx}", "**/*.d.ts", "dist/**"],
+    },
   },
 });
