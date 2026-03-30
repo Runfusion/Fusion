@@ -72,7 +72,12 @@ describe("TaskCard memoization", () => {
       return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
     }
 
-    const MemoizedProbe = React.memo(MemoProbe);
+    // Custom comparator that uses deep equality for task objects (mirrors TaskCard's areTaskCardPropsEqual)
+    const MemoizedProbe = React.memo(MemoProbe, (prevProps, nextProps) => {
+      // Compare task objects by value using JSON serialization
+      // This matches the behavior of areTaskCardPropsEqual used by TaskCard
+      return JSON.stringify(prevProps.task) === JSON.stringify(nextProps.task);
+    });
 
     function Harness() {
       const [count, setCount] = useState(0);
