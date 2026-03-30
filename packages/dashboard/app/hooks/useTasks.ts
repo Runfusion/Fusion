@@ -2,6 +2,17 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task, Column, TaskCreateInput, MergeResult } from "@kb/core";
 import * as api from "../api";
 
+/**
+ * Compare two ISO timestamp strings.
+ * Returns positive if a is newer than b, negative if b is newer, 0 if equal.
+ */
+function compareTimestamps(a: string | undefined, b: string | undefined): number {
+  if (!a && !b) return 0;
+  if (!a) return -1; // b is newer if a has no timestamp
+  if (!b) return 1;  // a is newer if b has no timestamp
+  return a.localeCompare(b);
+}
+
 export function useTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const tasksRef = useRef(tasks);
@@ -22,13 +33,41 @@ export function useTasks() {
     });
 
     es.addEventListener("task:moved", (e) => {
-      const { task }: { task: Task } = JSON.parse(e.data);
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)));
+      // Payload: { task, from, to } - task object includes server-set columnMovedAt
+      // We use 'to' as the authoritative column and trust the server's columnMovedAt
+      const { task, to }: { task: Task; from: Column; to: Column } = JSON.parse(e.data);
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...task, column: to } : t
+        )
+      );
     });
 
     es.addEventListener("task:updated", (e) => {
-      const task: Task = JSON.parse(e.data);
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)));
+      const incoming: Task = JSON.parse(e.data);
+      setTasks((prev) =>
+        prev.map((t) => {
+          if (t.id !== incoming.id) return t;
+
+          // Race condition prevention: If the incoming update has stale column data,
+          // preserve the current column. A task:moved event always carries the
+          // authoritative column in the 'to' field and updates columnMovedAt.
+          // If current state has a newer columnMovedAt, reject the column change.
+          const columnTimestampCompare = compareTimestamps(t.columnMovedAt, incoming.columnMovedAt);
+          if (columnTimestampCompare > 0 && t.column !== incoming.column) {
+            // Current state is newer - preserve column, merge other fields
+            return { ...incoming, column: t.column, columnMovedAt: t.columnMovedAt };
+          }
+
+          // Edge case: current has columnMovedAt but incoming doesn't (legacy data)
+          // Preserve the column information we have
+          if (t.columnMovedAt && !incoming.columnMovedAt && t.column !== incoming.column) {
+            return { ...incoming, column: t.column, columnMovedAt: t.columnMovedAt };
+          }
+
+          return incoming;
+        })
+      );
     });
 
     es.addEventListener("task:deleted", (e) => {
@@ -37,8 +76,15 @@ export function useTasks() {
     });
 
     es.addEventListener("task:merged", (e) => {
+      // Payload: { task, branch, merged, worktreeRemoved, branchDeleted, ... }
+      // The task object has already been moved to 'done' by the server
       const { task }: { task: Task } = JSON.parse(e.data);
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)));
+      setTasks((prev) =>
+        prev.map((t) =>
+          // Ensure column is 'done' since that's where merged tasks always go
+          t.id === task.id ? { ...task, column: "done" as Column } : t
+        )
+      );
     });
 
     es.addEventListener("error", () => {
