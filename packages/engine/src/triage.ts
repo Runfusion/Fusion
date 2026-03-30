@@ -565,14 +565,29 @@ export class TriageProcessor {
             }
 
             await this.store.updateTask(task.id, taskUpdates);
-            await this.store.moveTask(task.id, "todo");
 
-            // Log completion for re-specification
-            if (isRespecify) {
-              await this.store.logEntry(task.id, "Spec revised by AI", feedback);
-              triageLog.log(`✓ ${task.id} re-specified and moved to todo`);
+            // Check if manual plan approval is required
+            if (settings.requirePlanApproval) {
+              // Set awaiting-approval status instead of moving to todo
+              await this.store.updateTask(task.id, { status: "awaiting-approval" });
+              await this.store.logEntry(
+                task.id,
+                "Specification approved by AI — awaiting manual approval",
+              );
+              triageLog.log(
+                `✓ ${task.id} specified and awaiting manual approval`,
+              );
             } else {
-              triageLog.log(`✓ ${task.id} specified and moved to todo`);
+              // Auto-move to todo (existing behavior)
+              await this.store.moveTask(task.id, "todo");
+
+              // Log completion for re-specification
+              if (isRespecify) {
+                await this.store.logEntry(task.id, "Spec revised by AI", feedback);
+                triageLog.log(`✓ ${task.id} re-specified and moved to todo`);
+              } else {
+                triageLog.log(`✓ ${task.id} specified and moved to todo`);
+              }
             }
 
             this.options.onSpecifyComplete?.(task);

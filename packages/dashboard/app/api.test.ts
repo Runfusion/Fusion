@@ -298,3 +298,75 @@ describe("fetchGitRemotes", () => {
     await expect(fetchGitRemotes()).rejects.toThrow("Failed to execute git command");
   });
 });
+
+// --- Plan approval API tests ---
+
+import { approvePlan, rejectPlan } from "./api";
+
+describe("approvePlan", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("approves plan and returns updated task", async () => {
+    const approvedTask: Task = {
+      ...FAKE_DETAIL,
+      column: "todo",
+      status: undefined,
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, approvedTask));
+
+    const result = await approvePlan("KB-001");
+
+    expect(result.column).toBe("todo");
+    expect(result.status).toBeUndefined();
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/approve-plan", {
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+  });
+
+  it("throws on error response", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Task must be in 'triage' column to approve plan" }, 400)
+    );
+
+    await expect(approvePlan("KB-001")).rejects.toThrow("triage");
+  });
+});
+
+describe("rejectPlan", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("rejects plan and returns updated task", async () => {
+    const rejectedTask: Task = {
+      ...FAKE_DETAIL,
+      column: "triage",
+      status: undefined,
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, rejectedTask));
+
+    const result = await rejectPlan("KB-001");
+
+    expect(result.column).toBe("triage");
+    expect(result.status).toBeUndefined();
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/reject-plan", {
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+  });
+
+  it("throws on error response", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Task must have status 'awaiting-approval' to reject plan" }, 400)
+    );
+
+    await expect(rejectPlan("KB-001")).rejects.toThrow("awaiting-approval");
+  });
+});

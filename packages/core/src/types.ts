@@ -188,6 +188,11 @@ export interface Settings {
    *  lock files (ours), generated files (theirs), and trivial whitespace conflicts
    *  without spawning an AI agent. Default: true. */
   smartConflictResolution?: boolean;
+  /** When enabled, AI-generated task specifications require manual approval
+   *  before the task can move from triage to todo. Tasks with approved specs
+   *  remain in triage with status "awaiting-approval" until a user approves
+   *  or rejects the plan. Default: false. */
+  requirePlanApproval?: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -207,6 +212,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultThinkingLevel: undefined,
   autoResolveConflicts: true,
   smartConflictResolution: true,
+  requirePlanApproval: false,
 };
 
 export interface BoardConfig {

@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo } from "@kb/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@kb/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, requestSpecRevision } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, requestSpecRevision, approvePlan, rejectPlan } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -171,6 +171,27 @@ export function TaskDetailModal({
       addToast(err.message, "error");
     }
   }, [task.id, task.paused, onClose, addToast]);
+
+  const handleApprovePlan = useCallback(async () => {
+    try {
+      await approvePlan(task.id);
+      addToast(`Plan approved — ${task.id} moved to Todo`, "success");
+      onClose();
+    } catch (err: any) {
+      addToast(err.message, "error");
+    }
+  }, [task.id, onClose, addToast]);
+
+  const handleRejectPlan = useCallback(async () => {
+    if (!confirm("Reject this plan? The specification will be discarded and regenerated.")) return;
+    try {
+      await rejectPlan(task.id);
+      addToast(`Plan rejected — ${task.id} returned to Triage for re-specification`, "info");
+      onClose();
+    } catch (err: any) {
+      addToast(err.message, "error");
+    }
+  }, [task.id, onClose, addToast]);
 
   const uploadFile = useCallback(async (file: File) => {
     setUploading(true);
@@ -638,6 +659,17 @@ export function TaskDetailModal({
             <button className="btn btn-sm" onClick={handleTogglePause}>
               {task.paused ? "Unpause" : "Pause"}
             </button>
+          )}
+          {/* Approve/Reject Plan buttons for tasks awaiting approval */}
+          {task.column === "triage" && task.status === "awaiting-approval" && task.prompt && (
+            <>
+              <button className="btn btn-primary btn-sm" onClick={handleApprovePlan}>
+                Approve Plan
+              </button>
+              <button className="btn btn-danger btn-sm" onClick={handleRejectPlan}>
+                Reject Plan
+              </button>
+            </>
           )}
           <div style={{ flex: 1 }} />
           {task.column === "in-review" ? (

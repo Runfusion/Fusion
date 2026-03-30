@@ -203,6 +203,20 @@ export function SettingsModal({ onClose, addToast, initialSection }: SettingsMod
               {prefixError && <small className="field-error">{prefixError}</small>}
               {!prefixError && <small>Prefix for new task IDs (e.g. KB, PROJ)</small>}
             </div>
+            <div className="form-group">
+              <label htmlFor="requirePlanApproval" className="checkbox-label">
+                <input
+                  id="requirePlanApproval"
+                  type="checkbox"
+                  checked={form.requirePlanApproval || false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, requirePlanApproval: e.target.checked }))
+                  }
+                />
+                Require plan approval
+              </label>
+              <small>When enabled, AI-generated task specifications require manual approval before moving to Todo</small>
+            </div>
           </>
         );
       case "model": {

@@ -387,6 +387,70 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Approve plan for a task in awaiting-approval status
+  router.post("/tasks/:id/approve-plan", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      // Verify task is in triage column with awaiting-approval status
+      if (task.column !== "triage") {
+        res.status(400).json({ error: "Task must be in 'triage' column to approve plan" });
+        return;
+      }
+      if (task.status !== "awaiting-approval") {
+        res.status(400).json({ error: "Task must have status 'awaiting-approval' to approve plan" });
+        return;
+      }
+
+      // Log the approval
+      await store.logEntry(task.id, "Plan approved by user");
+
+      // Move to todo and clear status
+      const updated = await store.moveTask(task.id, "todo");
+      await store.updateTask(task.id, { status: undefined });
+
+      res.json({ ...updated, status: undefined });
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  // Reject plan for a task in awaiting-approval status
+  router.post("/tasks/:id/reject-plan", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      // Verify task is in triage column with awaiting-approval status
+      if (task.column !== "triage") {
+        res.status(400).json({ error: "Task must be in 'triage' column to reject plan" });
+        return;
+      }
+      if (task.status !== "awaiting-approval") {
+        res.status(400).json({ error: "Task must have status 'awaiting-approval' to reject plan" });
+        return;
+      }
+
+      // Log the rejection
+      await store.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");
+
+      // Clear status to return to normal triage state
+      await store.updateTask(task.id, { status: undefined });
+
+      // Remove PROMPT.md to force regeneration
+      const { rm } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const promptPath = join(store.getRootDir(), ".kb", "tasks", task.id, "PROMPT.md");
+      await rm(promptPath, { force: true });
+
+      const updated = await store.getTask(task.id);
+      res.json(updated);
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // Add steering comment to task
   router.post("/tasks/:id/steer", async (req, res) => {
     try {

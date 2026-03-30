@@ -75,6 +75,14 @@ export function unpauseTask(id: string): Promise<Task> {
   return api<Task>(`/tasks/${id}/unpause`, { method: "POST" });
 }
 
+export function approvePlan(id: string): Promise<Task> {
+  return api<Task>(`/tasks/${id}/approve-plan`, { method: "POST" });
+}
+
+export function rejectPlan(id: string): Promise<Task> {
+  return api<Task>(`/tasks/${id}/reject-plan`, { method: "POST" });
+}
+
 export function fetchConfig(): Promise<{ maxConcurrent: number }> {
   return api<{ maxConcurrent: number }>("/config");
 }

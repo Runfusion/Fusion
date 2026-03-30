@@ -10,6 +10,8 @@ vi.mock("../../api", () => ({
   fetchTaskDetail: vi.fn(),
   fetchAgentLogs: vi.fn().mockResolvedValue([]),
   requestSpecRevision: vi.fn().mockResolvedValue({}),
+  approvePlan: vi.fn().mockResolvedValue({}),
+  rejectPlan: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({
@@ -1534,6 +1536,273 @@ describe("TaskDetailModal", () => {
 
       // Should show spec editor (view mode with empty state)
       expect(container.querySelector(".spec-editor")).toBeTruthy();
+    });
+  });
+
+  describe("Plan Approval UI", () => {
+    it("shows Approve Plan and Reject Plan buttons for awaiting-approval tasks in triage", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Approve Plan")).toBeTruthy();
+      expect(screen.getByText("Reject Plan")).toBeTruthy();
+    });
+
+    it("does not show approval buttons when task is not in triage", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "todo",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Approve Plan")).toBeNull();
+      expect(screen.queryByText("Reject Plan")).toBeNull();
+    });
+
+    it("does not show approval buttons when task does not have awaiting-approval status", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "specifying",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Approve Plan")).toBeNull();
+      expect(screen.queryByText("Reject Plan")).toBeNull();
+    });
+
+    it("does not show approval buttons when task has no prompt", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Approve Plan")).toBeNull();
+      expect(screen.queryByText("Reject Plan")).toBeNull();
+    });
+
+    it("calls approvePlan API and shows success toast when Approve Plan is clicked", async () => {
+      const { approvePlan } = await import("../../api");
+      const mockApprovePlan = vi.mocked(approvePlan);
+      const addToast = vi.fn();
+      const onClose = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "KB-001",
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Approve Plan"));
+
+      await waitFor(() => {
+        expect(mockApprovePlan).toHaveBeenCalledWith("KB-001");
+      });
+      expect(addToast).toHaveBeenCalledWith("Plan approved — KB-001 moved to Todo", "success");
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it("calls rejectPlan API and shows success toast when Reject Plan is confirmed", async () => {
+      const { rejectPlan } = await import("../../api");
+      const mockRejectPlan = vi.mocked(rejectPlan);
+      const addToast = vi.fn();
+      const onClose = vi.fn();
+
+      // Mock confirm to return true
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "KB-001",
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Reject Plan"));
+
+      expect(window.confirm).toHaveBeenCalledWith(
+        "Reject this plan? The specification will be discarded and regenerated."
+      );
+
+      await waitFor(() => {
+        expect(mockRejectPlan).toHaveBeenCalledWith("KB-001");
+      });
+      expect(addToast).toHaveBeenCalledWith(
+        "Plan rejected — KB-001 returned to Triage for re-specification",
+        "info"
+      );
+      expect(onClose).toHaveBeenCalled();
+
+      window.confirm = originalConfirm;
+    });
+
+    it("does not call rejectPlan API when Reject Plan is cancelled", async () => {
+      const { rejectPlan } = await import("../../api");
+      const mockRejectPlan = vi.mocked(rejectPlan);
+      mockRejectPlan.mockClear(); // Clear any previous calls
+
+      const addToast = vi.fn();
+
+      // Mock confirm to return false
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => false);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Reject Plan"));
+
+      expect(window.confirm).toHaveBeenCalled();
+      expect(mockRejectPlan).not.toHaveBeenCalled();
+      expect(addToast).not.toHaveBeenCalled();
+
+      window.confirm = originalConfirm;
+    });
+
+    it("shows error toast when approvePlan fails", async () => {
+      const { approvePlan } = await import("../../api");
+      const mockApprovePlan = vi.mocked(approvePlan);
+      mockApprovePlan.mockRejectedValueOnce(new Error("Network error"));
+
+      const addToast = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "KB-001",
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Approve Plan"));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Network error", "error");
+      });
+    });
+
+    it("shows error toast when rejectPlan fails", async () => {
+      const { rejectPlan } = await import("../../api");
+      const mockRejectPlan = vi.mocked(rejectPlan);
+      mockRejectPlan.mockRejectedValueOnce(new Error("Server error"));
+
+      const addToast = vi.fn();
+
+      // Mock confirm to return true
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "KB-001",
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Reject Plan"));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Server error", "error");
+      });
+
+      window.confirm = originalConfirm;
     });
   });
 });

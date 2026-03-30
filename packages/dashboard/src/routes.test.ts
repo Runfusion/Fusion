@@ -1658,3 +1658,161 @@ describe("POST /tasks/:id/spec/revise", () => {
     expect(store.logEntry).toHaveBeenNthCalledWith(2, "KB-001", "AI spec revision requested", "Second feedback");
   });
 });
+
+// --- Plan Approval route tests ---
+
+describe("POST /tasks/:id/approve-plan", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      getTask: vi.fn(),
+      moveTask: vi.fn(),
+      updateTask: vi.fn(),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("approves plan and moves task from triage to todo", async () => {
+    const awaitingTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "awaiting-approval" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...movedTask, status: undefined });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
+
+    expect(res.status).toBe(200);
+    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Plan approved by user");
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined });
+    expect(res.body.column).toBe("todo");
+    expect(res.body.status).toBeUndefined();
+  });
+
+  it("returns 400 when task is not in triage column", async () => {
+    const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "awaiting-approval" as const };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(todoTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("triage");
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when task does not have awaiting-approval status", async () => {
+    const triageTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "specifying" as const };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(triageTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("awaiting-approval");
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when task not found", async () => {
+    const error = new Error("Task not found") as Error & { code?: string };
+    error.code = "ENOENT";
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-999/approve-plan");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 500 on unexpected errors", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Database error"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Database error");
+  });
+});
+
+describe("POST /tasks/:id/reject-plan", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      getTask: vi.fn(),
+      updateTask: vi.fn(),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("rejects plan and clears status for regeneration", async () => {
+    const awaitingTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "awaiting-approval" as const };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: undefined };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
+
+    expect(res.status).toBe(200);
+    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Plan rejected by user", "Specification will be regenerated");
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined });
+    expect(res.body.column).toBe("triage");
+  });
+
+  it("returns 400 when task is not in triage column", async () => {
+    const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "awaiting-approval" as const };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(todoTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("triage");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when task does not have awaiting-approval status", async () => {
+    const triageTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "specifying" as const };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(triageTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("awaiting-approval");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when task not found", async () => {
+    const error = new Error("Task not found") as Error & { code?: string };
+    error.code = "ENOENT";
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-999/reject-plan");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 500 on unexpected errors", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Database error"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Database error");
+  });
+});

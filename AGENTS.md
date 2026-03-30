@@ -100,3 +100,23 @@ Alias for `autoResolveConflicts`. When enabled, enables automatic resolution of:
 - Trivial whitespace conflicts via `git diff-tree -w`
 
 This setting is preferred for new configurations. If both settings are present, `smartConflictResolution` takes precedence.
+
+### `requirePlanApproval` (default: `false`)
+
+When enabled, AI-generated task specifications require manual approval before the task can move from "triage" to "todo". 
+
+**How it works:**
+- After the AI reviewer approves a specification, instead of automatically moving to "todo", the task remains in "triage" with status `"awaiting-approval"`
+- Users can review the PROMPT.md in the task detail modal
+- Users can click "Approve Plan" to move the task to "todo" and begin execution
+- Users can click "Reject Plan" to discard the specification and trigger regeneration
+
+To enable manual plan approval:
+
+```json
+{
+  "settings": {
+    "requirePlanApproval": true
+  }
+}
+```
