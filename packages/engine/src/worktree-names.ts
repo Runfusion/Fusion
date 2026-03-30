@@ -29,6 +29,23 @@ export const NOUNS = [
 ];
 
 /**
+ * Convert a string to a URL-friendly slug.
+ *
+ * - Lowercase
+ * - Replace spaces, underscores, and special chars with hyphens
+ * - Collapse multiple hyphens
+ * - Trim leading/trailing hyphens
+ */
+export function slugify(str: string): string {
+  return str
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "") // Remove special characters except spaces and hyphens
+    .replace(/\s+/g, "-") // Replace spaces with hyphens
+    .replace(/-+/g, "-") // Collapse multiple hyphens
+    .replace(/^-|-$/g, ""); // Trim leading/trailing hyphens
+}
+
+/**
  * Generate a random, human-friendly worktree directory name.
  *
  * Names follow an `adjective-noun` pattern (e.g., `swirly-monkey`,

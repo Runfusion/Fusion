@@ -201,6 +201,13 @@ export interface Settings {
    *  of being deleted. New tasks acquire a warm worktree from the pool,
    *  preserving build caches (node_modules, target/, dist/). Default: false. */
   recycleWorktrees?: boolean;
+  /** Controls how worktree directory names are generated when creating fresh worktrees.
+   *  Only applies when recycleWorktrees is NOT enabled (pooled worktrees retain their existing names).
+   *  - "random": Human-friendly adjective-noun names (e.g., swift-falcon) — default
+   *  - "task-id": Use the task ID (e.g., kb-042)
+   *  - "task-title": Use a slugified version of the task title (e.g., fix-login-bug)
+   *  Default: "random". */
+  worktreeNaming?: "random" | "task-id" | "task-title";
   /** Prefix for generated task IDs (e.g. `"KB"` produces `KB-001`).
    *  Defaults to `"KB"`. Only affects new tasks — existing tasks retain
    *  their original IDs. */
@@ -261,6 +268,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoMerge: true,
   worktreeInitCommand: undefined,
   recycleWorktrees: false,
+  worktreeNaming: "random",
   taskPrefix: undefined,
   includeTaskIdInCommit: true,
   defaultProvider: undefined,

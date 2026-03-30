@@ -63,7 +63,7 @@ export function SettingsModal({
   onThemeModeChange,
   onColorThemeChange,
 }: SettingsModalProps) {
-  const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false, autoMerge: true, recycleWorktrees: false, includeTaskIdInCommit: true, worktreeInitCommand: "" });
+  const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false, autoMerge: true, recycleWorktrees: false, worktreeNaming: "random", includeTaskIdInCommit: true, worktreeInitCommand: "" });
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<SectionId>(initialSection ?? SETTINGS_SECTIONS[0].id);
   const [prefixError, setPrefixError] = useState<string | null>(null);
@@ -424,6 +424,26 @@ export function SettingsModal({
                 Recycle worktrees
               </label>
               <small>When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="worktreeNaming">Worktree Naming Style</label>
+              <select
+                id="worktreeNaming"
+                value={form.worktreeNaming || "random"}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, worktreeNaming: e.target.value as "random" | "task-id" | "task-title" }))
+                }
+                disabled={form.recycleWorktrees}
+              >
+                <option value="random">Random names (e.g., swift-falcon)</option>
+                <option value="task-id">Task ID (e.g., kb-042)</option>
+                <option value="task-title">Task title (e.g., fix-login-bug)</option>
+              </select>
+              <small>
+                {form.recycleWorktrees
+                  ? "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names"
+                  : "How to name fresh worktree directories. Only applies when recycling is off."}
+              </small>
             </div>
           </>
         );

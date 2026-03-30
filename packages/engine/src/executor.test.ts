@@ -15,9 +15,13 @@ vi.mock("./merger.js", async (importOriginal) => {
     findWorktreeUser: vi.fn().mockResolvedValue(null),
   };
 });
-vi.mock("./worktree-names.js", () => ({
-  generateWorktreeName: vi.fn().mockReturnValue("swift-falcon"),
-}));
+vi.mock("./worktree-names.js", async () => {
+  const actual = await vi.importActual<typeof import("./worktree-names.js")>("./worktree-names.js");
+  return {
+    ...actual,
+    generateWorktreeName: vi.fn().mockReturnValue("swift-falcon"),
+  };
+});
 
 // Mock node modules used by executor
 vi.mock("node:child_process", () => ({
@@ -33,7 +37,7 @@ import { reviewStep as mockedReviewStepFn } from "./reviewer.js";
 import { execSync } from "node:child_process";
 import { findWorktreeUser, aiMergeTask } from "./merger.js";
 import { WorktreePool } from "./worktree-pool.js";
-import { generateWorktreeName } from "./worktree-names.js";
+import { generateWorktreeName, slugify } from "./worktree-names.js";
 import type { Column, Task, TaskDetail } from "@kb/core";
 
 const mockedCreateHaiAgent = vi.mocked(createKbAgent);
@@ -360,8 +364,8 @@ describe("TaskExecutor worktreeInitCommand", () => {
 describe("TaskExecutor worktree naming", () => {
   const makeTask = (id = "KB-030", worktree?: string) => ({
     id,
-    title: "Test",
-    description: "Test",
+    title: "Test Task Title",
+    description: "Test description for task",
     column: "in-progress" as const,
     dependencies: [],
     steps: [],
@@ -426,6 +430,158 @@ describe("TaskExecutor worktree naming", () => {
 
     // Should NOT generate a new name — reuse the stored path
     expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
+  });
+
+  describe("worktreeNaming setting", () => {
+    it("uses task ID as worktree name when worktreeNaming is 'task-id'", async () => {
+      const store = createMockStore();
+      store.getSettings.mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 15000,
+        groupOverlappingFiles: false,
+        autoMerge: false,
+        worktreeNaming: "task-id",
+      });
+
+      const executor = new TaskExecutor(store, "/tmp/test");
+      await executor.execute(makeTask("KB-042"));
+
+      // Should use task ID (lowercase) as worktree name
+      expect(store.updateTask).toHaveBeenCalledWith("KB-042", {
+        worktree: "/tmp/test/.worktrees/kb-042",
+      });
+      // Should NOT call generateWorktreeName when using task-id
+      expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
+    });
+
+    it("uses slugified task title as worktree name when worktreeNaming is 'task-title'", async () => {
+      const store = createMockStore();
+      store.getSettings.mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 15000,
+        groupOverlappingFiles: false,
+        autoMerge: false,
+        worktreeNaming: "task-title",
+      });
+
+      const executor = new TaskExecutor(store, "/tmp/test");
+      await executor.execute({
+        ...makeTask("KB-043"),
+        title: "Fix login bug with OAuth",
+      });
+
+      // Should use slugified title as worktree name
+      const expectedSlug = slugify("Fix login bug with OAuth");
+      expect(store.updateTask).toHaveBeenCalledWith("KB-043", {
+        worktree: `/tmp/test/.worktrees/${expectedSlug}`,
+      });
+      expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
+    });
+
+    it("falls back to description when title is empty for 'task-title' mode", async () => {
+      const store = createMockStore();
+      store.getSettings.mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 15000,
+        groupOverlappingFiles: false,
+        autoMerge: false,
+        worktreeNaming: "task-title",
+      });
+
+      const executor = new TaskExecutor(store, "/tmp/test");
+      const taskDescription = "Implement user authentication flow";
+      await executor.execute({
+        ...makeTask("KB-044"),
+        title: "",
+        description: taskDescription,
+      });
+
+      // Should slugify the first 60 chars of description when title is empty
+      const expectedSlug = slugify(taskDescription.slice(0, 60));
+      expect(store.updateTask).toHaveBeenCalledWith("KB-044", {
+        worktree: `/tmp/test/.worktrees/${expectedSlug}`,
+      });
+    });
+
+    it("uses generateWorktreeName when worktreeNaming is 'random'", async () => {
+      const store = createMockStore();
+      store.getSettings.mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 15000,
+        groupOverlappingFiles: false,
+        autoMerge: false,
+        worktreeNaming: "random",
+      });
+
+      const executor = new TaskExecutor(store, "/tmp/test");
+      await executor.execute(makeTask("KB-045"));
+
+      // Should use generateWorktreeName for random mode
+      expect(store.updateTask).toHaveBeenCalledWith("KB-045", {
+        worktree: "/tmp/test/.worktrees/swift-falcon",
+      });
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
+    });
+
+    it("defaults to random naming when worktreeNaming is undefined", async () => {
+      const store = createMockStore();
+      store.getSettings.mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 15000,
+        groupOverlappingFiles: false,
+        autoMerge: false,
+        // worktreeNaming is not set (undefined)
+      });
+
+      const executor = new TaskExecutor(store, "/tmp/test");
+      await executor.execute(makeTask("KB-046"));
+
+      // Should default to random naming
+      expect(store.updateTask).toHaveBeenCalledWith("KB-046", {
+        worktree: "/tmp/test/.worktrees/swift-falcon",
+      });
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
+    });
+
+    it("ignores worktreeNaming setting when using pooled worktree (recycle mode)", async () => {
+      const pool = new WorktreePool();
+      pool.release("/tmp/test/.worktrees/pooled-warm-wt");
+      // Pool path exists on disk, task worktree path does not (not a resume)
+      mockedExistsSync.mockImplementation(
+        (p) => p === "/tmp/test/.worktrees/pooled-warm-wt",
+      );
+
+      const store = createMockStore();
+      store.getSettings.mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 15000,
+        groupOverlappingFiles: false,
+        autoMerge: false,
+        recycleWorktrees: true,
+        worktreeNaming: "task-id", // This should be ignored for pooled worktrees
+      });
+
+      const executor = new TaskExecutor(store, "/tmp/test", { pool });
+      await executor.execute(makeTask("KB-047"));
+
+      // Should acquire from pool, ignoring the task-id naming preference
+      expect(store.updateTask).toHaveBeenCalledWith("KB-047", {
+        worktree: "/tmp/test/.worktrees/pooled-warm-wt",
+      });
+      // Should NOT call generateWorktreeName when using pooled worktree
+      expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
+      // Should log pool acquisition
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "KB-047",
+        expect.stringContaining("Acquired worktree from pool"),
+      );
+    });
   });
 });
 

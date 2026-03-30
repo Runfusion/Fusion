@@ -150,6 +150,29 @@ When true, enables ntfy.sh push notifications for task completion and failures.
 - Topic must be 1–64 alphanumeric/hyphen/underscore characters
 - Notifications are best-effort: failures are logged but don't block task execution
 
+### `worktreeNaming` (default: `"random"`)
+
+Controls how worktree directory names are generated when `recycleWorktrees` is NOT enabled. This setting only affects fresh worktrees (not pooled/recycled ones).
+
+**Valid values:**
+- `"random"` — Human-friendly random names like `swift-falcon`, `calm-river` (default)
+- `"task-id"` — Use the task ID as the directory name, e.g., `kb-042`
+- `"task-title"` — Use a slugified version of the task title, e.g., `fix-login-bug`
+
+**Example:**
+```json
+{
+  "settings": {
+    "worktreeNaming": "task-id"
+  }
+}
+```
+
+**Notes:**
+- This setting has no effect when `recycleWorktrees` is enabled (pooled worktrees retain their existing names)
+- Task branches are always named `kb/{task-id}` regardless of this setting
+- When using `"task-title"` mode, special characters are replaced with hyphens and the result is lowercased
+
 ## Per-Task Model Overrides
 
 The kb dashboard allows overriding the global AI model selection on a per-task basis. This enables using different models for different types of work without changing global settings.

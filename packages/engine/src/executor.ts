@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { TaskStore, Task, TaskDetail, StepStatus, Settings } from "@kb/core";
 import { findWorktreeUser } from "./merger.js";
-import { generateWorktreeName } from "./worktree-names.js";
+import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createKbAgent } from "./pi.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
@@ -292,8 +292,32 @@ export class TaskExecutor {
 
     executorLog.log(`Starting ${task.id}: ${task.title || task.description.slice(0, 60)}`);
 
+    // Fetch settings early — needed for worktree naming and later configuration
+    const settings = await this.store.getSettings();
+
     // Hoist worktreePath so it's accessible in the catch block for dep-abort cleanup
-    let worktreePath = task.worktree || join(this.rootDir, ".worktrees", generateWorktreeName(this.rootDir));
+    // Determine worktree name based on settings
+    let worktreePath: string;
+    if (task.worktree) {
+      worktreePath = task.worktree;
+    } else {
+      const naming = settings.worktreeNaming || "random";
+      let worktreeName: string;
+      
+      switch (naming) {
+        case "task-id":
+          worktreeName = task.id.toLowerCase();
+          break;
+        case "task-title":
+          worktreeName = slugify(task.title || task.description.slice(0, 60));
+          break;
+        case "random":
+        default:
+          worktreeName = generateWorktreeName(this.rootDir);
+          break;
+      }
+      worktreePath = join(this.rootDir, ".worktrees", worktreeName);
+    }
 
     try {
       // Check dependencies
@@ -314,7 +338,6 @@ export class TaskExecutor {
       // instead of task.id, so worktrees are named like ".worktrees/swift-falcon"
       let isResume = existsSync(worktreePath);
       let acquiredFromPool = false;
-      const settings = await this.store.getSettings();
 
       // Resolve the base branch — set by the scheduler when a dep is in-review
       const baseBranch = task.baseBranch || null;
