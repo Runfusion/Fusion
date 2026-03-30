@@ -7,6 +7,7 @@ import { COLUMNS, VALID_TRANSITIONS, type PrInfo } from "@kb/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo } from "./github.js";
 import { terminalSessionManager } from "./terminal.js";
+import { getTerminalService } from "./terminal-service.js";
 import { listFiles, readFile, writeFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse } from "./file-service.js";
 import { fetchAllProviderUsage } from "./usage.js";
 
@@ -1845,6 +1846,91 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       req.on("error", () => {
         terminalSessionManager.off("output", onOutput);
       });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── PTY Terminal Routes (WebSocket-based) ────────────────────────────
+
+  /**
+   * POST /api/terminal/sessions
+   * Create a new PTY terminal session.
+   * Body: { cwd?: string, cols?: number, rows?: number }
+   * Returns: { sessionId: string, shell: string, cwd: string }
+   */
+  router.post("/terminal/sessions", async (req, res) => {
+    try {
+      const { cwd, cols, rows } = req.body;
+      const terminalService = getTerminalService(store.getRootDir());
+
+      const session = await terminalService.createSession({
+        cwd,
+        cols: typeof cols === "number" ? cols : undefined,
+        rows: typeof rows === "number" ? rows : undefined,
+      });
+
+      if (!session) {
+        res.status(503).json({ error: "Failed to create session. Max sessions may be reached." });
+        return;
+      }
+
+      res.status(201).json({
+        sessionId: session.id,
+        shell: session.shell,
+        cwd: session.cwd,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to create terminal session" });
+    }
+  });
+
+  /**
+   * GET /api/terminal/sessions
+   * List all active PTY terminal sessions.
+   * Returns: [{ id: string, cwd: string, shell: string, createdAt: string }]
+   */
+  router.get("/terminal/sessions", async (_req, res) => {
+    try {
+      const terminalService = getTerminalService(store.getRootDir());
+      const sessions = terminalService.getAllSessions();
+
+      res.json(
+        sessions.map((s) => ({
+          id: s.id,
+          cwd: s.cwd,
+          shell: s.shell,
+          createdAt: s.createdAt.toISOString(),
+        }))
+      );
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to list sessions" });
+    }
+  });
+
+  /**
+   * DELETE /api/terminal/sessions/:id
+   * Kill a PTY terminal session.
+   * Returns: { killed: boolean }
+   */
+  router.delete("/terminal/sessions/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      const terminalService = getTerminalService(store.getRootDir());
+
+      const killed = terminalService.killSession(id);
+
+      if (!killed) {
+        const session = terminalService.getSession(id);
+        if (!session) {
+          res.status(404).json({ error: "Session not found" });
+        } else {
+          res.status(400).json({ error: "Failed to kill session" });
+        }
+        return;
+      }
+
+      res.json({ killed: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

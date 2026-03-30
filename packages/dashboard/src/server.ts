@@ -7,6 +7,8 @@ import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE } from "./sse.js";
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
+import { getTerminalService, type TerminalSession } from "./terminal-service.js";
+import { WebSocketServer, type WebSocket } from "ws";
 import { terminalSessionManager } from "./terminal.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -27,6 +29,9 @@ export interface ServerOptions {
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
   const app = express();
   app.use(express.json());
+
+  // Initialize terminal service with project root
+  const terminalService = getTerminalService(store.getRootDir());
 
   // Serve built React app
   // Resolution order:
@@ -77,7 +82,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     });
   });
 
-  // Terminal SSE endpoint for real-time command output streaming
+  // Legacy Terminal SSE endpoint (deprecated, use WebSocket instead)
   app.get("/api/terminal/sessions/:id/stream", rateLimit(RATE_LIMITS.sse), (req, res) => {
     const sessionId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
@@ -147,5 +152,145 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     res.sendFile(join(clientDir, "index.html"));
   });
 
+  // Store WebSocket server reference for external mounting
+  (app as ReturnType<typeof express> & { wsServer?: WebSocketServer }).wsServer = null as unknown as WebSocketServer;
+
   return app;
+}
+
+/**
+ * Setup WebSocket terminal server
+ * Call this after creating the HTTP server to attach WebSocket handling
+ */
+export function setupTerminalWebSocket(
+  app: ReturnType<typeof express>,
+  server: import("http").Server
+): void {
+  const terminalService = getTerminalService();
+  
+  const wss = new WebSocketServer({ 
+    server,
+    path: "/api/terminal/ws",
+  });
+
+  // Store reference on app for access
+  (app as ReturnType<typeof express> & { wsServer?: WebSocketServer }).wsServer = wss;
+
+  wss.on("connection", (ws: WebSocket, req) => {
+    // Parse query params from URL
+    const url = new URL(req.url || "", `http://${req.headers.host}`);
+    const sessionId = url.searchParams.get("sessionId");
+
+    if (!sessionId) {
+      ws.close(4000, "Missing sessionId");
+      return;
+    }
+
+    const session = terminalService.getSession(sessionId);
+    if (!session) {
+      ws.close(4004, "Session not found");
+      return;
+    }
+
+    // Track if connection is alive
+    let isAlive = true;
+    let dataUnsub: (() => void) | null = null;
+    let exitUnsub: (() => void) | null = null;
+
+    // Send scrollback buffer first
+    const scrollback = terminalService.getScrollbackAndClearPending(sessionId);
+    if (scrollback) {
+      ws.send(JSON.stringify({ type: "scrollback", data: scrollback }));
+    }
+
+    // Send connection info
+    ws.send(JSON.stringify({
+      type: "connected",
+      shell: session.shell,
+      cwd: session.cwd,
+    }));
+
+    // Subscribe to data events
+    dataUnsub = terminalService.onData((id, data) => {
+      if (id === sessionId && isAlive) {
+        try {
+          ws.send(JSON.stringify({ type: "data", data }));
+        } catch {
+          // WebSocket might be closing
+        }
+      }
+    });
+
+    // Subscribe to exit events
+    exitUnsub = terminalService.onExit((id, exitCode) => {
+      if (id === sessionId && isAlive) {
+        try {
+          ws.send(JSON.stringify({ type: "exit", exitCode }));
+        } catch {
+          // WebSocket might be closing
+        }
+      }
+    });
+
+    // Heartbeat ping/pong
+    const pingInterval = setInterval(() => {
+      if (!isAlive) {
+        ws.terminate();
+        return;
+      }
+      isAlive = false;
+      try {
+        ws.send(JSON.stringify({ type: "ping" }));
+      } catch {
+        ws.terminate();
+      }
+    }, 30000);
+
+    ws.on("pong", () => {
+      isAlive = true;
+    });
+
+    ws.on("message", (message: Buffer) => {
+      try {
+        const msg = JSON.parse(message.toString());
+        
+        switch (msg.type) {
+          case "input":
+            if (typeof msg.data === "string") {
+              terminalService.write(sessionId, msg.data);
+            }
+            break;
+          case "resize":
+            if (typeof msg.cols === "number" && typeof msg.rows === "number") {
+              terminalService.resize(sessionId, msg.cols, msg.rows);
+            }
+            break;
+          case "ping":
+            ws.send(JSON.stringify({ type: "pong" }));
+            break;
+          case "pong":
+            isAlive = true;
+            break;
+        }
+      } catch {
+        // Ignore malformed messages
+      }
+    });
+
+    ws.on("close", () => {
+      isAlive = false;
+      clearInterval(pingInterval);
+      if (dataUnsub) dataUnsub();
+      if (exitUnsub) exitUnsub();
+    });
+
+    ws.on("error", () => {
+      isAlive = false;
+      clearInterval(pingInterval);
+      if (dataUnsub) dataUnsub();
+      if (exitUnsub) exitUnsub();
+    });
+  });
+
+  console.log(`Terminal WebSocket server mounted at /api/terminal/ws`);
 }
