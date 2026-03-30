@@ -128,7 +128,6 @@ export function SpecEditor({
             onChange={(e) => setEditContent(e.target.value)}
             disabled={isSaving}
             placeholder="Enter task specification in Markdown..."
-            rows={20}
           />
         ) : content ? (
           <div className="markdown-body">

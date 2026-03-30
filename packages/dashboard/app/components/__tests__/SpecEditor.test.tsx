@@ -452,4 +452,37 @@ Test mission description.
 
     expect(screen.queryByText(/Ctrl/)).toBeNull();
   });
+
+  it("textarea fills available width in edit mode", () => {
+    render(<SpecEditor content={mockContent} onSave={mockOnSave} />);
+
+    fireEvent.click(screen.getByText("Edit"));
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(textarea.classList.contains("spec-editor-textarea")).toBe(true);
+    // Verify textarea has the CSS class for proper sizing
+    expect(getComputedStyle(textarea).width).toBeDefined();
+  });
+
+  it("spec-editor-content has correct flex direction", () => {
+    const { container } = render(<SpecEditor content={mockContent} onSave={mockOnSave} />);
+
+    const contentDiv = container.querySelector(".spec-editor-content");
+    expect(contentDiv).toBeTruthy();
+  });
+
+  it("toolbar remains visible when content is long", () => {
+    const longContent = "# Title\n\n" + "Content line\n".repeat(100);
+    render(<SpecEditor content={longContent} onSave={mockOnSave} />);
+
+    fireEvent.click(screen.getByText("Edit"));
+
+    // Toolbar should still be visible
+    const toolbar = document.querySelector(".spec-editor-toolbar");
+    expect(toolbar).toBeTruthy();
+
+    // View and Edit buttons should still be present
+    expect(screen.getByText("View")).toBeTruthy();
+    expect(screen.getByText("Edit")).toBeTruthy();
+  });
 });

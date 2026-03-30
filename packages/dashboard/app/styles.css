@@ -5802,6 +5802,200 @@ html .column.drag-over * {
   }
 }
 
+/* === Spec Editor === */
+.spec-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Toolbar - fixed at top */
+.spec-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.spec-editor-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.spec-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Content area - flexible and scrollable */
+.spec-editor-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 0;
+}
+
+/* Textarea - fills available space in edit mode */
+.spec-editor-textarea {
+  width: 100%;
+  min-height: 200px;
+  height: 100%;
+  flex: 1;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.spec-editor-textarea:focus {
+  border-color: var(--todo);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
+}
+
+.spec-editor-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Empty state */
+.spec-editor-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* Keyboard hint - stays above revision section */
+.spec-editor-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.spec-editor-hint kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+/* AI Revision section - fixed at bottom */
+.spec-editor-revision {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.spec-editor-revision h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+  color: var(--text);
+}
+
+.spec-editor-revision-help {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 8px 0;
+}
+
+.spec-editor-feedback {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.spec-editor-feedback:focus {
+  border-color: var(--todo);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
+}
+
+.spec-editor-feedback:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spec-editor-revision-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.spec-editor-char-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .spec-editor-content {
+    padding: 8px 0;
+  }
+
+  .spec-editor-textarea {
+    min-height: 150px;
+    padding: 10px;
+    font-size: 14px;
+  }
+
+  .spec-editor-toolbar {
+    padding: 6px 0;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .spec-editor-hint {
+    padding: 6px 0;
+    font-size: 11px;
+  }
+
+  .spec-editor-revision {
+    padding: 12px 0;
+  }
+
+  .spec-editor-revision h4 {
+    font-size: 12px;
+  }
+
+  .spec-editor-revision-help {
+    font-size: 11px;
+  }
+}
+
 /* === Quick Entry Box === */
 .quick-entry-box {
   padding: 8px 10px;
