@@ -88,9 +88,10 @@ kb task import owner/repo --labels bug     # Filter by label(s)
 
 **Dashboard Import:**
 - Click the ↓ (Download) icon in the header to open the GitHub import modal
-- Enter owner/repo, optionally filter by labels
-- Select an issue from the list and click Import
-- Already-imported issues are marked with an "Imported" badge
+- kb detects GitHub remotes automatically: a single remote is preselected, and multiple remotes can be chosen from a repository dropdown
+- Optionally filter the fetched issues with comma-separated labels before loading open issues
+- Review the results list and preview pane, then select the issue you want to import
+- Already-imported issues stay visible with an "Imported" badge and cannot be selected again
 
 Agents can use these same commands, or see [`.agents/skills/`](.agents/skills/) for structured skill docs.
 
