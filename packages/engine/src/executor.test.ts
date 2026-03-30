@@ -994,6 +994,83 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("## Project Commands");
   });
 
+  it("includes Steering Comments section when steeringComments has entries", () => {
+    const task = createMockTaskDetail({
+      steeringComments: [
+        {
+          id: "1",
+          text: "Please handle the edge case",
+          createdAt: new Date().toISOString(),
+          author: "user" as const,
+        },
+      ],
+    });
+    const result = buildExecutionPrompt(task);
+
+    expect(result).toContain("## Steering Comments");
+    expect(result).toContain("**user**");
+    expect(result).toContain("> Please handle the edge case");
+    expect(result).toContain("The following steering comments were added by the user");
+  });
+
+  it("formats multiple steering comments correctly", () => {
+    const now = new Date();
+    const task = createMockTaskDetail({
+      steeringComments: [
+        {
+          id: "1",
+          text: "First comment",
+          createdAt: new Date(now.getTime() - 60000).toISOString(), // 1 minute ago
+          author: "user" as const,
+        },
+        {
+          id: "2",
+          text: "Second comment",
+          createdAt: now.toISOString(),
+          author: "agent" as const,
+        },
+      ],
+    });
+    const result = buildExecutionPrompt(task);
+
+    expect(result).toContain("**user**");
+    expect(result).toContain("**agent**");
+    expect(result).toContain("> First comment");
+    expect(result).toContain("> Second comment");
+  });
+
+  it("omits Steering Comments section when steeringComments is empty", () => {
+    const task = createMockTaskDetail({ steeringComments: [] });
+    const result = buildExecutionPrompt(task);
+
+    expect(result).not.toContain("## Steering Comments");
+  });
+
+  it("omits Steering Comments section when steeringComments is undefined", () => {
+    const task = createMockTaskDetail();
+    const result = buildExecutionPrompt(task);
+
+    expect(result).not.toContain("## Steering Comments");
+  });
+
+  it("includes only the 10 most recent steering comments", () => {
+    const steeringComments = Array.from({ length: 15 }, (_, i) => ({
+      id: `${i}`,
+      text: `Comment ${i}`,
+      createdAt: new Date().toISOString(),
+      author: "user" as const,
+    }));
+
+    const task = createMockTaskDetail({ steeringComments });
+    const result = buildExecutionPrompt(task);
+
+    // Should include comments 5-14 (the 10 most recent), not 0-4
+    expect(result).toContain("> Comment 5");
+    expect(result).toContain("> Comment 14");
+    expect(result).not.toContain("> Comment 0");
+    expect(result).not.toContain("> Comment 4");
+  });
+
   it("passes settings to buildExecutionPrompt in TaskExecutor.execute()", async () => {
     const store = createMockStore();
     store.getSettings.mockResolvedValue({

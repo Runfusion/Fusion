@@ -259,6 +259,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Add steering comment to task
+  router.post("/tasks/:id/steer", async (req, res) => {
+    try {
+      const { text } = req.body;
+      if (!text || typeof text !== "string") {
+        res.status(400).json({ error: "text is required and must be a string" });
+        return;
+      }
+      if (text.length === 0 || text.length > 2000) {
+        res.status(400).json({ error: "text must be between 1 and 2000 characters" });
+        return;
+      }
+      const task = await store.addSteeringComment(req.params.id, text, "user");
+      res.json(task);
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // Update task
   router.patch("/tasks/:id", async (req, res) => {
     try {

@@ -106,6 +106,13 @@ export function fetchAgentLogs(taskId: string): Promise<AgentLogEntry[]> {
   return api<AgentLogEntry[]>(`/tasks/${taskId}/logs`);
 }
 
+export function addSteeringComment(id: string, text: string): Promise<Task> {
+  return api<Task>(`/tasks/${id}/steer`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
 // --- Models API ---
 
 /** Available AI model info returned by the models endpoint */

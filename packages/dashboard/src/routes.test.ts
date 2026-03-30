@@ -19,6 +19,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateSettings: vi.fn(),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),
+    addSteeringComment: vi.fn(),
     ...overrides,
   } as unknown as TaskStore;
 }
@@ -654,6 +655,109 @@ describe("Pause/Unpause endpoints", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/pause");
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("not found");
+  });
+
+  describe("POST /tasks/:id/steer", () => {
+    it("adds a steering comment to a task", async () => {
+      const mockComment = {
+        id: "KB-001",
+        steeringComments: [
+          {
+            id: "1234567890-abc123",
+            text: "Please handle the edge case",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            author: "user" as const,
+          },
+        ],
+      };
+      (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(mockComment);
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/steer",
+        JSON.stringify({ text: "Please handle the edge case" }),
+        { "Content-Type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(mockComment);
+      expect(store.addSteeringComment).toHaveBeenCalledWith(
+        "KB-001",
+        "Please handle the edge case",
+        "user"
+      );
+    });
+
+    it("returns 400 when text is missing", async () => {
+      const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/steer", JSON.stringify({}), {
+        "Content-Type": "application/json",
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("text is required");
+    });
+
+    it("returns 400 when text is empty", async () => {
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/steer",
+        JSON.stringify({ text: "" }),
+        { "Content-Type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
+      // Empty string fails the "!text" check, not the length check
+      expect(res.body.error).toContain("text is required");
+    });
+
+    it("returns 400 when text exceeds 2000 characters", async () => {
+      const longText = "a".repeat(2001);
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/steer",
+        JSON.stringify({ text: longText }),
+        { "Content-Type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("text must be between 1 and 2000 characters");
+    });
+
+    it("returns 404 when task not found", async () => {
+      const error = new Error("Task not found") as Error & { code?: string };
+      error.code = "ENOENT";
+      (store.addSteeringComment as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/steer",
+        JSON.stringify({ text: "Valid comment" }),
+        { "Content-Type": "application/json" }
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 500 on unexpected errors", async () => {
+      (store.addSteeringComment as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("Database error")
+      );
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/steer",
+        JSON.stringify({ text: "Valid comment" }),
+        { "Content-Type": "application/json" }
+      );
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Database error");
+    });
   });
 });
 

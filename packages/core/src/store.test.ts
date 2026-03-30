@@ -718,6 +718,98 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("addSteeringComment", () => {
+    it("adds a steering comment to a task", async () => {
+      const task = await createTestTask();
+      const updated = await store.addSteeringComment(task.id, "Please handle the edge case");
+
+      expect(updated.steeringComments).toHaveLength(1);
+      expect(updated.steeringComments![0].text).toBe("Please handle the edge case");
+      expect(updated.steeringComments![0].author).toBe("user");
+      expect(updated.steeringComments![0].id).toBeDefined();
+      expect(updated.steeringComments![0].createdAt).toBeDefined();
+    });
+
+    it("accepts agent as author", async () => {
+      const task = await createTestTask();
+      const updated = await store.addSteeringComment(task.id, "Note from agent", "agent");
+
+      expect(updated.steeringComments).toHaveLength(1);
+      expect(updated.steeringComments![0].author).toBe("agent");
+    });
+
+    it("initializes steeringComments array if undefined", async () => {
+      const task = await createTestTask();
+      expect(task.steeringComments).toBeUndefined();
+
+      const updated = await store.addSteeringComment(task.id, "First comment");
+      expect(updated.steeringComments).toBeDefined();
+      expect(updated.steeringComments).toHaveLength(1);
+    });
+
+    it("appends multiple comments in order", async () => {
+      const task = await createTestTask();
+      await store.addSteeringComment(task.id, "First comment");
+      await store.addSteeringComment(task.id, "Second comment");
+      await store.addSteeringComment(task.id, "Third comment");
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.steeringComments).toHaveLength(3);
+      expect(fetched.steeringComments![0].text).toBe("First comment");
+      expect(fetched.steeringComments![1].text).toBe("Second comment");
+      expect(fetched.steeringComments![2].text).toBe("Third comment");
+    });
+
+    it("generates unique IDs for each comment", async () => {
+      const task = await createTestTask();
+      const updated1 = await store.addSteeringComment(task.id, "Comment 1");
+      const updated2 = await store.addSteeringComment(task.id, "Comment 2");
+
+      const id1 = updated1.steeringComments![0].id;
+      const id2 = updated2.steeringComments![1].id;
+      expect(id1).not.toBe(id2);
+    });
+
+    it("emits task:updated event", async () => {
+      const task = await createTestTask();
+      const events: any[] = [];
+      store.on("task:updated", (t) => events.push(t));
+
+      await store.addSteeringComment(task.id, "Test comment");
+
+      expect(events).toHaveLength(1);
+      expect(events[0].steeringComments).toHaveLength(1);
+      expect(events[0].steeringComments![0].text).toBe("Test comment");
+    });
+
+    it("persists to disk and round-trips correctly", async () => {
+      const task = await createTestTask();
+      await store.addSteeringComment(task.id, "Persisted comment");
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.steeringComments).toHaveLength(1);
+      expect(fetched.steeringComments![0].text).toBe("Persisted comment");
+      expect(fetched.steeringComments![0].author).toBe("user");
+    });
+
+    it("adds log entry for the action", async () => {
+      const task = await createTestTask();
+      const updated = await store.addSteeringComment(task.id, "Comment with log");
+
+      expect(updated.log.some((l) => l.action === "Steering comment added")).toBe(true);
+      expect(updated.log.some((l) => l.outcome === "by user")).toBe(true);
+    });
+
+    it("updates updatedAt timestamp", async () => {
+      const task = await createTestTask();
+      const before = task.updatedAt;
+      await new Promise((r) => setTimeout(r, 10)); // Ensure time passes
+
+      const updated = await store.addSteeringComment(task.id, "Timestamp test");
+      expect(updated.updatedAt).not.toBe(before);
+    });
+  });
+
   describe("parseDependenciesFromPrompt", () => {
     it("returns single dependency from PROMPT.md", async () => {
       const task = await store.createTask({ description: "Task with dep" });

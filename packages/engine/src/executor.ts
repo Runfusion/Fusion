@@ -959,6 +959,25 @@ export class TaskExecutor {
   }
 }
 
+/**
+ * Format a timestamp for display in steering comments.
+ * Returns relative time for recent comments, absolute date for older ones.
+ */
+function formatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString();
+}
+
 // Project commands are injected here (for reliability) and also in the PROMPT.md (by triage).
 // This ensures the executor agent always sees the authoritative commands from settings,
 // even if the PROMPT.md was written manually or before commands were configured.
@@ -1019,6 +1038,26 @@ git log --oneline
     commandsSection = "\n" + lines.join("\n") + "\n";
   }
 
+  // Build steering comments section (last 10 comments only to avoid context bloat)
+  let steeringSection = "";
+  if (task.steeringComments && task.steeringComments.length > 0) {
+    const recentComments = [...task.steeringComments].slice(-10);
+    const lines = [
+      "",
+      "## Steering Comments",
+      "",
+      "The following steering comments were added by the user during execution. Consider adjusting your approach or replanning remaining steps based on this feedback.",
+      "",
+    ];
+    for (const comment of recentComments) {
+      const timestamp = formatTimestamp(comment.createdAt);
+      lines.push(`**${comment.author}** — ${timestamp}`);
+      lines.push(`> ${comment.text}`);
+      lines.push("");
+    }
+    steeringSection = lines.join("\n");
+  }
+
   return `Execute this task.
 
 ## Task: ${task.id}
@@ -1028,7 +1067,7 @@ ${task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}`
 ## PROMPT.md
 
 ${task.prompt}
-${attachmentsSection}${commandsSection}${progressSection}
+${attachmentsSection}${commandsSection}${progressSection}${steeringSection}
 ## Review level: ${reviewLevel}
 
 ${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}

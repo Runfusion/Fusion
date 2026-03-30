@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchTaskDetail, updateTask, fetchAuthStatus, loginProvider, logoutProvider, fetchModels } from "./api";
+import { fetchTaskDetail, updateTask, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, addSteeringComment } from "./api";
 import type { Task, TaskDetail } from "@kb/core";
 
 const FAKE_DETAIL: TaskDetail = {
@@ -209,5 +209,56 @@ describe("logoutProvider", () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "logout failed" }));
 
     await expect(logoutProvider("anthropic")).rejects.toThrow("logout failed");
+  });
+});
+
+describe("addSteeringComment", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const FAKE_TASK: Task = {
+    id: "KB-001",
+    description: "Test",
+    column: "in-progress",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    steeringComments: [
+      {
+        id: "1234567890-abc123",
+        text: "Please handle the edge case",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        author: "user",
+      },
+    ],
+  };
+
+  it("sends POST with text and returns updated task", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_TASK));
+
+    const result = await addSteeringComment("KB-001", "Please handle the edge case");
+
+    expect(result.id).toBe("KB-001");
+    expect(result.steeringComments).toHaveLength(1);
+    expect(result.steeringComments![0].text).toBe("Please handle the edge case");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/steer", {
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      body: JSON.stringify({ text: "Please handle the edge case" }),
+    });
+  });
+
+  it("throws on error response", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Task not found" })
+    );
+
+    await expect(addSteeringComment("KB-001", "Test comment")).rejects.toThrow("Task not found");
   });
 });

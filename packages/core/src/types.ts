@@ -49,6 +49,13 @@ export interface TaskAttachment {
   createdAt: string;
 }
 
+export interface SteeringComment {
+  id: string;
+  text: string;
+  createdAt: string;
+  author: "user" | "agent";
+}
+
 export interface Task {
   id: string;
   title?: string;
@@ -73,6 +80,7 @@ export interface Task {
    *  dependency's branch instead of HEAD. Cleared after worktree creation. */
   baseBranch?: string;
   attachments?: TaskAttachment[];
+  steeringComments?: SteeringComment[];
   log: TaskLogEntry[];
   size?: "S" | "M" | "L";
   reviewLevel?: number;

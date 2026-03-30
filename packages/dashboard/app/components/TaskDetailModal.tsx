@@ -7,6 +7,7 @@ import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask 
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { AgentLogViewer } from "./AgentLogViewer";
+import { SteeringTab } from "./SteeringTab";
 
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
@@ -54,7 +55,7 @@ export function TaskDetailModal({
   onRetryTask,
   addToast,
 }: TaskDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<"definition" | "agent-log">("definition");
+  const [activeTab, setActiveTab] = useState<"definition" | "agent-log" | "steering">("definition");
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
@@ -282,11 +283,19 @@ export function TaskDetailModal({
             >
               Agent Log
             </button>
+            <button
+              className={`detail-tab${activeTab === "steering" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("steering")}
+            >
+              Steering
+            </button>
           </div>
           {activeTab === "agent-log" ? (
             <div className="detail-section">
               <AgentLogViewer entries={agentLogEntries} loading={agentLogLoading} />
             </div>
+          ) : activeTab === "steering" ? (
+            <SteeringTab task={task} addToast={addToast} />
           ) : (
           <>
           <div className="detail-section">

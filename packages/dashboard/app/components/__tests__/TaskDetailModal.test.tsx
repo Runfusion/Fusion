@@ -646,6 +646,47 @@ describe("TaskDetailModal", () => {
       const afterSwitch = mockUseAgentLogs.mock.calls[mockUseAgentLogs.mock.calls.length - 1];
       expect(afterSwitch[1]).toBe(true);
     });
+
+    it("switches to Steering tab", async () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      // Click Steering tab
+      fireEvent.click(screen.getByText("Steering"));
+
+      // Steering content should appear
+      expect(screen.getByText("Steering Comments")).toBeTruthy();
+      expect(screen.getByPlaceholderText(/Add a steering comment/)).toBeTruthy();
+      // Definition content should be hidden
+      expect(container.querySelector(".markdown-body")).toBeNull();
+    });
+
+    it("shows Steering tab as third tab", async () => {
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const tabs = screen.getAllByRole("button").filter((b) =>
+        ["Definition", "Agent Log", "Steering"].includes(b.textContent || "")
+      );
+      expect(tabs.length).toBe(3);
+      expect(tabs[2].textContent).toBe("Steering");
+    });
   });
 
   describe("mobile responsive structure", () => {
@@ -714,11 +755,12 @@ describe("TaskDetailModal", () => {
       );
 
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(2);
+      expect(tabs.length).toBe(3);
       // Tabs should use class-based styling, not inline styles
       expect(tabs[0].classList.contains("detail-tab")).toBe(true);
       expect(tabs[0].classList.contains("detail-tab-active")).toBe(true); // Definition is default active
       expect(tabs[1].classList.contains("detail-tab-active")).toBe(false);
+      expect(tabs[2].classList.contains("detail-tab-active")).toBe(false);
       // Verify no inline padding/fontSize (responsive CSS controls this)
       expect((tabs[0] as HTMLElement).style.padding).toBe("");
       expect((tabs[0] as HTMLElement).style.fontSize).toBe("");

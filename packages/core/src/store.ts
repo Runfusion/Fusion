@@ -982,6 +982,48 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
+   * Add a steering comment to a task.
+   * Steering comments are user-provided feedback injected into the AI execution context.
+   */
+  async addSteeringComment(
+    id: string,
+    text: string,
+    author: "user" | "agent" = "user",
+  ): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      // Generate unique ID: timestamp + random suffix for collision resistance
+      const commentId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      const comment: import("./types.js").SteeringComment = {
+        id: commentId,
+        text,
+        createdAt: new Date().toISOString(),
+        author,
+      };
+
+      if (!task.steeringComments) {
+        task.steeringComments = [];
+      }
+      task.steeringComments.push(comment);
+      task.updatedAt = new Date().toISOString();
+      task.log.push({
+        timestamp: task.updatedAt,
+        action: "Steering comment added",
+        outcome: `by ${author}`,
+      });
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.watcher) this.taskCache.set(id, { ...task });
+
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+
+  /**
    * Read all historical agent log entries for a task from its agent log file.
    * Returns entries in chronological order (oldest first).
    *
