@@ -594,7 +594,6 @@ body {
   letter-spacing: 0.5px;
   padding: 2px 8px;
   border-radius: 10px;
-  margin-left: auto;
 }
 
 /* Size S: subtle green tint (low effort) */
@@ -1822,6 +1821,14 @@ body {
   cursor: not-allowed;
 }
 
+/* Card header actions container - groups size badge and buttons on the right */
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
 /* Edit button - visible on hover */
 .card-edit-btn {
   display: flex;
@@ -1830,7 +1837,6 @@ body {
   width: 20px;
   height: 20px;
   padding: 0;
-  margin-left: auto;
   background: transparent;
   border: none;
   border-radius: 4px;

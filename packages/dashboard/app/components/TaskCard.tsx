@@ -518,11 +518,6 @@ function TaskCardComponent({
             {task.status}
           </span>
         )}
-        {task.size && (
-          <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
-            {task.size}
-          </span>
-        )}
         {hasGitHubBadge && (
           <TaskCardBadge
             taskId={task.id}
@@ -532,36 +527,43 @@ function TaskCardComponent({
             isInViewport={isInViewport}
           />
         )}
-        {canEdit && (
-          <button
-            className="card-edit-btn"
-            onClick={handleEditClick}
-            title="Edit task"
-            aria-label="Edit task"
-          >
-            <Pencil size={12} />
-          </button>
-        )}
-        {task.column === "done" && onArchiveTask && (
-          <button
-            className="card-archive-btn"
-            onClick={handleArchiveClick}
-            title="Archive task"
-            aria-label="Archive task"
-          >
-            Archive
-          </button>
-        )}
-        {task.column === "archived" && onUnarchiveTask && (
-          <button
-            className="card-unarchive-btn"
-            onClick={handleUnarchiveClick}
-            title="Unarchive task"
-            aria-label="Unarchive task"
-          >
-            Unarchive
-          </button>
-        )}
+        <div className="card-header-actions">
+          {task.size && (
+            <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
+              {task.size}
+            </span>
+          )}
+          {canEdit && (
+            <button
+              className="card-edit-btn"
+              onClick={handleEditClick}
+              title="Edit task"
+              aria-label="Edit task"
+            >
+              <Pencil size={12} />
+            </button>
+          )}
+          {task.column === "done" && onArchiveTask && (
+            <button
+              className="card-archive-btn"
+              onClick={handleArchiveClick}
+              title="Archive task"
+              aria-label="Archive task"
+            >
+              Archive
+            </button>
+          )}
+          {task.column === "archived" && onUnarchiveTask && (
+            <button
+              className="card-unarchive-btn"
+              onClick={handleUnarchiveClick}
+              title="Unarchive task"
+              aria-label="Unarchive task"
+            >
+              Unarchive
+            </button>
+          )}
+        </div>
       </div>
       {isFailed && task.error && (
         <div className="card-error" title={task.error}>
