@@ -214,6 +214,51 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
+   * Duplicate an existing task, creating a fresh copy in triage.
+   * Copies title and description with source reference, but resets all
+   * execution state. The new task will be re-specified by the AI.
+   */
+  async duplicateTask(id: string): Promise<Task> {
+    // Read the source task with its prompt
+    const sourceTask = await this.getTask(id);
+
+    // Allocate a new ID
+    const newId = await this.allocateId();
+    const now = new Date().toISOString();
+
+    // Create new task with copied title/description, but fresh state
+    const newTask: Task = {
+      id: newId,
+      title: sourceTask.title,
+      description: `${sourceTask.description}\n\n(Duplicated from ${id})`,
+      column: "triage",
+      dependencies: [], // Fresh task should have no dependencies
+      steps: [], // Reset execution state
+      currentStep: 0,
+      log: [{ timestamp: now, action: `Duplicated from ${id}` }],
+      columnMovedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      // Explicitly NOT copied: worktree, status, blockedBy, paused, baseBranch,
+      // attachments, steeringComments, prInfo, agent logs, size, reviewLevel
+    };
+
+    const newDir = this.taskDir(newId);
+    await mkdir(newDir, { recursive: true });
+    await this.atomicWriteTaskJson(newDir, newTask);
+
+    // Copy source PROMPT.md content (the AI will re-specify it in triage)
+    const sourcePrompt = sourceTask.prompt;
+    await writeFile(join(newDir, "PROMPT.md"), sourcePrompt);
+
+    // Update cache if watcher is active
+    if (this.watcher) this.taskCache.set(newId, { ...newTask });
+
+    this.emit("task:created", newTask);
+    return newTask;
+  }
+
+  /**
    * Read a task's JSON and prompt content.
    *
    * Retries once after a short delay on non-ENOENT errors to handle

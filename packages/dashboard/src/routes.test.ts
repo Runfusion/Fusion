@@ -206,6 +206,61 @@ describe("POST /tasks/:id/retry", () => {
   });
 });
 
+describe("POST /tasks/:id/duplicate", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      duplicateTask: vi.fn(),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("duplicates a task and returns 201 with new task", async () => {
+    const newTask = { ...FAKE_TASK_DETAIL, id: "KB-002", column: "triage" };
+    (store.duplicateTask as ReturnType<typeof vi.fn>).mockResolvedValue(newTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/duplicate", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("KB-002");
+    expect(res.body.column).toBe("triage");
+    expect(store.duplicateTask).toHaveBeenCalledWith("KB-001");
+  });
+
+  it("returns 404 when source task not found", async () => {
+    const error = new Error("Task not found") as NodeJS.ErrnoException;
+    error.code = "ENOENT";
+    (store.duplicateTask as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-999/duplicate", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("not found");
+  });
+
+  it("returns 500 on unexpected errors", async () => {
+    (store.duplicateTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Database error"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/duplicate", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Database error");
+  });
+});
+
 describe("PATCH /tasks/:id", () => {
   let store: TaskStore;
 

@@ -39,7 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate } = await import("./commands/task.js");
 
 const HELP = `
 kb — AI-orchestrated task board
@@ -54,6 +54,7 @@ Usage:
   kb task update <id> <step> <status> Update step status (pending|in-progress|done|skipped)
   kb task log <id> <message>          Add a log entry
   kb task merge <id>                  Merge an in-review task and close it
+  kb task duplicate <id>              Duplicate a task (creates copy in triage)
   kb task attach <id> <file>          Attach a file to a task
   kb task pause <id>                  Pause a task (stops all automation)
   kb task unpause <id>                Unpause a task (resumes automation)
@@ -162,6 +163,12 @@ async function main() {
             const id = args[2];
             if (!id) { console.error("Usage: kb task merge <id>"); process.exit(1); }
             await runTaskMerge(id);
+            break;
+          }
+          case "duplicate": {
+            const id = args[2];
+            if (!id) { console.error("Usage: kb task duplicate <id>"); process.exit(1); }
+            await runTaskDuplicate(id);
             break;
           }
           case "attach": {

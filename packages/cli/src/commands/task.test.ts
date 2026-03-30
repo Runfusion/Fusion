@@ -28,7 +28,7 @@ vi.mock("@kb/engine", () => ({ aiMergeTask: vi.fn() }));
 
 import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@kb/core";
-import { runTaskShow, runTaskCreate } from "./task.js";
+import { runTaskShow, runTaskCreate, runTaskDuplicate } from "./task.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -836,5 +836,59 @@ describe("runTaskImportFromGitHub", () => {
       column: "triage",
       dependencies: [],
     });
+  });
+});
+
+// --- Duplicate Tests ---
+
+describe("runTaskDuplicate", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let mockDuplicateTask: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    mockDuplicateTask = vi.fn().mockResolvedValue({
+      id: "KB-002",
+      description: "Duplicated task",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      duplicateTask: mockDuplicateTask,
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("duplicates task and prints success", async () => {
+    await runTaskDuplicate("KB-001");
+
+    expect(mockDuplicateTask).toHaveBeenCalledOnce();
+    expect(mockDuplicateTask).toHaveBeenCalledWith("KB-001");
+
+    const successLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("✓ Duplicated"),
+    );
+    expect(successLine).toBeDefined();
+    expect(successLine![0]).toContain("KB-001");
+    expect(successLine![0]).toContain("KB-002");
+  });
+
+  it("throws when task not found", async () => {
+    mockDuplicateTask.mockRejectedValueOnce(new Error("Task KB-999 not found"));
+
+    await expect(runTaskDuplicate("KB-999")).rejects.toThrow("Task KB-999 not found");
   });
 });

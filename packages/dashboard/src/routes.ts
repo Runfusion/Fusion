@@ -276,6 +276,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Duplicate task
+  router.post("/tasks/:id/duplicate", async (req, res) => {
+    try {
+      const newTask = await store.duplicateTask(req.params.id);
+      res.status(201).json(newTask);
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // Upload attachment
   router.post("/tasks/:id/attachments", upload.single("file"), async (req, res) => {
     try {

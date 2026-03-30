@@ -1297,4 +1297,199 @@ describe("TaskStore", () => {
       expect(events).toHaveLength(2);
     });
   });
+
+  // ── Duplicate Task Tests ─────────────────────────────────────────
+
+  describe("duplicateTask", () => {
+    it("duplicates from triage column", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.id).not.toBe(task.id);
+      expect(duplicated.id).toMatch(/^KB-\d+$/);
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(task.description);
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("duplicates from todo column", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("duplicates from in-progress column", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      await store.moveTask(task.id, "in-progress");
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("duplicates from in-review column", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("duplicates from done column", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("new task is always in triage regardless of source column", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      const duplicated = await store.duplicateTask(task.id);
+      expect(duplicated.column).toBe("triage");
+    });
+
+    it("description includes source reference", async () => {
+      const task = await store.createTask({ description: "Original description" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.description).toBe(`Original description\n\n(Duplicated from ${task.id})`);
+    });
+
+    it("resets execution state (no steps, no worktree, etc.)", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      // Add some execution state
+      await store.updateTask(task.id, { worktree: "/some/path", status: "executing" });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.steps).toEqual([]);
+      expect(duplicated.currentStep).toBe(0);
+      expect(duplicated.worktree).toBeUndefined();
+      expect(duplicated.status).toBeUndefined();
+    });
+
+    it("does NOT copy dependencies", async () => {
+      const dep = await store.createTask({ description: "Dependency" });
+      const task = await store.createTask({ description: "Test task", dependencies: [dep.id] });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.dependencies).toEqual([]);
+    });
+
+    it("does NOT copy attachments", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      // Add an attachment
+      await store.addAttachment(task.id, "test.png", Buffer.from("fake"), "image/png");
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.attachments).toBeUndefined();
+    });
+
+    it("does NOT copy steering comments", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.addSteeringComment(task.id, "Test comment");
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.steeringComments).toBeUndefined();
+    });
+
+    it("emits task:created event", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      const events: any[] = [];
+      store.on("task:created", (t) => events.push(t));
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].id).toBe(duplicated.id);
+    });
+
+    it("adds log entry for duplicate action", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.log).toHaveLength(1);
+      expect(duplicated.log[0].action).toContain(`Duplicated from ${task.id}`);
+    });
+
+    it("copies source PROMPT.md content", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      const sourceDetail = await store.getTask(task.id);
+
+      const duplicated = await store.duplicateTask(task.id);
+      const dupDetail = await store.getTask(duplicated.id);
+
+      expect(dupDetail.prompt).toBe(sourceDetail.prompt);
+    });
+
+    it("throws ENOENT when source task does not exist", async () => {
+      await expect(store.duplicateTask("KB-999")).rejects.toThrow();
+    });
+
+    it("copies title if present", async () => {
+      const task = await store.createTask({ title: "My Task", description: "Test" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.title).toBe("My Task");
+    });
+
+    it("does NOT copy prInfo", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.updatePrInfo(task.id, {
+        url: "https://github.com/owner/repo/pull/1",
+        number: 1,
+        status: "open",
+        title: "Test PR",
+        headBranch: "kb/kb-001",
+        baseBranch: "main",
+        commentCount: 0,
+      });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.prInfo).toBeUndefined();
+    });
+
+    it("does NOT copy paused state", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.pauseTask(task.id, true);
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.paused).toBeUndefined();
+    });
+
+    it("does NOT copy blockedBy", async () => {
+      const blocker = await store.createTask({ description: "Blocker" });
+      const task = await store.createTask({ description: "Test task" });
+      await store.updateTask(task.id, { blockedBy: blocker.id });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.blockedBy).toBeUndefined();
+    });
+
+    it("does NOT copy baseBranch", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.updateTask(task.id, { baseBranch: "some-branch" });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.baseBranch).toBeUndefined();
+    });
+  });
 });

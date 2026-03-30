@@ -63,6 +63,10 @@ export function retryTask(id: string): Promise<Task> {
   return api<Task>(`/tasks/${id}/retry`, { method: "POST" });
 }
 
+export function duplicateTask(id: string): Promise<Task> {
+  return api<Task>(`/tasks/${id}/duplicate`, { method: "POST" });
+}
+
 export function pauseTask(id: string): Promise<Task> {
   return api<Task>(`/tasks/${id}/pause`, { method: "POST" });
 }

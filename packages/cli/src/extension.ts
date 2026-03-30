@@ -341,6 +341,36 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── kb_task_duplicate ─────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_duplicate",
+    label: "KB: Duplicate Task",
+    description:
+      "Duplicate an existing task, creating a fresh copy in triage. " +
+      "Copies the title and description but resets all execution state. " +
+      "The AI triage agent will re-specify the new task.",
+    promptSnippet: "Duplicate a kb task (creates copy in triage)",
+    promptGuidelines: [
+      "Use when a task needs to be re-done, split, or used as a template",
+      "The duplicated task will be placed in triage for re-specification",
+      "Dependencies, attachments, and execution state are NOT copied",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Source task ID to duplicate (e.g. KB-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const newTask = await store.duplicateTask(params.id);
+
+      return {
+        content: [{ type: "text", text: `Duplicated ${params.id} → ${newTask.id}` }],
+        details: { sourceId: params.id, newTaskId: newTask.id },
+      };
+    },
+  });
+
   // ── kb_task_import_github ─────────────────────────────────────────
 
   pi.registerTool({

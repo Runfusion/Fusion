@@ -286,6 +286,16 @@ export async function runTaskMove(id: string, column: string) {
   console.log();
 }
 
+export async function runTaskDuplicate(id: string) {
+  const store = await getStore();
+  const newTask = await store.duplicateTask(id);
+
+  console.log();
+  console.log(`  ✓ Duplicated ${id} → ${newTask.id}`);
+  console.log(`    Path: .kb/tasks/${newTask.id}/`);
+  console.log();
+}
+
 export async function runTaskImportGitHubInteractive(
   ownerRepo: string,
   options: TaskImportOptions = {}
