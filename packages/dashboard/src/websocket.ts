@@ -8,6 +8,13 @@ export interface BadgeUpdate {
   timestamp?: string;
 }
 
+/** BadgeSnapshot is the full badge state with required timestamp for caching */
+export interface BadgeSnapshot {
+  prInfo?: PrInfo | null;
+  issueInfo?: IssueInfo | null;
+  timestamp: string;
+}
+
 export interface BadgeUpdatedMessage {
   type: "badge:updated";
   taskId: string;

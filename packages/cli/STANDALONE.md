@@ -28,6 +28,22 @@ kb dashboard --paused        # Start with automation paused (review before work 
 kb dashboard --dev           # Start web UI only (no AI engine)
 ```
 
+### Multi-Instance Deployments
+
+When deploying the dashboard behind a load balancer with multiple instances, configure Redis pub/sub for real-time badge updates across instances:
+
+```bash
+# Set Redis URL for cross-instance badge synchronization
+export KB_BADGE_PUBSUB_REDIS_URL="redis://redis.example.com:6379"
+
+# Optional: customize the pub/sub channel (default: kb:badge-updates)
+export KB_BADGE_PUBSUB_CHANNEL="my-app-badge-updates"
+
+kb dashboard
+```
+
+With this configuration, PR/issue badge updates detected on one instance are delivered to subscribed WebSocket clients on other instances. Each instance maintains its own GitHub polling, only the badge snapshots are shared.
+
 ### Create a task
 
 ```bash

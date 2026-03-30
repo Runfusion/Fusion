@@ -6,7 +6,7 @@ import type { TaskStore, Column, MergeResult } from "@kb/core";
 import { COLUMNS, VALID_TRANSITIONS, type PrInfo, isGhAuthenticated } from "@kb/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo } from "./github.js";
-import { githubPoller, githubRateLimiter } from "./github-poll.js";
+import { githubPoller as globalGithubPoller, GitHubPollingService, githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
 import { listFiles, readFile, writeFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse } from "./file-service.js";
@@ -541,6 +541,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   // Get GitHub token from options or env
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
+  
+  // Use injected githubPoller if provided, otherwise use global singleton
+  const githubPoller = options?.githubPoller ?? globalGithubPoller;
 
   // Scheduler config (includes persisted settings)
   router.get("/config", async (_req, res) => {

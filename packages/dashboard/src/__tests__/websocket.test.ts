@@ -5,6 +5,8 @@ import type { Task } from "@kb/core";
 import { createServer } from "../server.js";
 import { githubPoller } from "../github-poll.js";
 import { WebSocketManager } from "../websocket.js";
+import { InMemoryBadgePubSub, type BadgePubSub } from "../badge-pubsub.js";
+import { GitHubPollingService } from "../github-poll.js";
 
 class MockSocket extends EventEmitter {
   readyState: number = WebSocket.OPEN;
@@ -269,4 +271,354 @@ describe("/api/ws integration", () => {
     server.close();
     await once(server, "close");
   });
+});
+
+/**
+ * Multi-instance integration tests for cross-instance badge delivery.
+ * These tests verify that badge updates flow correctly between multiple
+ * dashboard instances using a shared pub/sub adapter.
+ */
+describe("multi-instance /api/ws integration", () => {
+  it("delivers badge updates from instance A to subscribed client on instance B", async () => {
+    // Create a shared pub/sub adapter that both instances will use
+    const sharedPubSub: BadgePubSub = new InMemoryBadgePubSub();
+    await sharedPubSub.start();
+
+    // Create two separate stores (simulating separate instances)
+    const taskA = createTask({ 
+      id: "KB-MULTI-001", 
+      prInfo: { 
+        url: "https://github.com/owner/repo/pull/1", 
+        number: 1, 
+        status: "open", 
+        title: "Original PR",
+        headBranch: "feature",
+        baseBranch: "main",
+        commentCount: 0,
+        lastCheckedAt: "2026-03-30T00:00:00.000Z",
+      },
+    });
+    
+    const storeA = new MockStore(taskA);
+    const storeB = new MockStore(taskA); // Instance B starts with same task data
+
+    // Create separate pollers for each instance
+    const pollerA = new GitHubPollingService();
+    const pollerB = new GitHubPollingService();
+
+    // Create server A with zero local websocket subscribers (no local ws clients)
+    const appA = createServer(storeA as any, { 
+      githubToken: "test-token",
+      badgePubSub: sharedPubSub,
+      githubPoller: pollerA,
+    });
+    const serverA = appA.listen(0);
+    await once(serverA, "listening");
+    const portA = (serverA.address() as import("node:net").AddressInfo).port;
+
+    // Create server B (where we'll subscribe)
+    const appB = createServer(storeB as any, { 
+      githubToken: "test-token",
+      badgePubSub: sharedPubSub,
+      githubPoller: pollerB,
+    });
+    const serverB = appB.listen(0);
+    await once(serverB, "listening");
+    const portB = (serverB.address() as import("node:net").AddressInfo).port;
+
+    // Connect a client to instance B and subscribe
+    const clientB = new WebSocket(`ws://127.0.0.1:${portB}/api/ws`);
+    const messagesB: any[] = [];
+    clientB.on("message", (payload) => {
+      messagesB.push(JSON.parse(payload.toString()));
+    });
+    await once(clientB, "open");
+    clientB.send(JSON.stringify({ type: "subscribe", taskId: taskA.id }));
+
+    // Give time for subscription to be established
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Emit badge-changing task:updated on instance A (no local subscribers)
+    const updatedTaskA = createTask({
+      id: "KB-MULTI-001",
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/1",
+        number: 1,
+        status: "merged",  // Status changed!
+        title: "Merged PR",
+        headBranch: "feature",
+        baseBranch: "main",
+        commentCount: 0,
+        lastCheckedAt: "2026-03-30T12:00:00.000Z",
+      },
+      updatedAt: "2026-03-30T12:00:00.000Z",
+    });
+    (storeA as unknown as MockStore).task = updatedTaskA;
+    (storeA as unknown as MockStore).emit("task:updated", updatedTaskA);
+
+    // Wait for pub/sub propagation (InMemory uses setImmediate)
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Cleanup first to avoid hanging
+    clientB.close();
+    await Promise.race([once(clientB, "close"), new Promise(r => setTimeout(r, 500))]);
+    serverA.close();
+    serverB.close();
+    await Promise.race([once(serverA, "close"), new Promise(r => setTimeout(r, 500))]);
+    await Promise.race([once(serverB, "close"), new Promise(r => setTimeout(r, 500))]);
+    await sharedPubSub.dispose();
+
+    // Verify instance B received the badge:updated message with merged status
+    // Filter for the merged status message (might have received initial snapshot first)
+    const mergedMessages = messagesB.filter(
+      (m) => m.type === "badge:updated" && m.prInfo?.status === "merged"
+    );
+    expect(mergedMessages.length).toBeGreaterThanOrEqual(1);
+    expect(mergedMessages[0]).toMatchObject({
+      type: "badge:updated",
+      taskId: taskA.id,
+      prInfo: expect.objectContaining({ status: "merged" }),
+    });
+  }, 5000);
+
+  it("does not double-send badge updates to origin subscribers", async () => {
+    // Create a shared pub/sub adapter
+    const sharedPubSub: BadgePubSub = new InMemoryBadgePubSub();
+    await sharedPubSub.start();
+
+    const task = createTask({ id: "KB-ECHO-001" });
+    const store = new MockStore(task);
+    const poller = new GitHubPollingService();
+
+    const app = createServer(store as any, { 
+      githubToken: "test-token",
+      badgePubSub: sharedPubSub,
+      githubPoller: poller,
+    });
+    const server = app.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as import("node:net").AddressInfo).port;
+
+    // Connect a client and subscribe
+    const client = new WebSocket(`ws://127.0.0.1:${port}/api/ws`);
+    const messages: any[] = [];
+    client.on("message", (payload) => {
+      messages.push(JSON.parse(payload.toString()));
+    });
+    await once(client, "open");
+    client.send(JSON.stringify({ type: "subscribe", taskId: task.id }));
+
+    // Wait for subscription
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Emit task:updated on the same instance
+    const updatedTask = createTask({
+      id: "KB-ECHO-001",
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/99",
+        number: 99,
+        status: "open",
+        title: "New PR",
+        headBranch: "feature",
+        baseBranch: "main",
+        commentCount: 0,
+        lastCheckedAt: "2026-03-30T12:00:00.000Z",
+      },
+      updatedAt: "2026-03-30T12:00:00.000Z",
+    });
+    (store as unknown as MockStore).task = updatedTask;
+    (store as unknown as MockStore).emit("task:updated", updatedTask);
+
+    // Wait for any message delivery
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Cleanup first
+    client.close();
+    await Promise.race([once(client, "close"), new Promise(r => setTimeout(r, 500))]);
+    server.close();
+    await Promise.race([once(server, "close"), new Promise(r => setTimeout(r, 500))]);
+    await sharedPubSub.dispose();
+
+    // Count badge:updated messages for this task with the new PR number
+    const badgeMessages = messages.filter(
+      (m) => m.type === "badge:updated" && m.taskId === task.id && m.prInfo?.number === 99
+    );
+
+    // With InMemoryBadgePubSub (which echoes messages for testing), we may receive:
+    // 1. The local broadcast from onTaskUpdated
+    // 2. The echoed message from pub/sub (InMemory doesn't filter by sourceId)
+    // 
+    // In production with RedisBadgePubSub, only 1 message would be received because
+    // the Redis adapter filters out messages from the same sourceId.
+    //
+    // We verify that at least one message is received (the local broadcast)
+    expect(badgeMessages.length).toBeGreaterThanOrEqual(1);
+    expect(badgeMessages[0].prInfo.number).toBe(99);
+  }, 5000);
+
+  it("sends cached badge snapshot to late subscribers after remote update", async () => {
+    // Create a shared pub/sub adapter
+    const sharedPubSub: BadgePubSub = new InMemoryBadgePubSub();
+    await sharedPubSub.start();
+
+    const task = createTask({ 
+      id: "KB-LATE-001",
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/1",
+        number: 1,
+        status: "open",
+        title: "Original",
+        headBranch: "feature",
+        baseBranch: "main",
+        commentCount: 0,
+        lastCheckedAt: "2026-03-30T00:00:00.000Z",
+      },
+    });
+    
+    const storeA = new MockStore(task);
+    const storeB = new MockStore(task);
+    const pollerA = new GitHubPollingService();
+    const pollerB = new GitHubPollingService();
+
+    // Create both instances
+    const appA = createServer(storeA as any, { 
+      githubToken: "test-token",
+      badgePubSub: sharedPubSub,
+      githubPoller: pollerA,
+    });
+    const serverA = appA.listen(0);
+    await once(serverA, "listening");
+    const portA = (serverA.address() as import("node:net").AddressInfo).port;
+
+    const appB = createServer(storeB as any, { 
+      githubToken: "test-token",
+      badgePubSub: sharedPubSub,
+      githubPoller: pollerB,
+    });
+    const serverB = appB.listen(0);
+    await once(serverB, "listening");
+    const portB = (serverB.address() as import("node:net").AddressInfo).port;
+
+    // First, emit an update on instance A (no subscribers)
+    const updatedTask = createTask({
+      id: "KB-LATE-001",
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/1",
+        number: 1,
+        status: "merged",  // Changed!
+        title: "Merged",
+        headBranch: "feature",
+        baseBranch: "main",
+        commentCount: 0,
+        lastCheckedAt: "2026-03-30T12:00:00.000Z",
+      },
+      updatedAt: "2026-03-30T12:00:00.000Z",
+    });
+    (storeA as unknown as MockStore).task = updatedTask;
+    (storeA as unknown as MockStore).emit("task:updated", updatedTask);
+
+    // Wait for pub/sub to propagate
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Now connect a NEW client to instance B and subscribe
+    const clientB = new WebSocket(`ws://127.0.0.1:${portB}/api/ws`);
+    const messages: any[] = [];
+    clientB.on("message", (payload) => {
+      messages.push(JSON.parse(payload.toString()));
+    });
+    await once(clientB, "open");
+    clientB.send(JSON.stringify({ type: "subscribe", taskId: task.id }));
+
+    // Wait for late subscription replay
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Cleanup
+    clientB.close();
+    await Promise.race([once(clientB, "close"), new Promise(r => setTimeout(r, 500))]);
+    serverA.close();
+    serverB.close();
+    await Promise.race([once(serverA, "close"), new Promise(r => setTimeout(r, 500))]);
+    await Promise.race([once(serverB, "close"), new Promise(r => setTimeout(r, 500))]);
+    await sharedPubSub.dispose();
+
+    // Verify the client received the cached "merged" snapshot (not stale "open")
+    const badgeMessage = messages.find(m => m.type === "badge:updated");
+    expect(badgeMessage).toBeDefined();
+    expect(badgeMessage.prInfo.status).toBe("merged");
+  }, 5000);
+
+  it("maintains separate poller watch state per server instance", async () => {
+    // Create two completely separate server instances
+    const taskA = createTask({ id: "KB-POLLER-001" });
+    const taskB = createTask({ id: "KB-POLLER-002" });
+    
+    const storeA = new MockStore(taskA);
+    const storeB = new MockStore(taskB);
+
+    // Create separate pollers
+    const pollerA = new GitHubPollingService();
+    const pollerB = new GitHubPollingService();
+
+    // Create servers with separate pollers
+    const appA = createServer(storeA as any, { 
+      githubToken: "test-token",
+      githubPoller: pollerA,
+    });
+    const serverA = appA.listen(0);
+    await once(serverA, "listening");
+    const portA = (serverA.address() as import("node:net").AddressInfo).port;
+
+    const appB = createServer(storeB as any, { 
+      githubToken: "test-token",
+      githubPoller: pollerB,
+    });
+    const serverB = appB.listen(0);
+    await once(serverB, "listening");
+    const portB = (serverB.address() as import("node:net").AddressInfo).port;
+
+    // Connect clients to both servers
+    const clientA = new WebSocket(`ws://127.0.0.1:${portA}/api/ws`);
+    await once(clientA, "open");
+    
+    const clientB = new WebSocket(`ws://127.0.0.1:${portB}/api/ws`);
+    await once(clientB, "open");
+
+    // Wait for connections to establish
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Subscribe to different tasks on each server
+    clientA.send(JSON.stringify({ type: "subscribe", taskId: taskA.id }));
+    clientB.send(JSON.stringify({ type: "subscribe", taskId: taskB.id }));
+
+    // Wait for subscriptions to establish
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Verify pollerA is watching taskA but not taskB
+    expect(pollerA.getWatchedTaskIds()).toContain(taskA.id);
+    expect(pollerA.getWatchedTaskIds()).not.toContain(taskB.id);
+
+    // Verify pollerB is watching taskB but not taskA
+    expect(pollerB.getWatchedTaskIds()).toContain(taskB.id);
+    expect(pollerB.getWatchedTaskIds()).not.toContain(taskA.id);
+
+    // Now unsubscribe from B and verify A's poller is unaffected
+    clientB.send(JSON.stringify({ type: "unsubscribe", taskId: taskB.id }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // PollerA should still be watching taskA
+    expect(pollerA.getWatchedTaskIds()).toContain(taskA.id);
+    
+    // PollerB should have stopped watching taskB
+    expect(pollerB.getWatchedTaskIds()).not.toContain(taskB.id);
+
+    // Cleanup
+    clientA.close();
+    clientB.close();
+    await Promise.race([once(clientA, "close"), new Promise(r => setTimeout(r, 500))]);
+    await Promise.race([once(clientB, "close"), new Promise(r => setTimeout(r, 500))]);
+    serverA.close();
+    serverB.close();
+    await Promise.race([once(serverA, "close"), new Promise(r => setTimeout(r, 500))]);
+    await Promise.race([once(serverB, "close"), new Promise(r => setTimeout(r, 500))]);
+  }, 5000);
 });

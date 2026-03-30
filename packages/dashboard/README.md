@@ -304,6 +304,22 @@ The dashboard server exposes a REST API at `/api`:
 - `POST /api/tasks/:id/issue/refresh` - Refresh issue status
 - `WS /api/ws` - Real-time PR/issue badge updates for subscribed task cards
 
+### Multi-Instance Deployments
+
+When running the dashboard on multiple instances behind a load balancer, badge updates can be shared across instances using Redis pub/sub. This ensures that a PR/issue badge change detected on instance A is delivered to subscribed WebSocket clients on instance B.
+
+**Configuration:**
+- `KB_BADGE_PUBSUB_REDIS_URL` - Redis connection URL (e.g., `redis://localhost:6379`)
+- `KB_BADGE_PUBSUB_CHANNEL` - Pub/sub channel name (default: `kb:badge-updates`)
+
+When `KB_BADGE_PUBSUB_REDIS_URL` is not set, the dashboard uses an in-memory adapter for single-instance deployments.
+
+**Design Notes:**
+- Per-instance GitHub polling remains isolated; pub/sub only shares badge snapshot updates
+- WebSocket message format unchanged: `{ type: "badge:updated", taskId, prInfo?, issueInfo?, timestamp }`
+- Echo prevention: origin instances ignore their own pub/sub messages via source ID deduplication
+- Late subscribers receive the current cached snapshot from their connected instance
+
 ### PTY Terminal (WebSocket-based)
 - `POST /api/terminal/sessions` - Create session
 - `GET /api/terminal/sessions` - List sessions

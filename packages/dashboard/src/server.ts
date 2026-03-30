@@ -12,8 +12,10 @@ import { getTerminalService, type TerminalSession } from "./terminal-service.js"
 import { WebSocketServer, type WebSocket } from "ws";
 import { terminalSessionManager } from "./terminal.js";
 import { getCurrentGitHubRepo } from "./github.js";
-import { githubPoller, type TaskWatchInput } from "./github-poll.js";
-import { WebSocketManager } from "./websocket.js";
+import { githubPoller as globalGithubPoller, GitHubPollingService, type TaskWatchInput } from "./github-poll.js";
+import { WebSocketManager, type BadgeSnapshot } from "./websocket.js";
+import type { BadgePubSub } from "./badge-pubsub.js";
+import { createBadgePubSub, type BadgePubSubMessage } from "./badge-pubsub.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +30,10 @@ export interface ServerOptions {
   authStorage?: AuthStorageLike;
   /** Optional ModelRegistry instance for the models API — if not provided, the endpoint returns an empty list */
   modelRegistry?: ModelRegistryLike;
+  /** Optional BadgePubSub adapter for cross-instance badge snapshot fan-out — if not provided, creates from env or falls back to in-memory */
+  badgePubSub?: BadgePubSub;
+  /** Optional GitHubPollingService instance for per-server poller isolation — if not provided, uses the global singleton */
+  githubPoller?: GitHubPollingService;
 }
 
 type DashboardExpressApp = ReturnType<typeof express> & {
@@ -350,17 +356,34 @@ export function setupBadgeWebSocket(
 ): void {
   const dashboardApp = app as DashboardExpressApp;
   const wsManager = new WebSocketManager();
-  const badgeSnapshots = new Map<string, string>();
+  
+  // Structured badge snapshot cache for local subscriptions and pub/sub sync
+  // Maps taskId -> BadgeSnapshot with timestamp
+  const badgeSnapshots = new Map<string, BadgeSnapshot>();
+  
+  // Server instance ID for pub/sub deduplication
+  const serverId = randomUUID();
+  
+  // Use injected badgePubSub or create from environment
+  const badgePubSub = options?.badgePubSub ?? createBadgePubSub({ sourceId: serverId });
+  void badgePubSub.start();
+  
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
+  const githubPoller = options?.githubPoller ?? globalGithubPoller;
 
   githubPoller.configure({
     store,
     token: githubToken,
   });
 
+  // Prime cache with existing tasks
   void store.listTasks().then((tasks) => {
     for (const task of tasks) {
-      badgeSnapshots.set(task.id, serializeBadgeSnapshot(task));
+      badgeSnapshots.set(task.id, {
+        prInfo: task.prInfo ?? null,
+        issueInfo: task.issueInfo ?? null,
+        timestamp: new Date().toISOString(),
+      });
     }
   }).catch(() => {
     // Best-effort cache prime only
@@ -426,31 +449,50 @@ export function setupBadgeWebSocket(
     }
   };
 
-  const broadcastBadgeSnapshot = (task: Task): void => {
-    wsManager.broadcastBadgeUpdate(task.id, {
-      prInfo: task.prInfo ?? null,
-      issueInfo: task.issueInfo ?? null,
-      timestamp: new Date().toISOString(),
-    });
+  const broadcastBadgeSnapshot = (taskId: string, snapshot: BadgeSnapshot): void => {
+    wsManager.broadcastBadgeUpdate(taskId, snapshot);
   };
 
   const onTaskUpdated = (task: Task) => {
-    const nextSnapshot = serializeBadgeSnapshot(task);
     const previousSnapshot = badgeSnapshots.get(task.id);
+    const nextSnapshot: BadgeSnapshot = {
+      prInfo: task.prInfo ?? null,
+      issueInfo: task.issueInfo ?? null,
+      timestamp: new Date().toISOString(),
+    };
+    
+    // Update local cache immediately
     badgeSnapshots.set(task.id, nextSnapshot);
 
-    if (previousSnapshot === nextSnapshot) {
+    // Check if badge data actually changed
+    if (snapshotsEqual(previousSnapshot, nextSnapshot)) {
       return;
     }
 
+    // Always publish to shared bus (even if no local subscribers)
+    // This ensures other instances receive the update
+    const pubSubMessage: BadgePubSubMessage = {
+      sourceId: serverId,
+      taskId: task.id,
+      timestamp: nextSnapshot.timestamp,
+      prInfo: nextSnapshot.prInfo,
+      issueInfo: nextSnapshot.issueInfo,
+    };
+    void badgePubSub.publish(pubSubMessage);
+
+    // Broadcast to local websocket subscribers if any
     if (wsManager.getSubscriptionCount(task.id) > 0) {
-      broadcastBadgeSnapshot(task);
+      broadcastBadgeSnapshot(task.id, nextSnapshot);
       void syncPollerTask(task.id);
     }
   };
 
   const onTaskCreated = (task: Task) => {
-    badgeSnapshots.set(task.id, serializeBadgeSnapshot(task));
+    badgeSnapshots.set(task.id, {
+      prInfo: task.prInfo ?? null,
+      issueInfo: task.issueInfo ?? null,
+      timestamp: new Date().toISOString(),
+    });
   };
 
   const onTaskDeleted = (task: Task) => {
@@ -461,6 +503,23 @@ export function setupBadgeWebSocket(
   store.on("task:updated", onTaskUpdated);
   store.on("task:created", onTaskCreated);
   store.on("task:deleted", onTaskDeleted);
+
+  // Handle remote badge updates from other instances via pub/sub
+  badgePubSub.on("message", (message: BadgePubSubMessage) => {
+    // Update local cache with remote snapshot
+    const remoteSnapshot: BadgeSnapshot = {
+      prInfo: message.prInfo,
+      issueInfo: message.issueInfo,
+      timestamp: message.timestamp,
+    };
+    badgeSnapshots.set(message.taskId, remoteSnapshot);
+
+    // Rebroadcast to local websocket subscribers
+    // (No need to check for echo - pub/sub adapter already filtered our own messages)
+    if (wsManager.getSubscriptionCount(message.taskId) > 0) {
+      broadcastBadgeSnapshot(message.taskId, remoteSnapshot);
+    }
+  });
 
   wsManager.on("client:connected", (_clientId, totalClients) => {
     if (totalClients === 1) {
@@ -480,6 +539,13 @@ export function setupBadgeWebSocket(
       return;
     }
 
+    // Send cached snapshot to late subscriber if available
+    // This ensures a client subscribing after a remote update still sees the latest state
+    const cachedSnapshot = badgeSnapshots.get(taskId);
+    if (cachedSnapshot) {
+      broadcastBadgeSnapshot(taskId, cachedSnapshot);
+    }
+
     void syncPollerTask(taskId);
   });
 
@@ -497,6 +563,7 @@ export function setupBadgeWebSocket(
     }
 
     wsManager.dispose();
+    void badgePubSub.dispose();
     githubPoller.reset();
     wss.close();
     dashboardApp.terminalWsServer = null;
@@ -506,11 +573,24 @@ export function setupBadgeWebSocket(
   });
 }
 
-function serializeBadgeSnapshot(task: Pick<Task, "id" | "prInfo" | "issueInfo">): string {
-  return JSON.stringify({
-    prInfo: task.prInfo ?? null,
-    issueInfo: task.issueInfo ?? null,
-  });
+/** Compare two badge snapshots for equality */
+function snapshotsEqual(a: BadgeSnapshot | undefined, b: BadgeSnapshot | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  
+  // Compare prInfo
+  if (a.prInfo?.url !== b.prInfo?.url) return false;
+  if (a.prInfo?.status !== b.prInfo?.status) return false;
+  if (a.prInfo?.number !== b.prInfo?.number) return false;
+  if (a.prInfo?.title !== b.prInfo?.title) return false;
+  
+  // Compare issueInfo
+  if (a.issueInfo?.url !== b.issueInfo?.url) return false;
+  if (a.issueInfo?.state !== b.issueInfo?.state) return false;
+  if (a.issueInfo?.number !== b.issueInfo?.number) return false;
+  if (a.issueInfo?.title !== b.issueInfo?.title) return false;
+  
+  return true;
 }
 
 function resolveBadgeRepo(url: string, store: TaskStore): { owner: string; repo: string } | null {

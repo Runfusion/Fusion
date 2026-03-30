@@ -37,6 +37,7 @@
     "@mariozechner/pi-ai": "^0.62.0",
     "@mariozechner/pi-coding-agent": "^0.62.0",
     "express": "^5.1.0",
+    "ioredis": "^5.6.0",
     "multer": "^2.1.1"
   },
   "peerDependencies": {

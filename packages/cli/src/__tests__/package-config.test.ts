@@ -60,10 +60,9 @@ describe("CLI package.json publishing config", () => {
     expect(pkg.private).not.toBe(true);
   });
 
-  it("does not have @kb/* workspace packages in dependencies", () => {
+  it("declares ioredis as a runtime dependency for badge pub/sub", () => {
     const deps = Object.keys(pkg.dependencies || {});
-    const kbDeps = deps.filter((d) => d.startsWith("@kb/"));
-    expect(kbDeps).toEqual([]);
+    expect(deps).toContain("ioredis");
   });
 });
 

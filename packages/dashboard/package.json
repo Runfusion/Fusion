@@ -44,6 +44,7 @@
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/addon-webgl": "^0.18.0",
     "express": "^5.1.0",
+    "ioredis": "^5.6.0",
     "lucide-react": "^1.7.0",
     "multer": "^2.1.1",
     "node-pty": "^1.1.0-beta22",
