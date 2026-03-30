@@ -46,14 +46,14 @@ describe("Board", () => {
     expect(main.id).toBe("board");
   });
 
-  it("renders all 5 columns", () => {
+  it("renders all 6 columns", () => {
     renderBoard();
     for (const col of COLUMNS) {
       expect(screen.getByTestId(`column-${col}`)).toBeDefined();
     }
   });
 
-  it("renders all 5 columns as direct children of .board (CSS selector target)", () => {
+  it("renders all 6 columns as direct children of .board (CSS selector target)", () => {
     renderBoard();
     const board = screen.getByRole("main");
     // The mock Column renders <div data-testid="column-{col}" />, which are direct children

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchTaskDetail, updateTask, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, addSteeringComment, fetchGitRemotes } from "./api";
+import { fetchTaskDetail, updateTask, archiveTask, unarchiveTask, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, addSteeringComment, fetchGitRemotes } from "./api";
 import type { Task, TaskDetail } from "@kb/core";
 
 const FAKE_DETAIL: TaskDetail = {
@@ -635,6 +635,48 @@ describe("Git Management API", () => {
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Push rejected" }, 409));
 
       await expect(pushBranch()).rejects.toThrow("Push rejected");
+    });
+  });
+
+  describe("archiveTask", () => {
+    it("sends POST to archive endpoint", async () => {
+      const archivedTask: Task = { ...FAKE_DETAIL, column: "archived" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, archivedTask));
+
+      const response = await archiveTask("KB-001");
+
+      expect(response.column).toBe("archived");
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/archive", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+    });
+
+    it("throws on error", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Task not in done" }, 400));
+
+      await expect(archiveTask("KB-001")).rejects.toThrow("Task not in done");
+    });
+  });
+
+  describe("unarchiveTask", () => {
+    it("sends POST to unarchive endpoint", async () => {
+      const unarchivedTask: Task = { ...FAKE_DETAIL, column: "done" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, unarchivedTask));
+
+      const response = await unarchiveTask("KB-001");
+
+      expect(response.column).toBe("done");
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/unarchive", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+    });
+
+    it("throws on error", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Task not in archived" }, 400));
+
+      await expect(unarchiveTask("KB-001")).rejects.toThrow("Task not in archived");
     });
   });
 });

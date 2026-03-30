@@ -742,6 +742,72 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
   }
 
+  /**
+   * Archive a done task (move from done → archived).
+   * Logs the action and emits `task:moved` event.
+   */
+  async archiveTask(id: string): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      if (task.column !== "done") {
+        throw new Error(
+          `Cannot archive ${id}: task is in '${task.column}', must be in 'done'`,
+        );
+      }
+
+      task.column = "archived";
+      task.columnMovedAt = new Date().toISOString();
+      task.updatedAt = task.columnMovedAt;
+      task.log.push({
+        timestamp: task.columnMovedAt,
+        action: "Task archived",
+      });
+
+      await this.atomicWriteTaskJson(dir, task);
+
+      // Update cache if watcher is active
+      if (this.watcher) this.taskCache.set(id, { ...task });
+
+      this.emit("task:moved", { task, from: "done" as Column, to: "archived" as Column });
+      return task;
+    });
+  }
+
+  /**
+   * Unarchive an archived task (move from archived → done).
+   * Logs the action and emits `task:moved` event.
+   */
+  async unarchiveTask(id: string): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      if (task.column !== "archived") {
+        throw new Error(
+          `Cannot unarchive ${id}: task is in '${task.column}', must be in 'archived'`,
+        );
+      }
+
+      task.column = "done";
+      task.columnMovedAt = new Date().toISOString();
+      task.updatedAt = task.columnMovedAt;
+      task.log.push({
+        timestamp: task.columnMovedAt,
+        action: "Task unarchived",
+      });
+
+      await this.atomicWriteTaskJson(dir, task);
+
+      // Update cache if watcher is active
+      if (this.watcher) this.taskCache.set(id, { ...task });
+
+      this.emit("task:moved", { task, from: "archived" as Column, to: "done" as Column });
+      return task;
+    });
+  }
+
   private async moveToDone(task: Task, dir: string): Promise<void> {
     task.column = "done";
     task.worktree = undefined;

@@ -39,7 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive } = await import("./commands/task.js");
 
 const HELP = `
 kb — AI-orchestrated task board
@@ -56,6 +56,8 @@ Usage:
   kb task log <id> <message>          Add a log entry
   kb task merge <id>                  Merge an in-review task and close it
   kb task duplicate <id>              Duplicate a task (creates copy in triage)
+  kb task archive <id>                Archive a done task
+  kb task unarchive <id>              Unarchive an archived task
   kb task attach <id> <file>          Attach a file to a task
   kb task pause <id>                  Pause a task (stops all automation)
   kb task unpause <id>                Unpause a task (resumes automation)
@@ -72,7 +74,7 @@ Options:
   --interactive, -i          Interactive mode for issue selection
   --help, -h                 Show this help
 
-Columns: triage, todo, in-progress, in-review, done
+Columns: triage, todo, in-progress, in-review, done, archived
 Supported file types: png, jpg, gif, webp, txt, log, json, yaml, yml, toml, csv, xml
 
 The AI engine uses pi (github.com/badlogic/pi-mono) for agent sessions.
@@ -172,6 +174,18 @@ async function main() {
             const id = args[2];
             if (!id) { console.error("Usage: kb task duplicate <id>"); process.exit(1); }
             await runTaskDuplicate(id);
+            break;
+          }
+          case "archive": {
+            const id = args[2];
+            if (!id) { console.error("Usage: kb task archive <id>"); process.exit(1); }
+            await runTaskArchive(id);
+            break;
+          }
+          case "unarchive": {
+            const id = args[2];
+            if (!id) { console.error("Usage: kb task unarchive <id>"); process.exit(1); }
+            await runTaskUnarchive(id);
             break;
           }
           case "attach": {

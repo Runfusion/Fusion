@@ -15,6 +15,8 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateTask: vi.fn(),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
+    archiveTask: vi.fn(),
+    unarchiveTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({}),
     updateSettings: vi.fn(),
     logEntry: vi.fn().mockResolvedValue(undefined),
@@ -253,6 +255,110 @@ describe("POST /tasks/:id/duplicate", () => {
     (store.duplicateTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Database error"));
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/duplicate", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Database error");
+  });
+});
+
+describe("POST /tasks/:id/archive", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      archiveTask: vi.fn(),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("archives a done task and returns the updated task", async () => {
+    const archivedTask = { ...FAKE_TASK_DETAIL, column: "archived" };
+    (store.archiveTask as ReturnType<typeof vi.fn>).mockResolvedValue(archivedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/archive", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.column).toBe("archived");
+    expect(store.archiveTask).toHaveBeenCalledWith("KB-001");
+  });
+
+  it("returns 400 when task is not in done column", async () => {
+    (store.archiveTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Cannot archive KB-001: task is in 'triage', must be in 'done'"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/archive", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("must be in 'done'");
+  });
+
+  it("returns 500 on unexpected errors", async () => {
+    (store.archiveTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Database error"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/archive", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Database error");
+  });
+});
+
+describe("POST /tasks/:id/unarchive", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      unarchiveTask: vi.fn(),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("unarchives an archived task and returns the updated task", async () => {
+    const unarchivedTask = { ...FAKE_TASK_DETAIL, column: "done" };
+    (store.unarchiveTask as ReturnType<typeof vi.fn>).mockResolvedValue(unarchivedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/unarchive", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.column).toBe("done");
+    expect(store.unarchiveTask).toHaveBeenCalledWith("KB-001");
+  });
+
+  it("returns 400 when task is not in archived column", async () => {
+    (store.unarchiveTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Cannot unarchive KB-001: task is in 'done', must be in 'archived'"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/unarchive", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("must be in 'archived'");
+  });
+
+  it("returns 500 on unexpected errors", async () => {
+    (store.unarchiveTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Database error"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/unarchive", JSON.stringify({}), {
       "Content-Type": "application/json",
     });
 

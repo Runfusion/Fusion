@@ -35,9 +35,9 @@ describe("column fixed-width CSS", () => {
   });
 
   describe("desktop .board grid template", () => {
-    it("still uses repeat(5, minmax(260px, 1fr))", () => {
+    it("uses repeat(6, minmax(260px, 1fr)) for 6 columns", () => {
       expect(css).toContain(
-        "grid-template-columns: repeat(5, minmax(260px, 1fr))",
+        "grid-template-columns: repeat(6, minmax(260px, 1fr))",
       );
     });
   });

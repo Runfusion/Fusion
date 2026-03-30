@@ -12,6 +12,7 @@ const COLUMN_COLOR_MAP: Record<Column, string> = {
   "in-progress": "var(--in-progress)",
   "in-review": "var(--in-review)",
   done: "var(--done)",
+  archived: "var(--text-secondary)",
 };
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "specifying"]);
@@ -247,7 +248,8 @@ export function ListView({
       todo: [],
       "in-progress": [],
       "in-review": [],
-      done: []
+      done: [],
+      archived: []
     };
     sorted.forEach(task => groups[task.column].push(task));
     return groups;
@@ -317,6 +319,12 @@ export function ListView({
       setDragOverColumn(null);
       const taskId = e.dataTransfer.getData("text/plain");
       if (!taskId) return;
+
+      // Prevent dropping into archived column
+      if (column === "archived") {
+        addToast("Tasks can only be archived via the archive button", "error");
+        return;
+      }
 
       try {
         await onMoveTask(taskId, column);

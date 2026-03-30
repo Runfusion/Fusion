@@ -371,6 +371,63 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── kb_task_archive ───────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_archive",
+    label: "KB: Archive Task",
+    description:
+      "Archive a done task (move from done → archived). " +
+      "Archived tasks are preserved for historical reference but moved out of the main board view.",
+    promptSnippet: "Archive a done kb task (moves to archived column)",
+    promptGuidelines: [
+      "Use to clean up old completed tasks from the done column",
+      "Only tasks in the 'done' column can be archived",
+      "Archived tasks can be unarchived later if needed",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID to archive (e.g. KB-001). Must be in 'done' column." }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const task = await store.archiveTask(params.id);
+
+      return {
+        content: [{ type: "text", text: `Archived ${task.id} → ${COLUMN_LABELS[task.column]}` }],
+        details: { taskId: task.id, column: task.column },
+      };
+    },
+  });
+
+  // ── kb_task_unarchive ─────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_unarchive",
+    label: "KB: Unarchive Task",
+    description:
+      "Unarchive an archived task (move from archived → done). " +
+      "Restores the task to the done column.",
+    promptSnippet: "Unarchive a kb task (restores to done column)",
+    promptGuidelines: [
+      "Use to restore an archived task back to the done column",
+      "Only tasks in the 'archived' column can be unarchived",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID to unarchive (e.g. KB-001). Must be in 'archived' column." }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const task = await store.unarchiveTask(params.id);
+
+      return {
+        content: [{ type: "text", text: `Unarchived ${task.id} → ${COLUMN_LABELS[task.column]}` }],
+        details: { taskId: task.id, column: task.column },
+      };
+    },
+  });
+
   // ── kb_task_import_github ─────────────────────────────────────────
 
   pi.registerTool({

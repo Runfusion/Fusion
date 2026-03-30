@@ -242,7 +242,7 @@ body {
 /* === Board === */
 .board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(260px, 1fr));
+  grid-template-columns: repeat(6, minmax(260px, 1fr));
   gap: 12px;
   padding: 16px 24px;
   height: calc(100vh - 57px);
@@ -309,6 +309,9 @@ body {
 }
 .dot-done {
   background: var(--done);
+}
+.dot-archived {
+  background: var(--text-muted);
 }
 
 .column-header h2 {
@@ -1635,6 +1638,44 @@ body {
 }
 
 .card-edit-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+/* Archive/Unarchive buttons */
+.card-archive-btn,
+.card-unarchive-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.card:hover .card-archive-btn,
+.card:hover .card-unarchive-btn {
+  opacity: 1;
+}
+
+.card-archive-btn:hover,
+.card-unarchive-btn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+.card-archive-btn:focus,
+.card-unarchive-btn:focus {
   opacity: 1;
   outline: 1px solid var(--todo);
   outline-offset: 1px;

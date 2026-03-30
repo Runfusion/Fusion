@@ -2,6 +2,7 @@ import type { Task, TaskDetail, TaskCreateInput, Column as ColumnType } from "@k
 import { COLUMNS } from "@kb/core";
 import { Column } from "./Column";
 import type { ToastType } from "../hooks/useToast";
+import { useState } from "react";
 
 interface BoardProps {
   tasks: Task[];
@@ -20,9 +21,13 @@ interface BoardProps {
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
+  onArchiveTask?: (id: string) => Promise<Task>;
+  onUnarchiveTask?: (id: string) => Promise<Task>;
 }
 
-export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask }: BoardProps) {
+export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask }: BoardProps) {
+  const [archivedCollapsed, setArchivedCollapsed] = useState(true);
+
   return (
     <main className="board" id="board">
       {COLUMNS.map((col) => (
@@ -48,8 +53,11 @@ export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast
           addToast={addToast}
           globalPaused={globalPaused}
           onUpdateTask={onUpdateTask}
+          onArchiveTask={onArchiveTask}
+          onUnarchiveTask={onUnarchiveTask}
           {...(col === "triage" ? { isCreating, onCancelCreate, onCreateTask, onNewTask } : {})}
           {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
+          {...(col === "archived" ? { collapsed: archivedCollapsed, onToggleCollapse: () => setArchivedCollapsed(!archivedCollapsed) } : {})}
         />
       ))}
     </main>

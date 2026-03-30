@@ -75,6 +75,14 @@ export function unpauseTask(id: string): Promise<Task> {
   return api<Task>(`/tasks/${id}/unpause`, { method: "POST" });
 }
 
+export function archiveTask(id: string): Promise<Task> {
+  return api<Task>(`/tasks/${id}/archive`, { method: "POST" });
+}
+
+export function unarchiveTask(id: string): Promise<Task> {
+  return api<Task>(`/tasks/${id}/unarchive`, { method: "POST" });
+}
+
 export function approvePlan(id: string): Promise<Task> {
   return api<Task>(`/tasks/${id}/approve-plan`, { method: "POST" });
 }

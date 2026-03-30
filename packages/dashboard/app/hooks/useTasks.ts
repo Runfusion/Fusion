@@ -156,5 +156,21 @@ export function useTasks() {
     }
   }, []);
 
-  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, duplicateTask, updateTask };
+  const archiveTask = useCallback(async (id: string): Promise<Task> => {
+    const task = await api.archiveTask(id);
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? task : t))
+    );
+    return task;
+  }, []);
+
+  const unarchiveTask = useCallback(async (id: string): Promise<Task> => {
+    const task = await api.unarchiveTask(id);
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? task : t))
+    );
+    return task;
+  }, []);
+
+  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, duplicateTask, updateTask, archiveTask, unarchiveTask };
 }

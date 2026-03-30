@@ -2,7 +2,7 @@
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done"] as const;
+export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done", "archived"] as const;
 export type Column = (typeof COLUMNS)[number];
 
 export type PrStatus = "open" | "closed" | "merged";
@@ -267,6 +267,7 @@ export const COLUMN_LABELS: Record<Column, string> = {
   "in-progress": "In Progress",
   "in-review": "In Review",
   done: "Done",
+  archived: "Archived",
 };
 
 export const COLUMN_DESCRIPTIONS: Record<Column, string> = {
@@ -275,6 +276,7 @@ export const COLUMN_DESCRIPTIONS: Record<Column, string> = {
   "in-progress": "AI is working on this in a worktree",
   "in-review": "Complete — ready to merge",
   done: "Merged and closed",
+  archived: "Completed and archived",
 };
 
 export const VALID_TRANSITIONS: Record<Column, Column[]> = {
@@ -282,5 +284,6 @@ export const VALID_TRANSITIONS: Record<Column, Column[]> = {
   todo: ["in-progress", "triage"],
   "in-progress": ["in-review", "todo", "triage"],
   "in-review": ["done", "in-progress"],
-  done: [],
+  done: ["archived"],
+  archived: ["done"],
 };

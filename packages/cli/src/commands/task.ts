@@ -296,6 +296,24 @@ export async function runTaskDuplicate(id: string) {
   console.log();
 }
 
+export async function runTaskArchive(id: string) {
+  const store = await getStore();
+  const task = await store.archiveTask(id);
+
+  console.log();
+  console.log(`  ✓ Archived ${task.id} → ${COLUMN_LABELS[task.column]}`);
+  console.log();
+}
+
+export async function runTaskUnarchive(id: string) {
+  const store = await getStore();
+  const task = await store.unarchiveTask(id);
+
+  console.log();
+  console.log(`  ✓ Unarchived ${task.id} → ${COLUMN_LABELS[task.column]}`);
+  console.log();
+}
+
 export async function runTaskImportGitHubInteractive(
   ownerRepo: string,
   options: TaskImportOptions = {}

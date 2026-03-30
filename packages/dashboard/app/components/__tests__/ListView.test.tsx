@@ -598,7 +598,7 @@ describe("ListView", () => {
 
     // Find section headers by their structure
     const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
-    expect(sectionHeaders.length).toBe(5); // One for each column
+    expect(sectionHeaders.length).toBe(6); // One for each column
 
     // Check that triage section shows count of 2
     const triageHeader = sectionHeaders.find(h => h.textContent?.includes("Triage"));
@@ -1152,7 +1152,7 @@ describe("ListView Hide Done Tasks", () => {
 
     // All section headers should be visible initially
     const sectionHeadersBefore = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
-    expect(sectionHeadersBefore.length).toBe(5); // All 5 columns
+    expect(sectionHeadersBefore.length).toBe(6); // All 6 columns
 
     // Click hide done button
     const hideDoneButton = screen.getByRole("button", { name: /hide done/i });

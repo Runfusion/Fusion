@@ -10,6 +10,7 @@ const COLUMN_COLOR_MAP: Record<Column, string> = {
   "in-progress": "rgba(188,140,255,0.15)",
   "in-review": "rgba(63,185,80,0.15)",
   done: "rgba(139,148,158,0.15)",
+  archived: "rgba(120,120,120,0.1)",
 };
 
 const COLUMN_TEXT_COLOR_MAP: Record<Column, string> = {
@@ -18,6 +19,7 @@ const COLUMN_TEXT_COLOR_MAP: Record<Column, string> = {
   "in-progress": "var(--in-progress)",
   "in-review": "var(--in-review)",
   done: "var(--done)",
+  archived: "var(--text-secondary)",
 };
 
 const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
@@ -35,6 +37,8 @@ interface TaskCardProps {
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
+  onArchiveTask?: (id: string) => Promise<Task>;
+  onUnarchiveTask?: (id: string) => Promise<Task>;
 }
 
 export function TaskCard({
@@ -45,6 +49,8 @@ export function TaskCard({
   globalPaused,
   tasks = [],
   onUpdateTask,
+  onArchiveTask,
+  onUnarchiveTask,
 }: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
@@ -139,8 +145,9 @@ export function TaskCard({
 
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
+  const isArchived = task.column === "archived";
   const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
-  const isDraggable = !queued && !isPaused && !isEditing; // Disable drag during edit
+  const isDraggable = !queued && !isPaused && !isEditing && !isArchived; // Disable drag during edit or if archived
 
   // Check if this card can be edited inline
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
@@ -367,6 +374,42 @@ export function TaskCard({
             aria-label="Edit task"
           >
             <Pencil size={12} />
+          </button>
+        )}
+        {/* Archive button for done column tasks */}
+        {task.column === "done" && onArchiveTask && (
+          <button
+            className="card-archive-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onArchiveTask(task.id).then(() => {
+                addToast(`Archived ${task.id}`, "success");
+              }).catch((err: any) => {
+                addToast(`Failed to archive ${task.id}: ${err.message}`, "error");
+              });
+            }}
+            title="Archive task"
+            aria-label="Archive task"
+          >
+            Archive
+          </button>
+        )}
+        {/* Unarchive button for archived column tasks */}
+        {task.column === "archived" && onUnarchiveTask && (
+          <button
+            className="card-unarchive-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onUnarchiveTask(task.id).then(() => {
+                addToast(`Unarchived ${task.id}`, "success");
+              }).catch((err: any) => {
+                addToast(`Failed to unarchive ${task.id}: ${err.message}`, "error");
+              });
+            }}
+            title="Unarchive task"
+            aria-label="Unarchive task"
+          >
+            Unarchive
           </button>
         )}
       </div>

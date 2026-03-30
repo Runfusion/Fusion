@@ -685,6 +685,28 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Archive task (done → archived)
+  router.post("/tasks/:id/archive", async (req, res) => {
+    try {
+      const task = await store.archiveTask(req.params.id);
+      res.json(task);
+    } catch (err: any) {
+      const status = err.message?.includes("must be in") ? 400 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  // Unarchive task (archived → done)
+  router.post("/tasks/:id/unarchive", async (req, res) => {
+    try {
+      const task = await store.unarchiveTask(req.params.id);
+      res.json(task);
+    } catch (err: any) {
+      const status = err.message?.includes("must be in") ? 400 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // Upload attachment
   router.post("/tasks/:id/attachments", upload.single("file"), async (req, res) => {
     try {

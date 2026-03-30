@@ -1563,4 +1563,230 @@ describe("TaskStore", () => {
       expect(duplicated.baseBranch).toBeUndefined();
     });
   });
+
+
+  // ── Archive/Unarchive Tests ──────────────────────────────────────
+
+  describe("archiveTask", () => {
+    it("archives a done task (moves done → archived)", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const archived = await store.archiveTask(task.id);
+
+      expect(archived.column).toBe("archived");
+    });
+
+    it("adds log entry 'Task archived'", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const archived = await store.archiveTask(task.id);
+
+      expect(archived.log.some((l) => l.action === "Task archived")).toBe(true);
+    });
+
+    it("emits task:moved event with correct from/to columns", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const events: any[] = [];
+      store.on("task:moved", (data) => events.push(data));
+
+      await store.archiveTask(task.id);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].from).toBe("done");
+      expect(events[0].to).toBe("archived");
+    });
+
+    it("persists to disk and round-trips correctly", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      await store.archiveTask(task.id);
+      const fetched = await store.getTask(task.id);
+
+      expect(fetched.column).toBe("archived");
+    });
+
+    it("throws error when task is not in 'done' column", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      // Task starts in triage, not done
+
+      await expect(store.archiveTask(task.id)).rejects.toThrow("must be in 'done'");
+    });
+
+    it("updates columnMovedAt timestamp", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      const beforeArchive = (await store.getTask(task.id)).columnMovedAt;
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      const archived = await store.archiveTask(task.id);
+
+      expect(archived.columnMovedAt).not.toBe(beforeArchive);
+      expect(new Date(archived.columnMovedAt!).getTime()).toBeGreaterThan(new Date(beforeArchive!).getTime());
+    });
+  });
+
+  describe("unarchiveTask", () => {
+    it("unarchives an archived task (moves archived → done)", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id);
+
+      const unarchived = await store.unarchiveTask(task.id);
+
+      expect(unarchived.column).toBe("done");
+    });
+
+    it("adds log entry 'Task unarchived'", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id);
+
+      const unarchived = await store.unarchiveTask(task.id);
+
+      expect(unarchived.log.some((l) => l.action === "Task unarchived")).toBe(true);
+    });
+
+    it("emits task:moved event with correct from/to columns", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id);
+
+      const events: any[] = [];
+      store.on("task:moved", (data) => events.push(data));
+
+      await store.unarchiveTask(task.id);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].from).toBe("archived");
+      expect(events[0].to).toBe("done");
+    });
+
+    it("persists to disk and round-trips correctly", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id);
+
+      await store.unarchiveTask(task.id);
+      const fetched = await store.getTask(task.id);
+
+      expect(fetched.column).toBe("done");
+    });
+
+    it("throws error when task is not in 'archived' column", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      // Task starts in triage, not archived
+
+      await expect(store.unarchiveTask(task.id)).rejects.toThrow("must be in 'archived'");
+    });
+  });
+
+  describe("VALID_TRANSITIONS — invalid archived transitions via moveTask", () => {
+    it("moveTask from archived → in-progress should fail", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id);
+
+      await expect(store.moveTask(task.id, "in-progress")).rejects.toThrow("Invalid transition");
+    });
+
+    it("moveTask from archived → triage should fail", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id);
+
+      await expect(store.moveTask(task.id, "triage")).rejects.toThrow("Invalid transition");
+    });
+
+    it("moveTask from archived → todo should fail", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id);
+
+      await expect(store.moveTask(task.id, "todo")).rejects.toThrow("Invalid transition");
+    });
+
+    it("moveTask from archived → in-review should fail", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id);
+
+      await expect(store.moveTask(task.id, "in-review")).rejects.toThrow("Invalid transition");
+    });
+
+    it("moveTask from triage → archived should fail", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      // Task starts in triage
+
+      await expect(store.moveTask(task.id, "archived")).rejects.toThrow("Invalid transition");
+    });
+
+    it("moveTask from todo → archived should fail", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+
+      await expect(store.moveTask(task.id, "archived")).rejects.toThrow("Invalid transition");
+    });
+
+    it("moveTask from in-progress → archived should fail", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      await expect(store.moveTask(task.id, "archived")).rejects.toThrow("Invalid transition");
+    });
+
+    it("moveTask from in-review → archived should fail", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+
+      await expect(store.moveTask(task.id, "archived")).rejects.toThrow("Invalid transition");
+    });
+  });
 });

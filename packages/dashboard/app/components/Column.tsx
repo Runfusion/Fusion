@@ -7,6 +7,7 @@ import { WorktreeGroup } from "./WorktreeGroup";
 import { InlineCreateCard } from "./InlineCreateCard";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
 interface ColumnProps {
   column: ColumnType;
@@ -27,17 +28,27 @@ interface ColumnProps {
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
+  onArchiveTask?: (id: string) => Promise<Task>;
+  onUnarchiveTask?: (id: string) => Promise<Task>;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask }: ColumnProps) {
+export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, collapsed, onToggleCollapse }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const countFlashing = useFlashOnIncrease(tasks.length);
 
+  // Archived column is collapsed by default - don't show drag state when collapsed
+  const isArchived = column === "archived";
+  const isCollapsed = isArchived && collapsed;
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
+    // Don't allow dropping into archived column via drag-drop
+    if (isArchived) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     setDragOver(true);
-  }, []);
+  }, [isArchived]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     const el = e.currentTarget as HTMLElement;
@@ -61,7 +72,7 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
 
   return (
     <div
-      className={`column${dragOver ? " drag-over" : ""}`}
+      className={`column${dragOver ? " drag-over" : ""}${isArchived ? " column-archived" : ""}${isCollapsed ? " column-collapsed" : ""}`}
       data-column={column}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -87,46 +98,68 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
             + New Task
           </button>
         )}
-      </div>
-      <p className="column-desc">{COLUMN_DESCRIPTIONS[column]}</p>
-      <div className="column-body">
-        {column === "triage" && isCreating && onCancelCreate && onCreateTask && (
-          <InlineCreateCard
-            tasks={allTasks}
-            onSubmit={onCreateTask}
-            onCancel={onCancelCreate}
-            addToast={addToast}
-          />
-        )}
-        {column === "in-progress" ? (
-          (() => {
-            const groups = groupByWorktree(tasks, allTasks, maxConcurrent);
-            return groups.length === 0 ? (
-              <div className="empty-column">No tasks</div>
-            ) : (
-              groups.map((group) => (
-                <WorktreeGroup
-                  key={group.label}
-                  label={group.label}
-                  activeTasks={group.activeTasks}
-                  queuedTasks={group.queuedTasks}
-                  onOpenDetail={onOpenDetail}
-                  addToast={addToast}
-                  globalPaused={globalPaused}
-                  tasks={allTasks}
-                  onUpdateTask={onUpdateTask}
-                />
-              ))
-            );
-          })()
-        ) : tasks.length === 0 ? (
-          <div className="empty-column">No tasks</div>
-        ) : (
-          tasks.map((task) => (
-            <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} tasks={allTasks} onUpdateTask={onUpdateTask} />
-          ))
+        {isArchived && onToggleCollapse && (
+          <button
+            className="btn btn-icon btn-sm"
+            onClick={onToggleCollapse}
+            title={collapsed ? "Expand archived tasks" : "Collapse archived tasks"}
+            aria-label={collapsed ? "Expand archived tasks" : "Collapse archived tasks"}
+          >
+            {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+          </button>
         )}
       </div>
+      {!isCollapsed && <p className="column-desc">{COLUMN_DESCRIPTIONS[column]}</p>}
+      {!isCollapsed && (
+        <div className="column-body">
+          {column === "triage" && isCreating && onCancelCreate && onCreateTask && (
+            <InlineCreateCard
+              tasks={allTasks}
+              onSubmit={onCreateTask}
+              onCancel={onCancelCreate}
+              addToast={addToast}
+            />
+          )}
+          {column === "in-progress" ? (
+            (() => {
+              const groups = groupByWorktree(tasks, allTasks, maxConcurrent);
+              return groups.length === 0 ? (
+                <div className="empty-column">No tasks</div>
+              ) : (
+                groups.map((group) => (
+                  <WorktreeGroup
+                    key={group.label}
+                    label={group.label}
+                    activeTasks={group.activeTasks}
+                    queuedTasks={group.queuedTasks}
+                    onOpenDetail={onOpenDetail}
+                    addToast={addToast}
+                    globalPaused={globalPaused}
+                    tasks={allTasks}
+                    onUpdateTask={onUpdateTask}
+                  />
+                ))
+              );
+            })()
+          ) : tasks.length === 0 ? (
+            <div className="empty-column">No tasks</div>
+          ) : (
+            tasks.map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                onOpenDetail={onOpenDetail}
+                addToast={addToast}
+                globalPaused={globalPaused}
+                tasks={allTasks}
+                onUpdateTask={onUpdateTask}
+                onArchiveTask={onArchiveTask}
+                onUnarchiveTask={onUnarchiveTask}
+              />
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
