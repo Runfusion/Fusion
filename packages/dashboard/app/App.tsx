@@ -142,15 +142,12 @@ function AppInner() {
     setTerminalOpen(false);
   }, []);
 
-  // Filter tasks to get only in-progress tasks for terminal
-  const inProgressTasks = tasks.filter((t) => t.column === "in-progress");
   return (
     <>
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenGitHubImport={() => setGitHubImportOpen(true)}
         onToggleTerminal={handleToggleTerminal}
-        inProgressCount={inProgressTasks.length}
         globalPaused={globalPaused}
         enginePaused={enginePaused}
         onToggleGlobalPause={handleToggleGlobalPause}

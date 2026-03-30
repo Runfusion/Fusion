@@ -1,37 +1,28 @@
-import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal, Moon, Sun, Monitor } from "lucide-react";
-import type { ThemeMode } from "@kb/core";
+import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal } from "lucide-react";
 
 interface HeaderProps {
   onOpenSettings?: () => void;
   onOpenGitHubImport?: () => void;
   onToggleTerminal?: () => void;
-  inProgressCount?: number;
   globalPaused?: boolean;
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
   onToggleEnginePause?: () => void;
   view?: "board" | "list";
   onChangeView?: (view: "board" | "list") => void;
-  themeMode?: ThemeMode;
-  onToggleTheme?: () => void;
 }
 
 export function Header({
   onOpenSettings,
   onOpenGitHubImport,
   onToggleTerminal,
-  inProgressCount = 0,
   globalPaused,
   enginePaused,
   onToggleGlobalPause,
   onToggleEnginePause,
   view = "board",
   onChangeView,
-  themeMode = "dark",
-  onToggleTheme,
 }: HeaderProps) {
-  const hasInProgressTasks = inProgressCount > 0;
-
   return (
     <header className="header">
       <div className="header-left">
@@ -63,41 +54,18 @@ export function Header({
             </button>
           </div>
         )}
-        {/* Theme Toggle */}
-        {onToggleTheme && (
-          <button
-            className="btn-icon"
-            onClick={onToggleTheme}
-            title={`Toggle theme (${themeMode === "dark" ? "Dark" : themeMode === "light" ? "Light" : "System"})`}
-            aria-label={`Toggle theme (${themeMode === "dark" ? "Dark" : themeMode === "light" ? "Light" : "System"})`}
-            data-testid="theme-toggle-btn"
-          >
-            {themeMode === "dark" ? (
-              <Moon size={16} />
-            ) : themeMode === "light" ? (
-              <Sun size={16} />
-            ) : (
-              <Monitor size={16} />
-            )}
-          </button>
-        )}
         {/* Import from GitHub */}
         <button className="btn-icon" onClick={onOpenGitHubImport} title="Import from GitHub">
           <Download size={16} />
         </button>
-        {/* Terminal button - always enabled */}
+        {/* Terminal button - always available for interactive shell access */}
         <button
-          className={`btn-icon btn-icon--terminal${hasInProgressTasks ? " has-badge" : ""}`}
+          className="btn-icon btn-icon--terminal"
           onClick={onToggleTerminal}
           title="Open Terminal"
           data-testid="terminal-toggle-btn"
         >
           <Terminal size={16} />
-          {hasInProgressTasks && (
-            <span className="btn-badge" data-testid="terminal-badge">
-              {inProgressCount > 9 ? "9+" : inProgressCount}
-            </span>
-          )}
         </button>
         {/* Pause button (soft pause): stops new work, lets agents finish */}
         <button

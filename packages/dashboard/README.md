@@ -12,6 +12,28 @@ Web-based dashboard for managing kb tasks. Provides a visual kanban board, list 
 - **GitHub Import**: Import issues directly from GitHub repositories
 - **PR Management**: Create and track pull requests for in-review tasks
 
+### Interactive Terminal
+Access a fully functional shell terminal directly from the dashboard. Click the terminal icon in the header to open the interactive terminal modal.
+
+**Features**:
+- Execute shell commands in the project's working directory
+- Real-time output streaming via Server-Sent Events (SSE)
+- Command history with Up/Down arrow navigation
+- Keyboard shortcuts:
+  - `↑` / `↓` - Navigate command history
+  - `Ctrl+C` - Kill running process
+  - `Ctrl+L` - Clear terminal screen
+  - `Escape` - Close terminal modal
+
+**Supported Commands**:
+The terminal includes a curated allowlist of safe commands including: git, npm/pnpm/yarn, node, python, ls, cat, curl, make, ps, and many more. Dangerous commands (rm -rf /, disk writes, fork bombs, etc.) are automatically blocked for security.
+
+**Session Management**:
+- Each command creates a new session with 30-second timeout
+- Output streams in real-time as the command executes
+- Sessions automatically clean up after exit
+- Terminal state persists while modal is open (clears on close)
+
 ### Git Manager
 The Git Manager provides comprehensive repository visualization and management directly from the web UI. Access it via the Git Branch icon in the header.
 
@@ -137,7 +159,7 @@ The dashboard server exposes a REST API at `/api`:
 
 ### Git Operations
 - `GET /api/git/status` - Current branch and status
-- `GET /api/git/commits` - Recent commits (with optional `?limit=`)
+- `GET /api/git/commits` - Recent commits (with optional `?limit=`)  
 - `GET /api/git/commits/:hash/diff` - Commit diff
 - `GET /api/git/branches` - List branches
 - `GET /api/git/worktrees` - List worktrees with task associations
@@ -147,6 +169,12 @@ The dashboard server exposes a REST API at `/api`:
 - `POST /api/git/fetch` - Fetch from remote (`{ remote? }`)
 - `POST /api/git/pull` - Pull current branch
 - `POST /api/git/push` - Push current branch
+
+### Interactive Terminal
+- `POST /api/terminal/exec` - Execute command (`{ command }`) → `{ sessionId }`
+- `GET /api/terminal/sessions/:id` - Get session status and output
+- `POST /api/terminal/sessions/:id/kill` - Kill running process (`{ signal? }`)
+- `GET /api/terminal/sessions/:id/stream` - SSE stream for real-time output
 
 ### GitHub Integration
 - `GET /api/git/remotes` - List GitHub remotes

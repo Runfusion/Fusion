@@ -477,3 +477,58 @@ export function pushBranch(): Promise<GitPushResult> {
     method: "POST",
   });
 }
+
+// --- Terminal API ---
+
+/** Terminal exec response - returns sessionId for streaming output via SSE */
+export interface TerminalExecResponse {
+  sessionId: string;
+}
+
+/** Terminal session status and output */
+export interface TerminalSession {
+  id: string;
+  command: string;
+  running: boolean;
+  exitCode: number | null;
+  output: string;
+  startTime: string;
+}
+
+/** Terminal SSE event types */
+export interface TerminalOutputEvent {
+  type: "stdout" | "stderr";
+  data: string;
+}
+
+/** Terminal exit event from SSE */
+export interface TerminalExitEvent {
+  type: "exit";
+  exitCode: number;
+}
+
+/** Execute a shell command and get a session ID for streaming output */
+export function execTerminalCommand(command: string): Promise<TerminalExecResponse> {
+  return api<TerminalExecResponse>("/terminal/exec", {
+    method: "POST",
+    body: JSON.stringify({ command }),
+  });
+}
+
+/** Get terminal session status and accumulated output */
+export function getTerminalSession(sessionId: string): Promise<TerminalSession> {
+  return api<TerminalSession>(`/terminal/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+/** Kill a running terminal session */
+export function killTerminalSession(sessionId: string, signal?: "SIGTERM" | "SIGKILL" | "SIGINT"): Promise<{ killed: boolean; sessionId: string }> {
+  return api<{ killed: boolean; sessionId: string }>(`/terminal/sessions/${encodeURIComponent(sessionId)}/kill`, {
+    method: "POST",
+    body: JSON.stringify({ signal: signal ?? "SIGTERM" }),
+  });
+}
+
+/** Get the SSE stream URL for a terminal session */
+export function getTerminalStreamUrl(sessionId: string): string {
+  return `/api/terminal/sessions/${encodeURIComponent(sessionId)}/stream`;
+}

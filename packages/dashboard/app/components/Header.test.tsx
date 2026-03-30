@@ -105,45 +105,14 @@ describe("Header", () => {
 
     it("calls onToggleTerminal when terminal button is clicked", () => {
       const onToggleTerminal = vi.fn();
-      renderHeader({ onToggleTerminal, inProgressCount: 1 });
+      renderHeader({ onToggleTerminal });
       fireEvent.click(screen.getByTitle("Open Terminal"));
       expect(onToggleTerminal).toHaveBeenCalled();
     });
 
-    it("shows badge with count when in-progress tasks exist", () => {
-      renderHeader({ onToggleTerminal: noop, inProgressCount: 3 });
-      expect(screen.getByTestId("terminal-badge")).toBeDefined();
-      expect(screen.getByTestId("terminal-badge").textContent).toBe("3");
-    });
-
-    it("shows badge with 9+ when count exceeds 9", () => {
-      renderHeader({ onToggleTerminal: noop, inProgressCount: 15 });
-      expect(screen.getByTestId("terminal-badge")).toBeDefined();
-      expect(screen.getByTestId("terminal-badge").textContent).toBe("9+");
-    });
-
-    it("does not show badge when no in-progress tasks", () => {
-      renderHeader({ onToggleTerminal: noop, inProgressCount: 0 });
-      expect(screen.queryByTestId("terminal-badge")).toBeNull();
-    });
-
-    it("is always enabled (interactive shell feature)", () => {
-      // Terminal is now always accessible regardless of task state
-      const { rerender } = renderHeader({ onToggleTerminal: noop, inProgressCount: 0 });
-      let btn = screen.getByTitle("Open Terminal");
-      expect(btn.hasAttribute("disabled")).toBe(false);
-
-      rerender(<Header
-        onOpenSettings={noop}
-        onOpenGitHubImport={noop}
-        globalPaused={false}
-        enginePaused={false}
-        onToggleGlobalPause={noop}
-        onToggleEnginePause={noop}
-        onToggleTerminal={noop}
-        inProgressCount={2}
-      />);
-      btn = screen.getByTitle("Open Terminal");
+    it("is always enabled regardless of task state", () => {
+      renderHeader({ onToggleTerminal: noop });
+      const btn = screen.getByTitle("Open Terminal");
       expect(btn.hasAttribute("disabled")).toBe(false);
     });
   });

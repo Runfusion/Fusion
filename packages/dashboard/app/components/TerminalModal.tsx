@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { X, Trash2, Terminal as TerminalIcon } from "lucide-react";
 import { useTerminal } from "../hooks/useTerminal";
 
@@ -8,24 +8,38 @@ interface TerminalModalProps {
   initialCommand?: string;
 }
 
+/**
+ * Interactive terminal modal component.
+ * 
+ * Provides a fully functional shell terminal where users can execute commands
+ * in the project's working directory. Features include:
+ * - Real-time command output streaming via SSE
+ * - Command history with Up/Down arrow navigation
+ * - Keyboard shortcuts (Ctrl+C to kill, Ctrl+L to clear)
+ * - Persistent session during modal lifetime
+ * - Scrollable output history
+ * 
+ * The terminal is independent of task state and always available.
+ */
 export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModalProps) {
   const {
     history,
-    input,
     isRunning,
-    currentDirectory,
+    inputValue,
+    setInputValue,
     executeCommand,
     clearHistory,
-    setInput,
     killCurrentCommand,
-    navigateHistory,
+    navigateHistoryUp,
+    navigateHistoryDown,
+    resetHistoryNavigation,
   } = useTerminal();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
-  const [historyOffset, setHistoryOffset] = useState(-1);
+  const [showWelcome, setShowWelcome] = useState(true);
 
-  // Auto-scroll to bottom when history changes
+  // Auto-scroll to bottom when output changes
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
@@ -35,77 +49,19 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
   // Focus input when modal opens
   useEffect(() => {
     if (isOpen && inputRef.current) {
-      inputRef.current.focus();
+      setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [isOpen]);
 
   // Execute initial command if provided
   useEffect(() => {
-    if (isOpen && initialCommand && !isRunning && history.length === 0) {
+    if (isOpen && initialCommand && showWelcome) {
+      setShowWelcome(false);
       executeCommand(initialCommand);
     }
-  }, [isOpen, initialCommand, isRunning, history.length, executeCommand]);
+  }, [isOpen, initialCommand, executeCommand, showWelcome]);
 
-  // Handle keyboard shortcuts
-  const handleKeyDown = useCallback(
-    async (e: React.KeyboardEvent) => {
-      // Ctrl+C - Kill running command
-      if (e.ctrlKey && e.key === "c" && isRunning) {
-        e.preventDefault();
-        await killCurrentCommand();
-        return;
-      }
-
-      // Ctrl+L - Clear screen
-      if (e.ctrlKey && e.key === "l") {
-        e.preventDefault();
-        clearHistory();
-        return;
-      }
-
-      // Enter - Execute command
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        const command = input.trim();
-        if (command) {
-          await executeCommand(command);
-          setHistoryOffset(-1);
-        }
-        return;
-      }
-
-      // Up arrow - Navigate history backward (older)
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        const historyCmd = navigateHistory("up", input);
-        if (historyCmd !== null) {
-          setInput(historyCmd);
-        }
-        return;
-      }
-
-      // Down arrow - Navigate history forward (newer)
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        const historyCmd = navigateHistory("down", input);
-        if (historyCmd !== null) {
-          setInput(historyCmd);
-        }
-        return;
-      }
-    },
-    [input, isRunning, executeCommand, killCurrentCommand, clearHistory, navigateHistory, setInput]
-  );
-
-  // Handle overlay click to close
-  const handleOverlayClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose]
-  );
-
-  // Handle escape key
+  // Handle escape key to close modal
   useEffect(() => {
     if (!isOpen) return;
 
@@ -116,24 +72,91 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     return () => document.removeEventListener("keydown", handleKey);
   }, [isOpen, onClose]);
 
+  // Handle overlay click to close
+  const handleOverlayClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget) onClose();
+    },
+    [onClose],
+  );
+
+  // Handle command submission
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!inputValue.trim() || isRunning) return;
+
+      setShowWelcome(false);
+      resetHistoryNavigation();
+      await executeCommand(inputValue.trim());
+    },
+    [inputValue, isRunning, executeCommand, resetHistoryNavigation],
+  );
+
+  // Handle keyboard shortcuts
+  const handleKeyDown = useCallback(
+    async (e: React.KeyboardEvent<HTMLInputElement>) => {
+      // Ctrl+C - Kill running process
+      if (e.key === "c" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (isRunning) {
+          await killCurrentCommand();
+        }
+        return;
+      }
+
+      // Ctrl+L - Clear screen
+      if (e.key === "l" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        clearHistory();
+        setShowWelcome(true);
+        return;
+      }
+
+      // Up arrow - Navigate history back
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        navigateHistoryUp();
+        return;
+      }
+
+      // Down arrow - Navigate history forward
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        navigateHistoryDown();
+        return;
+      }
+    },
+    [isRunning, killCurrentCommand, clearHistory, navigateHistoryUp, navigateHistoryDown],
+  );
+
+  // Handle clear button click
+  const handleClear = useCallback(() => {
+    clearHistory();
+    setShowWelcome(true);
+  }, [clearHistory]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay open" onClick={handleOverlayClick} data-testid="terminal-modal-overlay">
-      <div className="modal terminal-modal interactive" data-testid="terminal-modal">
+    <div
+      className="modal-overlay open"
+      onClick={handleOverlayClick}
+      data-testid="terminal-modal-overlay"
+    >
+      <div className="modal terminal-modal" data-testid="terminal-modal">
         {/* Header */}
         <div className="terminal-header">
-          <div className="terminal-title">
+          <div className="terminal-title" data-testid="terminal-title">
             <TerminalIcon size={16} />
-            <span>Terminal</span>
+            <span>Interactive Terminal</span>
           </div>
           <div className="terminal-actions">
             <button
               className="terminal-clear-btn"
-              onClick={clearHistory}
-              disabled={history.length === 0}
-              title="Clear history (Ctrl+L)"
+              onClick={handleClear}
               data-testid="terminal-clear-btn"
+              title="Clear terminal (Ctrl+L)"
             >
               <Trash2 size={14} />
               <span>Clear</span>
@@ -142,7 +165,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
               className="terminal-close"
               onClick={onClose}
               data-testid="terminal-close-btn"
-              title="Close terminal (Esc)"
+              title="Close terminal"
             >
               <X size={20} />
             </button>
@@ -150,38 +173,63 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
         </div>
 
         {/* Output area */}
-        <div className="terminal-content" ref={outputRef} data-testid="terminal-content">
-          {history.length === 0 ? (
+        <div
+          className="terminal-output"
+          ref={outputRef}
+          data-testid="terminal-output"
+        >
+          {showWelcome && history.length === 0 ? (
             <div className="terminal-welcome" data-testid="terminal-welcome">
-              <p>Interactive Terminal</p>
-              <p>Type commands and press Enter to execute.</p>
-              <div className="terminal-shortcuts">
-                <span>Ctrl+C</span> Kill process
-                <span>Ctrl+L</span> Clear screen
-                <span>↑/↓</span> Command history
-                <span>Esc</span> Close
+              <div className="terminal-welcome-icon">
+                <TerminalIcon size={48} />
               </div>
+              <h3>Interactive Terminal</h3>
+              <p>
+                Execute shell commands in the project directory. Available commands include:
+              </p>
+              <div className="terminal-commands-list">
+                <span>git</span>
+                <span>npm/pnpm/yarn</span>
+                <span>ls/cat</span>
+                <span>node</span>
+                <span>python</span>
+                <span>curl</span>
+                <span>make</span>
+                <span>ps</span>
+              </div>
+              <p className="terminal-shortcuts">
+                <kbd>↑</kbd> <kbd>↓</kbd> Navigate history &nbsp;•&nbsp;
+                <kbd>Ctrl</kbd>+<kbd>C</kbd> Kill process &nbsp;•&nbsp;
+                <kbd>Ctrl</kbd>+<kbd>L</kbd> Clear
+              </p>
             </div>
           ) : (
-            <div className="terminal-output" data-testid="terminal-output">
-              {history.map((entry, index) => (
-                <div key={index} className="terminal-entry" data-testid={`terminal-entry-${index}`}>
+            <div className="terminal-history">
+              {history.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="terminal-entry"
+                  data-testid={`terminal-entry-${entry.id}`}
+                >
                   <div className="terminal-prompt-line">
                     <span className="terminal-prompt">$</span>
                     <span className="terminal-command">{entry.command}</span>
-                    {entry.isRunning && <span className="terminal-running-indicator">●</span>}
                   </div>
                   {entry.output && (
-                    <pre className="terminal-output-text" data-testid={`terminal-output-${index}`}>
+                    <pre
+                      className={`terminal-output-text ${
+                        entry.exitCode !== 0 && !entry.isRunning
+                          ? "terminal-output-error"
+                          : ""
+                      }`}
+                    >
                       {entry.output}
                     </pre>
                   )}
-                  {!entry.isRunning && entry.exitCode !== null && (
-                    <div
-                      className={`terminal-exit-code ${entry.exitCode !== 0 ? "error" : ""}`}
-                      data-testid={`terminal-exit-${index}`}
-                    >
-                      {entry.exitCode === 0 ? "✓" : `✗ Exit code: ${entry.exitCode}`}
+                  {entry.isRunning && (
+                    <div className="terminal-running-indicator">
+                      <span className="terminal-spinner" />
+                      <span>Running...</span>
                     </div>
                   )}
                 </div>
@@ -192,38 +240,32 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
 
         {/* Input area */}
         <div className="terminal-input-area" data-testid="terminal-input-area">
-          <div className="terminal-input-line">
-            <span className="terminal-prompt">$</span>
+          <form onSubmit={handleSubmit} className="terminal-form">
+            <span className="terminal-input-prompt">$</span>
             <input
               ref={inputRef}
               type="text"
               className="terminal-input"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Type a command..."
+              placeholder={isRunning ? "Command running..." : "Type a command..."}
               disabled={isRunning}
-              data-testid="terminal-input"
               autoFocus
-              spellCheck={false}
-              autoComplete="off"
-              autoCorrect="off"
+              data-testid="terminal-input"
             />
             {isRunning && (
               <button
+                type="button"
                 className="terminal-kill-btn"
                 onClick={killCurrentCommand}
-                title="Kill process (Ctrl+C)"
                 data-testid="terminal-kill-btn"
+                title="Kill process (Ctrl+C)"
               >
                 Stop
               </button>
             )}
-          </div>
-          <div className="terminal-status">
-            {currentDirectory}
-            {isRunning && <span className="terminal-status-running">Running...</span>}
-          </div>
+          </form>
         </div>
       </div>
     </div>
