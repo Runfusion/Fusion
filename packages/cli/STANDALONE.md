@@ -42,7 +42,42 @@ export KB_BADGE_PUBSUB_CHANNEL="my-app-badge-updates"
 kb dashboard
 ```
 
-With this configuration, PR/issue badge updates detected on one instance are delivered to subscribed WebSocket clients on other instances. Each instance maintains its own GitHub polling, only the badge snapshots are shared.
+With this configuration, PR/issue badge updates received via webhook on one instance are delivered to subscribed WebSocket clients on all instances.
+
+### GitHub App Webhook Setup
+
+For real-time PR/issue badge updates, configure a GitHub App to push updates to the dashboard:
+
+**Required Environment Variables:**
+```bash
+export KB_GITHUB_APP_ID="123456"
+export KB_GITHUB_APP_PRIVATE_KEY_PATH="/path/to/private-key.pem"
+# Or: export KB_GITHUB_APP_PRIVATE_KEY="$(cat /path/to/private-key.pem)"
+export KB_GITHUB_WEBHOOK_SECRET="your-webhook-secret"
+```
+
+**GitHub App Configuration:**
+1. Create a GitHub App at Settings → Developer settings → GitHub Apps
+2. Set the **Webhook URL** to `https://your-domain/api/github/webhooks`
+3. Generate and download a **Private Key**
+4. Configure these **Permissions**:
+   - Metadata: Read
+   - Pull requests: Read
+   - Issues: Read
+5. Subscribe to these **Webhook Events**:
+   - Pull request
+   - Issues
+   - Issue comment
+
+**Minimum Permissions Summary:**
+| Permission | Level | Purpose |
+|------------|-------|---------|
+| Metadata | Read | Access repository metadata |
+| Pull requests | Read | Fetch PR status, title, comments |
+| Issues | Read | Fetch issue status, title, state |
+
+**Fallback Behavior:**
+When webhooks are not configured or delivery fails, the dashboard falls back to the 5-minute background refresh on the PR/issue status endpoints. The 5-minute staleness window ensures reasonably fresh data even without webhooks.
 
 ### Create a task
 

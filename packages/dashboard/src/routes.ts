@@ -5,12 +5,21 @@ import { execSync } from "node:child_process";
 import type { TaskStore, Column, MergeResult } from "@kb/core";
 import { COLUMNS, VALID_TRANSITIONS, type PrInfo, isGhAuthenticated } from "@kb/core";
 import type { ServerOptions } from "./server.js";
-import { GitHubClient, getCurrentGitHubRepo } from "./github.js";
-import { githubPoller as globalGithubPoller, GitHubPollingService, githubRateLimiter } from "./github-poll.js";
+import { GitHubClient, getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
+import { githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
 import { listFiles, readFile, writeFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse } from "./file-service.js";
 import { fetchAllProviderUsage } from "./usage.js";
+import {
+  getGitHubAppConfig,
+  verifyWebhookSignature,
+  classifyWebhookEvent,
+  isSameResource,
+  hasPrBadgeFieldsChanged,
+  hasIssueBadgeFieldsChanged,
+  type BadgeUrlComponents,
+} from "./github-webhooks.js";
 
 /**
  * Minimal interface matching pi-coding-agent's ModelRegistry API surface
@@ -541,9 +550,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   // Get GitHub token from options or env
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
-  
-  // Use injected githubPoller if provided, otherwise use global singleton
-  const githubPoller = options?.githubPoller ?? globalGithubPoller;
 
   // Scheduler config (includes persisted settings)
   router.get("/config", async (_req, res) => {
@@ -1743,8 +1749,176 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
+   * POST /api/github/webhooks
+   * GitHub App webhook endpoint for badge updates.
+   * Accepts signed webhook deliveries for pull_request, issues, and issue_comment events.
+   * Verifies X-Hub-Signature-256, fetches canonical badge state, and updates matching tasks.
+   * 
+   * Responses:
+   * - 200: Valid ping event
+   * - 202: Valid but unsupported/irrelevant event
+   * - 401: Missing required webhook auth headers
+   * - 403: Signature mismatch/tampering detected
+   * - 503: GitHub App configuration missing or incomplete
+   * - 500: Installation token refresh failed
+   */
+  router.post("/github/webhooks", async (req, res) => {
+    const config = getGitHubAppConfig();
+    if (!config) {
+      res.status(503).json({ error: "GitHub App not configured" });
+      return;
+    }
+
+    // Get raw body (Buffer from express.raw() middleware)
+    const rawBody = req.body as Buffer;
+    if (!Buffer.isBuffer(rawBody)) {
+      res.status(400).json({ error: "Invalid request body" });
+      return;
+    }
+
+    // Verify signature
+    const signatureHeader = req.headers["x-hub-signature-256"] as string | undefined;
+    const verification = verifyWebhookSignature(rawBody, signatureHeader, config.webhookSecret);
+    if (!verification.valid) {
+      res.status(403).json({ error: verification.error ?? "Invalid signature" });
+      return;
+    }
+
+    // Parse payload after verification
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody.toString("utf-8"));
+    } catch {
+      res.status(400).json({ error: "Invalid JSON payload" });
+      return;
+    }
+
+    // Classify event
+    const eventType = req.headers["x-github-event"] as string | undefined;
+    const classification = classifyWebhookEvent(eventType, payload);
+
+    // Handle ping
+    if (eventType === "ping") {
+      res.status(200).json({ message: "Pong" });
+      return;
+    }
+
+    // Unsupported event
+    if (!classification.supported) {
+      res.status(202).json({ message: "Event type not supported" });
+      return;
+    }
+
+    // Not relevant for badge updates (e.g., issue_comment on regular issue)
+    if (!classification.relevant) {
+      res.status(202).json({ message: "Event not relevant for badges" });
+      return;
+    }
+
+    // Missing required data
+    if (!classification.owner || !classification.repo || classification.number === undefined || !classification.installationId) {
+      res.status(400).json({ error: "Missing repository or installation data" });
+      return;
+    }
+
+    // Fetch installation token
+    const installationToken = await GitHubClient.fetchInstallationToken(
+      classification.installationId,
+      config.appId,
+      config.privateKey,
+    );
+    if (!installationToken) {
+      res.status(500).json({ error: "Failed to fetch installation token" });
+      return;
+    }
+
+    // Fetch canonical badge state
+    let badgeData: Omit<PrInfo, "lastCheckedAt"> | Omit<import("@kb/core").IssueInfo, "lastCheckedAt"> | null = null;
+    if (classification.resourceType === "pr") {
+      badgeData = await GitHubClient.fetchPrWithInstallationToken(
+        classification.owner,
+        classification.repo,
+        classification.number,
+        installationToken,
+      );
+    } else {
+      badgeData = await GitHubClient.fetchIssueWithInstallationToken(
+        classification.owner,
+        classification.repo,
+        classification.number,
+        installationToken,
+      );
+    }
+
+    if (!badgeData) {
+      res.status(202).json({ message: "Badge resource not found or inaccessible" });
+      return;
+    }
+
+    // Find all matching tasks by badge URL
+    const tasks = await store.listTasks();
+    const matchingTasks: Array<{ id: string; resourceType: "pr" | "issue"; current: unknown }> = [];
+
+    for (const task of tasks) {
+      if (classification.resourceType === "pr" && task.prInfo) {
+        const parsed = parseBadgeUrl(task.prInfo.url);
+        if (parsed && 
+            parsed.owner.toLowerCase() === classification.owner!.toLowerCase() &&
+            parsed.repo.toLowerCase() === classification.repo!.toLowerCase() &&
+            parsed.number === classification.number) {
+          matchingTasks.push({ id: task.id, resourceType: "pr", current: task.prInfo });
+        }
+      } else if (classification.resourceType === "issue" && task.issueInfo) {
+        const parsed = parseBadgeUrl(task.issueInfo.url);
+        if (parsed &&
+            parsed.owner.toLowerCase() === classification.owner!.toLowerCase() &&
+            parsed.repo.toLowerCase() === classification.repo!.toLowerCase() &&
+            parsed.number === classification.number) {
+          matchingTasks.push({ id: task.id, resourceType: "issue", current: task.issueInfo });
+        }
+      }
+    }
+
+    if (matchingTasks.length === 0) {
+      res.status(202).json({ message: "No tasks linked to this resource" });
+      return;
+    }
+
+    // Update matching tasks
+    const checkedAt = new Date().toISOString();
+    let badgeFieldsChanged = false;
+
+    for (const match of matchingTasks) {
+      if (match.resourceType === "pr") {
+        const current = match.current as PrInfo;
+        const next = { ...(badgeData as Omit<PrInfo, "lastCheckedAt">), lastCheckedAt: checkedAt };
+        const changed = hasPrBadgeFieldsChanged(current, badgeData as Omit<PrInfo, "lastCheckedAt">);
+        if (changed || current.lastCheckedAt !== checkedAt) {
+          await store.updatePrInfo(match.id, next);
+          if (changed) badgeFieldsChanged = true;
+        }
+      } else {
+        const current = match.current as import("@kb/core").IssueInfo;
+        const next = { ...(badgeData as Omit<import("@kb/core").IssueInfo, "lastCheckedAt">), lastCheckedAt: checkedAt };
+        const changed = hasIssueBadgeFieldsChanged(current, badgeData as Omit<import("@kb/core").IssueInfo, "lastCheckedAt">);
+        if (changed || current.lastCheckedAt !== checkedAt) {
+          await store.updateIssueInfo(match.id, next);
+          if (changed) badgeFieldsChanged = true;
+        }
+      }
+    }
+
+    res.status(200).json({
+      updated: matchingTasks.length,
+      tasks: matchingTasks.map(m => m.id),
+      badgeFieldsChanged,
+    });
+  });
+
+  /**
    * GET /api/tasks/:id/pr/status
    * Get cached PR status for a task. Triggers background refresh if stale (>5 min).
+   * Uses only persisted badge timestamps (no in-memory poller state).
    */
   router.get("/tasks/:id/pr/status", async (req, res) => {
     try {
@@ -1757,9 +1931,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Check if data is stale (>5 minutes since last check)
       const fiveMinutesMs = 5 * 60 * 1000;
-      const lastChecked = githubPoller.getLastCheckedAt(task.id, "pr")
-        || task.prInfo.lastCheckedAt
-        || task.updatedAt;
+      const lastChecked = task.prInfo.lastCheckedAt || task.updatedAt;
       const lastCheckedTime = new Date(lastChecked).getTime();
       const isStale = Date.now() - lastCheckedTime > fiveMinutesMs;
 
@@ -1797,23 +1969,29 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      // Get owner/repo from git remote or GITHUB_REPOSITORY env
+      // Get owner/repo from badge URL first, then fall back to env/git
       let owner: string;
       let repo: string;
 
-      const envRepo = process.env.GITHUB_REPOSITORY;
-      if (envRepo) {
-        const [o, r] = envRepo.split("/");
-        owner = o;
-        repo = r;
+      const badgeParsed = parseBadgeUrl(task.prInfo.url);
+      if (badgeParsed) {
+        owner = badgeParsed.owner;
+        repo = badgeParsed.repo;
       } else {
-        const gitRepo = getCurrentGitHubRepo(store.getRootDir());
-        if (!gitRepo) {
-          res.status(400).json({ error: "Could not determine GitHub repository" });
-          return;
+        const envRepo = process.env.GITHUB_REPOSITORY;
+        if (envRepo) {
+          const [o, r] = envRepo.split("/");
+          owner = o;
+          repo = r;
+        } else {
+          const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+          if (!gitRepo) {
+            res.status(400).json({ error: "Could not determine GitHub repository" });
+            return;
+          }
+          owner = gitRepo.owner;
+          repo = gitRepo.repo;
         }
-        owner = gitRepo.owner;
-        repo = gitRepo.repo;
       }
 
       // Check rate limit
@@ -1861,6 +2039,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * GET /api/tasks/:id/issue/status
    * Get cached issue status for a task. Triggers background refresh if stale (>5 min).
+   * Uses only persisted badge timestamps (no in-memory poller state).
    */
   router.get("/tasks/:id/issue/status", async (req, res) => {
     try {
@@ -1872,9 +2051,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       const fiveMinutesMs = 5 * 60 * 1000;
-      const lastChecked = githubPoller.getLastCheckedAt(task.id, "issue")
-        || task.issueInfo.lastCheckedAt
-        || task.updatedAt;
+      const lastChecked = task.issueInfo.lastCheckedAt || task.updatedAt;
       const lastCheckedTime = new Date(lastChecked).getTime();
       const isStale = Date.now() - lastCheckedTime > fiveMinutesMs;
 
@@ -1912,19 +2089,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       let owner: string;
       let repo: string;
 
-      const envRepo = process.env.GITHUB_REPOSITORY;
-      if (envRepo) {
-        const [o, r] = envRepo.split("/");
-        owner = o;
-        repo = r;
+      // Get owner/repo from badge URL first, then fall back to env/git
+      const badgeParsed = parseBadgeUrl(task.issueInfo.url);
+      if (badgeParsed) {
+        owner = badgeParsed.owner;
+        repo = badgeParsed.repo;
       } else {
-        const gitRepo = getCurrentGitHubRepo(store.getRootDir());
-        if (!gitRepo) {
-          res.status(400).json({ error: "Could not determine GitHub repository" });
-          return;
+        const envRepo = process.env.GITHUB_REPOSITORY;
+        if (envRepo) {
+          const [o, r] = envRepo.split("/");
+          owner = o;
+          repo = r;
+        } else {
+          const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+          if (!gitRepo) {
+            res.status(400).json({ error: "Could not determine GitHub repository" });
+            return;
+          }
+          owner = gitRepo.owner;
+          repo = gitRepo.repo;
         }
-        owner = gitRepo.owner;
-        repo = gitRepo.repo;
       }
 
       const repoKey = `${owner}/${repo}`;
@@ -2577,23 +2761,30 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 /**
  * Background PR refresh - updates PR status without blocking the response.
  * Silently logs errors without affecting the user experience.
+ * Prefers badge URL for repo resolution to support multi-repo setups.
  */
 async function refreshPrInBackground(store: TaskStore, taskId: string, currentPrInfo: PrInfo, token?: string): Promise<void> {
   try {
-    // Get owner/repo from git remote or GITHUB_REPOSITORY env
+    // Get owner/repo from badge URL first, then fall back to env/git
     let owner: string;
     let repo: string;
 
-    const envRepo = process.env.GITHUB_REPOSITORY;
-    if (envRepo) {
-      const [o, r] = envRepo.split("/");
-      owner = o;
-      repo = r;
+    const badgeParsed = parseBadgeUrl(currentPrInfo.url);
+    if (badgeParsed) {
+      owner = badgeParsed.owner;
+      repo = badgeParsed.repo;
     } else {
-      const gitRepo = getCurrentGitHubRepo(store.getRootDir());
-      if (!gitRepo) return; // Silent fail - can't determine repo
-      owner = gitRepo.owner;
-      repo = gitRepo.repo;
+      const envRepo = process.env.GITHUB_REPOSITORY;
+      if (envRepo) {
+        const [o, r] = envRepo.split("/");
+        owner = o;
+        repo = r;
+      } else {
+        const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+        if (!gitRepo) return; // Silent fail - can't determine repo
+        owner = gitRepo.owner;
+        repo = gitRepo.repo;
+      }
     }
 
     const repoKey = `${owner}/${repo}`;
@@ -2621,16 +2812,23 @@ async function refreshIssueInBackground(
     let owner: string;
     let repo: string;
 
-    const envRepo = process.env.GITHUB_REPOSITORY;
-    if (envRepo) {
-      const [o, r] = envRepo.split("/");
-      owner = o;
-      repo = r;
+    // Get owner/repo from badge URL first, then fall back to env/git
+    const badgeParsed = parseBadgeUrl(currentIssueInfo.url);
+    if (badgeParsed) {
+      owner = badgeParsed.owner;
+      repo = badgeParsed.repo;
     } else {
-      const gitRepo = getCurrentGitHubRepo(store.getRootDir());
-      if (!gitRepo) return;
-      owner = gitRepo.owner;
-      repo = gitRepo.repo;
+      const envRepo = process.env.GITHUB_REPOSITORY;
+      if (envRepo) {
+        const [o, r] = envRepo.split("/");
+        owner = o;
+        repo = r;
+      } else {
+        const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+        if (!gitRepo) return;
+        owner = gitRepo.owner;
+        repo = gitRepo.repo;
+      }
     }
 
     const repoKey = `${owner}/${repo}`;

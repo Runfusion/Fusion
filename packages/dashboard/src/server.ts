@@ -11,8 +11,7 @@ import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
 import { getTerminalService, type TerminalSession } from "./terminal-service.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import { terminalSessionManager } from "./terminal.js";
-import { getCurrentGitHubRepo } from "./github.js";
-import { githubPoller as globalGithubPoller, GitHubPollingService, type TaskWatchInput } from "./github-poll.js";
+import { getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
 import { WebSocketManager, type BadgeSnapshot } from "./websocket.js";
 import type { BadgePubSub } from "./badge-pubsub.js";
 import { createBadgePubSub, type BadgePubSubMessage } from "./badge-pubsub.js";
@@ -32,8 +31,6 @@ export interface ServerOptions {
   modelRegistry?: ModelRegistryLike;
   /** Optional BadgePubSub adapter for cross-instance badge snapshot fan-out — if not provided, creates from env or falls back to in-memory */
   badgePubSub?: BadgePubSub;
-  /** Optional GitHubPollingService instance for per-server poller isolation — if not provided, uses the global singleton */
-  githubPoller?: GitHubPollingService;
 }
 
 type DashboardExpressApp = ReturnType<typeof express> & {
@@ -45,6 +42,12 @@ type DashboardExpressApp = ReturnType<typeof express> & {
 
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
   const app = express();
+
+  // Raw body buffer for webhook signature verification - must be before express.json()
+  // Only applied to the webhook route
+  app.use("/api/github/webhooks", express.raw({ type: "application/json" }));
+
+  // Standard JSON parsing for all other routes
   app.use(express.json());
 
   // Initialize terminal service with project root
@@ -367,14 +370,6 @@ export function setupBadgeWebSocket(
   // Use injected badgePubSub or create from environment
   const badgePubSub = options?.badgePubSub ?? createBadgePubSub({ sourceId: serverId });
   void badgePubSub.start();
-  
-  const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
-  const githubPoller = options?.githubPoller ?? globalGithubPoller;
-
-  githubPoller.configure({
-    store,
-    token: githubToken,
-  });
 
   // Prime cache with existing tasks
   void store.listTasks().then((tasks) => {
@@ -404,50 +399,6 @@ export function setupBadgeWebSocket(
 
   dashboardApp.badgeWsServer = wss;
   dashboardApp.badgeWsManager = wsManager;
-
-  const syncPollerTask = async (taskId: string): Promise<void> => {
-    if (wsManager.getSubscriptionCount(taskId) === 0) {
-      githubPoller.unwatchTask(taskId);
-      return;
-    }
-
-    try {
-      const task = await store.getTask(taskId);
-      const watches: TaskWatchInput[] = [];
-
-      if (task.prInfo) {
-        const repo = resolveBadgeRepo(task.prInfo.url, store);
-        if (repo) {
-          watches.push({
-            taskId: task.id,
-            type: "pr",
-            owner: repo.owner,
-            repo: repo.repo,
-            number: task.prInfo.number,
-          });
-        }
-      }
-
-      if (task.issueInfo) {
-        const repo = resolveBadgeRepo(task.issueInfo.url, store);
-        if (repo) {
-          watches.push({
-            taskId: task.id,
-            type: "issue",
-            owner: repo.owner,
-            repo: repo.repo,
-            number: task.issueInfo.number,
-          });
-        }
-      }
-
-      githubPoller.replaceTaskWatches(task.id, watches);
-    } catch (err: any) {
-      if (err?.code === "ENOENT") {
-        githubPoller.unwatchTask(taskId);
-      }
-    }
-  };
 
   const broadcastBadgeSnapshot = (taskId: string, snapshot: BadgeSnapshot): void => {
     wsManager.broadcastBadgeUpdate(taskId, snapshot);
@@ -483,7 +434,6 @@ export function setupBadgeWebSocket(
     // Broadcast to local websocket subscribers if any
     if (wsManager.getSubscriptionCount(task.id) > 0) {
       broadcastBadgeSnapshot(task.id, nextSnapshot);
-      void syncPollerTask(task.id);
     }
   };
 
@@ -497,7 +447,6 @@ export function setupBadgeWebSocket(
 
   const onTaskDeleted = (task: Task) => {
     badgeSnapshots.delete(task.id);
-    githubPoller.unwatchTask(task.id);
   };
 
   store.on("task:updated", onTaskUpdated);
@@ -521,32 +470,15 @@ export function setupBadgeWebSocket(
     }
   });
 
-  wsManager.on("client:connected", (_clientId, totalClients) => {
-    if (totalClients === 1) {
-      githubPoller.start();
-    }
-  });
-
-  wsManager.on("client:disconnected", (_clientId, totalClients) => {
-    if (totalClients === 0) {
-      githubPoller.stop();
-    }
-  });
-
   wsManager.on("subscription:changed", (taskId, subscriberCount) => {
-    if (subscriberCount === 0) {
-      githubPoller.unwatchTask(taskId);
-      return;
-    }
-
     // Send cached snapshot to late subscriber if available
     // This ensures a client subscribing after a remote update still sees the latest state
-    const cachedSnapshot = badgeSnapshots.get(taskId);
-    if (cachedSnapshot) {
-      broadcastBadgeSnapshot(taskId, cachedSnapshot);
+    if (subscriberCount > 0) {
+      const cachedSnapshot = badgeSnapshots.get(taskId);
+      if (cachedSnapshot) {
+        broadcastBadgeSnapshot(taskId, cachedSnapshot);
+      }
     }
-
-    void syncPollerTask(taskId);
   });
 
   wss.on("connection", (ws: WebSocket) => {
@@ -564,7 +496,6 @@ export function setupBadgeWebSocket(
 
     wsManager.dispose();
     void badgePubSub.dispose();
-    githubPoller.reset();
     wss.close();
     dashboardApp.terminalWsServer = null;
     dashboardApp.badgeWsServer = null;
@@ -591,39 +522,4 @@ function snapshotsEqual(a: BadgeSnapshot | undefined, b: BadgeSnapshot | undefin
   if (a.issueInfo?.title !== b.issueInfo?.title) return false;
   
   return true;
-}
-
-function resolveBadgeRepo(url: string, store: TaskStore): { owner: string; repo: string } | null {
-  const parsedUrl = parseGitHubBadgeUrl(url);
-  if (parsedUrl) {
-    return parsedUrl;
-  }
-
-  const envRepo = process.env.GITHUB_REPOSITORY;
-  if (envRepo) {
-    const [owner, repo] = envRepo.split("/");
-    if (owner && repo) {
-      return { owner, repo };
-    }
-  }
-
-  return getCurrentGitHubRepo(store.getRootDir());
-}
-
-function parseGitHubBadgeUrl(url: string): { owner: string; repo: string } | null {
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname !== "github.com") {
-      return null;
-    }
-
-    const [owner, repo] = parsed.pathname.split("/").filter(Boolean);
-    if (!owner || !repo) {
-      return null;
-    }
-
-    return { owner, repo };
-  } catch {
-    return null;
-  }
 }

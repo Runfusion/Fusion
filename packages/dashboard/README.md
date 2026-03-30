@@ -297,12 +297,42 @@ The dashboard server exposes a REST API at `/api`:
 - `GET /api/git/remotes` - List GitHub remotes
 - `POST /api/github/issues/fetch` - Fetch issues (`{ owner, repo, limit?, labels? }`)
 - `POST /api/github/issues/import` - Import issue (`{ owner, repo, issueNumber }`)
+- `POST /api/github/webhooks` - GitHub App webhook endpoint for badge updates (see GitHub App Setup below)
 - `POST /api/tasks/:id/pr/create` - Create PR
-- `GET /api/tasks/:id/pr/status` - Get PR status
-- `POST /api/tasks/:id/pr/refresh` - Refresh PR status
-- `GET /api/tasks/:id/issue/status` - Get cached issue status
-- `POST /api/tasks/:id/issue/refresh` - Refresh issue status
+- `GET /api/tasks/:id/pr/status` - Get PR status (5-min staleness, auto background refresh)
+- `POST /api/tasks/:id/pr/refresh` - Force refresh PR status
+- `GET /api/tasks/:id/issue/status` - Get cached issue status (5-min staleness, auto background refresh)
+- `POST /api/tasks/:id/issue/refresh` - Force refresh issue status
 - `WS /api/ws` - Real-time PR/issue badge updates for subscribed task cards
+
+### GitHub App Setup for Badge Webhooks
+
+For real-time PR/issue badge updates, configure a GitHub App instead of relying on polling:
+
+**Environment Variables:**
+- `KB_GITHUB_APP_ID` - Your GitHub App ID
+- `KB_GITHUB_APP_PRIVATE_KEY` - PEM private key content (or use `KB_GITHUB_APP_PRIVATE_KEY_PATH`)
+- `KB_GITHUB_APP_PRIVATE_KEY_PATH` - Path to PEM private key file (alternative to direct key)
+- `KB_GITHUB_WEBHOOK_SECRET` - Webhook secret for signature verification
+
+**GitHub App Configuration:**
+- **Permissions Required:**
+  - Metadata: Read
+  - Pull requests: Read
+  - Issues: Read
+- **Webhook Events:** Subscribe to `pull_request`, `issues`, and `issue_comment` events
+- **Webhook URL:** `https://your-dashboard-url/api/github/webhooks`
+
+**How it Works:**
+1. GitHub sends signed webhook events when PR/issue state changes
+2. Server verifies `X-Hub-Signature-256` using `KB_GITHUB_WEBHOOK_SECRET`
+3. Server fetches canonical badge data using GitHub App installation token
+4. Matching tasks (by parsed badge URL) are updated via `store.updatePrInfo()` / `store.updateIssueInfo()`
+5. `task:updated` event triggers `/api/ws` broadcast to subscribed clients
+6. No duplicate broadcasts when only `lastCheckedAt` timestamp changes
+
+**Fallback Behavior:**
+When webhook delivery is unavailable, the 5-minute refresh endpoints (`/api/tasks/:id/pr/status`, `/api/tasks/:id/issue/status`) continue to work as the fallback path. Staleness is computed from persisted `lastCheckedAt` timestamps only (no in-memory poller state).
 
 ### Multi-Instance Deployments
 
@@ -315,7 +345,7 @@ When running the dashboard on multiple instances behind a load balancer, badge u
 When `KB_BADGE_PUBSUB_REDIS_URL` is not set, the dashboard uses an in-memory adapter for single-instance deployments.
 
 **Design Notes:**
-- Per-instance GitHub polling remains isolated; pub/sub only shares badge snapshot updates
+- Webhook deliveries to any instance are broadcast to all instances via pub/sub
 - WebSocket message format unchanged: `{ type: "badge:updated", taskId, prInfo?, issueInfo?, timestamp }`
 - Echo prevention: origin instances ignore their own pub/sub messages via source ID deduplication
 - Late subscribers receive the current cached snapshot from their connected instance

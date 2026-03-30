@@ -993,7 +993,7 @@ export class GitHubClient {
       number: data.number,
       state: this.mapIssueState(data.state),
       title: data.title,
-      stateReason: data.state_reason,
+      stateReason: data.state_reason ?? undefined,
     };
   }
 
@@ -1463,8 +1463,181 @@ export class GitHubClient {
       title: data.title,
       body: data.body,
       state: this.mapIssueState(data.state),
-      stateReason: data.state_reason,
+      stateReason: data.state_reason ?? undefined,
     };
+  }
+
+  // ==========================================
+  // GitHub App Installation Auth Methods
+  // ==========================================
+
+  /**
+   * Generate a JWT for GitHub App authentication.
+   * Used to request installation access tokens.
+   */
+  static async generateAppJWT(appId: string, privateKey: string): Promise<string> {
+    const { createSign } = await import("node:crypto");
+    const now = Math.floor(Date.now() / 1000);
+    const expiration = now + 600; // 10 minutes max per GitHub requirements
+
+    const header = { alg: "RS256", typ: "JWT" };
+    const payload = {
+      iat: now - 60, // 1 minute ago to account for clock skew
+      exp: expiration,
+      iss: appId,
+    };
+
+    const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+    const signingInput = `${encodedHeader}.${encodedPayload}`;
+
+    const signature = createSign("RSA-SHA256")
+      .update(signingInput)
+      .sign(privateKey, "base64url");
+
+    return `${signingInput}.${signature}`;
+  }
+
+  /**
+   * Fetch an installation access token for a GitHub App.
+   * This token is used to make API calls on behalf of the app installation.
+   */
+  static async fetchInstallationToken(
+    installationId: number,
+    appId: string,
+    privateKey: string,
+  ): Promise<string | null> {
+    try {
+      const jwt = await GitHubClient.generateAppJWT(appId, privateKey);
+
+      const response = await fetch(
+        `https://api.github.com/app/installations/${installationId}/access_tokens`,
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            Authorization: `Bearer ${jwt}`,
+            "User-Agent": "kb-dashboard/1.0",
+          },
+        },
+      );
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data = await response.json() as { token: string };
+      return data.token;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Fetch canonical PR info using GitHub App installation authentication.
+   * This bypasses the gh CLI and user tokens for webhook-driven updates.
+   */
+  static async fetchPrWithInstallationToken(
+    owner: string,
+    repo: string,
+    number: number,
+    installationToken: string,
+  ): Promise<Omit<PrInfo, "lastCheckedAt"> | null> {
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`,
+        {
+          headers: {
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            Authorization: `Bearer ${installationToken}`,
+            "User-Agent": "kb-dashboard/1.0",
+          },
+        },
+      );
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data = await response.json() as {
+        number: number;
+        html_url: string;
+        title: string;
+        state: string;
+        merged: boolean;
+        head: { ref: string };
+        base: { ref: string };
+        comments: number;
+        updated_at: string;
+      };
+
+      return {
+        url: data.html_url,
+        number: data.number,
+        status: data.merged ? "merged" : data.state === "open" ? "open" : "closed",
+        title: data.title,
+        headBranch: data.head.ref,
+        baseBranch: data.base.ref,
+        commentCount: data.comments,
+        lastCommentAt: data.updated_at,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Fetch canonical issue info using GitHub App installation authentication.
+   */
+  static async fetchIssueWithInstallationToken(
+    owner: string,
+    repo: string,
+    number: number,
+    installationToken: string,
+  ): Promise<Omit<IssueInfo, "lastCheckedAt"> | null> {
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}`,
+        {
+          headers: {
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            Authorization: `Bearer ${installationToken}`,
+            "User-Agent": "kb-dashboard/1.0",
+          },
+        },
+      );
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data = await response.json() as {
+        number: number;
+        html_url: string;
+        title: string;
+        state: string;
+        state_reason?: "completed" | "not_planned" | "reopened" | null;
+        pull_request?: unknown;
+      };
+
+      // Skip PRs - they come through the issues endpoint too
+      if (data.pull_request) {
+        return null;
+      }
+
+      return {
+        url: data.html_url,
+        number: data.number,
+        state: data.state === "open" ? "open" : "closed",
+        title: data.title,
+        stateReason: data.state_reason ?? undefined,
+      };
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -1591,6 +1764,58 @@ function mapGraphQlBatchIssueStateReason(
     default:
       return undefined;
   }
+}
+
+/**
+ * Parse a GitHub badge URL (PR or issue) into its components.
+ * Supports formats like:
+ * - https://github.com/owner/repo/pull/123
+ * - https://github.com/owner/repo/issues/123
+ * 
+ * This is a shared helper used by routes.ts, server.ts, and the webhook handler
+ * to ensure consistent badge URL parsing across the codebase.
+ */
+export function parseBadgeUrl(url: string): { owner: string; repo: string; number: number; resourceType: "pr" | "issue" } | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "github.com") {
+      return null;
+    }
+
+    const pathParts = parsed.pathname.split("/").filter(Boolean);
+    if (pathParts.length < 4) {
+      return null;
+    }
+
+    const [owner, repo, type, numberStr] = pathParts;
+    const number = parseInt(numberStr, 10);
+
+    if (!owner || !repo || !Number.isFinite(number) || number < 1) {
+      return null;
+    }
+
+    let resourceType: "pr" | "issue";
+    if (type === "pull") {
+      resourceType = "pr";
+    } else if (type === "issues") {
+      resourceType = "issue";
+    } else {
+      return null;
+    }
+
+    return { owner, repo, number, resourceType };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @deprecated Use parseBadgeUrl instead
+ */
+export function parseGitHubBadgeUrl(url: string): { owner: string; repo: string } | null {
+  const parsed = parseBadgeUrl(url);
+  if (!parsed) return null;
+  return { owner: parsed.owner, repo: parsed.repo };
 }
 
 /**
