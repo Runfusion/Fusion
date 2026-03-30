@@ -489,6 +489,7 @@ body {
     transform var(--transition-fast),
     opacity var(--transition-normal);
   user-select: none;
+  touch-action: pan-y;
 }
 .card:hover {
   background: var(--card-hover);

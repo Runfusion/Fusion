@@ -2101,6 +2101,70 @@ describe("TaskCard touch gesture handling", () => {
     expect(onOpenDetail).not.toHaveBeenCalled();
   });
 
+  it("does NOT open modal during vertical scrolling", async () => {
+    const onOpenDetail = vi.fn();
+
+    render(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={onOpenDetail}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="KB-099"]');
+    expect(card).toBeDefined();
+
+    fireEvent.touchStart(card!, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    fireEvent.touchMove(card!, {
+      touches: [{ clientX: 100, clientY: 115 }],
+    });
+
+    fireEvent.touchEnd(card!, {
+      changedTouches: [{ clientX: 100, clientY: 115 }],
+      target: card,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("does NOT open modal during horizontal scrolling", async () => {
+    const onOpenDetail = vi.fn();
+
+    render(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={onOpenDetail}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="KB-099"]');
+    expect(card).toBeDefined();
+
+    fireEvent.touchStart(card!, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    fireEvent.touchMove(card!, {
+      touches: [{ clientX: 115, clientY: 100 }],
+    });
+
+    fireEvent.touchEnd(card!, {
+      changedTouches: [{ clientX: 115, clientY: 100 }],
+      target: card,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
   it("does NOT open modal on long press (slow touch)", async () => {
     const onOpenDetail = vi.fn();
 
