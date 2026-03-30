@@ -189,16 +189,20 @@ describe("POST /tasks/:id/retry", () => {
     expect(res.body.error).toContain("not in a failed state");
   });
 
-  it("returns 400 when task is not in in-progress column", async () => {
-    const doneTask = { ...FAKE_TASK_DETAIL, column: "done", status: "failed" };
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+  it("retries a failed task in any column (not just in-progress)", async () => {
+    const failedTaskInTodo = { ...FAKE_TASK_DETAIL, column: "todo", status: "failed" };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo", status: undefined };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(failedTaskInTodo);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(failedTaskInTodo);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/retry", JSON.stringify({}), {
       "Content-Type": "application/json",
     });
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("not in a failed state");
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined });
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
   });
 });
 
