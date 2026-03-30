@@ -3655,6 +3655,212 @@ body {
   margin-top: 8px;
 }
 
+/* === Model Combobox Component === */
+
+.model-combobox {
+  position: relative;
+  width: 100%;
+}
+
+.model-combobox-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.model-combobox-trigger:hover:not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+.model-combobox-trigger:focus {
+  border-color: var(--todo);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
+}
+
+.model-combobox-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.model-combobox-trigger-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.model-combobox-trigger-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 8px;
+  transition: transform 0.15s;
+}
+
+.model-combobox-trigger[aria-expanded="true"] .model-combobox-trigger-arrow {
+  transform: rotate(180deg);
+}
+
+.model-combobox-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 100;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.model-combobox-search-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-combobox-search {
+  width: 100%;
+  padding: 10px 36px 10px 12px;
+  background: var(--bg);
+  border: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+
+.model-combobox-search::placeholder {
+  color: var(--text-dim);
+}
+
+.model-combobox-search:focus {
+  background: var(--card);
+}
+
+.model-combobox-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.15s;
+}
+
+.model-combobox-clear:hover {
+  color: var(--text);
+}
+
+.model-combobox-results-count {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.model-combobox-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.model-combobox-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.model-combobox-option:hover,
+.model-combobox-option--highlighted {
+  background: var(--card-hover);
+}
+
+.model-combobox-option--selected {
+  background: rgba(88, 166, 255, 0.15);
+}
+
+.model-combobox-option--selected:hover,
+.model-combobox-option--selected.model-combobox-option--highlighted {
+  background: rgba(88, 166, 255, 0.25);
+}
+
+.model-combobox-option-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.model-combobox-option-text--default {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.model-combobox-option-id {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.model-combobox-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.model-combobox-group:last-child {
+  border-bottom: none;
+}
+
+.model-combobox-optgroup {
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  background: var(--bg);
+  cursor: default;
+}
+
+.model-combobox-no-results {
+  padding: 16px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* ============================================================
    THEME SYSTEM
    ============================================================ */

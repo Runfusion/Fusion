@@ -94,20 +94,41 @@ describe("ModelSelectorTab", () => {
     expect(screen.getByText("openai/gpt-4o")).toBeInTheDocument();
   });
 
-  it("groups models by provider in select options", async () => {
+  it("opens combobox when trigger is clicked", async () => {
+    const user = userEvent.setup();
     render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
     await waitFor(() => {
       expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
     });
 
-    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
-    expect(executorSelect).toBeInTheDocument();
+    // Click the executor combobox trigger
+    const executorTrigger = screen.getByLabelText("Executor Model");
+    await user.click(executorTrigger);
 
-    // Check options exist with model names
-    expect(screen.getAllByText("Claude Sonnet 4.5").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Claude Opus 4").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("GPT-4o").length).toBeGreaterThanOrEqual(1);
+    // Dropdown should be visible with models
+    expect(screen.getByPlaceholderText("Filter models…")).toBeInTheDocument();
+    expect(screen.getByText("3 models")).toBeInTheDocument();
+    expect(screen.getByText("Claude Sonnet 4.5")).toBeInTheDocument();
+    expect(screen.getByText("Claude Opus 4")).toBeInTheDocument();
+    expect(screen.getByText("GPT-4o")).toBeInTheDocument();
+  });
+
+  it("groups models by provider in dropdown", async () => {
+    const user = userEvent.setup();
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    });
+
+    // Open the combobox
+    const executorTrigger = screen.getByLabelText("Executor Model");
+    await user.click(executorTrigger);
+
+    // Check provider headers are present
+    expect(screen.getByText("anthropic")).toBeInTheDocument();
+    expect(screen.getByText("openai")).toBeInTheDocument();
   });
 
   it("enables Save button when selections change", async () => {
@@ -121,9 +142,13 @@ describe("ModelSelectorTab", () => {
     const saveButton = screen.getByText("Save");
     expect(saveButton).toBeDisabled();
 
-    // Select a model
-    const executorSelect = screen.getByLabelText("Executor Model");
-    await user.selectOptions(executorSelect, "anthropic/claude-sonnet-4-5");
+    // Open combobox and select a model
+    const executorTrigger = screen.getByLabelText("Executor Model");
+    await user.click(executorTrigger);
+    
+    // Click on a model option
+    const modelOption = screen.getByText("Claude Sonnet 4.5");
+    await user.click(modelOption);
 
     expect(saveButton).toBeEnabled();
   });
@@ -139,12 +164,14 @@ describe("ModelSelectorTab", () => {
     });
 
     // Select executor model
-    const executorSelect = screen.getByLabelText("Executor Model");
-    await user.selectOptions(executorSelect, "anthropic/claude-sonnet-4-5");
+    const executorTrigger = screen.getByLabelText("Executor Model");
+    await user.click(executorTrigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
 
     // Select validator model
-    const validatorSelect = screen.getByLabelText("Validator Model");
-    await user.selectOptions(validatorSelect, "openai/gpt-4o");
+    const validatorTrigger = screen.getByLabelText("Validator Model");
+    await user.click(validatorTrigger);
+    await user.click(screen.getByText("GPT-4o"));
 
     // Click save
     await user.click(screen.getByText("Save"));
@@ -176,9 +203,15 @@ describe("ModelSelectorTab", () => {
       expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
     });
 
-    // Select "Use default" (empty value)
-    const executorSelect = screen.getByLabelText("Executor Model");
-    await user.selectOptions(executorSelect, "");
+    // Open combobox
+    const executorTrigger = screen.getByLabelText("Executor Model");
+    await user.click(executorTrigger);
+    
+    // Select "Use default"
+    const defaultOption = screen.getAllByText("Use default").find(
+      el => el.classList.contains("model-combobox-option-text--default")
+    ) || screen.getAllByText("Use default")[0];
+    await user.click(defaultOption);
 
     // Click save
     await user.click(screen.getByText("Save"));
@@ -202,15 +235,19 @@ describe("ModelSelectorTab", () => {
       expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
     });
 
-    // Change selection
-    const executorSelect = screen.getByLabelText("Executor Model");
-    await user.selectOptions(executorSelect, "anthropic/claude-sonnet-4-5");
+    // Open and select a model
+    const executorTrigger = screen.getByLabelText("Executor Model");
+    await user.click(executorTrigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
+
+    // Verify Save is enabled
+    expect(screen.getByText("Save")).toBeEnabled();
 
     // Reset
     await user.click(screen.getByText("Reset"));
 
-    // Selection should be back to empty (Use default)
-    expect(executorSelect).toHaveValue("");
+    // Save should be disabled again (no changes)
+    expect(screen.getByText("Save")).toBeDisabled();
   });
 
   it("shows error state when fetchModels fails", async () => {
@@ -246,15 +283,16 @@ describe("ModelSelectorTab", () => {
     });
 
     // Select a model
-    const executorSelect = screen.getByLabelText("Executor Model");
-    await user.selectOptions(executorSelect, "anthropic/claude-sonnet-4-5");
+    const executorTrigger = screen.getByLabelText("Executor Model");
+    await user.click(executorTrigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
 
     // Start save
     await user.click(screen.getByText("Save"));
 
     // Should show saving state
     expect(screen.getByText("Saving…")).toBeInTheDocument();
-    expect(executorSelect).toBeDisabled();
+    expect(executorTrigger).toBeDisabled();
   });
 
   it("shows error toast when save fails", async () => {
@@ -268,8 +306,9 @@ describe("ModelSelectorTab", () => {
     });
 
     // Select a model
-    const executorSelect = screen.getByLabelText("Executor Model");
-    await user.selectOptions(executorSelect, "anthropic/claude-sonnet-4-5");
+    const executorTrigger = screen.getByLabelText("Executor Model");
+    await user.click(executorTrigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
 
     // Click save
     await user.click(screen.getByText("Save"));
@@ -279,203 +318,295 @@ describe("ModelSelectorTab", () => {
     });
   });
 
-  // Filter functionality tests
-  it("renders filter input for executor and validator selectors", async () => {
-    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+  // Combobox-specific tests
+  describe("Combobox behavior", () => {
+    it("filters models when typing in search input", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
+
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
+
+      // Type filter text
+      const searchInput = screen.getByPlaceholderText("Filter models…");
+      await user.type(searchInput, "openai");
+
+      // Should show filtered results
+      expect(screen.getByText("1 model")).toBeInTheDocument();
+      expect(screen.getByText("GPT-4o")).toBeInTheDocument();
+      expect(screen.queryByText("Claude Sonnet 4.5")).not.toBeInTheDocument();
+      expect(screen.queryByText("Claude Opus 4")).not.toBeInTheDocument();
     });
 
-    // Both filter inputs should be present (placeholder text)
-    const filterInputs = screen.getAllByPlaceholderText("Filter models…");
-    expect(filterInputs.length).toBe(2);
-  });
+    it("filters models by model ID", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-  it("filters executor models by provider name", async () => {
-    const user = userEvent.setup();
-    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
+
+      // Type model ID
+      const searchInput = screen.getByPlaceholderText("Filter models…");
+      await user.type(searchInput, "gpt-4o");
+
+      // Should show only GPT-4o
+      expect(screen.getByText("1 model")).toBeInTheDocument();
+      expect(screen.getByText("GPT-4o")).toBeInTheDocument();
+      expect(screen.queryByText("Claude Sonnet 4.5")).not.toBeInTheDocument();
     });
 
-    // Type "openai" in the executor filter
-    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
-    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
-    await user.type(filterInput, "openai");
+    it("filters models by display name", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-    // Should show result count
-    expect(within(executorSection!).getByText("1 model")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
 
-    // The select should only show openai models
-    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
-    const options = Array.from(executorSelect.options).map((o) => o.textContent);
-    expect(options).toContain("Use default");
-    expect(options).toContain("GPT-4o");
-    expect(options).not.toContain("Claude Sonnet 4.5");
-    expect(options).not.toContain("Claude Opus 4");
-  });
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
 
-  it("filters models by model ID", async () => {
-    const user = userEvent.setup();
-    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+      // Type display name
+      const searchInput = screen.getByPlaceholderText("Filter models…");
+      await user.type(searchInput, "opus");
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      // Should show only Opus
+      expect(screen.getByText("1 model")).toBeInTheDocument();
+      expect(screen.getByText("Claude Opus 4")).toBeInTheDocument();
+      expect(screen.queryByText("Claude Sonnet 4.5")).not.toBeInTheDocument();
     });
 
-    // Type "gpt-4o" in the executor filter
-    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
-    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
-    await user.type(filterInput, "gpt-4o");
+    it("supports multi-word filter (AND logic)", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-    // Should show only GPT-4o
-    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
-    const options = Array.from(executorSelect.options).map((o) => o.textContent);
-    expect(options).toContain("GPT-4o");
-    expect(options).not.toContain("Claude Sonnet 4.5");
-  });
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
 
-  it("filters models by display name", async () => {
-    const user = userEvent.setup();
-    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      // Type multi-word filter
+      const searchInput = screen.getByPlaceholderText("Filter models…");
+      await user.type(searchInput, "anthropic claude");
+
+      // Should show only anthropic models
+      expect(screen.getByText("2 models")).toBeInTheDocument();
+      expect(screen.getByText("Claude Sonnet 4.5")).toBeInTheDocument();
+      expect(screen.getByText("Claude Opus 4")).toBeInTheDocument();
+      expect(screen.queryByText("GPT-4o")).not.toBeInTheDocument();
     });
 
-    // Type "opus" (case insensitive)
-    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
-    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
-    await user.type(filterInput, "opus");
+    it("clear button clears filter and restores full list", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-    // Should show only Claude Opus 4
-    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
-    const options = Array.from(executorSelect.options).map((o) => o.textContent);
-    expect(options).toContain("Claude Opus 4");
-    expect(options).not.toContain("Claude Sonnet 4.5");
-    expect(options).not.toContain("GPT-4o");
-  });
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
 
-  it("supports multi-word filter (AND logic)", async () => {
-    const user = userEvent.setup();
-    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      // Type a filter
+      const searchInput = screen.getByPlaceholderText("Filter models…");
+      await user.type(searchInput, "openai");
+
+      // Verify filter is applied
+      expect(screen.getByText("1 model")).toBeInTheDocument();
+
+      // Click clear button
+      const clearButton = screen.getByLabelText("Clear filter");
+      await user.click(clearButton);
+
+      // Filter should be cleared
+      expect(searchInput).toHaveValue("");
+      expect(screen.getByText("3 models")).toBeInTheDocument();
     });
 
-    // Type "anthropic claude" - both terms must match
-    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
-    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
-    await user.type(filterInput, "anthropic claude");
+    it("shows empty state message when filter matches nothing", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-    // Should show only anthropic claude models
-    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
-    const options = Array.from(executorSelect.options).map((o) => o.textContent);
-    expect(options).toContain("Claude Sonnet 4.5");
-    expect(options).toContain("Claude Opus 4");
-    expect(options).not.toContain("GPT-4o");
-  });
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
 
-  it("Use default option remains visible regardless of filter", async () => {
-    const user = userEvent.setup();
-    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      // Type a filter that matches nothing
+      const searchInput = screen.getByPlaceholderText("Filter models…");
+      await user.type(searchInput, "xyz123");
+
+      // Should show no results message
+      expect(screen.getByText("0 models")).toBeInTheDocument();
+      expect(screen.getByText(/No models match/)).toBeInTheDocument();
     });
 
-    // Type a filter that matches nothing
-    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
-    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
-    await user.type(filterInput, "nonexistent");
+    it("closes dropdown when clicking outside", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-    // Use default should still be visible
-    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
-    const options = Array.from(executorSelect.options).map((o) => o.textContent);
-    expect(options).toContain("Use default");
-  });
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
 
-  it("clear button clears filter and restores full list", async () => {
-    const user = userEvent.setup();
-    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      // Dropdown should be visible
+      expect(screen.getByPlaceholderText("Filter models…")).toBeInTheDocument();
+
+      // Click outside (on the intro text)
+      await user.click(screen.getByText(/Override the AI models/));
+
+      // Dropdown should be closed
+      expect(screen.queryByPlaceholderText("Filter models…")).not.toBeInTheDocument();
     });
 
-    // Type a filter
-    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
-    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
-    await user.type(filterInput, "openai");
+    it("closes dropdown on Escape key", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-    // Verify filter is applied
-    expect(within(executorSection!).getByText("1 model")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
 
-    // Click clear button
-    const clearButton = within(executorSection!).getByLabelText("Clear filter");
-    await user.click(clearButton);
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
 
-    // Filter should be cleared and all models should be visible
-    expect(filterInput).toHaveValue("");
-    expect(within(executorSection!).getByText("3 models")).toBeInTheDocument();
+      // Dropdown should be visible
+      expect(screen.getByPlaceholderText("Filter models…")).toBeInTheDocument();
 
-    const executorSelect = screen.getByLabelText("Executor Model") as HTMLSelectElement;
-    const options = Array.from(executorSelect.options).map((o) => o.textContent);
-    expect(options).toContain("Claude Sonnet 4.5");
-    expect(options).toContain("Claude Opus 4");
-    expect(options).toContain("GPT-4o");
-  });
+      // Press Escape
+      await user.keyboard("{Escape}");
 
-  it("shows empty state message when filter matches nothing", async () => {
-    const user = userEvent.setup();
-    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      // Dropdown should be closed
+      expect(screen.queryByPlaceholderText("Filter models…")).not.toBeInTheDocument();
     });
 
-    // Type a filter that matches nothing
-    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
-    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
-    await user.type(filterInput, "xyz123");
+    it("navigates with arrow keys and selects with Enter", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-    // Should show no results message
-    expect(within(executorSection!).getByText("No models match 'xyz123'")).toBeInTheDocument();
-    expect(within(executorSection!).getByText("0 models")).toBeInTheDocument();
-  });
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
 
-  it("selecting a model from filtered list works correctly", async () => {
-    const user = userEvent.setup();
-    mockUpdateTask.mockResolvedValue({ ...FAKE_TASK });
+      // Focus and open combobox with arrow down
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      executorTrigger.focus();
+      await user.keyboard("{ArrowDown}");
 
-    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+      // Dropdown should be visible
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("Filter models…")).toBeInTheDocument();
+      });
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      // Navigate down and press Enter to select
+      await user.keyboard("{ArrowDown}");
+      await user.keyboard("{Enter}");
+
+      // Dropdown should be closed and Save button should be enabled
+      await waitFor(() => {
+        expect(screen.queryByPlaceholderText("Filter models…")).not.toBeInTheDocument();
+      });
+      expect(screen.getByText("Save")).toBeEnabled();
     });
 
-    // Filter to show only openai
-    const executorSection = screen.getByLabelText("Executor Model").closest(".form-group");
-    const filterInput = within(executorSection!).getByPlaceholderText("Filter models…");
-    await user.type(filterInput, "openai");
+    it("Use default option is always visible", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
-    // Select the filtered model
-    const executorSelect = screen.getByLabelText("Executor Model");
-    await user.selectOptions(executorSelect, "openai/gpt-4o");
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
 
-    // Save
-    await user.click(screen.getByText("Save"));
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
 
-    // Verify correct model was saved
-    await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
-        modelProvider: "openai",
-        modelId: "gpt-4o",
-        validatorModelProvider: undefined,
-        validatorModelId: undefined,
+      // Use default should be visible
+      const defaultOptions = screen.getAllByText("Use default");
+      expect(defaultOptions.length).toBeGreaterThan(0);
+
+      // Type a filter that matches nothing
+      const searchInput = screen.getByPlaceholderText("Filter models…");
+      await user.type(searchInput, "nonexistent123");
+
+      // Use default should still be visible
+      expect(screen.getAllByText("Use default").length).toBeGreaterThan(0);
+    });
+
+    it("shows model ID next to model name", async () => {
+      const user = userEvent.setup();
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
+
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
+
+      // Model IDs should be visible next to names
+      expect(screen.getByText("claude-sonnet-4-5")).toBeInTheDocument();
+      expect(screen.getByText("claude-opus-4")).toBeInTheDocument();
+      expect(screen.getByText("gpt-4o")).toBeInTheDocument();
+    });
+
+    it("selecting a model from filtered list works correctly", async () => {
+      const user = userEvent.setup();
+      mockUpdateTask.mockResolvedValue({ ...FAKE_TASK });
+
+      render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+      });
+
+      // Open combobox
+      const executorTrigger = screen.getByLabelText("Executor Model");
+      await user.click(executorTrigger);
+
+      // Filter to show only openai
+      const searchInput = screen.getByPlaceholderText("Filter models…");
+      await user.type(searchInput, "openai");
+
+      // Select the filtered model
+      const modelOption = screen.getByText("GPT-4o");
+      await user.click(modelOption);
+
+      // Save
+      await user.click(screen.getByText("Save"));
+
+      // Verify correct model was saved
+      await waitFor(() => {
+        expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+          validatorModelProvider: undefined,
+          validatorModelId: undefined,
+        });
       });
     });
   });
