@@ -7,7 +7,11 @@ vi.mock("../../api", () => ({
   uploadAttachment: vi.fn(),
   deleteAttachment: vi.fn(),
   updateTask: vi.fn().mockResolvedValue({}),
+  fetchTaskDetail: vi.fn(),
   fetchAgentLogs: vi.fn().mockResolvedValue([]),
+  requestSpecRevision: vi.fn().mockResolvedValue({}),
+  approvePlan: vi.fn().mockResolvedValue({}),
+  rejectPlan: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({
@@ -35,6 +39,7 @@ const noopMove = vi.fn(async () => ({}) as Task);
 const noopDelete = vi.fn(async () => ({}) as Task);
 const noopMerge = vi.fn(async () => ({ merged: false }) as MergeResult);
 const noopRetry = vi.fn(async () => ({}) as Task);
+const noopOpenDetail = vi.fn();
 
 describe("TaskDetailModal", () => {
   it("renders markdown-body without detail-prompt class when prompt exists", () => {
@@ -45,6 +50,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -62,6 +68,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -79,6 +86,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -97,6 +105,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -112,6 +121,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         onRetryTask={noopRetry}
         addToast={noop}
       />,
@@ -128,6 +138,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         onRetryTask={noopRetry}
         addToast={noop}
       />,
@@ -144,6 +155,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -163,6 +175,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -190,6 +203,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -207,6 +221,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -220,6 +235,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -247,6 +263,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={addToast}
         />,
       );
@@ -284,6 +301,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -322,6 +340,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -378,6 +397,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={addToast}
         />,
       );
@@ -408,6 +428,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -423,6 +444,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -447,6 +469,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -475,6 +498,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -492,18 +516,22 @@ describe("TaskDetailModal", () => {
       <TaskDetailModal
         task={makeTask({
           log: [
-            { timestamp: "2026-01-01T00:00:00Z", message: "Created task" },
-            { timestamp: "2026-01-01T00:01:00Z", message: "Started work" },
-            { timestamp: "2026-01-01T00:02:00Z", message: "Completed step 1" },
+            { timestamp: "2026-01-01T00:00:00Z", action: "Created task" },
+            { timestamp: "2026-01-01T00:01:00Z", action: "Started work" },
+            { timestamp: "2026-01-01T00:02:00Z", action: "Completed step 1" },
           ],
         })}
         onClose={noop}
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
+
+    // Click on Activity tab to show activity list
+    fireEvent.click(screen.getByText("Activity"));
 
     const activityList = container.querySelector(".detail-activity-list");
     expect(activityList).toBeTruthy();
@@ -528,6 +556,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -556,6 +585,7 @@ describe("TaskDetailModal", () => {
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
         addToast={noop}
       />,
     );
@@ -577,16 +607,152 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
 
       expect(screen.getByText("Definition")).toBeTruthy();
+      expect(screen.getByText("Activity")).toBeTruthy();
       expect(screen.getByText("Agent Log")).toBeTruthy();
       // Definition content should be visible
       expect(container.querySelector(".markdown-body")).toBeTruthy();
+      // Activity section should NOT be visible initially
+      expect(container.querySelector(".detail-activity")).toBeNull();
       // Agent log viewer should not be visible
       expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeNull();
+    });
+
+    it("switches to Activity tab and shows activity feed", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            prompt: "# Hello\n\nContent",
+            log: [
+              { timestamp: "2026-01-01T00:00:00Z", action: "Created task" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Click Activity tab
+      fireEvent.click(screen.getByText("Activity"));
+
+      // Activity section should be visible
+      expect(container.querySelector(".detail-activity")).toBeTruthy();
+      // Activity list should be visible
+      expect(container.querySelector(".detail-activity-list")).toBeTruthy();
+      // Definition content should be hidden
+      expect(container.querySelector(".markdown-body")).toBeNull();
+    });
+
+    it("activity tab renders log entries correctly", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            log: [
+              { timestamp: "2026-01-01T00:00:00Z", action: "Created task" },
+              { timestamp: "2026-01-01T00:01:00Z", action: "Started work", outcome: "Success" },
+              { timestamp: "2026-01-01T00:02:00Z", action: "Completed step 1" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Click Activity tab
+      fireEvent.click(screen.getByText("Activity"));
+
+      const activityList = container.querySelector(".detail-activity-list");
+      expect(activityList).toBeTruthy();
+
+      // Check log entries are rendered (in reverse order - newest first)
+      const logEntries = container.querySelectorAll(".detail-log-entry");
+      expect(logEntries).toHaveLength(3);
+
+      // Most recent entry should be first
+      expect(logEntries[0].textContent).toContain("Completed step 1");
+      expect(logEntries[1].textContent).toContain("Started work");
+      expect(logEntries[1].textContent).toContain("Success"); // outcome
+      expect(logEntries[2].textContent).toContain("Created task");
+    });
+
+    it("activity tab shows empty state when no logs", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ log: [] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Click Activity tab
+      fireEvent.click(screen.getByText("Activity"));
+
+      // Activity section should be visible
+      expect(container.querySelector(".detail-activity")).toBeTruthy();
+      // Empty state should be shown
+      expect(container.querySelector(".detail-log-empty")).toBeTruthy();
+      expect(screen.getByText("(no activity)")).toBeTruthy();
+      // Activity list should NOT be present when empty
+      expect(container.querySelector(".detail-activity-list")).toBeNull();
+    });
+
+    it("can switch between all four tabs", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            prompt: "# Hello\n\nContent",
+            log: [{ timestamp: "2026-01-01T00:00:00Z", action: "Test" }],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Start on Definition tab
+      expect(container.querySelector(".markdown-body")).toBeTruthy();
+      expect(container.querySelector(".detail-activity")).toBeNull();
+
+      // Switch to Activity tab
+      fireEvent.click(screen.getByText("Activity"));
+      expect(container.querySelector(".detail-activity")).toBeTruthy();
+      expect(container.querySelector(".markdown-body")).toBeNull();
+
+      // Switch to Agent Log tab
+      fireEvent.click(screen.getByText("Agent Log"));
+      expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeTruthy();
+      expect(container.querySelector(".detail-activity")).toBeNull();
+
+      // Switch to Steering tab
+      fireEvent.click(screen.getByText("Steering"));
+      expect(screen.getByText("Steering Comments")).toBeTruthy();
+      expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeNull();
+
+      // Switch back to Definition tab
+      fireEvent.click(screen.getByText("Definition"));
+      expect(container.querySelector(".markdown-body")).toBeTruthy();
+      expect(container.querySelector(".detail-activity")).toBeNull();
+      expect(screen.queryByText("Steering Comments")).toBeNull();
     });
 
     it("switches to Agent Log tab and back", async () => {
@@ -600,6 +766,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -632,6 +799,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -646,6 +814,267 @@ describe("TaskDetailModal", () => {
       const afterSwitch = mockUseAgentLogs.mock.calls[mockUseAgentLogs.mock.calls.length - 1];
       expect(afterSwitch[1]).toBe(true);
     });
+
+    it("switches to Steering tab", async () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Click Steering tab
+      fireEvent.click(screen.getByText("Steering"));
+
+      // Steering content should appear
+      expect(screen.getByText("Steering Comments")).toBeTruthy();
+      expect(screen.getByPlaceholderText(/Add a steering comment/)).toBeTruthy();
+      // Definition content should be hidden
+      expect(container.querySelector(".markdown-body")).toBeNull();
+    });
+
+    it("shows Steering tab as third tab", async () => {
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const tabs = screen.getAllByRole("button").filter((b) =>
+        ["Definition", "Activity", "Agent Log", "Steering"].includes(b.textContent || "")
+      );
+      expect(tabs.length).toBe(4);
+      expect(tabs[1].textContent).toBe("Activity");
+      expect(tabs[3].textContent).toBe("Steering");
+    });
+  });
+
+  describe("step progress", () => {
+    it("renders step progress section when steps exist", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "in-progress" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(container.querySelector(".detail-step-progress")).toBeTruthy();
+      expect(screen.getByText("Progress")).toBeTruthy();
+    });
+
+    it("shows '(no steps defined)' when steps array is empty", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ steps: [] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(container.querySelector(".detail-step-progress")).toBeTruthy();
+      expect(screen.getByText("(no steps defined)")).toBeTruthy();
+    });
+
+    it("renders correct number of segments matching step count", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "in-progress" },
+              { name: "Step 3", status: "pending" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const segments = container.querySelectorAll(".step-progress-segment");
+      expect(segments).toHaveLength(3);
+    });
+
+    it("segments have correct status modifier classes", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "in-progress" },
+              { name: "Step 3", status: "pending" },
+              { name: "Step 4", status: "skipped" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const segments = container.querySelectorAll(".step-progress-segment");
+      expect(segments[0].classList.contains("step-progress-segment--done")).toBe(true);
+      expect(segments[1].classList.contains("step-progress-segment--in-progress")).toBe(true);
+      expect(segments[2].classList.contains("step-progress-segment--pending")).toBe(true);
+      expect(segments[3].classList.contains("step-progress-segment--skipped")).toBe(true);
+    });
+
+    it("segments have correct inline background colors based on status", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "in-progress" },
+              { name: "Step 3", status: "pending" },
+              { name: "Step 4", status: "skipped" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const segments = container.querySelectorAll(".step-progress-segment");
+      expect((segments[0] as HTMLElement).style.backgroundColor).toBe("var(--color-success, #3fb950)");
+      expect((segments[1] as HTMLElement).style.backgroundColor).toBe("var(--todo, #58a6ff)");
+      expect((segments[2] as HTMLElement).style.backgroundColor).toBe("var(--border, #30363d)");
+      expect((segments[3] as HTMLElement).style.backgroundColor).toBe("var(--text-dim, #484f58)");
+    });
+
+    it("displays correct completion count", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Step 1", status: "done" },
+              { name: "Step 2", status: "done" },
+              { name: "Step 3", status: "pending" },
+              { name: "Step 4", status: "in-progress" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("2/4 steps")).toBeTruthy();
+    });
+
+    it("has data-tooltip attribute with step name and status on each segment", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            steps: [
+              { name: "Initialize project", status: "done" },
+              { name: "Add tests", status: "in-progress" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const segments = container.querySelectorAll(".step-progress-segment");
+      expect(segments[0].getAttribute("data-tooltip")).toBe("Initialize project (done)");
+      expect(segments[1].getAttribute("data-tooltip")).toBe("Add tests (in-progress)");
+    });
+
+    it("step progress only renders in Definition tab, not Agent Log tab", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            prompt: "# Test",
+            steps: [
+              { name: "Step 1", status: "done" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Should be visible in Definition tab
+      expect(container.querySelector(".detail-step-progress")).toBeTruthy();
+
+      // Switch to Agent Log tab
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      // Should not be visible in Agent Log tab
+      expect(container.querySelector(".detail-step-progress")).toBeNull();
+    });
+
+    it("step progress is hidden in Steering tab", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            prompt: "# Test",
+            steps: [
+              { name: "Step 1", status: "done" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Switch to Steering tab
+      fireEvent.click(screen.getByText("Steering"));
+
+      // Should not be visible in Steering tab
+      expect(container.querySelector(".detail-step-progress")).toBeNull();
+    });
   });
 
   describe("mobile responsive structure", () => {
@@ -657,6 +1086,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -673,6 +1103,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -689,6 +1120,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -709,16 +1141,21 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
 
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(2);
+      expect(tabs.length).toBe(6); // Definition, Activity, Agent Log, Steering, Model, Spec
       // Tabs should use class-based styling, not inline styles
       expect(tabs[0].classList.contains("detail-tab")).toBe(true);
       expect(tabs[0].classList.contains("detail-tab-active")).toBe(true); // Definition is default active
       expect(tabs[1].classList.contains("detail-tab-active")).toBe(false);
+      expect(tabs[2].classList.contains("detail-tab-active")).toBe(false);
+      expect(tabs[3].classList.contains("detail-tab-active")).toBe(false);
+      expect(tabs[4].classList.contains("detail-tab-active")).toBe(false);
+      expect(tabs[5].classList.contains("detail-tab-active")).toBe(false);
       // Verify no inline padding/fontSize (responsive CSS controls this)
       expect((tabs[0] as HTMLElement).style.padding).toBe("");
       expect((tabs[0] as HTMLElement).style.fontSize).toBe("");
@@ -732,6 +1169,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -751,6 +1189,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -767,6 +1206,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -783,6 +1223,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -809,6 +1250,7 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
           addToast={noop}
         />,
       );
@@ -883,6 +1325,486 @@ describe("TaskDetailModal", () => {
       expect(newInput.value).toBe("");
       // All items visible again
       expect(document.querySelectorAll(".dep-dropdown-item")).toHaveLength(3);
+    });
+  });
+
+  describe("clickable dependency links", () => {
+    it("renders dependency list items with clickable class", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["KB-001", "KB-002"] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const depLinks = container.querySelectorAll(".detail-dep-link");
+      expect(depLinks).toHaveLength(2);
+      expect(depLinks[0].textContent).toBe("KB-001");
+      expect(depLinks[1].textContent).toBe("KB-002");
+    });
+
+    it("calls fetchTaskDetail and onOpenDetail when clicking a dependency", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      const mockDetail: TaskDetail = {
+        ...makeTask({ id: "KB-001", description: "Dep 1" }),
+        prompt: "",
+        attachments: [],
+      };
+      mockFetch.mockResolvedValueOnce(mockDetail);
+      const onOpenDetail = vi.fn();
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["KB-001"] })}
+          onOpenDetail={onOpenDetail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const depLink = container.querySelector(".detail-dep-link")!;
+      fireEvent.click(depLink);
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith("KB-001");
+        expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
+      });
+    });
+
+    it("shows error toast when dependency fetch fails", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      mockFetch.mockRejectedValueOnce(new Error("Task not found"));
+      const onOpenDetail = vi.fn();
+      const addToast = vi.fn();
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["KB-001"] })}
+          onOpenDetail={onOpenDetail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={addToast}
+        />,
+      );
+
+      const depLink = container.querySelector(".detail-dep-link")!;
+      fireEvent.click(depLink);
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Failed to load dependency KB-001", "error");
+      });
+      expect(onOpenDetail).not.toHaveBeenCalled();
+    });
+
+    it("remove button click does not trigger dependency click", async () => {
+      const { updateTask } = await import("../../api");
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      mockFetch.mockRejectedValueOnce(new Error("Should not be called"));
+      const onOpenDetail = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ dependencies: ["KB-001"] })}
+          onOpenDetail={onOpenDetail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      const removeButton = screen.getByTitle(/Remove dependency/);
+      fireEvent.click(removeButton);
+
+      // onOpenDetail should not be called when clicking remove
+      expect(onOpenDetail).not.toHaveBeenCalled();
+      // updateTask should be called to remove the dependency
+      await waitFor(() => {
+        expect(updateTask).toHaveBeenCalledWith("KB-099", { dependencies: [] });
+      });
+    });
+  });
+
+  describe("Spec tab", () => {
+    it("shows Spec tab alongside other tabs", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Spec")).toBeTruthy();
+    });
+
+    it("switches to Spec tab when clicked", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Test\n\nSpec content." })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Initially not showing Spec content
+      expect(container.querySelector(".spec-editor")).toBeNull();
+
+      // Click Spec tab
+      fireEvent.click(screen.getByText("Spec"));
+
+      // Should show SpecEditor
+      expect(container.querySelector(".spec-editor")).toBeTruthy();
+    });
+
+    it("Spec tab shows SpecEditor with task prompt", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Test Task\n\nTest specification." })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Spec"));
+
+      // Should show the spec content (without leading heading)
+      expect(container.querySelector(".spec-editor")).toBeTruthy();
+    });
+
+    it("shows all 5 tabs in correct order", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const tabs = container.querySelectorAll(".detail-tab");
+      expect(tabs.length).toBe(6);
+      expect(tabs[0].textContent).toBe("Definition");
+      expect(tabs[1].textContent).toBe("Activity");
+      expect(tabs[2].textContent).toBe("Agent Log");
+      expect(tabs[3].textContent).toBe("Steering");
+      expect(tabs[4].textContent).toBe("Model");
+      expect(tabs[5].textContent).toBe("Spec");
+    });
+
+    it("shows empty state in Spec tab when no prompt", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Spec"));
+
+      // Should show spec editor (view mode with empty state)
+      expect(container.querySelector(".spec-editor")).toBeTruthy();
+    });
+  });
+
+  describe("Plan Approval UI", () => {
+    it("shows Approve Plan and Reject Plan buttons for awaiting-approval tasks in triage", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Approve Plan")).toBeTruthy();
+      expect(screen.getByText("Reject Plan")).toBeTruthy();
+    });
+
+    it("does not show approval buttons when task is not in triage", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "todo",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Approve Plan")).toBeNull();
+      expect(screen.queryByText("Reject Plan")).toBeNull();
+    });
+
+    it("does not show approval buttons when task does not have awaiting-approval status", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "specifying",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Approve Plan")).toBeNull();
+      expect(screen.queryByText("Reject Plan")).toBeNull();
+    });
+
+    it("does not show approval buttons when task has no prompt", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Approve Plan")).toBeNull();
+      expect(screen.queryByText("Reject Plan")).toBeNull();
+    });
+
+    it("calls approvePlan API and shows success toast when Approve Plan is clicked", async () => {
+      const { approvePlan } = await import("../../api");
+      const mockApprovePlan = vi.mocked(approvePlan);
+      const addToast = vi.fn();
+      const onClose = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "KB-001",
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Approve Plan"));
+
+      await waitFor(() => {
+        expect(mockApprovePlan).toHaveBeenCalledWith("KB-001");
+      });
+      expect(addToast).toHaveBeenCalledWith("Plan approved — KB-001 moved to Todo", "success");
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it("calls rejectPlan API and shows success toast when Reject Plan is confirmed", async () => {
+      const { rejectPlan } = await import("../../api");
+      const mockRejectPlan = vi.mocked(rejectPlan);
+      const addToast = vi.fn();
+      const onClose = vi.fn();
+
+      // Mock confirm to return true
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "KB-001",
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Reject Plan"));
+
+      expect(window.confirm).toHaveBeenCalledWith(
+        "Reject this plan? The specification will be discarded and regenerated."
+      );
+
+      await waitFor(() => {
+        expect(mockRejectPlan).toHaveBeenCalledWith("KB-001");
+      });
+      expect(addToast).toHaveBeenCalledWith(
+        "Plan rejected — KB-001 returned to Triage for re-specification",
+        "info"
+      );
+      expect(onClose).toHaveBeenCalled();
+
+      window.confirm = originalConfirm;
+    });
+
+    it("does not call rejectPlan API when Reject Plan is cancelled", async () => {
+      const { rejectPlan } = await import("../../api");
+      const mockRejectPlan = vi.mocked(rejectPlan);
+      mockRejectPlan.mockClear(); // Clear any previous calls
+
+      const addToast = vi.fn();
+
+      // Mock confirm to return false
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => false);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Reject Plan"));
+
+      expect(window.confirm).toHaveBeenCalled();
+      expect(mockRejectPlan).not.toHaveBeenCalled();
+      expect(addToast).not.toHaveBeenCalled();
+
+      window.confirm = originalConfirm;
+    });
+
+    it("shows error toast when approvePlan fails", async () => {
+      const { approvePlan } = await import("../../api");
+      const mockApprovePlan = vi.mocked(approvePlan);
+      mockApprovePlan.mockRejectedValueOnce(new Error("Network error"));
+
+      const addToast = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "KB-001",
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Approve Plan"));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Network error", "error");
+      });
+    });
+
+    it("shows error toast when rejectPlan fails", async () => {
+      const { rejectPlan } = await import("../../api");
+      const mockRejectPlan = vi.mocked(rejectPlan);
+      mockRejectPlan.mockRejectedValueOnce(new Error("Server error"));
+
+      const addToast = vi.fn();
+
+      // Mock confirm to return true
+      const originalConfirm = window.confirm;
+      window.confirm = vi.fn(() => true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "KB-001",
+            column: "triage",
+            status: "awaiting-approval",
+            prompt: "# Task Spec",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Reject Plan"));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Server error", "error");
+      });
+
+      window.confirm = originalConfirm;
     });
   });
 });

@@ -80,6 +80,10 @@ describe("kb pi extension", () => {
         "kb_task_attach",
         "kb_task_pause",
         "kb_task_unpause",
+        "kb_task_duplicate",
+        "kb_task_import_github",
+        "kb_task_import_github_issue",
+        "kb_task_browse_github_issues",
       ];
 
       for (const name of expected) {

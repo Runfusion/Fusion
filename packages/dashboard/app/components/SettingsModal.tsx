@@ -203,6 +203,20 @@ export function SettingsModal({ onClose, addToast, initialSection }: SettingsMod
               {prefixError && <small className="field-error">{prefixError}</small>}
               {!prefixError && <small>Prefix for new task IDs (e.g. KB, PROJ)</small>}
             </div>
+            <div className="form-group">
+              <label htmlFor="requirePlanApproval" className="checkbox-label">
+                <input
+                  id="requirePlanApproval"
+                  type="checkbox"
+                  checked={form.requirePlanApproval || false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, requirePlanApproval: e.target.checked }))
+                  }
+                />
+                Require plan approval
+              </label>
+              <small>When enabled, AI-generated task specifications require manual approval before moving to Todo</small>
+            </div>
           </>
         );
       case "model": {
@@ -443,6 +457,34 @@ export function SettingsModal({ onClose, addToast, initialSection }: SettingsMod
                 Include task ID in commit scope
               </label>
               <small>When disabled, merge commit messages omit the task ID from the scope (e.g. <code>feat: ...</code> instead of <code>feat(KB-001): ...</code>)</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="autoResolveConflicts" className="checkbox-label">
+                <input
+                  id="autoResolveConflicts"
+                  type="checkbox"
+                  checked={form.autoResolveConflicts !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, autoResolveConflicts: e.target.checked }))
+                  }
+                />
+                Auto-resolve conflicts in lock files and generated files
+              </label>
+              <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.), generated files (dist/*, *.gen.ts), and trivial whitespace conflicts are resolved automatically without AI intervention. Complex code conflicts still require AI review.</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="smartConflictResolution" className="checkbox-label">
+                <input
+                  id="smartConflictResolution"
+                  type="checkbox"
+                  checked={form.smartConflictResolution !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, smartConflictResolution: e.target.checked }))
+                  }
+                />
+                Smart conflict resolution
+              </label>
+              <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review.</small>
             </div>
           </>
         );

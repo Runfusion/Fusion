@@ -994,6 +994,83 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("## Project Commands");
   });
 
+  it("includes Steering Comments section when steeringComments has entries", () => {
+    const task = createMockTaskDetail({
+      steeringComments: [
+        {
+          id: "1",
+          text: "Please handle the edge case",
+          createdAt: new Date().toISOString(),
+          author: "user" as const,
+        },
+      ],
+    });
+    const result = buildExecutionPrompt(task);
+
+    expect(result).toContain("## Steering Comments");
+    expect(result).toContain("**user**");
+    expect(result).toContain("> Please handle the edge case");
+    expect(result).toContain("The following steering comments were added by the user");
+  });
+
+  it("formats multiple steering comments correctly", () => {
+    const now = new Date();
+    const task = createMockTaskDetail({
+      steeringComments: [
+        {
+          id: "1",
+          text: "First comment",
+          createdAt: new Date(now.getTime() - 60000).toISOString(), // 1 minute ago
+          author: "user" as const,
+        },
+        {
+          id: "2",
+          text: "Second comment",
+          createdAt: now.toISOString(),
+          author: "agent" as const,
+        },
+      ],
+    });
+    const result = buildExecutionPrompt(task);
+
+    expect(result).toContain("**user**");
+    expect(result).toContain("**agent**");
+    expect(result).toContain("> First comment");
+    expect(result).toContain("> Second comment");
+  });
+
+  it("omits Steering Comments section when steeringComments is empty", () => {
+    const task = createMockTaskDetail({ steeringComments: [] });
+    const result = buildExecutionPrompt(task);
+
+    expect(result).not.toContain("## Steering Comments");
+  });
+
+  it("omits Steering Comments section when steeringComments is undefined", () => {
+    const task = createMockTaskDetail();
+    const result = buildExecutionPrompt(task);
+
+    expect(result).not.toContain("## Steering Comments");
+  });
+
+  it("includes only the 10 most recent steering comments", () => {
+    const steeringComments = Array.from({ length: 15 }, (_, i) => ({
+      id: `${i}`,
+      text: `Comment ${i}`,
+      createdAt: new Date().toISOString(),
+      author: "user" as const,
+    }));
+
+    const task = createMockTaskDetail({ steeringComments });
+    const result = buildExecutionPrompt(task);
+
+    // Should include comments 5-14 (the 10 most recent), not 0-4
+    expect(result).toContain("> Comment 5");
+    expect(result).toContain("> Comment 14");
+    expect(result).not.toContain("> Comment 0");
+    expect(result).not.toContain("> Comment 4");
+  });
+
   it("passes settings to buildExecutionPrompt in TaskExecutor.execute()", async () => {
     const store = createMockStore();
     store.getSettings.mockResolvedValue({
@@ -2773,5 +2850,178 @@ describe("TaskExecutor usage limit detection", () => {
       "KB-002",
       "overloaded_error: Overloaded",
     );
+  });
+});
+
+describe("Per-task model overrides", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("uses per-task model overrides when both provider and modelId are set", async () => {
+    const store = createMockStore();
+    const capturedOptions: any[] = [];
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOptions.push(opts);
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: {},
+        },
+      } as any;
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Override getTask to return task with model overrides
+    store.getTask.mockResolvedValue({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    });
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    });
+
+    // Should use per-task model overrides
+    expect(capturedOptions[0].defaultProvider).toBe("anthropic");
+    expect(capturedOptions[0].defaultModelId).toBe("claude-sonnet-4-5");
+  });
+
+  it("falls back to global settings when per-task model is not fully specified", async () => {
+    const store = createMockStore();
+    const capturedOptions: any[] = [];
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOptions.push(opts);
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: {},
+        },
+      } as any;
+    });
+
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: undefined,
+      defaultProvider: "openai",
+      defaultModelId: "gpt-4o",
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      // No modelProvider/modelId set
+    });
+
+    // Should use global settings (not task overrides)
+    expect(capturedOptions[0].defaultProvider).toBe("openai");
+    expect(capturedOptions[0].defaultModelId).toBe("gpt-4o");
+  });
+
+  it("falls back to global settings when only modelProvider is set (missing modelId)", async () => {
+    const store = createMockStore();
+    const capturedOptions: any[] = [];
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedOptions.push(opts);
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: {},
+        },
+      } as any;
+    });
+
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: undefined,
+      defaultProvider: "openai",
+      defaultModelId: "gpt-4o",
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Override getTask to return task with only modelProvider set
+    store.getTask.mockResolvedValue({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      modelProvider: "anthropic",
+      // modelId is missing
+    });
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      modelProvider: "anthropic",
+      // modelId is missing
+    });
+
+    // Should fall back to global settings since modelId is not set
+    expect(capturedOptions[0].defaultProvider).toBe("openai");
+    expect(capturedOptions[0].defaultModelId).toBe("gpt-4o");
   });
 });

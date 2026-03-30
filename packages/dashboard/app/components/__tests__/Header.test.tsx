@@ -26,6 +26,21 @@ describe("Header", () => {
     expect(btn).toBeDefined();
   });
 
+  it("renders the import button", () => {
+    const onOpen = vi.fn();
+    render(<Header onOpenGitHubImport={onOpen} />);
+    const btn = screen.getByTitle("Import from GitHub");
+    expect(btn).toBeDefined();
+  });
+
+  it("calls onOpenGitHubImport when import button is clicked", () => {
+    const onOpen = vi.fn();
+    render(<Header onOpenGitHubImport={onOpen} />);
+    const btn = screen.getByTitle("Import from GitHub");
+    fireEvent.click(btn);
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
   // ── Pause button (soft pause) ────────────────────────────────────
 
   it("renders pause button with 'Pause scheduling' title when not paused", () => {
@@ -113,4 +128,64 @@ describe("Header", () => {
     const svg = btn.querySelector("svg");
     expect(svg).toBeDefined();
   });
+
+  // ── View Toggle ────────────────────────────────────────────────────
+
+  it("renders view toggle when onChangeView is provided", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const boardBtn = screen.getByTitle("Board view");
+    const listBtn = screen.getByTitle("List view");
+    expect(boardBtn).toBeDefined();
+    expect(listBtn).toBeDefined();
+  });
+
+  it("does not render view toggle when onChangeView is not provided", () => {
+    render(<Header />);
+    const boardBtn = screen.queryByTitle("Board view");
+    const listBtn = screen.queryByTitle("List view");
+    expect(boardBtn).toBeNull();
+    expect(listBtn).toBeNull();
+  });
+
+  it("calls onChangeView with 'board' when board view button is clicked", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="list" onChangeView={onChangeView} />);
+    const boardBtn = screen.getByTitle("Board view");
+    fireEvent.click(boardBtn);
+    expect(onChangeView).toHaveBeenCalledWith("board");
+  });
+
+  it("calls onChangeView with 'list' when list view button is clicked", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const listBtn = screen.getByTitle("List view");
+    fireEvent.click(listBtn);
+    expect(onChangeView).toHaveBeenCalledWith("list");
+  });
+
+  it("marks board view button as active when view is 'board'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const boardBtn = screen.getByTitle("Board view");
+    expect(boardBtn.className).toContain("active");
+    expect(boardBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("marks list view button as active when view is 'list'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="list" onChangeView={onChangeView} />);
+    const listBtn = screen.getByTitle("List view");
+    expect(listBtn.className).toContain("active");
+    expect(listBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("does not mark board view button as active when view is 'list'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="list" onChangeView={onChangeView} />);
+    const boardBtn = screen.getByTitle("Board view");
+    expect(boardBtn.className).not.toContain("active");
+    expect(boardBtn.getAttribute("aria-pressed")).toBe("false");
+  });
 });
+

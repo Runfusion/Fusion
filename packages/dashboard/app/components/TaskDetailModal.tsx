@@ -1,12 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Task, TaskDetail, TaskAttachment, Column, MergeResult } from "@kb/core";
+import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo } from "@kb/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@kb/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, requestSpecRevision, approvePlan, rejectPlan } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { AgentLogViewer } from "./AgentLogViewer";
+import { SteeringTab } from "./SteeringTab";
+import { ModelSelectorTab } from "./ModelSelectorTab";
+import { PrSection } from "./PrSection";
+import { SpecEditor } from "./SpecEditor";
+
+function getStepStatusColor(status: string): string {
+  switch (status) {
+    case "done":
+      return "var(--color-success, #3fb950)";
+    case "in-progress":
+      return "var(--todo, #58a6ff)";
+    case "skipped":
+      return "var(--text-dim, #484f58)";
+    case "pending":
+    default:
+      return "var(--border, #30363d)";
+  }
+}
 
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
@@ -33,11 +51,13 @@ interface TaskDetailModalProps {
   task: TaskDetail;
   tasks?: Task[];
   onClose: () => void;
+  onOpenDetail: (task: TaskDetail) => void; // For clicking dependencies
   onMoveTask: (id: string, column: Column) => Promise<Task>;
   onDeleteTask: (id: string) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   addToast: (message: string, type?: ToastType) => void;
+  githubTokenConfigured?: boolean;
 }
 
 function truncate(s: string, max: number): string {
@@ -48,18 +68,22 @@ export function TaskDetailModal({
   task,
   tasks = [],
   onClose,
+  onOpenDetail,
   onMoveTask,
   onDeleteTask,
   onMergeTask,
   onRetryTask,
   addToast,
+  githubTokenConfigured,
 }: TaskDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<"definition" | "agent-log">("definition");
+  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "steering" | "model" | "spec">("definition");
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
   const [showDepDropdown, setShowDepDropdown] = useState(false);
   const [depSearch, setDepSearch] = useState("");
+  const [isSavingSpec, setIsSavingSpec] = useState(false);
+  const [isRequestingRevision, setIsRequestingRevision] = useState(false);
   useEffect(() => {
     if (!showDepDropdown) setDepSearch("");
   }, [showDepDropdown]);
@@ -149,6 +173,27 @@ export function TaskDetailModal({
     }
   }, [task.id, task.paused, onClose, addToast]);
 
+  const handleApprovePlan = useCallback(async () => {
+    try {
+      await approvePlan(task.id);
+      addToast(`Plan approved — ${task.id} moved to Todo`, "success");
+      onClose();
+    } catch (err: any) {
+      addToast(err.message, "error");
+    }
+  }, [task.id, onClose, addToast]);
+
+  const handleRejectPlan = useCallback(async () => {
+    if (!confirm("Reject this plan? The specification will be discarded and regenerated.")) return;
+    try {
+      await rejectPlan(task.id);
+      addToast(`Plan rejected — ${task.id} returned to Triage for re-specification`, "info");
+      onClose();
+    } catch (err: any) {
+      addToast(err.message, "error");
+    }
+  }, [task.id, onClose, addToast]);
+
   const uploadFile = useCallback(async (file: File) => {
     setUploading(true);
     try {
@@ -226,7 +271,8 @@ export function TaskDetailModal({
     }
   }, [task.id, dependencies, addToast]);
 
-  const handleRemoveDep = useCallback(async (depId: string) => {
+  const handleRemoveDep = useCallback(async (e: React.MouseEvent, depId: string) => {
+    e.stopPropagation(); // Prevent triggering dependency click
     const newDeps = dependencies.filter((d) => d !== depId);
     setDependencies(newDeps);
     try {
@@ -236,6 +282,48 @@ export function TaskDetailModal({
       addToast(err.message, "error");
     }
   }, [task.id, dependencies, addToast]);
+
+  const handleDepClick = useCallback(async (depId: string) => {
+    try {
+      const detail = await fetchTaskDetail(depId);
+      onOpenDetail(detail);
+    } catch (err: any) {
+      addToast(`Failed to load dependency ${depId}`, "error");
+    }
+  }, [onOpenDetail, addToast]);
+
+  const handleSaveSpec = useCallback(async (newContent: string) => {
+    setIsSavingSpec(true);
+    try {
+      await updateTask(task.id, { prompt: newContent });
+      addToast("Spec updated", "success");
+      // Update local task data
+      task.prompt = newContent;
+    } catch (err: any) {
+      addToast(err.message, "error");
+      throw err;
+    } finally {
+      setIsSavingSpec(false);
+    }
+  }, [task, addToast]);
+
+  const handleRequestSpecRevision = useCallback(async (feedback: string) => {
+    setIsRequestingRevision(true);
+    try {
+      await requestSpecRevision(task.id, feedback);
+      addToast("AI revision requested. Task moved to triage.", "success");
+      // Task has been moved to triage, close modal
+      onClose();
+    } catch (err: any) {
+      if (err.message?.includes("in-review") || err.message?.includes("done")) {
+        addToast("Cannot request revision: Task must be in 'todo' or 'in-progress' column.", "error");
+      } else {
+        addToast(err.message, "error");
+      }
+    } finally {
+      setIsRequestingRevision(false);
+    }
+  }, [task.id, addToast, onClose]);
 
   const availableTasks = tasks
     .filter((t) => t.id !== task.id && !dependencies.includes(t.id))
@@ -277,15 +365,78 @@ export function TaskDetailModal({
               Definition
             </button>
             <button
+              className={`detail-tab${activeTab === "activity" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("activity")}
+            >
+              Activity
+            </button>
+            <button
               className={`detail-tab${activeTab === "agent-log" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("agent-log")}
             >
               Agent Log
             </button>
+            <button
+              className={`detail-tab${activeTab === "steering" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("steering")}
+            >
+              Steering
+            </button>
+            <button
+              className={`detail-tab${activeTab === "model" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("model")}
+            >
+              Model
+            </button>
+            <button
+              className={`detail-tab${activeTab === "spec" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("spec")}
+            >
+              Spec
+            </button>
           </div>
-          {activeTab === "agent-log" ? (
+          {activeTab === "spec" ? (
+            <div className="detail-section">
+              <SpecEditor
+                content={task.prompt || ""}
+                onSave={handleSaveSpec}
+                onRequestRevision={handleRequestSpecRevision}
+                isSaving={isSavingSpec}
+                isRequesting={isRequestingRevision}
+              />
+            </div>
+          ) : activeTab === "model" ? (
+            <div className="detail-section">
+              <ModelSelectorTab task={task} addToast={addToast} />
+            </div>
+          ) : activeTab === "agent-log" ? (
             <div className="detail-section">
               <AgentLogViewer entries={agentLogEntries} loading={agentLogLoading} />
+            </div>
+          ) : activeTab === "steering" ? (
+            <SteeringTab task={task} addToast={addToast} />
+          ) : activeTab === "activity" ? (
+            <div className="detail-section detail-activity">
+              <h4>Activity</h4>
+              {task.log && task.log.length > 0 ? (
+                <div className="detail-activity-list">
+                  {[...task.log].reverse().map((entry, i) => (
+                    <div key={i} className="detail-log-entry">
+                      <div className="detail-log-header">
+                        <span className="detail-log-timestamp">
+                          {formatTimestamp(entry.timestamp)}
+                        </span>
+                        <span className="detail-log-action">{entry.action}</span>
+                      </div>
+                      {entry.outcome && (
+                        <div className="detail-log-outcome">{entry.outcome}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="detail-log-empty">(no activity)</div>
+              )}
             </div>
           ) : (
           <>
@@ -377,11 +528,25 @@ export function TaskDetailModal({
             {dependencies.length > 0 ? (
               <ul className="detail-dep-list">
                 {dependencies.map((dep) => (
-                  <li key={dep}>
-                    {dep}
+                  <li key={dep} className="detail-dep-item">
+                    <span
+                      className="detail-dep-link"
+                      onClick={() => handleDepClick(dep)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleDepClick(dep);
+                        }
+                      }}
+                      role="link"
+                      tabIndex={0}
+                      title={`Click to view ${dep}`}
+                    >
+                      {dep}
+                    </span>
                     <button
                       className="dep-remove-btn"
-                      onClick={() => handleRemoveDep(dep)}
+                      onClick={(e) => handleRemoveDep(e, dep)}
                       title={`Remove dependency ${dep}`}
                       style={{
                         marginLeft: "6px",
@@ -450,28 +615,45 @@ export function TaskDetailModal({
               })()}
             </div>
           </div>
-          <div className="detail-section detail-activity">
-            <h4>Activity</h4>
-            {task.log && task.log.length > 0 ? (
-              <div className="detail-activity-list">
-                {[...task.log].reverse().map((entry, i) => (
-                  <div key={i} className="detail-log-entry">
-                    <div className="detail-log-header">
-                      <span className="detail-log-timestamp">
-                        {formatTimestamp(entry.timestamp)}
-                      </span>
-                      <span className="detail-log-action">{entry.action}</span>
-                    </div>
-                    {entry.outcome && (
-                      <div className="detail-log-outcome">{entry.outcome}</div>
-                    )}
-                  </div>
-                ))}
+          <div className="detail-section detail-step-progress">
+            <h4>Progress</h4>
+            {task.steps && task.steps.length > 0 ? (
+              <div className="step-progress-wrapper">
+                <div className="step-progress-bar">
+                  {task.steps.map((step, index) => (
+                    <div
+                      key={index}
+                      className={`step-progress-segment step-progress-segment--${step.status}`}
+                      data-tooltip={`${step.name} (${step.status})`}
+                      style={{ backgroundColor: getStepStatusColor(step.status) }}
+                    />
+                  ))}
+                </div>
+                <span className="step-progress-label">
+                  {task.steps.filter(s => s.status === "done").length}/{task.steps.length} steps
+                </span>
               </div>
             ) : (
-              <div className="detail-log-empty">(no activity)</div>
+              <div className="step-progress-empty">(no steps defined)</div>
             )}
           </div>
+          {/* PR Section - only for in-review tasks */}
+          {task.column === "in-review" && (
+            <PrSection
+              taskId={task.id}
+              prInfo={task.prInfo}
+              hasGitHubToken={githubTokenConfigured ?? false}
+              onPrCreated={(prInfo) => {
+                // Update task locally to show new PR
+                (task as TaskDetail).prInfo = prInfo;
+                addToast(`PR #${prInfo.number} created`, "success");
+              }}
+              onPrUpdated={(prInfo) => {
+                (task as TaskDetail).prInfo = prInfo;
+              }}
+              addToast={addToast}
+            />
+          )}
           </>
           )}
         </div>
@@ -488,6 +670,17 @@ export function TaskDetailModal({
             <button className="btn btn-sm" onClick={handleTogglePause}>
               {task.paused ? "Unpause" : "Pause"}
             </button>
+          )}
+          {/* Approve/Reject Plan buttons for tasks awaiting approval */}
+          {task.column === "triage" && task.status === "awaiting-approval" && task.prompt && (
+            <>
+              <button className="btn btn-primary btn-sm" onClick={handleApprovePlan}>
+                Approve Plan
+              </button>
+              <button className="btn btn-danger btn-sm" onClick={handleRejectPlan}>
+                Reject Plan
+              </button>
+            </>
           )}
           <div style={{ flex: 1 }} />
           {task.column === "in-review" ? (

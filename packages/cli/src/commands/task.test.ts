@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// Mock node:readline/promises before importing the module under test
+vi.mock("node:readline/promises", () => ({
+  createInterface: vi.fn(),
+}));
+
 // Mock @kb/core before importing the module under test
 vi.mock("@kb/core", () => {
   const COLUMNS = ["triage", "specified", "in-progress", "review", "done"];
@@ -21,8 +26,9 @@ vi.mock("@kb/core", () => {
 // Mock @kb/engine
 vi.mock("@kb/engine", () => ({ aiMergeTask: vi.fn() }));
 
+import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@kb/core";
-import { runTaskShow, runTaskCreate } from "./task.js";
+import { runTaskShow, runTaskCreate, runTaskDuplicate } from "./task.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -268,5 +274,621 @@ describe("runTaskCreate with --depends", () => {
       description: "test task",
       dependencies: undefined,
     });
+  });
+});
+
+import { runTaskImportGitHubInteractive } from "./task.js";
+
+describe("runTaskImportGitHubInteractive", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let mockCreateTask: ReturnType<typeof vi.fn>;
+  let mockListTasks: ReturnType<typeof vi.fn>;
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as any;
+
+    mockCreateTask = vi.fn().mockImplementation((input: { description: string; title?: string }) => ({
+      id: `KB-${String(mockCreateTask.mock.calls.length).padStart(3, "0")}`,
+      title: input.title,
+      description: input.description,
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+
+    mockListTasks = vi.fn().mockResolvedValue([]);
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      createTask: mockCreateTask,
+      listTasks: mockListTasks,
+    }));
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  const mockIssue = (num: number, title: string, body: string | null): GitHubIssue => ({
+    number: num,
+    title,
+    body,
+    html_url: `https://github.com/owner/repo/issues/${num}`,
+    labels: [],
+    created_at: "2024-01-01T00:00:00Z",
+    updated_at: "2024-01-02T00:00:00Z",
+  });
+
+  it("imports selected issues via interactive mode", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([
+        mockIssue(1, "First Issue", "Description 1"),
+        mockIssue(2, "Second Issue", "Description 2"),
+        mockIssue(3, "Third Issue", "Description 3"),
+      ]),
+    } as Response);
+
+    // Mock readline to select issues 1 and 3
+    const mockReadline = {
+      question: vi.fn().mockResolvedValueOnce("1,3"),
+      close: vi.fn(),
+    };
+    vi.mocked(createInterface).mockReturnValueOnce(mockReadline as any);
+
+    await runTaskImportGitHubInteractive("owner/repo");
+
+    expect(mockCreateTask).toHaveBeenCalledTimes(2);
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: "First Issue",
+      description: "Description 1\n\nSource: https://github.com/owner/repo/issues/1",
+      column: "triage",
+      dependencies: [],
+    });
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: "Third Issue",
+      description: "Description 3\n\nSource: https://github.com/owner/repo/issues/3",
+      column: "triage",
+      dependencies: [],
+    });
+  });
+
+  it('imports all issues when "all" is selected', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([
+        mockIssue(1, "First Issue", "Description 1"),
+        mockIssue(2, "Second Issue", "Description 2"),
+      ]),
+    } as Response);
+
+    // Mock readline to select "all"
+    const mockReadline = {
+      question: vi.fn().mockResolvedValueOnce("all"),
+      close: vi.fn(),
+    };
+    vi.mocked(createInterface).mockReturnValueOnce(mockReadline as any);
+
+    await runTaskImportGitHubInteractive("owner/repo");
+
+    expect(mockCreateTask).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips already imported issues", async () => {
+    // Setup existing task with source URL
+    mockListTasks.mockResolvedValueOnce([
+      {
+        id: "KB-001",
+        description: "Existing\n\nSource: https://github.com/owner/repo/issues/1",
+        column: "triage",
+      },
+    ]);
+
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([
+        mockIssue(1, "First Issue", "Description 1"),
+        mockIssue(2, "Second Issue", "Description 2"),
+      ]),
+    } as Response);
+
+    const mockReadline = {
+      question: vi.fn().mockResolvedValueOnce("all"),
+      close: vi.fn(),
+    };
+    vi.mocked(createInterface).mockReturnValueOnce(mockReadline as any);
+
+    await runTaskImportGitHubInteractive("owner/repo");
+
+    expect(mockCreateTask).toHaveBeenCalledTimes(1);
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: "Second Issue",
+      description: "Description 2\n\nSource: https://github.com/owner/repo/issues/2",
+      column: "triage",
+      dependencies: [],
+    });
+
+    const skipLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("Skipping #1"),
+    );
+    expect(skipLine).toBeDefined();
+  });
+
+  it("handles empty issues list", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([]),
+    } as Response);
+
+    await runTaskImportGitHubInteractive("owner/repo");
+
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    const noIssuesLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("No open issues"),
+    );
+    expect(noIssuesLine).toBeDefined();
+  });
+
+  it("exits on invalid owner/repo format", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+
+    await expect(runTaskImportGitHubInteractive("invalid-format")).rejects.toThrow("process.exit");
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("handles API errors gracefully", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+    } as Response);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+
+    await expect(runTaskImportGitHubInteractive("owner/repo")).rejects.toThrow("process.exit");
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("re-prompts on invalid input", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([
+        mockIssue(1, "First Issue", "Description 1"),
+      ]),
+    } as Response);
+
+    // First invalid input, then valid
+    const mockReadline = {
+      question: vi.fn()
+        .mockResolvedValueOnce("invalid")
+        .mockResolvedValueOnce("1"),
+      close: vi.fn(),
+    };
+    vi.mocked(createInterface).mockReturnValueOnce(mockReadline as any);
+
+    await runTaskImportGitHubInteractive("owner/repo");
+
+    expect(mockReadline.question).toHaveBeenCalledTimes(2);
+    expect(mockCreateTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-prompts on out of range selection", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([
+        mockIssue(1, "First Issue", "Description 1"),
+      ]),
+    } as Response);
+
+    // First out of range, then valid
+    const mockReadline = {
+      question: vi.fn()
+        .mockResolvedValueOnce("99")
+        .mockResolvedValueOnce("1"),
+      close: vi.fn(),
+    };
+    vi.mocked(createInterface).mockReturnValueOnce(mockReadline as any);
+
+    await runTaskImportGitHubInteractive("owner/repo");
+
+    expect(mockReadline.question).toHaveBeenCalledTimes(2);
+    expect(mockCreateTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+// GitHub Import Tests
+import { fetchGitHubIssues, runTaskImportFromGitHub, type GitHubIssue } from "./task.js";
+
+describe("fetchGitHubIssues", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  const originalFetch = globalThis.fetch;
+  const originalEnv = process.env.GITHUB_TOKEN;
+
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as any;
+    delete process.env.GITHUB_TOKEN;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalEnv;
+    vi.restoreAllMocks();
+  });
+
+  const mockIssue: GitHubIssue = {
+    number: 1,
+    title: "Test Issue",
+    body: "Test body",
+    html_url: "https://github.com/owner/repo/issues/1",
+    labels: [{ name: "bug" }],
+    created_at: "2024-01-01T00:00:00Z",
+    updated_at: "2024-01-02T00:00:00Z",
+  };
+
+  it("fetches issues successfully", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([mockIssue]),
+    } as Response);
+
+    const issues = await fetchGitHubIssues("owner", "repo");
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0].number).toBe(1);
+    expect(issues[0].title).toBe("Test Issue");
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("https://api.github.com/repos/owner/repo/issues");
+    expect(url).toContain("state=open");
+  });
+
+  it("includes Authorization header when GITHUB_TOKEN is set", async () => {
+    process.env.GITHUB_TOKEN = "test-token";
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([mockIssue]),
+    } as Response);
+
+    await fetchGitHubIssues("owner", "repo");
+
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-token");
+  });
+
+  it("respects limit option", async () => {
+    const manyIssues = Array.from({ length: 50 }, (_, i) => ({
+      ...mockIssue,
+      number: i + 1,
+    }));
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(manyIssues),
+    } as Response);
+
+    const issues = await fetchGitHubIssues("owner", "repo", { limit: 10 });
+
+    expect(issues).toHaveLength(10);
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("per_page=10");
+  });
+
+  it("respects labels option", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([mockIssue]),
+    } as Response);
+
+    await fetchGitHubIssues("owner", "repo", { labels: ["bug", "enhancement"] });
+
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("labels=bug%2Cenhancement");
+  });
+
+  it("filters out pull requests", async () => {
+    const pr = { ...mockIssue, pull_request: {} };
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([mockIssue, pr]),
+    } as Response);
+
+    const issues = await fetchGitHubIssues("owner", "repo");
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0].number).toBe(1);
+  });
+
+  it("throws error for 404", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+    } as Response);
+
+    await expect(fetchGitHubIssues("owner", "repo")).rejects.toThrow("Repository not found");
+  });
+
+  it("throws error for 401/403", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+    } as Response);
+
+    await expect(fetchGitHubIssues("owner", "repo")).rejects.toThrow("Authentication failed");
+  });
+
+  it("throws generic error for other status codes", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Server Error",
+    } as Response);
+
+    await expect(fetchGitHubIssues("owner", "repo")).rejects.toThrow("GitHub API error: 500");
+  });
+});
+
+describe("runTaskImportFromGitHub", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let mockCreateTask: ReturnType<typeof vi.fn>;
+  let mockListTasks: ReturnType<typeof vi.fn>;
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as any;
+
+    mockCreateTask = vi.fn().mockImplementation((input: { description: string; title?: string }) => ({
+      id: `KB-${String(mockCreateTask.mock.calls.length).padStart(3, "0")}`,
+      title: input.title,
+      description: input.description,
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+
+    mockListTasks = vi.fn().mockResolvedValue([]);
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      createTask: mockCreateTask,
+      listTasks: mockListTasks,
+    }));
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  const mockIssue = (num: number, title: string, body: string | null): GitHubIssue => ({
+    number: num,
+    title,
+    body,
+    html_url: `https://github.com/owner/repo/issues/${num}`,
+    labels: [],
+    created_at: "2024-01-01T00:00:00Z",
+    updated_at: "2024-01-02T00:00:00Z",
+  });
+
+  it("imports issues and creates tasks", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([
+        mockIssue(1, "First Issue", "Description 1"),
+        mockIssue(2, "Second Issue", "Description 2"),
+      ]),
+    } as Response);
+
+    await runTaskImportFromGitHub("owner/repo");
+
+    expect(mockCreateTask).toHaveBeenCalledTimes(2);
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: "First Issue",
+      description: "Description 1\n\nSource: https://github.com/owner/repo/issues/1",
+      column: "triage",
+      dependencies: [],
+    });
+
+    const successLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("✓ Imported 2 tasks"),
+    );
+    expect(successLine).toBeDefined();
+  });
+
+  it("skips already imported issues", async () => {
+    // Setup existing task with source URL
+    mockListTasks.mockResolvedValueOnce([
+      {
+        id: "KB-001",
+        description: "Existing\n\nSource: https://github.com/owner/repo/issues/1",
+        column: "triage",
+      },
+    ]);
+
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([
+        mockIssue(1, "First Issue", "Description 1"),
+        mockIssue(2, "Second Issue", "Description 2"),
+      ]),
+    } as Response);
+
+    await runTaskImportFromGitHub("owner/repo");
+
+    expect(mockCreateTask).toHaveBeenCalledTimes(1);
+    const skipLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("Skipping #1"),
+    );
+    expect(skipLine).toBeDefined();
+  });
+
+  it("handles empty issues list", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([]),
+    } as Response);
+
+    await runTaskImportFromGitHub("owner/repo");
+
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    const noIssuesLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("No open issues"),
+    );
+    expect(noIssuesLine).toBeDefined();
+  });
+
+  it("exits on invalid owner/repo format", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+
+    await expect(runTaskImportFromGitHub("invalid-format")).rejects.toThrow("process.exit");
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("handles API errors gracefully", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+    } as Response);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+
+    await expect(runTaskImportFromGitHub("owner/repo")).rejects.toThrow("process.exit");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("uses (no description) for empty body", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([mockIssue(1, "No Body Issue", null)]),
+    } as Response);
+
+    await runTaskImportFromGitHub("owner/repo");
+
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: "No Body Issue",
+      description: "(no description)\n\nSource: https://github.com/owner/repo/issues/1",
+      column: "triage",
+      dependencies: [],
+    });
+  });
+
+  it("truncates long titles to 200 chars", async () => {
+    const longTitle = "A".repeat(250);
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([mockIssue(1, longTitle, "Body")]),
+    } as Response);
+
+    await runTaskImportFromGitHub("owner/repo");
+
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: "A".repeat(200),
+      description: expect.stringContaining("Body"),
+      column: "triage",
+      dependencies: [],
+    });
+  });
+});
+
+// --- Duplicate Tests ---
+
+describe("runTaskDuplicate", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let mockDuplicateTask: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    mockDuplicateTask = vi.fn().mockResolvedValue({
+      id: "KB-002",
+      description: "Duplicated task",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      duplicateTask: mockDuplicateTask,
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("duplicates task and prints success", async () => {
+    await runTaskDuplicate("KB-001");
+
+    expect(mockDuplicateTask).toHaveBeenCalledOnce();
+    expect(mockDuplicateTask).toHaveBeenCalledWith("KB-001");
+
+    const successLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("✓ Duplicated"),
+    );
+    expect(successLine).toBeDefined();
+    expect(successLine![0]).toContain("KB-001");
+    expect(successLine![0]).toContain("KB-002");
+  });
+
+  it("throws when task not found", async () => {
+    mockDuplicateTask.mockRejectedValueOnce(new Error("Task KB-999 not found"));
+
+    await expect(runTaskDuplicate("KB-999")).rejects.toThrow("Task KB-999 not found");
   });
 });

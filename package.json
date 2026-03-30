@@ -11,6 +11,7 @@
     "build:exe": "pnpm build && pnpm --filter @dustinbyrne/kb build:exe",
     "build:exe:all": "pnpm build && pnpm --filter @dustinbyrne/kb build:exe:all",
     "test": "pnpm -r test",
+    "test:coverage": "pnpm -r test -- --coverage",
     "typecheck": "pnpm -r typecheck",
     "changeset": "changeset",
     "version": "changeset version",

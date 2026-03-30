@@ -23,6 +23,8 @@ Launch the web UI and AI engine:
 ```bash
 kb dashboard
 kb dashboard --port 8080
+kb dashboard --paused        # Start with automation paused (review before work begins)
+kb dashboard --dev           # Start web UI only (no AI engine)
 ```
 
 ### Create a task
@@ -43,6 +45,8 @@ kb task log KB-001 "Added context"  # Add a log entry
 kb task pause KB-001                # Pause a task (stops automation)
 kb task unpause KB-001              # Resume a paused task
 kb task attach KB-001 ./error.log   # Attach a file to a task
+kb task import owner/repo           # Import GitHub issues as tasks
+kb task import owner/repo --limit 10 --labels "bug,enhancement"
 ```
 
 ### Typical workflow

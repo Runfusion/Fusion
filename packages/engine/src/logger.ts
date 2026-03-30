@@ -61,3 +61,6 @@ export const worktreePoolLog = createLogger("worktree-pool");
 
 /** Logger for the review subsystem. */
 export const reviewerLog = createLogger("reviewer");
+
+/** Logger for the PR monitor subsystem. */
+export const prMonitorLog = createLogger("pr-monitor");

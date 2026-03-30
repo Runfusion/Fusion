@@ -245,3 +245,95 @@ describe("reviewStep — exhausted-retry error detection", () => {
     expect(result.verdict).toBe("APPROVE");
   });
 });
+
+describe("reviewStep — validator model overrides", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("uses validatorModelProvider and validatorModelId when both are set", async () => {
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),
+    );
+
+    await reviewStep(
+      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        defaultProvider: "openai",
+        defaultModelId: "gpt-4o",
+        validatorModelProvider: "anthropic",
+        validatorModelId: "claude-sonnet-4-5",
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect(opts.defaultProvider).toBe("anthropic");
+    expect(opts.defaultModelId).toBe("claude-sonnet-4-5");
+  });
+
+  it("falls back to defaultProvider/defaultModelId when validatorModelProvider is missing", async () => {
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),
+    );
+
+    await reviewStep(
+      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        defaultProvider: "openai",
+        defaultModelId: "gpt-4o",
+        // validatorModelProvider is missing
+        validatorModelId: "claude-sonnet-4-5",
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect(opts.defaultProvider).toBe("openai");
+    expect(opts.defaultModelId).toBe("gpt-4o");
+  });
+
+  it("falls back to defaultProvider/defaultModelId when validatorModelId is missing", async () => {
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),
+    );
+
+    await reviewStep(
+      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        defaultProvider: "openai",
+        defaultModelId: "gpt-4o",
+        validatorModelProvider: "anthropic",
+        // validatorModelId is missing
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect(opts.defaultProvider).toBe("openai");
+    expect(opts.defaultModelId).toBe("gpt-4o");
+  });
+
+  it("falls back to defaultProvider/defaultModelId when both validator fields are undefined", async () => {
+    mockedCreateHaiAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),
+    );
+
+    await reviewStep(
+      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        defaultProvider: "openai",
+        defaultModelId: "gpt-4o",
+      },
+    );
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateHaiAgent.mock.calls[0][0];
+    expect(opts.defaultProvider).toBe("openai");
+    expect(opts.defaultModelId).toBe("gpt-4o");
+  });
+});

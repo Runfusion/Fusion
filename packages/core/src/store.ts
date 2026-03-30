@@ -214,6 +214,51 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
+   * Duplicate an existing task, creating a fresh copy in triage.
+   * Copies title and description with source reference, but resets all
+   * execution state. The new task will be re-specified by the AI.
+   */
+  async duplicateTask(id: string): Promise<Task> {
+    // Read the source task with its prompt
+    const sourceTask = await this.getTask(id);
+
+    // Allocate a new ID
+    const newId = await this.allocateId();
+    const now = new Date().toISOString();
+
+    // Create new task with copied title/description, but fresh state
+    const newTask: Task = {
+      id: newId,
+      title: sourceTask.title,
+      description: `${sourceTask.description}\n\n(Duplicated from ${id})`,
+      column: "triage",
+      dependencies: [], // Fresh task should have no dependencies
+      steps: [], // Reset execution state
+      currentStep: 0,
+      log: [{ timestamp: now, action: `Duplicated from ${id}` }],
+      columnMovedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      // Explicitly NOT copied: worktree, status, blockedBy, paused, baseBranch,
+      // attachments, steeringComments, prInfo, agent logs, size, reviewLevel
+    };
+
+    const newDir = this.taskDir(newId);
+    await mkdir(newDir, { recursive: true });
+    await this.atomicWriteTaskJson(newDir, newTask);
+
+    // Copy source PROMPT.md content (the AI will re-specify it in triage)
+    const sourcePrompt = sourceTask.prompt;
+    await writeFile(join(newDir, "PROMPT.md"), sourcePrompt);
+
+    // Update cache if watcher is active
+    if (this.watcher) this.taskCache.set(newId, { ...newTask });
+
+    this.emit("task:created", newTask);
+    return newTask;
+  }
+
+  /**
    * Read a task's JSON and prompt content.
    *
    * Retries once after a short delay on non-ENOENT errors to handle
@@ -295,7 +340,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
@@ -337,6 +382,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (updates.baseBranch !== undefined) task.baseBranch = updates.baseBranch;
       if (updates.size !== undefined) task.size = updates.size;
       if (updates.reviewLevel !== undefined) task.reviewLevel = updates.reviewLevel;
+      if (updates.mergeRetries !== undefined) task.mergeRetries = updates.mergeRetries;
+      if (updates.modelProvider === null) {
+        task.modelProvider = undefined;
+      } else if (updates.modelProvider !== undefined) {
+        task.modelProvider = updates.modelProvider;
+      }
+      if (updates.modelId === null) {
+        task.modelId = undefined;
+      } else if (updates.modelId !== undefined) {
+        task.modelId = updates.modelId;
+      }
+      if (updates.validatorModelProvider === null) {
+        task.validatorModelProvider = undefined;
+      } else if (updates.validatorModelProvider !== undefined) {
+        task.validatorModelProvider = updates.validatorModelProvider;
+      }
+      if (updates.validatorModelId === null) {
+        task.validatorModelId = undefined;
+      } else if (updates.validatorModelId !== undefined) {
+        task.validatorModelId = updates.validatorModelId;
+      }
       task.updatedAt = new Date().toISOString();
 
       await this.atomicWriteTaskJson(dir, task);
@@ -979,6 +1045,99 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const logPath = join(dir, "agent.log");
     await appendFile(logPath, JSON.stringify(entry) + "\n");
     this.emit("agent:log", entry);
+  }
+
+  /**
+   * Add a steering comment to a task.
+   * Steering comments are user-provided feedback injected into the AI execution context.
+   */
+  async addSteeringComment(
+    id: string,
+    text: string,
+    author: "user" | "agent" = "user",
+  ): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      // Generate unique ID: timestamp + random suffix for collision resistance
+      const commentId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      const comment: import("./types.js").SteeringComment = {
+        id: commentId,
+        text,
+        createdAt: new Date().toISOString(),
+        author,
+      };
+
+      if (!task.steeringComments) {
+        task.steeringComments = [];
+      }
+      task.steeringComments.push(comment);
+      task.updatedAt = new Date().toISOString();
+      task.log.push({
+        timestamp: task.updatedAt,
+        action: "Steering comment added",
+        outcome: `by ${author}`,
+      });
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.watcher) this.taskCache.set(id, { ...task });
+
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+
+  /**
+   * Update or clear PR information for a task.
+   * Updates task.json atomically and emits `task:updated` event.
+   *
+   * @param id - The task ID
+   * @param prInfo - The PR info to set, or null to clear
+   * @returns The updated task
+   */
+  async updatePrInfo(
+    id: string,
+    prInfo: import("./types.js").PrInfo | null,
+  ): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      const prevPrNumber = task.prInfo?.number;
+      const prevPrStatus = task.prInfo?.status;
+
+      if (prInfo) {
+        task.prInfo = prInfo;
+        task.log.push({
+          timestamp: new Date().toISOString(),
+          action: "PR linked",
+          outcome: `PR #${prInfo.number}: ${prInfo.url}`,
+        });
+      } else {
+        task.prInfo = undefined;
+        if (prevPrNumber) {
+          task.log.push({
+            timestamp: new Date().toISOString(),
+            action: "PR unlinked",
+            outcome: `PR #${prevPrNumber} removed`,
+          });
+        }
+      }
+
+      task.updatedAt = new Date().toISOString();
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.watcher) this.taskCache.set(id, { ...task });
+
+      // Only emit if PR info actually changed
+      if (prevPrNumber !== prInfo?.number || prevPrStatus !== prInfo?.status) {
+        this.emit("task:updated", task);
+      }
+
+      return task;
+    });
   }
 
   /**

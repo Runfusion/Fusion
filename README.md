@@ -65,7 +65,23 @@ kb task list
 kb task show KB-001
 kb task move KB-001 todo
 kb task merge KB-001
+kb task import owner/repo                  # Import all open issues (batch mode)
+kb task import owner/repo --interactive    # Interactive issue selection
+kb task import owner/repo --limit 10       # Limit number of issues fetched
+kb task import owner/repo --labels bug     # Filter by label(s)
 ```
+
+**GitHub Import:**
+- Batch mode imports all open issues automatically (skipping already-imported)
+- Interactive mode (`-i`) lets you select specific issues from a numbered list
+- Requires `GITHUB_TOKEN` env var for private repositories
+- Pull requests are automatically filtered out
+
+**Dashboard Import:**
+- Click the ↓ (Download) icon in the header to open the GitHub import modal
+- Enter owner/repo, optionally filter by labels
+- Select an issue from the list and click Import
+- Already-imported issues are marked with an "Imported" badge
 
 Agents can use these same commands, or see [`.agents/skills/`](.agents/skills/) for structured skill docs.
 
@@ -193,6 +209,51 @@ KB_CLIENT_DIR=/path/to/client ./kb dashboard
 ```
 
 **Prerequisites:** Bun ≥ 1.0 (`bun --version`)
+
+## GitHub Integration
+
+### PR Creation from Dashboard
+
+kb can create GitHub Pull Requests directly from the dashboard for tasks in the **In Review** column:
+
+1. Set the `GITHUB_TOKEN` environment variable with a personal access token (requires `repo` scope)
+2. Open a task in the **In Review** column
+3. Click **"Create PR"** in the Pull Request section
+4. Enter a title and optional description
+5. The PR is created and linked to the task automatically
+
+The dashboard shows real-time PR status (open, closed, merged) with a refresh button to fetch the latest state from GitHub.
+
+### Spec Editing & AI Revision
+
+The dashboard includes a **Spec** tab for managing task specifications directly in the UI:
+
+**Manual Edit:**
+1. Open any task and click the **Spec** tab
+2. Click **Edit** to modify the PROMPT.md content directly
+3. Save changes with the **Save** button (or Ctrl/Cmd+Enter)
+
+**Request AI Revision:**
+1. In the Spec tab, use the **"Ask AI to Revise"** section
+2. Enter feedback describing what needs to change (e.g., "Add more details about error handling", "Split this into smaller steps")
+3. Click **"Request AI Revision"**
+4. The task moves to **Triage** for re-specification by the AI
+
+**Limitations:**
+- AI revision is only available for tasks in **Todo** or **In Progress** columns
+- Tasks in **In Review** or **Done** must be moved back to Todo/In Progress first
+- Maximum feedback length is 2000 characters
+
+### PR Comment Monitoring
+
+When a task has a linked PR, kb automatically monitors it for new review comments:
+
+- **Adaptive polling**: Checks every 30 seconds when active, 5 minutes when idle
+- **Actionable feedback detection**: Filters out "LGTM" and "Thanks" comments, detects requests like "fix", "change", "update"
+- **Steering comments**: Automatically adds actionable review feedback as steering comments on the task
+- **Follow-up tasks**: When a PR is closed with unaddressed feedback, a follow-up task is created
+
+Configure via the same `GITHUB_TOKEN` environment variable.
 
 ## Releases
 

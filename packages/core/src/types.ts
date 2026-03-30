@@ -5,6 +5,20 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done"] as const;
 export type Column = (typeof COLUMNS)[number];
 
+export type PrStatus = "open" | "closed" | "merged";
+
+export interface PrInfo {
+  url: string;
+  number: number;
+  status: PrStatus;
+  title: string;
+  headBranch: string;
+  baseBranch: string;
+  commentCount: number;
+  lastCommentAt?: string;
+  lastCheckedAt?: string;
+}
+
 export type StepStatus = "pending" | "in-progress" | "done" | "skipped";
 
 export interface TaskStep {
@@ -49,6 +63,13 @@ export interface TaskAttachment {
   createdAt: string;
 }
 
+export interface SteeringComment {
+  id: string;
+  text: string;
+  createdAt: string;
+  author: "user" | "agent";
+}
+
 export interface Task {
   id: string;
   title?: string;
@@ -73,9 +94,30 @@ export interface Task {
    *  dependency's branch instead of HEAD. Cleared after worktree creation. */
   baseBranch?: string;
   attachments?: TaskAttachment[];
+  steeringComments?: SteeringComment[];
+  /** PR information for tasks linked to GitHub pull requests */
+  prInfo?: PrInfo;
   log: TaskLogEntry[];
   size?: "S" | "M" | "L";
   reviewLevel?: number;
+  /** AI model provider override for the executor agent (e.g., "anthropic").
+   *  Must be set together with `modelId`. When both model fields are undefined,
+   *  the executor uses global settings defaults. */
+  modelProvider?: string;
+  /** AI model ID override for the executor agent (e.g., "claude-sonnet-4-5").
+   *  Must be set together with `modelProvider`. When both model fields are undefined,
+   *  the executor uses global settings defaults. */
+  modelId?: string;
+  /** AI model provider override for the validator/reviewer agent.
+   *  Must be set together with `validatorModelId`. When both validator model fields
+   *  are undefined, the reviewer uses global settings defaults. */
+  validatorModelProvider?: string;
+  /** AI model ID override for the validator/reviewer agent.
+   *  Must be set together with `validatorModelProvider`. When both validator model
+   *  fields are undefined, the reviewer uses global settings defaults. */
+  validatorModelId?: string;
+  /** Number of merge retry attempts made for this task (auto-merge conflict recovery) */
+  mergeRetries?: number;
   /** ISO-8601 timestamp of when the task last entered its current column.
    *  Used to sort cards within a column so that recently-moved cards appear at the top. */
   columnMovedAt?: string;
@@ -133,6 +175,9 @@ export interface Settings {
    *  Defaults to `"KB"`. Only affects new tasks — existing tasks retain
    *  their original IDs. */
   taskPrefix?: string;
+  /** Whether GitHub token is configured for PR operations (read-only, set by server).
+   *  When false, PR creation features are disabled in the UI. */
+  githubTokenConfigured?: boolean;
   /** When true, merge commit messages include the task ID as the conventional
    *  commit scope (e.g. `feat(KB-001): ...`). When false, the scope is
    *  omitted (e.g. `feat: ...`). Default: true. */
@@ -150,6 +195,20 @@ export interface Settings {
    *  produce better results but cost more. When undefined, the engine
    *  uses the model's default thinking level. */
   defaultThinkingLevel?: ThinkingLevel;
+  /** When true, auto-merge will automatically resolve common conflict patterns
+   *  (lock files, generated files, trivial conflicts) without requiring AI
+   *  intervention. When AI resolution fails, the system will retry with escalating
+   *  strategies. Default: true. */
+  autoResolveConflicts?: boolean;
+  /** Alias for autoResolveConflicts. When true, enables automatic resolution of
+   *  lock files (ours), generated files (theirs), and trivial whitespace conflicts
+   *  without spawning an AI agent. Default: true. */
+  smartConflictResolution?: boolean;
+  /** When enabled, AI-generated task specifications require manual approval
+   *  before the task can move from triage to todo. Tasks with approved specs
+   *  remain in triage with status "awaiting-approval" until a user approves
+   *  or rejects the plan. Default: false. */
+  requirePlanApproval?: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -167,6 +226,9 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultProvider: undefined,
   defaultModelId: undefined,
   defaultThinkingLevel: undefined,
+  autoResolveConflicts: true,
+  smartConflictResolution: true,
+  requirePlanApproval: false,
 };
 
 export interface BoardConfig {
@@ -181,6 +243,14 @@ export interface MergeResult {
   worktreeRemoved: boolean;
   branchDeleted: boolean;
   error?: string;
+  /** Strategy that successfully resolved the merge, if any */
+  resolutionStrategy?: "ai" | "auto-resolve" | "theirs";
+  /** Alias for resolutionStrategy — how conflicts were resolved (for metrics/debugging) */
+  resolutionMethod?: "ai" | "auto" | "mixed" | "theirs";
+  /** Number of retry attempts made (1 = first attempt succeeded, 2-3 = retries needed) */
+  attemptsMade?: 1 | 2 | 3;
+  /** Number of files auto-resolved (for tracking mixed resolution scenarios) */
+  autoResolvedCount?: number;
 }
 
 export const COLUMN_LABELS: Record<Column, string> = {

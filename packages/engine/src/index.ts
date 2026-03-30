@@ -9,3 +9,5 @@ export { createKbAgent, type AgentOptions, type AgentResult } from "./pi.js";
 export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees } from "./worktree-pool.js";
 export { createLogger, type Logger } from "./logger.js";
 export { isUsageLimitError, UsageLimitPauser } from "./usage-limit-detector.js";
+export { PrMonitor, type PrComment, type TrackedPr, type OnNewCommentsCallback } from "./pr-monitor.js";
+export { PrCommentHandler } from "./pr-comment-handler.js";

@@ -5,6 +5,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Coverage reports
+coverage/
+
 # hai runtime (local board state — don't commit)
 .kb/
 .hai/

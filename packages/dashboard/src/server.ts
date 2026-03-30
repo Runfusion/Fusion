@@ -15,6 +15,8 @@ export interface ServerOptions {
   onMerge?: (taskId: string) => Promise<MergeResult>;
   /** Maximum concurrent worktrees / execution slots (default 2) */
   maxConcurrent?: number;
+  /** Optional GitHub token for PR operations — falls back to GITHUB_TOKEN env var */
+  githubToken?: string;
   /** Optional AuthStorage instance for auth routes — if not provided, one is created internally */
   authStorage?: AuthStorageLike;
   /** Optional ModelRegistry instance for the models API — if not provided, the endpoint returns an empty list */

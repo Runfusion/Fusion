@@ -396,7 +396,7 @@ export class TaskExecutor {
         this.createTaskCreateTool(),
         this.createTaskAddDepTool(task.id),
         this.createTaskDoneTool(task.id, () => { taskDone = true; }),
-        this.createReviewStepTool(task.id, worktreePath, detail.prompt, codeReviewVerdicts, sessionRef, stepCheckpoints),
+        this.createReviewStepTool(task.id, worktreePath, detail.prompt, codeReviewVerdicts, sessionRef, stepCheckpoints, detail),
       ];
 
       const agentLogger = new AgentLogger({
@@ -408,6 +408,15 @@ export class TaskExecutor {
       });
 
       const agentWork = async () => {
+        // Resolve model settings: use per-task overrides if both provider and modelId are set,
+        // otherwise fall back to global settings
+        const executorProvider = detail.modelProvider && detail.modelId
+          ? detail.modelProvider
+          : settings.defaultProvider;
+        const executorModelId = detail.modelProvider && detail.modelId
+          ? detail.modelId
+          : settings.defaultModelId;
+
         const { session } = await createKbAgent({
           cwd: worktreePath,
           systemPrompt: EXECUTOR_SYSTEM_PROMPT,
@@ -417,8 +426,8 @@ export class TaskExecutor {
           onThinking: agentLogger.onThinking,
           onToolStart: agentLogger.onToolStart,
           onToolEnd: agentLogger.onToolEnd,
-          defaultProvider: settings.defaultProvider,
-          defaultModelId: settings.defaultModelId,
+          defaultProvider: executorProvider,
+          defaultModelId: executorModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,
         });
 
@@ -732,6 +741,7 @@ export class TaskExecutor {
     codeReviewVerdicts: Map<number, ReviewVerdict>,
     sessionRef: { current: AgentSession | null },
     stepCheckpoints: Map<number, string>,
+    detail: TaskDetail,
   ): ToolDefinition {
     const store = this.store;
     const options = this.options;
@@ -761,6 +771,8 @@ export class TaskExecutor {
               defaultProvider: settings.defaultProvider,
               defaultModelId: settings.defaultModelId,
               defaultThinkingLevel: settings.defaultThinkingLevel,
+              validatorModelProvider: detail.validatorModelProvider,
+              validatorModelId: detail.validatorModelId,
               store,
               taskId,
             },
@@ -959,6 +971,25 @@ export class TaskExecutor {
   }
 }
 
+/**
+ * Format a timestamp for display in steering comments.
+ * Returns relative time for recent comments, absolute date for older ones.
+ */
+function formatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString();
+}
+
 // Project commands are injected here (for reliability) and also in the PROMPT.md (by triage).
 // This ensures the executor agent always sees the authoritative commands from settings,
 // even if the PROMPT.md was written manually or before commands were configured.
@@ -1019,6 +1050,26 @@ git log --oneline
     commandsSection = "\n" + lines.join("\n") + "\n";
   }
 
+  // Build steering comments section (last 10 comments only to avoid context bloat)
+  let steeringSection = "";
+  if (task.steeringComments && task.steeringComments.length > 0) {
+    const recentComments = [...task.steeringComments].slice(-10);
+    const lines = [
+      "",
+      "## Steering Comments",
+      "",
+      "The following steering comments were added by the user during execution. Consider adjusting your approach or replanning remaining steps based on this feedback.",
+      "",
+    ];
+    for (const comment of recentComments) {
+      const timestamp = formatTimestamp(comment.createdAt);
+      lines.push(`**${comment.author}** — ${timestamp}`);
+      lines.push(`> ${comment.text}`);
+      lines.push("");
+    }
+    steeringSection = lines.join("\n");
+  }
+
   return `Execute this task.
 
 ## Task: ${task.id}
@@ -1028,7 +1079,7 @@ ${task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}`
 ## PROMPT.md
 
 ${task.prompt}
-${attachmentsSection}${commandsSection}${progressSection}
+${attachmentsSection}${commandsSection}${progressSection}${steeringSection}
 ## Review level: ${reviewLevel}
 
 ${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}

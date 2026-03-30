@@ -345,6 +345,19 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("autoResolveConflicts setting", () => {
+    it("persists autoResolveConflicts and returns it via getSettings", async () => {
+      await store.updateSettings({ autoResolveConflicts: false });
+      const settings = await store.getSettings();
+      expect(settings.autoResolveConflicts).toBe(false);
+    });
+
+    it("default settings have autoResolveConflicts set to true", async () => {
+      const settings = await store.getSettings();
+      expect(settings.autoResolveConflicts).toBe(true);
+    });
+  });
+
   // ── Concurrent stress test ───────────────────────────────────────
 
   describe("concurrent stress", () => {
@@ -602,6 +615,64 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("updateTask — model overrides", () => {
+    it("sets executor model provider and id via updateTask", async () => {
+      const task = await createTestTask();
+      const updated = await store.updateTask(task.id, { modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      expect(updated.modelProvider).toBe("anthropic");
+      expect(updated.modelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("sets validator model provider and id via updateTask", async () => {
+      const task = await createTestTask();
+      const updated = await store.updateTask(task.id, { validatorModelProvider: "openai", validatorModelId: "gpt-4o" });
+      expect(updated.validatorModelProvider).toBe("openai");
+      expect(updated.validatorModelId).toBe("gpt-4o");
+    });
+
+    it("clears executor model fields via null", async () => {
+      const task = await createTestTask();
+      await store.updateTask(task.id, { modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      const updated = await store.updateTask(task.id, { modelProvider: null, modelId: null });
+      expect(updated.modelProvider).toBeUndefined();
+      expect(updated.modelId).toBeUndefined();
+    });
+
+    it("clears validator model fields via null", async () => {
+      const task = await createTestTask();
+      await store.updateTask(task.id, { validatorModelProvider: "openai", validatorModelId: "gpt-4o" });
+      const updated = await store.updateTask(task.id, { validatorModelProvider: null, validatorModelId: null });
+      expect(updated.validatorModelProvider).toBeUndefined();
+      expect(updated.validatorModelId).toBeUndefined();
+    });
+
+    it("sets only executor model without affecting validator model", async () => {
+      const task = await createTestTask();
+      await store.updateTask(task.id, { validatorModelProvider: "openai", validatorModelId: "gpt-4o" });
+      const updated = await store.updateTask(task.id, { modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
+      expect(updated.modelProvider).toBe("anthropic");
+      expect(updated.modelId).toBe("claude-sonnet-4-5");
+      expect(updated.validatorModelProvider).toBe("openai");
+      expect(updated.validatorModelId).toBe("gpt-4o");
+    });
+
+    it("preserves model fields when updating unrelated fields", async () => {
+      const task = await createTestTask();
+      await store.updateTask(task.id, {
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        validatorModelProvider: "openai",
+        validatorModelId: "gpt-4o",
+      });
+      const updated = await store.updateTask(task.id, { title: "Updated title" });
+      expect(updated.modelProvider).toBe("anthropic");
+      expect(updated.modelId).toBe("claude-sonnet-4-5");
+      expect(updated.validatorModelProvider).toBe("openai");
+      expect(updated.validatorModelId).toBe("gpt-4o");
+      expect(updated.title).toBe("Updated title");
+    });
+  });
+
   describe("agent log persistence", () => {
     it("appendAgentLog creates agent.log and getAgentLogs reads it back", async () => {
       const task = await createTestTask();
@@ -715,6 +786,281 @@ describe("TaskStore", () => {
       expect(logs[2].text).toBe("Read");
       expect(logs[2].detail).toBe("file not found");
       expect(logs[2].agent).toBe("reviewer");
+    });
+  });
+
+  describe("addSteeringComment", () => {
+    it("adds a steering comment to a task", async () => {
+      const task = await createTestTask();
+      const updated = await store.addSteeringComment(task.id, "Please handle the edge case");
+
+      expect(updated.steeringComments).toHaveLength(1);
+      expect(updated.steeringComments![0].text).toBe("Please handle the edge case");
+      expect(updated.steeringComments![0].author).toBe("user");
+      expect(updated.steeringComments![0].id).toBeDefined();
+      expect(updated.steeringComments![0].createdAt).toBeDefined();
+    });
+
+    it("accepts agent as author", async () => {
+      const task = await createTestTask();
+      const updated = await store.addSteeringComment(task.id, "Note from agent", "agent");
+
+      expect(updated.steeringComments).toHaveLength(1);
+      expect(updated.steeringComments![0].author).toBe("agent");
+    });
+
+    it("initializes steeringComments array if undefined", async () => {
+      const task = await createTestTask();
+      expect(task.steeringComments).toBeUndefined();
+
+      const updated = await store.addSteeringComment(task.id, "First comment");
+      expect(updated.steeringComments).toBeDefined();
+      expect(updated.steeringComments).toHaveLength(1);
+    });
+
+    it("appends multiple comments in order", async () => {
+      const task = await createTestTask();
+      await store.addSteeringComment(task.id, "First comment");
+      await store.addSteeringComment(task.id, "Second comment");
+      await store.addSteeringComment(task.id, "Third comment");
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.steeringComments).toHaveLength(3);
+      expect(fetched.steeringComments![0].text).toBe("First comment");
+      expect(fetched.steeringComments![1].text).toBe("Second comment");
+      expect(fetched.steeringComments![2].text).toBe("Third comment");
+    });
+
+    it("generates unique IDs for each comment", async () => {
+      const task = await createTestTask();
+      const updated1 = await store.addSteeringComment(task.id, "Comment 1");
+      const updated2 = await store.addSteeringComment(task.id, "Comment 2");
+
+      const id1 = updated1.steeringComments![0].id;
+      const id2 = updated2.steeringComments![1].id;
+      expect(id1).not.toBe(id2);
+    });
+
+    it("emits task:updated event", async () => {
+      const task = await createTestTask();
+      const events: any[] = [];
+      store.on("task:updated", (t) => events.push(t));
+
+      await store.addSteeringComment(task.id, "Test comment");
+
+      expect(events).toHaveLength(1);
+      expect(events[0].steeringComments).toHaveLength(1);
+      expect(events[0].steeringComments![0].text).toBe("Test comment");
+    });
+
+    it("persists to disk and round-trips correctly", async () => {
+      const task = await createTestTask();
+      await store.addSteeringComment(task.id, "Persisted comment");
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.steeringComments).toHaveLength(1);
+      expect(fetched.steeringComments![0].text).toBe("Persisted comment");
+      expect(fetched.steeringComments![0].author).toBe("user");
+    });
+
+    it("adds log entry for the action", async () => {
+      const task = await createTestTask();
+      const updated = await store.addSteeringComment(task.id, "Comment with log");
+
+      expect(updated.log.some((l) => l.action === "Steering comment added")).toBe(true);
+      expect(updated.log.some((l) => l.outcome === "by user")).toBe(true);
+    });
+
+    it("updates updatedAt timestamp", async () => {
+      const task = await createTestTask();
+      const before = task.updatedAt;
+      await new Promise((r) => setTimeout(r, 10)); // Ensure time passes
+
+      const updated = await store.addSteeringComment(task.id, "Timestamp test");
+      expect(updated.updatedAt).not.toBe(before);
+    });
+  });
+
+  describe("updatePrInfo", () => {
+    it("adds PR info to a task without existing PR", async () => {
+      const task = await createTestTask();
+      const prInfo = {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open" as const,
+        title: "Fix the bug",
+        headBranch: "kb-001-fix-bug",
+        baseBranch: "main",
+        commentCount: 0,
+      };
+
+      const updated = await store.updatePrInfo(task.id, prInfo);
+
+      expect(updated.prInfo).toEqual(prInfo);
+      expect(updated.log.some((l) => l.action === "PR linked" && l.outcome?.includes("#42"))).toBe(true);
+    });
+
+    it("updates existing PR info with new values", async () => {
+      const task = await createTestTask();
+      const prInfo1 = {
+        url: "https://github.com/owner/repo/pull/1",
+        number: 1,
+        status: "open" as const,
+        title: "Initial PR",
+        headBranch: "branch-1",
+        baseBranch: "main",
+        commentCount: 0,
+      };
+      await store.updatePrInfo(task.id, prInfo1);
+
+      const prInfo2 = {
+        url: "https://github.com/owner/repo/pull/1",
+        number: 1,
+        status: "merged" as const,
+        title: "Initial PR (updated)",
+        headBranch: "branch-1",
+        baseBranch: "main",
+        commentCount: 3,
+        lastCommentAt: "2026-01-01T00:00:00.000Z",
+      };
+      const updated = await store.updatePrInfo(task.id, prInfo2);
+
+      expect(updated.prInfo?.status).toBe("merged");
+      expect(updated.prInfo?.commentCount).toBe(3);
+      expect(updated.prInfo?.lastCommentAt).toBe("2026-01-01T00:00:00.000Z");
+    });
+
+    it("clears PR info when passed null", async () => {
+      const task = await createTestTask();
+      const prInfo = {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open" as const,
+        title: "Fix the bug",
+        headBranch: "kb-001-fix-bug",
+        baseBranch: "main",
+        commentCount: 0,
+      };
+      await store.updatePrInfo(task.id, prInfo);
+
+      const updated = await store.updatePrInfo(task.id, null);
+
+      expect(updated.prInfo).toBeUndefined();
+      expect(updated.log.some((l) => l.action === "PR unlinked")).toBe(true);
+    });
+
+    it("emits task:updated event when PR info changes", async () => {
+      const task = await createTestTask();
+      const events: any[] = [];
+      store.on("task:updated", (t) => events.push(t));
+
+      const prInfo = {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open" as const,
+        title: "Fix the bug",
+        headBranch: "kb-001-fix-bug",
+        baseBranch: "main",
+        commentCount: 0,
+      };
+      await store.updatePrInfo(task.id, prInfo);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].prInfo?.number).toBe(42);
+    });
+
+    it("does NOT emit task:updated when PR info is unchanged", async () => {
+      const task = await createTestTask();
+      const prInfo = {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open" as const,
+        title: "Fix the bug",
+        headBranch: "kb-001-fix-bug",
+        baseBranch: "main",
+        commentCount: 0,
+      };
+      await store.updatePrInfo(task.id, prInfo);
+
+      const events: any[] = [];
+      store.on("task:updated", (t) => events.push(t));
+
+      // Update with same values (status and number unchanged)
+      await store.updatePrInfo(task.id, { ...prInfo });
+
+      // Should not emit because number and status are the same
+      expect(events).toHaveLength(0);
+    });
+
+    it("persists to disk and round-trips correctly", async () => {
+      const task = await createTestTask();
+      const prInfo = {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open" as const,
+        title: "Fix the bug",
+        headBranch: "kb-001-fix-bug",
+        baseBranch: "main",
+        commentCount: 5,
+        lastCommentAt: "2026-03-30T12:00:00.000Z",
+      };
+
+      await store.updatePrInfo(task.id, prInfo);
+      const fetched = await store.getTask(task.id);
+
+      expect(fetched.prInfo).toEqual(prInfo);
+    });
+
+    it("updates updatedAt timestamp", async () => {
+      const task = await createTestTask();
+      const before = task.updatedAt;
+      await new Promise((r) => setTimeout(r, 10)); // Ensure time passes
+
+      const prInfo = {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open" as const,
+        title: "Fix the bug",
+        headBranch: "kb-001-fix-bug",
+        baseBranch: "main",
+        commentCount: 0,
+      };
+      const updated = await store.updatePrInfo(task.id, prInfo);
+
+      expect(updated.updatedAt).not.toBe(before);
+    });
+
+    it("serializes concurrent updates correctly", async () => {
+      const task = await createTestTask();
+
+      // Fire 5 concurrent updates
+      const promises = Array.from({ length: 5 }, (_, i) =>
+        store.updatePrInfo(task.id, {
+          url: `https://github.com/owner/repo/pull/${i + 1}`,
+          number: i + 1,
+          status: "open" as const,
+          title: `PR ${i + 1}`,
+          headBranch: `branch-${i + 1}`,
+          baseBranch: "main",
+          commentCount: i,
+        }),
+      );
+
+      await Promise.all(promises);
+
+      // Read back and verify valid JSON
+      const taskJsonPath = join(rootDir, ".kb", "tasks", task.id, "task.json");
+      const raw = await readFile(taskJsonPath, "utf-8");
+      const result = JSON.parse(raw) as Task;
+
+      // Should have exactly one of the PRs set (last one wins)
+      expect(result.prInfo).toBeDefined();
+      expect(result.prInfo!.number).toBeGreaterThanOrEqual(1);
+      expect(result.prInfo!.number).toBeLessThanOrEqual(5);
+
+      // Should have all the PR linked log entries
+      const prLogs = result.log.filter((l) => l.action === "PR linked");
+      expect(prLogs).toHaveLength(5);
     });
   });
 
@@ -1020,6 +1366,201 @@ describe("TaskStore", () => {
       await store.updateSettings({ maxConcurrent: 2 });
 
       expect(events).toHaveLength(2);
+    });
+  });
+
+  // ── Duplicate Task Tests ─────────────────────────────────────────
+
+  describe("duplicateTask", () => {
+    it("duplicates from triage column", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.id).not.toBe(task.id);
+      expect(duplicated.id).toMatch(/^KB-\d+$/);
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(task.description);
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("duplicates from todo column", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("duplicates from in-progress column", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      await store.moveTask(task.id, "in-progress");
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("duplicates from in-review column", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("duplicates from done column", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.column).toBe("triage");
+      expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
+    });
+
+    it("new task is always in triage regardless of source column", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      const duplicated = await store.duplicateTask(task.id);
+      expect(duplicated.column).toBe("triage");
+    });
+
+    it("description includes source reference", async () => {
+      const task = await store.createTask({ description: "Original description" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.description).toBe(`Original description\n\n(Duplicated from ${task.id})`);
+    });
+
+    it("resets execution state (no steps, no worktree, etc.)", async () => {
+      const task = await store.createTask({ description: "Test task", column: "todo" });
+      // Add some execution state
+      await store.updateTask(task.id, { worktree: "/some/path", status: "executing" });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.steps).toEqual([]);
+      expect(duplicated.currentStep).toBe(0);
+      expect(duplicated.worktree).toBeUndefined();
+      expect(duplicated.status).toBeUndefined();
+    });
+
+    it("does NOT copy dependencies", async () => {
+      const dep = await store.createTask({ description: "Dependency" });
+      const task = await store.createTask({ description: "Test task", dependencies: [dep.id] });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.dependencies).toEqual([]);
+    });
+
+    it("does NOT copy attachments", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      // Add an attachment
+      await store.addAttachment(task.id, "test.png", Buffer.from("fake"), "image/png");
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.attachments).toBeUndefined();
+    });
+
+    it("does NOT copy steering comments", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.addSteeringComment(task.id, "Test comment");
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.steeringComments).toBeUndefined();
+    });
+
+    it("emits task:created event", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      const events: any[] = [];
+      store.on("task:created", (t) => events.push(t));
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].id).toBe(duplicated.id);
+    });
+
+    it("adds log entry for duplicate action", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.log).toHaveLength(1);
+      expect(duplicated.log[0].action).toContain(`Duplicated from ${task.id}`);
+    });
+
+    it("copies source PROMPT.md content", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      const sourceDetail = await store.getTask(task.id);
+
+      const duplicated = await store.duplicateTask(task.id);
+      const dupDetail = await store.getTask(duplicated.id);
+
+      expect(dupDetail.prompt).toBe(sourceDetail.prompt);
+    });
+
+    it("throws ENOENT when source task does not exist", async () => {
+      await expect(store.duplicateTask("KB-999")).rejects.toThrow();
+    });
+
+    it("copies title if present", async () => {
+      const task = await store.createTask({ title: "My Task", description: "Test" });
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.title).toBe("My Task");
+    });
+
+    it("does NOT copy prInfo", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.updatePrInfo(task.id, {
+        url: "https://github.com/owner/repo/pull/1",
+        number: 1,
+        status: "open",
+        title: "Test PR",
+        headBranch: "kb/kb-001",
+        baseBranch: "main",
+        commentCount: 0,
+      });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.prInfo).toBeUndefined();
+    });
+
+    it("does NOT copy paused state", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.pauseTask(task.id, true);
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.paused).toBeUndefined();
+    });
+
+    it("does NOT copy blockedBy", async () => {
+      const blocker = await store.createTask({ description: "Blocker" });
+      const task = await store.createTask({ description: "Test task" });
+      await store.updateTask(task.id, { blockedBy: blocker.id });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.blockedBy).toBeUndefined();
+    });
+
+    it("does NOT copy baseBranch", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      await store.updateTask(task.id, { baseBranch: "some-branch" });
+
+      const duplicated = await store.duplicateTask(task.id);
+
+      expect(duplicated.baseBranch).toBeUndefined();
     });
   });
 });

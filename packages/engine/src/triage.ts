@@ -461,11 +461,33 @@ export class TriageProcessor {
               detail.attachments,
             );
 
+          // Check if this is a re-specification request
+          const isRespecify = task.status === "needs-respecify";
+          let existingPrompt: string | undefined;
+          let feedback: string | undefined;
+
+          if (isRespecify) {
+            // Get the existing prompt content
+            existingPrompt = detail.prompt;
+
+            // Extract feedback from the most recent "AI spec revision requested" log entry
+            const revisionLogEntry = [...task.log]
+              .reverse()
+              .find((entry) => entry.action === "AI spec revision requested");
+            feedback = revisionLogEntry?.outcome;
+
+            triageLog.log(
+              `${task.id} re-specifying with feedback: ${feedback?.slice(0, 100)}...`,
+            );
+          }
+
           const agentPrompt = buildSpecificationPrompt(
             detail,
             promptPath,
             settings,
             attachmentContents,
+            existingPrompt,
+            feedback,
           );
           await session.prompt(
             agentPrompt,
@@ -491,7 +513,11 @@ export class TriageProcessor {
               task.id,
               `Spec review not approved (${verdictDesc}) — specification not approved`,
             );
-            await this.store.updateTask(task.id, { status: null });
+            // For re-specification, keep the needs-respecify status so it can be retried
+            // For new specs, clear the status
+            await this.store.updateTask(task.id, {
+              status: isRespecify ? "needs-respecify" : null,
+            });
             return;
           }
 
@@ -539,8 +565,31 @@ export class TriageProcessor {
             }
 
             await this.store.updateTask(task.id, taskUpdates);
-            await this.store.moveTask(task.id, "todo");
-            triageLog.log(`✓ ${task.id} specified and moved to todo`);
+
+            // Check if manual plan approval is required
+            if (settings.requirePlanApproval) {
+              // Set awaiting-approval status instead of moving to todo
+              await this.store.updateTask(task.id, { status: "awaiting-approval" });
+              await this.store.logEntry(
+                task.id,
+                "Specification approved by AI — awaiting manual approval",
+              );
+              triageLog.log(
+                `✓ ${task.id} specified and awaiting manual approval`,
+              );
+            } else {
+              // Auto-move to todo (existing behavior)
+              await this.store.moveTask(task.id, "todo");
+
+              // Log completion for re-specification
+              if (isRespecify) {
+                await this.store.logEntry(task.id, "Spec revised by AI", feedback);
+                triageLog.log(`✓ ${task.id} re-specified and moved to todo`);
+              } else {
+                triageLog.log(`✓ ${task.id} specified and moved to todo`);
+              }
+            }
+
             this.options.onSpecifyComplete?.(task);
           }
         } finally {
@@ -564,7 +613,9 @@ export class TriageProcessor {
         // Pause (global or engine) — clear specifying status without reporting an error
         this.pauseAborted.delete(task.id);
         triageLog.log(`${task.id} aborted by pause — clearing status`);
-        await this.store.updateTask(task.id, { status: null }).catch(() => {});
+        // For re-specification, restore needs-respecify status
+        const restoreStatus = task.status === "needs-respecify" ? "needs-respecify" : undefined;
+        await this.store.updateTask(task.id, { status: restoreStatus }).catch(() => {});
       } else {
         // Check if the error is a usage-limit error and trigger global pause
         if (this.options.usageLimitPauser && isUsageLimitError(err.message)) {
@@ -574,7 +625,9 @@ export class TriageProcessor {
             err.message,
           );
         }
-        await this.store.updateTask(task.id, { status: null }).catch(() => {});
+        // For re-specification, restore needs-respecify status so it can be retried
+        const restoreStatus = task.status === "needs-respecify" ? "needs-respecify" : undefined;
+        await this.store.updateTask(task.id, { status: restoreStatus }).catch(() => {});
         triageLog.error(`✗ ${task.id} specification failed:`, err.message);
         this.options.onSpecifyError?.(task, err);
       }
@@ -918,7 +971,11 @@ export function buildSpecificationPrompt(
   promptPath: string,
   settings?: Settings,
   attachmentContents?: AttachmentContent[],
+  existingPrompt?: string,
+  feedback?: string,
 ): string {
+  const isRevision = existingPrompt && feedback;
+
   let commandsSection = "";
   if (settings?.testCommand || settings?.buildCommand) {
     const lines = ["## Project Commands"];
@@ -948,19 +1005,36 @@ export function buildSpecificationPrompt(
     attachmentsSection = "\n\n" + parts.join("\n");
   }
 
-  return `Specify this task and write the result to \`${promptPath}\`.
+  let revisionSection = "";
+  if (isRevision) {
+    revisionSection = `
+
+## Revision Instructions
+You are revising an existing task specification based on user feedback.
+
+**Important:** Keep the same overall PROMPT.md structure (headings, sections, format) but improve the content to address the feedback below. Do not drastically change the file structure unless necessary.
+
+## Existing Specification
+\`\`\`markdown
+${existingPrompt}
+\`\`\`
+
+## User Feedback
+${feedback}
+
+Please revise the specification above to address this feedback. Write the complete revised PROMPT.md to \`${promptPath}\`.`;
+  }
+
+  return `${isRevision ? "Revise" : "Specify"} this task and write the result to \`${promptPath}\`.
 
 ## Task
 - **ID:** ${task.id}
 - **Title:** ${task.title || "(none)"}
 - **Description:** ${task.description}
-${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}
+${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}
 
 ## Instructions
-1. Read the project structure to understand context (package.json, source files, etc.)
-2. Write a complete PROMPT.md specification to \`${promptPath}\` following the format in your system prompt
-3. The specification must be detailed enough for an autonomous AI agent to implement without asking questions
-4. Name actual files, functions, and patterns from the codebase — be specific
+${isRevision ? "1. Review the existing specification and user feedback carefully\n2. Revise the PROMPT.md to address the feedback while maintaining the structure\n3. Ensure the specification is detailed enough for an AI agent to execute" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n4. Name actual files, functions, and patterns from the codebase — be specific"}
 
 Use the write tool to write the specification file.${commandsSection}${attachmentsSection}`;
 }

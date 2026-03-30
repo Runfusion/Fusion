@@ -1,9 +1,11 @@
 import { Router } from "express";
 import multer from "multer";
 import { createReadStream } from "node:fs";
+import { execSync } from "node:child_process";
 import type { TaskStore, Column, MergeResult } from "@kb/core";
-import { COLUMNS } from "@kb/core";
+import { COLUMNS, VALID_TRANSITIONS, type PrInfo } from "@kb/core";
 import type { ServerOptions } from "./server.js";
+import { GitHubClient, getCurrentGitHubRepo } from "./github.js";
 
 /**
  * Minimal interface matching pi-coding-agent's ModelRegistry API surface
@@ -41,8 +43,517 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
 
+// ── Git Remote Detection ──────────────────────────────────────────
+
+/** Git remote info returned by the remotes endpoint */
+export interface GitRemote {
+  name: string;
+  owner: string;
+  repo: string;
+  url: string;
+}
+
+/**
+ * Parse a GitHub URL to extract owner and repo.
+ * Handles HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git) formats.
+ */
+function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
+  // HTTPS format: https://github.com/owner/repo.git or https://github.com/owner/repo
+  const httpsMatch = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/i);
+  if (httpsMatch) {
+    return { owner: httpsMatch[1], repo: httpsMatch[2] };
+  }
+
+  // SSH format: git@github.com:owner/repo.git or git@github.com:owner/repo
+  const sshMatch = url.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
+  if (sshMatch) {
+    return { owner: sshMatch[1], repo: sshMatch[2] };
+  }
+
+  return null;
+}
+
+/**
+ * Get GitHub remotes from the current git repository.
+ * Executes `git remote -v` and parses the output.
+ */
+function getGitHubRemotes(): GitRemote[] {
+  try {
+    // Execute git remote -v to get all remotes with their URLs
+    const output = execSync("git remote -v", { encoding: "utf-8", timeout: 5000 });
+
+    const remotes: GitRemote[] = [];
+    const seen = new Set<string>();
+
+    for (const line of output.split("\n")) {
+      // Parse lines like: "origin  https://github.com/owner/repo.git (fetch)"
+      const match = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+      if (!match) continue;
+
+      const [, name, url] = match;
+
+      // Skip duplicates (fetch/push entries for same remote)
+      const key = `${name}-${url}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      // Only include GitHub URLs
+      const parsed = parseGitHubUrl(url);
+      if (parsed) {
+        remotes.push({
+          name,
+          owner: parsed.owner,
+          repo: parsed.repo,
+          url,
+        });
+      }
+    }
+
+    return remotes;
+  } catch {
+    // Return empty array if not a git repo, git not available, or any error
+    return [];
+  }
+}
+
+/**
+ * Check if the current directory is a git repository.
+ * Used to validate git operations before executing commands.
+ */
+function isGitRepo(): boolean {
+  try {
+    execSync("git rev-parse --git-dir", { encoding: "utf-8", timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get the current git status including branch, commit hash, and dirty state.
+ * Returns structured data for the Git Manager UI.
+ */
+function getGitStatus(): {
+  branch: string;
+  commit: string;
+  isDirty: boolean;
+  ahead: number;
+  behind: number;
+} | null {
+  try {
+    // Get current branch
+    const branch = execSync("git branch --show-current", { encoding: "utf-8", timeout: 5000 }).trim() || "HEAD detached";
+
+    // Get current commit hash (short)
+    const commit = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
+
+    // Check if working directory is dirty
+    const statusOutput = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000 }).trim();
+    const isDirty = statusOutput.length > 0;
+
+    // Get ahead/behind counts from origin
+    let ahead = 0;
+    let behind = 0;
+    try {
+      const revListOutput = execSync("git rev-list --left-right --count HEAD...@{u}", { encoding: "utf-8", timeout: 5000 }).trim();
+      const match = revListOutput.match(/(\d+)\s+(\d+)/);
+      if (match) {
+        ahead = parseInt(match[1], 10);
+        behind = parseInt(match[2], 10);
+      }
+    } catch {
+      // No upstream or other error - leave as 0
+    }
+
+    return { branch, commit, isDirty, ahead, behind };
+  } catch {
+    return null;
+  }
+}
+
+/** Git commit info returned by the commits endpoint */
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  date: string;
+  parents: string[];
+}
+
+/**
+ * Get recent commits from the git log.
+ * @param limit Maximum number of commits to return (default 20)
+ */
+function getGitCommits(limit: number = 20): GitCommit[] {
+  try {
+    // Format: hash|shortHash|message|author|date|parents
+    const format = "%H|%h|%s|%an|%aI|%P";
+    const output = execSync(`git log --max-count=${limit} --pretty=format:"${format}"`, {
+      encoding: "utf-8",
+      timeout: 10000,
+    });
+
+    const commits: GitCommit[] = [];
+    for (const line of output.split("\n")) {
+      const parts = line.split("|");
+      if (parts.length < 5) continue;
+
+      const [hash, shortHash, message, author, date, parentsStr] = parts;
+      const parents = parentsStr ? parentsStr.split(" ").filter(Boolean) : [];
+
+      commits.push({
+        hash,
+        shortHash,
+        message: message || "",
+        author: author || "",
+        date: date || "",
+        parents,
+      });
+    }
+
+    return commits;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get the diff for a specific commit.
+ * @param hash The commit hash
+ * @returns Object with stat and patch
+ */
+function getCommitDiff(hash: string): { stat: string; patch: string } | null {
+  try {
+    // Validate the hash is a valid git object
+    execSync(`git cat-file -t ${hash}`, { encoding: "utf-8", timeout: 5000 });
+
+    // Get diff stat
+    const stat = execSync(`git show --stat --format="" ${hash}`, { encoding: "utf-8", timeout: 10000 }).trim();
+
+    // Get patch
+    const patch = execSync(`git show --format="" ${hash}`, { encoding: "utf-8", timeout: 10000 });
+
+    return { stat, patch };
+  } catch {
+    return null;
+  }
+}
+
+/** Git branch info returned by the branches endpoint */
+export interface GitBranch {
+  name: string;
+  isCurrent: boolean;
+  remote?: string;
+  lastCommitDate?: string;
+}
+
+/**
+ * Get all local branches with their info.
+ */
+function getGitBranches(): GitBranch[] {
+  try {
+    // Get current branch name
+    let currentBranch = "";
+    try {
+      currentBranch = execSync("git branch --show-current", { encoding: "utf-8", timeout: 5000 }).trim();
+    } catch {
+      // Detached HEAD - no current branch
+    }
+
+    // Get all branches with info
+    const format = "%(refname:short)|%(upstream:short)|%(committerdate:iso8601)|%(HEAD)";
+    const output = execSync(`git for-each-ref --format="${format}" refs/heads/`, {
+      encoding: "utf-8",
+      timeout: 10000,
+    });
+
+    const branches: GitBranch[] = [];
+    for (const line of output.trim().split("\n")) {
+      const parts = line.split("|");
+      if (parts.length < 4) continue;
+
+      const [name, remote, lastCommitDate, headMarker] = parts;
+      const isCurrent = headMarker === "*" || name === currentBranch;
+
+      branches.push({
+        name,
+        isCurrent,
+        remote: remote || undefined,
+        lastCommitDate: lastCommitDate || undefined,
+      });
+    }
+
+    return branches;
+  } catch {
+    return [];
+  }
+}
+
+/** Git worktree info returned by the worktrees endpoint */
+export interface GitWorktree {
+  path: string;
+  branch?: string;
+  isMain: boolean;
+  isBare: boolean;
+  taskId?: string;
+}
+
+/**
+ * Get all git worktrees.
+ * @param tasks Optional task list to correlate worktrees with tasks
+ */
+function getGitWorktrees(tasks: { id: string; worktree?: string }[] = []): GitWorktree[] {
+  try {
+    const output = execSync("git worktree list --porcelain", { encoding: "utf-8", timeout: 10000 });
+
+    const worktrees: GitWorktree[] = [];
+    let currentWorktree: Partial<GitWorktree> = {};
+
+    for (const line of output.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        // Save previous worktree if exists
+        if (currentWorktree.path) {
+          // Find associated task by matching worktree path
+          const task = tasks.find((t) => t.worktree && currentWorktree.path === t.worktree);
+          worktrees.push({
+            path: currentWorktree.path,
+            branch: currentWorktree.branch,
+            isMain: currentWorktree.isMain || false,
+            isBare: currentWorktree.isBare || false,
+            taskId: task?.id,
+          });
+        }
+        // Start new worktree
+        currentWorktree = { path: line.slice(9).trim() };
+      } else if (line.startsWith("branch ")) {
+        currentWorktree.branch = line.slice(8).trim().replace(/^refs\/heads\//, "");
+      } else if (line === "bare") {
+        currentWorktree.isBare = true;
+      } else if (line === "main") {
+        currentWorktree.isMain = true;
+      } else if (line === "" && currentWorktree.path) {
+        // Empty line signals end of worktree entry
+        const task = tasks.find((t) => t.worktree && currentWorktree.path === t.worktree);
+        worktrees.push({
+          path: currentWorktree.path,
+          branch: currentWorktree.branch,
+          isMain: currentWorktree.isMain || false,
+          isBare: currentWorktree.isBare || false,
+          taskId: task?.id,
+        });
+        currentWorktree = {};
+      }
+    }
+
+    // Handle last worktree if no trailing newline
+    if (currentWorktree.path) {
+      const task = tasks.find((t) => t.worktree && currentWorktree.path === t.worktree);
+      worktrees.push({
+        path: currentWorktree.path,
+        branch: currentWorktree.branch,
+        isMain: currentWorktree.isMain || false,
+        isBare: currentWorktree.isBare || false,
+        taskId: task?.id,
+      });
+    }
+
+    return worktrees;
+  } catch {
+    return [];
+  }
+}
+
+// ── Git Action Helper Functions ──────────────────────────────────────────
+
+/**
+ * Validates a branch name to prevent command injection.
+ * Branch names must not contain spaces, special shell characters, or start with dashes.
+ */
+function isValidBranchName(name: string): boolean {
+  // Must not be empty
+  if (!name || name.length === 0) return false;
+  // Must not start with a dash (could be interpreted as an option)
+  if (name.startsWith("-")) return false;
+  // Must not contain shell metacharacters
+  if (/[;<>&|`$(){}[\]\r\n]/.test(name)) return false;
+  // Must be valid git ref format (no spaces, no double dots, etc)
+  if (/\s/.test(name)) return false;
+  if (name.includes("..")) return false;
+  if (name.includes("~")) return false;
+  if (name.includes("^")) return false;
+  if (name.includes(":")) return false;
+  // Must not be a reserved git ref name
+  const reserved = ["HEAD", "FETCH_HEAD", "ORIG_HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD"];
+  if (reserved.includes(name)) return false;
+  return true;
+}
+
+/**
+ * Create a new branch from current HEAD or specified base.
+ * Returns the created branch name.
+ */
+function createGitBranch(name: string, base?: string): string {
+  if (!isValidBranchName(name)) {
+    throw new Error("Invalid branch name");
+  }
+  if (base && !isValidBranchName(base)) {
+    throw new Error("Invalid base branch name");
+  }
+  const cmd = base
+    ? `git checkout -b ${name} ${base}`
+    : `git checkout -b ${name}`;
+  execSync(cmd, { encoding: "utf-8", timeout: 10000 });
+  return name;
+}
+
+/**
+ * Checkout an existing branch.
+ * Throws if there are uncommitted changes that would be lost.
+ */
+function checkoutGitBranch(name: string): void {
+  if (!isValidBranchName(name)) {
+    throw new Error("Invalid branch name");
+  }
+  // Check for uncommitted changes that would be lost
+  try {
+    execSync("git diff-index --quiet HEAD --", { encoding: "utf-8", timeout: 5000 });
+  } catch {
+    // Has uncommitted changes - check if they'd be lost
+    const diff = execSync("git diff --name-only", { encoding: "utf-8", timeout: 5000 }).trim();
+    if (diff) {
+      throw new Error("Uncommitted changes would be lost. Commit or stash changes first.");
+    }
+  }
+  execSync(`git checkout ${name}`, { encoding: "utf-8", timeout: 10000 });
+}
+
+/**
+ * Delete a branch.
+ * Throws if it's the current branch or has unmerged commits.
+ */
+function deleteGitBranch(name: string, force: boolean = false): void {
+  if (!isValidBranchName(name)) {
+    throw new Error("Invalid branch name");
+  }
+  const flag = force ? "-D" : "-d";
+  execSync(`git branch ${flag} ${name}`, { encoding: "utf-8", timeout: 10000 });
+}
+
+/** Result of a fetch operation */
+export interface GitFetchResult {
+  fetched: boolean;
+  message: string;
+}
+
+/**
+ * Fetch from origin or specified remote.
+ */
+function fetchGitRemote(remote: string = "origin"): GitFetchResult {
+  if (!isValidBranchName(remote)) {
+    throw new Error("Invalid remote name");
+  }
+  try {
+    const output = execSync(`git fetch ${remote}`, { encoding: "utf-8", timeout: 30000 });
+    return { fetched: true, message: output.trim() || "Fetch completed" };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("Could not resolve host") || message.includes("Connection refused")) {
+      throw new Error("Failed to connect to remote");
+    }
+    // No updates is not an error
+    return { fetched: false, message: message || "No updates" };
+  }
+}
+
+/** Result of a pull operation */
+export interface GitPullResult {
+  success: boolean;
+  message: string;
+  conflict?: boolean;
+}
+
+/**
+ * Pull the current branch.
+ */
+function pullGitBranch(): GitPullResult {
+  try {
+    const output = execSync("git pull", { encoding: "utf-8", timeout: 30000 });
+    return { success: true, message: output.trim() };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("CONFLICT") || message.includes("Merge conflict")) {
+      return { success: false, message: "Merge conflict detected. Resolve manually.", conflict: true };
+    }
+    throw new Error(message || "Pull failed");
+  }
+}
+
+/** Result of a push operation */
+export interface GitPushResult {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * Push the current branch.
+ */
+function pushGitBranch(): GitPushResult {
+  try {
+    const output = execSync("git push", { encoding: "utf-8", timeout: 30000 });
+    return { success: true, message: output.trim() || "Push completed" };
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("rejected") || message.includes("non-fast-forward")) {
+      throw new Error("Push rejected. Pull latest changes first.");
+    }
+    if (message.includes("Could not resolve host") || message.includes("Connection refused")) {
+      throw new Error("Failed to connect to remote");
+    }
+    throw new Error(message || "Push failed");
+  }
+}
+
+/**
+ * Per-repo GitHub API rate limiter.
+ * Tracks requests per repo and enforces 60 requests per hour per repo.
+ */
+class GitHubRateLimiter {
+  private requests = new Map<string, number[]>();
+  private readonly maxRequests = 60;
+  private readonly windowMs = 60 * 60 * 1000; // 1 hour
+
+  canMakeRequest(repo: string): boolean {
+    const now = Date.now();
+    const timestamps = this.requests.get(repo) || [];
+
+    // Remove timestamps outside the window
+    const validTimestamps = timestamps.filter((ts) => now - ts < this.windowMs);
+
+    if (validTimestamps.length >= this.maxRequests) {
+      return false;
+    }
+
+    validTimestamps.push(now);
+    this.requests.set(repo, validTimestamps);
+    return true;
+  }
+
+  getResetTime(repo: string): Date | null {
+    const timestamps = this.requests.get(repo);
+    if (!timestamps || timestamps.length === 0) return null;
+
+    const oldest = Math.min(...timestamps);
+    return new Date(oldest + this.windowMs);
+  }
+}
+
 export function createApiRoutes(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
+  const ghRateLimiter = new GitHubRateLimiter();
+
+  // Get GitHub token from options or env
+  const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
 
   // Scheduler config (includes persisted settings)
   router.get("/config", async (_req, res) => {
@@ -61,7 +572,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.get("/settings", async (_req, res) => {
     try {
       const settings = await store.getSettings();
-      res.json(settings);
+      // Inject server-side configuration flags
+      res.json({
+        ...settings,
+        githubTokenConfigured: Boolean(githubToken),
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -146,7 +661,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/tasks/:id/retry", async (req, res) => {
     try {
       const task = await store.getTask(req.params.id);
-      if (task.column !== "in-progress" || task.status !== "failed") {
+      if (task.status !== "failed") {
         res.status(400).json({ error: "Task is not in a failed state" });
         return;
       }
@@ -156,6 +671,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Duplicate task
+  router.post("/tasks/:id/duplicate", async (req, res) => {
+    try {
+      const newTask = await store.duplicateTask(req.params.id);
+      res.status(201).json(newTask);
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404 : 500;
+      res.status(status).json({ error: err.message });
     }
   });
 
@@ -259,19 +785,167 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Approve plan for a task in awaiting-approval status
+  router.post("/tasks/:id/approve-plan", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      // Verify task is in triage column with awaiting-approval status
+      if (task.column !== "triage") {
+        res.status(400).json({ error: "Task must be in 'triage' column to approve plan" });
+        return;
+      }
+      if (task.status !== "awaiting-approval") {
+        res.status(400).json({ error: "Task must have status 'awaiting-approval' to approve plan" });
+        return;
+      }
+
+      // Log the approval
+      await store.logEntry(task.id, "Plan approved by user");
+
+      // Move to todo and clear status
+      const updated = await store.moveTask(task.id, "todo");
+      await store.updateTask(task.id, { status: undefined });
+
+      res.json({ ...updated, status: undefined });
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  // Reject plan for a task in awaiting-approval status
+  router.post("/tasks/:id/reject-plan", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      // Verify task is in triage column with awaiting-approval status
+      if (task.column !== "triage") {
+        res.status(400).json({ error: "Task must be in 'triage' column to reject plan" });
+        return;
+      }
+      if (task.status !== "awaiting-approval") {
+        res.status(400).json({ error: "Task must have status 'awaiting-approval' to reject plan" });
+        return;
+      }
+
+      // Log the rejection
+      await store.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");
+
+      // Clear status to return to normal triage state
+      await store.updateTask(task.id, { status: undefined });
+
+      // Remove PROMPT.md to force regeneration
+      const { rm } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const promptPath = join(store.getRootDir(), ".kb", "tasks", task.id, "PROMPT.md");
+      await rm(promptPath, { force: true });
+
+      const updated = await store.getTask(task.id);
+      res.json(updated);
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  // Add steering comment to task
+  router.post("/tasks/:id/steer", async (req, res) => {
+    try {
+      const { text } = req.body;
+      if (!text || typeof text !== "string") {
+        res.status(400).json({ error: "text is required and must be a string" });
+        return;
+      }
+      if (text.length === 0 || text.length > 2000) {
+        res.status(400).json({ error: "text must be between 1 and 2000 characters" });
+        return;
+      }
+      const task = await store.addSteeringComment(req.params.id, text, "user");
+      res.json(task);
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  // Request AI revision of task spec
+  router.post("/tasks/:id/spec/revise", async (req, res) => {
+    try {
+      const { feedback } = req.body;
+      if (!feedback || typeof feedback !== "string") {
+        res.status(400).json({ error: "feedback is required and must be a string" });
+        return;
+      }
+      if (feedback.length === 0 || feedback.length > 2000) {
+        res.status(400).json({ error: "feedback must be between 1 and 2000 characters" });
+        return;
+      }
+
+      // Get current task state
+      const task = await store.getTask(req.params.id);
+
+      // Check if task can transition to triage
+      const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
+      if (!canTransition) {
+        res.status(400).json({
+          error: `Cannot request spec revision for tasks in '${task.column}' column. ` +
+                 `Move task to 'todo' or 'in-progress' first.`,
+        });
+        return;
+      }
+
+      // Log the revision request
+      await store.logEntry(task.id, "AI spec revision requested", feedback);
+
+      // Move to triage for re-specification (only valid for todo/in-progress)
+      const updated = await store.moveTask(task.id, "triage");
+
+      // Update status to indicate needs re-specification
+      await store.updateTask(task.id, { status: "needs-respecify" });
+
+      res.json(updated);
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404
+        : err.message?.includes("Invalid transition") ? 400
+        : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // Update task
   router.patch("/tasks/:id", async (req, res) => {
     try {
-      const { title, description, prompt, dependencies } = req.body;
+      const { title, description, prompt, dependencies, modelProvider, modelId, validatorModelProvider, validatorModelId } = req.body;
+
+      // Validate model fields are strings or undefined/null
+      const validateModelField = (value: unknown, name: string): string | null | undefined => {
+        if (value === undefined || value === null) return null;
+        if (typeof value !== "string") {
+          throw new Error(`${name} must be a string`);
+        }
+        return value;
+      };
+
+      const validatedModelProvider = validateModelField(modelProvider, "modelProvider");
+      const validatedModelId = validateModelField(modelId, "modelId");
+      const validatedValidatorModelProvider = validateModelField(validatorModelProvider, "validatorModelProvider");
+      const validatedValidatorModelId = validateModelField(validatorModelId, "validatorModelId");
+
       const task = await store.updateTask(req.params.id, {
         title,
         description,
         prompt,
         dependencies,
+        modelProvider: validatedModelProvider,
+        modelId: validatedModelId,
+        validatorModelProvider: validatedValidatorModelProvider,
+        validatorModelId: validatedValidatorModelId,
       });
       res.json(task);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const status = err.message?.includes("must be a string") ? 400 : 500;
+      res.status(status).json({ error: err.message });
     }
   });
 
@@ -285,10 +959,708 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * GET /api/git/remotes
+   * Returns GitHub remotes from the current git repository.
+   * Response: Array of GitRemote objects [{ name: string, owner: string, repo: string, url: string }]
+   */
+  router.get("/git/remotes", (_req, res) => {
+    try {
+      const remotes = getGitHubRemotes();
+      res.json(remotes);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/status
+   * Returns current git status: branch, commit hash, dirty state, ahead/behind counts.
+   * Response: { branch: string, commit: string, isDirty: boolean, ahead: number, behind: number }
+   */
+  router.get("/git/status", (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const status = getGitStatus();
+      if (!status) {
+        res.status(500).json({ error: "Failed to get git status" });
+        return;
+      }
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/commits
+   * Returns recent commits (default 20, configurable via ?limit=).
+   * Response: Array of GitCommit objects
+   */
+  router.get("/git/commits", (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
+      const commits = getGitCommits(limit);
+      res.json(commits);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/commits/:hash/diff
+   * Returns diff for a specific commit (stat + patch).
+   * Response: { stat: string, patch: string }
+   */
+  router.get("/git/commits/:hash/diff", (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { hash } = req.params;
+      // Validate hash format (only hex characters, 7-40 chars)
+      if (!/^[a-f0-9]{7,40}$/i.test(hash)) {
+        res.status(400).json({ error: "Invalid commit hash format" });
+        return;
+      }
+      const diff = getCommitDiff(hash);
+      if (!diff) {
+        res.status(404).json({ error: "Commit not found" });
+        return;
+      }
+      res.json(diff);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/branches
+   * Returns all local branches with current indicator, remote tracking info, and last commit date.
+   * Response: Array of GitBranch objects
+   */
+  router.get("/git/branches", (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const branches = getGitBranches();
+      res.json(branches);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/worktrees
+   * Returns all worktrees with path, branch, isMain, and associated task ID.
+   * Response: Array of GitWorktree objects
+   */
+  router.get("/git/worktrees", async (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      // Get tasks to correlate with worktrees
+      const tasks = await store.listTasks();
+      const worktrees = getGitWorktrees(tasks);
+      res.json(worktrees);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+// ── Git Action Routes ─────────────────────────────────────────────
+
+  /**
+   * POST /api/git/branches
+   * Create a new branch from current HEAD or specified base.
+   * Body: { name: string, base?: string }
+   */
+  router.post("/git/branches", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name, base } = req.body;
+      if (!name || typeof name !== "string") {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      const branchName = createGitBranch(name, base);
+      res.status(201).json({ name: branchName, created: true });
+    } catch (err: any) {
+      if (err.message.includes("Invalid branch name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message.includes("already exists")) {
+        res.status(409).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/git/branches/:name/checkout
+   * Checkout an existing branch.
+   */
+  router.post("/git/branches/:name/checkout", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name } = req.params;
+      checkoutGitBranch(name);
+      res.json({ checkedOut: name });
+    } catch (err: any) {
+      if (err.message.includes("Invalid branch name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message.includes("Uncommitted changes")) {
+        res.status(409).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * DELETE /api/git/branches/:name
+   * Delete a branch.
+   * Query: ?force=true to force delete (even with unmerged commits)
+   */
+  router.delete("/git/branches/:name", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name } = req.params;
+      const force = req.query.force === "true";
+      deleteGitBranch(name, force);
+      res.json({ deleted: name });
+    } catch (err: any) {
+      if (err.message.includes("Invalid branch name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message.includes("Cannot delete branch") || err.message.includes("is currently checked out")) {
+        res.status(409).json({ error: err.message });
+      } else if (err.message.includes("not fully merged")) {
+        res.status(409).json({ error: "Branch has unmerged commits. Use force=true to delete anyway." });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/git/fetch
+   * Fetch from origin or specified remote.
+   * Body: { remote?: string }
+   */
+  router.post("/git/fetch", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { remote } = req.body;
+      const result = fetchGitRemote(remote || "origin");
+      res.json(result);
+    } catch (err: any) {
+      if (err.message.includes("Invalid remote name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message.includes("Failed to connect")) {
+        res.status(503).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/git/pull
+   * Pull the current branch.
+   */
+  router.post("/git/pull", async (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const result = pullGitBranch();
+      if (result.conflict) {
+        res.status(409).json(result);
+      } else {
+        res.json(result);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/git/push
+   * Push the current branch.
+   */
+  router.post("/git/push", async (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const result = pushGitBranch();
+      res.json(result);
+    } catch (err: any) {
+      if (err.message.includes("rejected") || err.message.includes("Pull latest")) {
+        res.status(409).json({ error: err.message });
+      } else if (err.message.includes("Failed to connect")) {
+        res.status(503).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+// ── GitHub Import Routes ──────────────────────────────────────────
+
+  /**
+   * POST /api/github/issues/fetch
+   * Fetch open issues from a GitHub repository.
+   * Body: { owner: string, repo: string, limit?: number, labels?: string[] }
+   * Returns: Array of GitHubIssue objects (filtered, no PRs)
+   */
+  router.post("/github/issues/fetch", async (req, res) => {
+    try {
+      const { owner, repo, limit = 30, labels } = req.body;
+
+      if (!owner || typeof owner !== "string") {
+        res.status(400).json({ error: "owner is required" });
+        return;
+      }
+      if (!repo || typeof repo !== "string") {
+        res.status(400).json({ error: "repo is required" });
+        return;
+      }
+
+      const token = process.env.GITHUB_TOKEN;
+
+      // Build query parameters - only open issues, no PRs
+      const params = new URLSearchParams();
+      params.append("state", "open");
+      params.append("per_page", String(Math.min(limit, 100)));
+      if (labels && labels.length > 0) {
+        params.append("labels", labels.join(","));
+      }
+
+      const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${params}`;
+
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "kb-dashboard/1.0",
+      };
+
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      try {
+        const response = await fetch(url, {
+          headers,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            res.status(404).json({ error: `Repository not found: ${owner}/${repo}` });
+            return;
+          }
+          if (response.status === 401 || response.status === 403) {
+            res.status(token ? 403 : 401).json({
+              error: `Authentication failed. ${token ? "Check your GITHUB_TOKEN." : "Set GITHUB_TOKEN env var."}`,
+            });
+            return;
+          }
+          res.status(502).json({ error: `GitHub API error: ${response.status} ${response.statusText}` });
+          return;
+        }
+
+        // Filter out pull requests (they have a pull_request property)
+        const issues = (await response.json()) as Array<{
+          number: number;
+          title: string;
+          body: string | null;
+          html_url: string;
+          labels: Array<{ name: string }>;
+          pull_request?: unknown;
+        }>;
+        const filteredIssues = issues.filter((issue) => !issue.pull_request).slice(0, limit);
+
+        res.json(filteredIssues);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/github/issues/import
+   * Import a specific GitHub issue as a kb task.
+   * Body: { owner: string, repo: string, issueNumber: number }
+   * Returns: Created Task object
+   */
+  router.post("/github/issues/import", async (req, res) => {
+    try {
+      const { owner, repo, issueNumber } = req.body;
+
+      if (!owner || typeof owner !== "string") {
+        res.status(400).json({ error: "owner is required" });
+        return;
+      }
+      if (!repo || typeof repo !== "string") {
+        res.status(400).json({ error: "repo is required" });
+        return;
+      }
+      if (!issueNumber || typeof issueNumber !== "number" || issueNumber < 1) {
+        res.status(400).json({ error: "issueNumber is required and must be a positive number" });
+        return;
+      }
+
+      const token = process.env.GITHUB_TOKEN;
+
+      // Fetch the specific issue
+      const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`;
+
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "kb-dashboard/1.0",
+      };
+
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      let issue: { number: number; title: string; body: string | null; html_url: string; pull_request?: unknown };
+
+      try {
+        const response = await fetch(url, {
+          headers,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            res.status(404).json({ error: `Issue #${issueNumber} not found in ${owner}/${repo}` });
+            return;
+          }
+          if (response.status === 401 || response.status === 403) {
+            res.status(token ? 403 : 401).json({
+              error: `Authentication failed. ${token ? "Check your GITHUB_TOKEN." : "Set GITHUB_TOKEN env var."}`,
+            });
+            return;
+          }
+          res.status(502).json({ error: `GitHub API error: ${response.status} ${response.statusText}` });
+          return;
+        }
+
+        issue = await response.json() as typeof issue;
+
+        // Check if it's a pull request
+        if (issue.pull_request) {
+          res.status(400).json({ error: `#${issueNumber} is a pull request, not an issue` });
+          return;
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      // Check if already imported
+      const existingTasks = await store.listTasks();
+      const sourceUrl = issue.html_url;
+      for (const existingTask of existingTasks) {
+        if (existingTask.description.includes(sourceUrl)) {
+          res.status(409).json({
+            error: `Issue #${issueNumber} already imported as ${existingTask.id}`,
+            existingTaskId: existingTask.id,
+          });
+          return;
+        }
+      }
+
+      // Create the task
+      const title = issue.title.slice(0, 200);
+      const body = issue.body?.trim() || "(no description)";
+      const description = `${body}\n\nSource: ${sourceUrl}`;
+
+      const task = await store.createTask({
+        title: title || undefined,
+        description,
+        column: "triage",
+        dependencies: [],
+      });
+
+      // Log the import action
+      await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
+
+      res.status(201).json(task);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ---------- Auth routes ----------
   registerAuthRoutes(router, options?.authStorage);
 
+  // ── PR Management Routes ─────────────────────────────────────────
+
+  /**
+   * POST /api/tasks/:id/pr/create
+   * Create a GitHub PR for an in-review task.
+   * Body: { title: string, body?: string, base?: string }
+   * Returns: Created PrInfo
+   */
+  router.post("/tasks/:id/pr/create", async (req, res) => {
+    try {
+      const { title, body, base } = req.body;
+
+      if (!title || typeof title !== "string") {
+        res.status(400).json({ error: "title is required and must be a string" });
+        return;
+      }
+
+      // Get task and validate
+      const task = await store.getTask(req.params.id);
+      if (task.column !== "in-review") {
+        res.status(400).json({ error: "Task must be in 'in-review' column to create a PR" });
+        return;
+      }
+
+      if (task.prInfo) {
+        res.status(409).json({ error: `Task already has PR #${task.prInfo.number}: ${task.prInfo.url}` });
+        return;
+      }
+
+      // Determine branch name from task
+      const branchName = `kb/${task.id.toLowerCase()}`;
+
+      // Get owner/repo from git remote or GITHUB_REPOSITORY env
+      let owner: string;
+      let repo: string;
+
+      const envRepo = process.env.GITHUB_REPOSITORY;
+      if (envRepo) {
+        const [o, r] = envRepo.split("/");
+        owner = o;
+        repo = r;
+      } else {
+        const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+        if (!gitRepo) {
+          res.status(400).json({ error: "Could not determine GitHub repository. Set GITHUB_REPOSITORY env var or configure git remote." });
+          return;
+        }
+        owner = gitRepo.owner;
+        repo = gitRepo.repo;
+      }
+
+      // Check rate limit
+      const repoKey = `${owner}/${repo}`;
+      if (!ghRateLimiter.canMakeRequest(repoKey)) {
+        const resetTime = ghRateLimiter.getResetTime(repoKey);
+        res.status(429).json({
+          error: "GitHub API rate limit exceeded for this repository",
+          resetAt: resetTime?.toISOString(),
+        });
+        return;
+      }
+
+      // Create the PR
+      const client = new GitHubClient(githubToken);
+
+      const prInfo = await client.createPr({
+        owner,
+        repo,
+        title,
+        body,
+        head: branchName,
+        base,
+      });
+
+      // Store PR info
+      await store.updatePrInfo(task.id, prInfo);
+      await store.logEntry(task.id, "Created PR", `PR #${prInfo.number}: ${prInfo.url}`);
+
+      res.status(201).json(prInfo);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else if (err.message?.includes("already exists")) {
+        res.status(409).json({ error: err.message });
+      } else if (err.message?.includes("No commits between")) {
+        res.status(400).json({ error: "Branch has no commits. Push changes before creating PR." });
+      } else {
+        res.status(500).json({ error: err.message || "Failed to create PR" });
+      }
+    }
+  });
+
+  /**
+   * GET /api/tasks/:id/pr/status
+   * Get cached PR status for a task. Triggers background refresh if stale (>5 min).
+   */
+  router.get("/tasks/:id/pr/status", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      if (!task.prInfo) {
+        res.status(404).json({ error: "Task has no associated PR" });
+        return;
+      }
+
+      // Check if data is stale (>5 minutes since last check)
+      const fiveMinutesMs = 5 * 60 * 1000;
+      const lastChecked = task.prInfo.lastCheckedAt || task.updatedAt;
+      const lastCheckedTime = new Date(lastChecked).getTime();
+      const isStale = Date.now() - lastCheckedTime > fiveMinutesMs;
+
+      // Return cached data immediately
+      res.json({
+        prInfo: task.prInfo,
+        stale: isStale,
+      });
+
+      // Trigger background refresh if stale (don't await, let it run)
+      if (isStale) {
+        refreshPrInBackground(store, task.id, task.prInfo, githubToken);
+      }
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/tasks/:id/pr/refresh
+   * Force refresh PR status from GitHub API.
+   * Returns: Updated PrInfo
+   */
+  router.post("/tasks/:id/pr/refresh", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      if (!task.prInfo) {
+        res.status(404).json({ error: "Task has no associated PR" });
+        return;
+      }
+
+      // Get owner/repo from git remote or GITHUB_REPOSITORY env
+      let owner: string;
+      let repo: string;
+
+      const envRepo = process.env.GITHUB_REPOSITORY;
+      if (envRepo) {
+        const [o, r] = envRepo.split("/");
+        owner = o;
+        repo = r;
+      } else {
+        const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+        if (!gitRepo) {
+          res.status(400).json({ error: "Could not determine GitHub repository" });
+          return;
+        }
+        owner = gitRepo.owner;
+        repo = gitRepo.repo;
+      }
+
+      // Check rate limit
+      const repoKey = `${owner}/${repo}`;
+      if (!ghRateLimiter.canMakeRequest(repoKey)) {
+        const resetTime = ghRateLimiter.getResetTime(repoKey);
+        res.status(429).json({
+          error: "GitHub API rate limit exceeded for this repository",
+          resetAt: resetTime?.toISOString(),
+        });
+        return;
+      }
+
+      // Fetch fresh PR status
+      const client = new GitHubClient(githubToken);
+
+      const prInfo = await client.getPrStatus(owner, repo, task.prInfo.number);
+
+      // Add lastCheckedAt timestamp
+      prInfo.lastCheckedAt = new Date().toISOString();
+
+      // Update stored PR info
+      await store.updatePrInfo(task.id, prInfo);
+
+      res.json(prInfo);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
   return router;
+}
+
+/**
+ * Background PR refresh - updates PR status without blocking the response.
+ * Silently logs errors without affecting the user experience.
+ */
+async function refreshPrInBackground(store: TaskStore, taskId: string, currentPrInfo: PrInfo, token?: string): Promise<void> {
+  try {
+    // Get owner/repo from git remote or GITHUB_REPOSITORY env
+    let owner: string;
+    let repo: string;
+
+    const envRepo = process.env.GITHUB_REPOSITORY;
+    if (envRepo) {
+      const [o, r] = envRepo.split("/");
+      owner = o;
+      repo = r;
+    } else {
+      const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+      if (!gitRepo) return; // Silent fail - can't determine repo
+      owner = gitRepo.owner;
+      repo = gitRepo.repo;
+    }
+
+    const client = new GitHubClient(token);
+
+    const prInfo = await client.getPrStatus(owner, repo, currentPrInfo.number);
+    prInfo.lastCheckedAt = new Date().toISOString();
+    await store.updatePrInfo(taskId, prInfo);
+  } catch {
+    // Silent fail - background refresh is best-effort
+  }
 }
 
 /**

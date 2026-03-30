@@ -1,6 +1,8 @@
 import { resolveDependencyOrder, type TaskStore, type Task } from "@kb/core";
 import type { AgentSemaphore } from "./concurrency.js";
 import { schedulerLog } from "./logger.js";
+import type { PrMonitor } from "./pr-monitor.js";
+import { getCurrentGitHubRepo } from "./github.js";
 
 /**
  * Check whether two sets of file scope paths overlap.
@@ -53,6 +55,8 @@ export interface SchedulerOptions {
   onSchedule?: (task: Task) => void;
   /** Called when a task is blocked by deps */
   onBlocked?: (task: Task, blockedBy: string[]) => void;
+  /** Optional PR monitor for tracking in-review PRs */
+  prMonitor?: PrMonitor;
 }
 
 /**
@@ -111,6 +115,48 @@ export class Scheduler {
         this.schedule();
       }
     });
+
+    /**
+     * PR Monitoring: Start monitoring when a task moves to "in-review",
+     * stop monitoring when it moves out.
+     */
+    this.store.on("task:moved", ({ task, to }) => {
+      if (!this.options.prMonitor) return;
+
+      if (to === "in-review" && task.prInfo) {
+        // Start monitoring existing PR
+        const repo = getCurrentGitHubRepo(this.store.getRootDir());
+        if (repo) {
+          this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
+        }
+      } else if (task.column === "in-review" && to !== "in-review") {
+        // Task moved out of in-review, stop monitoring
+        this.options.prMonitor.stopMonitoring(task.id);
+
+        // If task has a closed/merged PR, check for unaddressed feedback
+        if (task.prInfo && (task.prInfo.status === "closed" || task.prInfo.status === "merged")) {
+          // This would need the tracked PR data - handled by PrMonitor/PrCommentHandler
+        }
+      }
+    });
+
+    /**
+     * PR Monitoring: Start monitoring when PR is linked to an in-review task.
+     */
+    this.store.on("task:updated", (task) => {
+      if (!this.options.prMonitor) return;
+      if (task.column !== "in-review") return;
+      if (!task.prInfo) return;
+
+      // Check if we're already monitoring this task
+      const tracked = this.options.prMonitor.getTrackedPrs();
+      if (!tracked.has(task.id)) {
+        const repo = getCurrentGitHubRepo(this.store.getRootDir());
+        if (repo) {
+          this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
+        }
+      }
+    });
   }
 
   start(): void {
@@ -130,6 +176,10 @@ export class Scheduler {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
       this.activePollMs = null;
+    }
+    // Stop all PR monitoring when scheduler shuts down
+    if (this.options.prMonitor) {
+      this.options.prMonitor.stopAll();
     }
     schedulerLog.log("Stopped");
   }

@@ -39,13 +39,15 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate } = await import("./commands/task.js");
 
 const HELP = `
 kb — AI-orchestrated task board
 
 Usage:
   kb dashboard                        Start the board web UI
+  kb dashboard --paused               Start with automation paused
+  kb dashboard --dev                  Start web UI only (no AI engine)
   kb task create [desc] [opts]         Create a new task (goes to triage)
   kb task list                        List all tasks
   kb task show <id>                   Show task details, steps, log
@@ -53,14 +55,21 @@ Usage:
   kb task update <id> <step> <status> Update step status (pending|in-progress|done|skipped)
   kb task log <id> <message>          Add a log entry
   kb task merge <id>                  Merge an in-review task and close it
+  kb task duplicate <id>              Duplicate a task (creates copy in triage)
   kb task attach <id> <file>          Attach a file to a task
   kb task pause <id>                  Pause a task (stops all automation)
   kb task unpause <id>                Unpause a task (resumes automation)
+  kb task import <owner/repo> [opts]  Import GitHub issues as tasks
 
 Options:
   --port, -p <port>          Dashboard port (default: 4040)
+  --paused                   Start with engine paused (automation disabled)
+  --dev                      Start dashboard only (no AI engine)
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
+  --limit, -l <n>            Max issues to import (default: 30, max: 100)
+  --labels, -L <labels>      Comma-separated label filter for import
+  --interactive, -i          Interactive mode for issue selection
   --help, -h                 Show this help
 
 Columns: triage, todo, in-progress, in-review, done
@@ -88,7 +97,9 @@ async function main() {
         const pi = portIdx !== -1 ? portIdx : portIdxShort;
         const port = pi !== -1 ? parseInt(args[pi + 1], 10) : 4040;
         const open = !args.includes("--no-open");
-        await runDashboard(port, { open });
+        const paused = args.includes("--paused");
+        const dev = args.includes("--dev");
+        await runDashboard(port, { open, paused, dev });
         break;
       }
 
@@ -157,6 +168,12 @@ async function main() {
             await runTaskMerge(id);
             break;
           }
+          case "duplicate": {
+            const id = args[2];
+            if (!id) { console.error("Usage: kb task duplicate <id>"); process.exit(1); }
+            await runTaskDuplicate(id);
+            break;
+          }
           case "attach": {
             const id = args[2], file = args[3];
             if (!id || !file) {
@@ -176,6 +193,47 @@ async function main() {
             const id = args[2];
             if (!id) { console.error("Usage: kb task unpause <id>"); process.exit(1); }
             await runTaskUnpause(id);
+            break;
+          }
+          case "import": {
+            const ownerRepo = args[2];
+            if (!ownerRepo) {
+              console.error("Usage: kb task import <owner/repo> [options]");
+              console.error("Options: --limit <n>, -l <n>  (default: 30, max: 100)");
+              console.error("         --labels <labels>, -L <labels>  (comma-separated)");
+              console.error("         --interactive, -i  (interactive mode)");
+              process.exit(1);
+            }
+
+            // Parse options
+            let limit = 30;
+            const limitIdx = args.indexOf("--limit");
+            const limitIdxShort = args.indexOf("-l");
+            const li = limitIdx !== -1 ? limitIdx : limitIdxShort;
+            if (li !== -1 && li + 1 < args.length) {
+              const parsed = parseInt(args[li + 1], 10);
+              if (!isNaN(parsed)) {
+                limit = Math.min(Math.max(parsed, 1), 100);
+              }
+            }
+
+            let labels: string[] | undefined;
+            const labelsIdx = args.indexOf("--labels");
+            const labelsIdxShort = args.indexOf("-L");
+            const labi = labelsIdx !== -1 ? labelsIdx : labelsIdxShort;
+            if (labi !== -1 && labi + 1 < args.length) {
+              labels = args[labi + 1].split(",").map(l => l.trim()).filter(Boolean);
+            }
+
+            // Check for interactive mode
+            const interactive = args.includes("--interactive") || args.includes("-i");
+
+            if (interactive) {
+              const { runTaskImportGitHubInteractive } = await import("./commands/task.js");
+              await runTaskImportGitHubInteractive(ownerRepo, { limit, labels });
+            } else {
+              await runTaskImportFromGitHub(ownerRepo, { limit, labels });
+            }
             break;
           }
           default:

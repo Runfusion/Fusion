@@ -341,6 +341,386 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── kb_task_duplicate ─────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_duplicate",
+    label: "KB: Duplicate Task",
+    description:
+      "Duplicate an existing task, creating a fresh copy in triage. " +
+      "Copies the title and description but resets all execution state. " +
+      "The AI triage agent will re-specify the new task.",
+    promptSnippet: "Duplicate a kb task (creates copy in triage)",
+    promptGuidelines: [
+      "Use when a task needs to be re-done, split, or used as a template",
+      "The duplicated task will be placed in triage for re-specification",
+      "Dependencies, attachments, and execution state are NOT copied",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Source task ID to duplicate (e.g. KB-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const newTask = await store.duplicateTask(params.id);
+
+      return {
+        content: [{ type: "text", text: `Duplicated ${params.id} → ${newTask.id}` }],
+        details: { sourceId: params.id, newTaskId: newTask.id },
+      };
+    },
+  });
+
+  // ── kb_task_import_github ─────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_import_github",
+    label: "KB: Import GitHub Issues",
+    description:
+      "Import GitHub issues as kb tasks. Fetches open issues from a repository " +
+      "and creates tasks in the triage column. Each task includes the issue title " +
+      "and body with a link to the source issue.",
+    promptSnippet: "Import GitHub issues as kb tasks",
+    promptGuidelines: [
+      "Use for syncing GitHub issue backlog to kb board",
+      "Requires GITHUB_TOKEN env var for private repositories",
+      "Use --limit to control how many issues to import (default: 30)",
+      "Use --labels to filter by specific labels",
+    ],
+    parameters: Type.Object({
+      ownerRepo: Type.String({
+        description: "Repository in owner/repo format (e.g., 'dustinbyrne/kb')",
+        pattern: "^[^/]+/[^/]+$",
+      }),
+      limit: Type.Optional(
+        Type.Number({
+          description: "Max issues to import (default: 30, max: 100)",
+          minimum: 1,
+          maximum: 100,
+        })
+      ),
+      labels: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Label names to filter by",
+        })
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // Import the function dynamically to avoid circular dependencies
+      const { runTaskImportFromGitHub } = await import("./commands/task.js");
+
+      const limit = params.limit ?? 30;
+      const labels = params.labels;
+
+      // Capture console output
+      const originalLog = console.log;
+      const originalError = console.error;
+      const logs: string[] = [];
+
+      console.log = (...args: unknown[]) => {
+        const line = args.map(String).join(" ");
+        logs.push(line);
+        originalLog.apply(console, args);
+      };
+      console.error = (...args: unknown[]) => {
+        const line = args.map(String).join(" ");
+        logs.push(line);
+        originalError.apply(console, args);
+      };
+
+      try {
+        await runTaskImportFromGitHub(params.ownerRepo, { limit, labels });
+      } finally {
+        console.log = originalLog;
+        console.error = originalError;
+      }
+
+      // Parse created task IDs from logs
+      const createdTasks: Array<{ id: string; title: string }> = [];
+      for (const line of logs) {
+        const match = line.match(/Created (KB-\d+):\s*(.+)$/);
+        if (match) {
+          createdTasks.push({ id: match[1], title: match[2].trim() });
+        }
+      }
+
+      const summary = logs.find((l) => l.includes("✓ Imported")) || "Import complete";
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${summary}\n\nCreated tasks:\n${createdTasks.map((t) => `  ${t.id}: ${t.title}`).join("\n") || "  None"}`,
+          },
+        ],
+        details: { createdTasks, summary },
+      };
+    },
+  });
+
+  // ── kb_task_import_github_issue ───────────────────────────────────
+  // Import a single GitHub issue by its issue number
+
+  pi.registerTool({
+    name: "kb_task_import_github_issue",
+    label: "KB: Import GitHub Issue",
+    description:
+      "Import a specific GitHub issue as a kb task. Fetches the issue by number " +
+      "and creates a single task in the triage column with the issue title and body.",
+    promptSnippet: "Import a specific GitHub issue as a kb task",
+    promptGuidelines: [
+      "Use for importing a single known issue by its number",
+      "Requires GITHUB_TOKEN env var for private repositories",
+      "Skips import if the issue is already imported (checks for existing Source URL)",
+    ],
+    parameters: Type.Object({
+      owner: Type.String({
+        description: "Repository owner (e.g., 'dustinbyrne')",
+      }),
+      repo: Type.String({
+        description: "Repository name (e.g., 'kb')",
+      }),
+      issueNumber: Type.Number({
+        description: "GitHub issue number to import",
+        minimum: 1,
+      }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { owner, repo, issueNumber } = params;
+      const token = process.env.GITHUB_TOKEN;
+
+      // Build URL for single issue
+      const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`;
+
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "kb-cli/1.0",
+      };
+
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      let issue: { number: number; title: string; body: string | null; html_url: string };
+
+      try {
+        const response = await fetch(url, {
+          headers,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error(`Issue #${issueNumber} not found in ${owner}/${repo}`);
+          }
+          if (response.status === 401 || response.status === 403) {
+            throw new Error(
+              `Authentication failed. ${token ? "Check your GITHUB_TOKEN." : "Set GITHUB_TOKEN env var."}`
+            );
+          }
+          throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+        }
+
+        issue = await response.json() as typeof issue;
+
+        // Check if it's a pull request
+        if ("pull_request" in issue && issue.pull_request) {
+          throw new Error(`#${issueNumber} is a pull request, not an issue`);
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      // Check if already imported
+      const store = await getStore(ctx.cwd);
+      const existingTasks = await store.listTasks();
+      const sourceUrl = issue.html_url;
+
+      for (const task of existingTasks) {
+        if (task.description.includes(sourceUrl)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Issue #${issueNumber} already imported as ${task.id}\nSource: ${sourceUrl}`,
+              },
+            ],
+            details: { skipped: true, existingTaskId: task.id, sourceUrl },
+          };
+        }
+      }
+
+      // Create the task
+      const title = issue.title.slice(0, 200);
+      const body = issue.body?.trim() || "(no description)";
+      const description = `${body}\n\nSource: ${sourceUrl}`;
+
+      const task = await store.createTask({
+        title: title || undefined,
+        description,
+        column: "triage",
+        dependencies: [],
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Imported ${task.id} from GitHub\n${sourceUrl}`,
+          },
+        ],
+        details: { taskId: task.id, sourceUrl },
+      };
+    },
+  });
+
+  // ── kb_task_browse_github_issues ──────────────────────────────────
+  // Browse available GitHub issues before importing
+
+  pi.registerTool({
+    name: "kb_task_browse_github_issues",
+    label: "KB: Browse GitHub Issues",
+    description:
+      "List open GitHub issues from a repository to browse before importing. " +
+      "Returns issue numbers, titles, and URLs for selection. Use with kb_task_import_github_issue " +
+      "to import specific issues by number.",
+    promptSnippet: "Browse open GitHub issues in a repository",
+    promptGuidelines: [
+      "Use to preview available issues before importing",
+      "Returns a list you can reference when importing specific issues",
+      "Use --limit to control how many issues to show (default: 30)",
+      "Use --labels to filter by specific labels",
+      "Requires GITHUB_TOKEN env var for private repositories",
+    ],
+    parameters: Type.Object({
+      owner: Type.String({
+        description: "Repository owner (e.g., 'dustinbyrne')",
+      }),
+      repo: Type.String({
+        description: "Repository name (e.g., 'kb')",
+      }),
+      limit: Type.Optional(
+        Type.Number({
+          description: "Max issues to show (default: 30, max: 100)",
+          minimum: 1,
+          maximum: 100,
+        })
+      ),
+      labels: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Label names to filter by",
+        })
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { owner, repo, limit = 30, labels } = params;
+      const token = process.env.GITHUB_TOKEN;
+
+      // Build query parameters
+      const queryParams = new URLSearchParams();
+      queryParams.append("state", "open");
+      queryParams.append("per_page", String(Math.min(limit, 100)));
+      if (labels && labels.length > 0) {
+        queryParams.append("labels", labels.join(","));
+      }
+
+      const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${queryParams}`;
+
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "kb-cli/1.0",
+      };
+
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      let issues: Array<{ number: number; title: string; html_url: string; labels: Array<{ name: string }> }>;
+
+      try {
+        const response = await fetch(url, {
+          headers,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error(`Repository not found: ${owner}/${repo}`);
+          }
+          if (response.status === 401 || response.status === 403) {
+            throw new Error(
+              `Authentication failed. ${token ? "Check your GITHUB_TOKEN." : "Set GITHUB_TOKEN env var."}`
+            );
+          }
+          throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+        }
+
+        const allIssues = await response.json() as typeof issues;
+        // Filter out pull requests
+        issues = allIssues.filter((i) => !("pull_request" in i && i.pull_request)).slice(0, limit);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (issues.length === 0) {
+        return {
+          content: [{ type: "text", text: `No open issues found in ${owner}/${repo}.` }],
+          details: { count: 0, issues: [] },
+        };
+      }
+
+      // Check which issues are already imported
+      const store = await getStore(ctx.cwd);
+      const existingTasks = await store.listTasks();
+      const importedUrls = new Set<string>();
+
+      for (const task of existingTasks) {
+        const match = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
+        if (match) {
+          importedUrls.add(match[1]);
+        }
+      }
+
+      const lines: string[] = [];
+      lines.push(`Found ${issues.length} open issues in ${owner}/${repo}:\n`);
+
+      for (const issue of issues) {
+        const isImported = importedUrls.has(issue.html_url);
+        const labelStr = issue.labels.length > 0 ? ` [${issue.labels.map((l) => l.name).join(", ")}]` : "";
+        const importedStr = isImported ? " ✓ Imported" : "";
+        lines.push(`  #${issue.number}: ${issue.title.slice(0, 80)}${issue.title.length > 80 ? "…" : ""}${labelStr}${importedStr}`);
+        lines.push(`     ${issue.html_url}`);
+      }
+
+      lines.push("\nUse kb_task_import_github_issue to import a specific issue by number.");
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: {
+          count: issues.length,
+          issues: issues.map((i) => ({
+            number: i.number,
+            title: i.title,
+            url: i.html_url,
+            labels: i.labels.map((l) => l.name),
+            imported: importedUrls.has(i.html_url),
+          })),
+        },
+      };
+    },
+  });
+
   // ── /kb command — start the dashboard + engine ───────────────────
 
   let dashboardProcess: ChildProcess | null = null;

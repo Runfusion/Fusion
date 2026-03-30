@@ -95,7 +95,13 @@ if (!existsSync(dashboardClientSrc)) {
 // Express.static requires a real filesystem directory, so we co-locate
 // the pre-built SPA next to the binary rather than embedding blobs.
 function copyClientAssets() {
-  if (existsSync(dashboardClientDest)) rmSync(dashboardClientDest, { recursive: true });
+  try {
+    if (existsSync(dashboardClientDest)) {
+      rmSync(dashboardClientDest, { recursive: true, force: true });
+    }
+  } catch {
+    // Ignore cleanup errors - directory might not exist or be accessible
+  }
   console.log("Copying dashboard client assets...");
   mkdirSync(dashboardClientDest, { recursive: true });
   cpSync(dashboardClientSrc, dashboardClientDest, { recursive: true });
