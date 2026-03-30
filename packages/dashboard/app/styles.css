@@ -7515,9 +7515,23 @@ html .column.drag-over * {
   border-bottom: 1px solid var(--border);
   color: var(--text);
   font-size: 13px;
+  line-height: 1.4;
   font-family: inherit;
   outline: none;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  resize: none;
+  min-height: 36px;
+  max-height: 200px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), min-height 0.2s ease;
+}
+
+.quick-entry-input--expanded {
+  min-height: 80px;
+}
+
+@media (max-width: 768px) {
+  .quick-entry-input--expanded {
+    min-height: 60px;
+  }
 }
 
 .quick-entry-input:focus {
