@@ -84,6 +84,24 @@ The dashboard includes a fully interactive shell terminal for executing commands
 - Push current branch
 - View operation results and error states
 
+### File Browser
+Browse and edit task worktree files directly from the task detail modal:
+
+- **Files Tab**: Available when a task has a worktree assigned
+- **File Tree**: Navigate directories with breadcrumb-style path display
+- **Code Editor**: Edit files with syntax highlighting powered by CodeMirror 6
+  - Supports TypeScript, JavaScript, JSON, CSS, Markdown, and more
+  - One-dark theme matching the dashboard
+  - Auto-detects language from file extension
+- **Safety Features**:
+  - Path traversal prevention (blocks `..` patterns)
+  - Binary file detection (prevents editing images, executables, etc.)
+  - 1MB file size limit
+  - Unsaved change indicators
+- **Keyboard Shortcuts**:
+  - `Ctrl/Cmd+S` to save
+  - `Escape` to close
+
 ### Configuration
 - **Settings Modal**: Configure scheduling, worktrees, build commands, merge preferences, notifications, and appearance
 - **Notifications**: ntfy.sh integration for push notifications when tasks complete or fail

@@ -532,3 +532,52 @@ export function killTerminalSession(sessionId: string, signal?: "SIGTERM" | "SIG
 export function getTerminalStreamUrl(sessionId: string): string {
   return `/api/terminal/sessions/${encodeURIComponent(sessionId)}/stream`;
 }
+
+// --- File Browser API ---
+
+/** File node in directory listing */
+export interface FileNode {
+  name: string;
+  type: "file" | "directory";
+  size?: number;
+  mtime?: string;
+}
+
+/** File listing response */
+export interface FileListResponse {
+  path: string;
+  entries: FileNode[];
+}
+
+/** File content response */
+export interface FileContentResponse {
+  content: string;
+  mtime: string;
+  size: number;
+}
+
+/** Save file response */
+export interface SaveFileResponse {
+  success: true;
+  mtime: string;
+  size: number;
+}
+
+/** List files in task directory */
+export function fetchFileList(taskId: string, path?: string): Promise<FileListResponse> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  return api<FileListResponse>(`/tasks/${taskId}/files${query}`);
+}
+
+/** Fetch file content */
+export function fetchFileContent(taskId: string, filePath: string): Promise<FileContentResponse> {
+  return api<FileContentResponse>(`/tasks/${taskId}/files/${encodeURIComponent(filePath)}`);
+}
+
+/** Save file content */
+export function saveFileContent(taskId: string, filePath: string, content: string): Promise<SaveFileResponse> {
+  return api<SaveFileResponse>(`/tasks/${taskId}/files/${encodeURIComponent(filePath)}`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}

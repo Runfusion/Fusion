@@ -7,6 +7,7 @@ import { COLUMNS, VALID_TRANSITIONS, type PrInfo } from "@kb/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo } from "./github.js";
 import { terminalSessionManager } from "./terminal.js";
+import { listFiles, readFile, writeFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse } from "./file-service.js";
 
 /**
  * Minimal interface matching pi-coding-agent's ModelRegistry API surface
@@ -1806,6 +1807,89 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── File API Routes ───────────────────────────────────────────────
+
+  /**
+   * GET /api/tasks/:id/files
+   * List files in task directory (or worktree if available).
+   * Query param: ?path=relative/path for subdirectory navigation.
+   * Returns: { path: string; entries: FileNode[] }
+   */
+  router.get("/tasks/:id/files", async (req, res) => {
+    try {
+      const { path: subPath } = req.query;
+      const result = await listFiles(store, req.params.id, typeof subPath === "string" ? subPath : undefined);
+      res.json(result);
+    } catch (err: any) {
+      if (err instanceof FileServiceError) {
+        const status = err.code === "ENOTASK" ? 404
+          : err.code === "ENOENT" ? 404
+          : err.code === "EACCES" ? 403
+          : 400;
+        res.status(status).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
+  /**
+   * GET /api/tasks/:id/files/:filepath
+   * Read file contents.
+   * Returns: { content: string; mtime: string; size: number }
+   */
+  router.get("/tasks/:id/files/{*filepath}", async (req, res) => {
+    try {
+      const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
+      const result = await readFile(store, req.params.id, filePath);
+      res.json(result);
+    } catch (err: any) {
+      if (err instanceof FileServiceError) {
+        const status = err.code === "ENOENT" ? 404
+          : err.code === "ENOTASK" ? 404
+          : err.code === "EACCES" ? 403
+          : err.code === "ETOOLARGE" ? 413
+          : err.code === "EINVAL" && err.message.includes("Binary file") ? 415
+          : 400;
+        res.status(status).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
+  /**
+   * POST /api/tasks/:id/files/:filepath
+   * Write file contents.
+   * Body: { content: string }
+   * Returns: { success: true; mtime: string; size: number }
+   */
+  router.post("/tasks/:id/files/{*filepath}", async (req, res) => {
+    try {
+      const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
+      const { content } = req.body;
+      
+      if (typeof content !== "string") {
+        res.status(400).json({ error: "content is required and must be a string" });
+        return;
+      }
+
+      const result = await writeFile(store, req.params.id, filePath, content);
+      res.json(result);
+    } catch (err: any) {
+      if (err instanceof FileServiceError) {
+        const status = err.code === "ENOENT" ? 404
+          : err.code === "ENOTASK" ? 404
+          : err.code === "EACCES" ? 403
+          : err.code === "ETOOLARGE" ? 413
+          : 400;
+        res.status(status).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
     }
   });
 
