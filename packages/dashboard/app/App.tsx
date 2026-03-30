@@ -223,10 +223,12 @@ function AppInner() {
         onImport={handleGitHubImport}
         tasks={tasks}
       />
-      <TerminalModal
-        isOpen={terminalOpen}
-        onClose={handleTerminalClose}
-      />
+      {terminalOpen && (
+        <TerminalModal
+          isOpen={terminalOpen}
+          onClose={handleTerminalClose}
+        />
+      )}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>
   );

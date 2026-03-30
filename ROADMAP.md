@@ -1,7 +1,7 @@
 # Roadmap
 
 ## 🏁 KB-006: Clickable Dependencies
-> Status: completed
+> Status: planned
 
 - [x] Update TaskCard with clickable dependency badges
 - [x] Pass tasks prop through Column and WorktreeGroup

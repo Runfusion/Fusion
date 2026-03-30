@@ -3497,8 +3497,6 @@ body {
   font-style: italic;
 }
 
-/* Model selector filter styles */
-.model-selector-filter {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4288,7 +4286,6 @@ html .column.drag-over * {
 }
 
 .file-node-time {
-  font-size: 11px;
   color: var(--text-dim);
   font-family: "SF Mono", Monaco, Consolas, monospace;
   flex-shrink: 0;
