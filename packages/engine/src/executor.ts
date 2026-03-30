@@ -227,7 +227,11 @@ export class TaskExecutor {
     executorLog.log(`Found ${inProgress.length} orphaned in-progress task(s)`);
     for (const task of inProgress) {
       executorLog.log(`Resuming ${task.id}: ${task.title || task.description.slice(0, 60)}`);
-      await this.store.logEntry(task.id, "Resumed after engine restart");
+      try {
+        await this.store.logEntry(task.id, "Resumed after engine restart");
+      } catch (err) {
+        executorLog.error(`Failed to write resume log for ${task.id}:`, err);
+      }
       this.execute(task).catch((err) =>
         executorLog.error(`Failed to resume ${task.id}:`, err),
       );

@@ -63,6 +63,12 @@ export function TaskCard({
 
   const titleInputRef = useRef<HTMLInputElement>(null);
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const touchOpenHandledRef = useRef(false);
+
+  const isInteractiveTarget = useCallback((target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) return false;
+    return !!target.closest("button, a, input, textarea, select, label, [role='button']");
+  }, []);
 
   // Reset edit state when task changes
   useEffect(() => {
@@ -133,6 +139,21 @@ export function TaskCard({
       addToast("Failed to load task details", "error");
     }
   }, [task.id, onOpenDetail, addToast, isEditing]);
+
+  const handleCardClick = useCallback((e: React.MouseEvent) => {
+    if (touchOpenHandledRef.current) {
+      touchOpenHandledRef.current = false;
+      return;
+    }
+    if (isInteractiveTarget(e.target)) return;
+    handleClick();
+  }, [handleClick, isInteractiveTarget]);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (isInteractiveTarget(e.target)) return;
+    touchOpenHandledRef.current = true;
+    handleClick();
+  }, [handleClick, isInteractiveTarget]);
 
   const handleDepClick = useCallback(async (e: React.MouseEvent, depId: string) => {
     e.stopPropagation(); // Prevent card click
@@ -308,7 +329,8 @@ export function TaskCard({
       onDragOver={handleFileDragOver}
       onDragLeave={handleFileDragLeave}
       onDrop={handleFileDrop}
-      onClick={handleClick}
+      onClick={handleCardClick}
+      onTouchEnd={handleTouchEnd}
       onDoubleClick={handleDoubleClick}
     >
       <div className="card-header">

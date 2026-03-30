@@ -1845,6 +1845,68 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * GET /api/terminal/sessions/:id/stream
+   * SSE endpoint for real-time terminal output streaming.
+   * Events: terminal:output (stdout/stderr), terminal:exit
+   */
+  router.get("/terminal/sessions/:id/stream", (req, res) => {
+    try {
+      const { id } = req.params;
+      const session = terminalSessionManager.getSession(id);
+      
+      if (!session) {
+        res.status(404).json({ error: "Session not found" });
+        return;
+      }
+
+      // Set up SSE headers
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering if present
+
+      // Send initial connection event
+      res.write(`event: connected\ndata: ${JSON.stringify({ sessionId: id })}\n\n`);
+
+      // Handler for output events
+      const onOutput = (event: import("./terminal.js").TerminalOutputEvent) => {
+        if (event.sessionId !== id) return;
+        
+        const eventName = event.type === "exit" ? "terminal:exit" : "terminal:output";
+        const data = JSON.stringify({
+          type: event.type,
+          data: event.data,
+          ...(event.exitCode !== undefined && { exitCode: event.exitCode }),
+        });
+        
+        res.write(`event: ${eventName}\ndata: ${data}\n\n`);
+        
+        // Close connection on exit after a brief delay to ensure client receives final data
+        if (event.type === "exit") {
+          setTimeout(() => {
+            res.end();
+          }, 100);
+        }
+      };
+
+      // Subscribe to session manager events
+      terminalSessionManager.on("output", onOutput);
+
+      // Handle client disconnect
+      req.on("close", () => {
+        terminalSessionManager.off("output", onOutput);
+      });
+
+      // Handle errors
+      req.on("error", () => {
+        terminalSessionManager.off("output", onOutput);
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
 

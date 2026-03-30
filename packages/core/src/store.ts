@@ -102,7 +102,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const filePath = join(dir, "task.json");
     const raw = await readFile(filePath, "utf-8");
     try {
-      return JSON.parse(raw) as Task;
+      const task = JSON.parse(raw) as Task;
+      // Normalize legacy task.json files so newer code can safely mutate them.
+      if (!Array.isArray(task.log)) task.log = [];
+      if (!Array.isArray(task.dependencies)) task.dependencies = [];
+      if (!Array.isArray(task.steps)) task.steps = [];
+      return task;
     } catch (err) {
       throw new Error(
         `Failed to parse task.json at ${filePath}: ${(err as Error).message}`,
