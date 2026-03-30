@@ -6,6 +6,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./planning": {
+      "types": "./src/planning.ts",
+      "import": "./src/planning.ts"
     }
   },
   "publishConfig": {

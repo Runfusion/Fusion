@@ -87,6 +87,7 @@ describe("kb pi extension", () => {
         "kb_task_browse_github_issues",
         "kb_task_archive",
         "kb_task_unarchive",
+        "kb_task_plan",
       ];
 
       for (const name of expected) {

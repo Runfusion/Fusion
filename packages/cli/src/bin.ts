@@ -39,7 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan } = await import("./commands/task.js");
 
 const HELP = `
 kb — AI-orchestrated task board
@@ -50,6 +50,7 @@ Usage:
   kb dashboard --dev                  Start web UI only (no AI engine)
   kb dashboard --interactive          Start with interactive port selection
   kb task create [desc] [opts]         Create a new task (goes to triage)
+  kb task plan [description] [opts]    Create task via AI-guided planning
   kb task list                        List all tasks
   kb task show <id>                   Show task details, steps, log
   kb task move <id> <col>             Move a task to a column
@@ -73,6 +74,7 @@ Options:
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
   --feedback <text>          Refinement feedback (non-interactive mode)
+  --yes                      Skip confirmation prompts (planning mode)
   --limit, -l <n>            Max issues to import (default: 30, max: 100)
   --labels, -L <labels>      Comma-separated label filter for import
   --interactive, -i          Interactive mode for issue selection
@@ -130,6 +132,21 @@ async function main() {
             }
             const title = descParts.join(" ");
             await runTaskCreate(title || undefined, attachFiles.length > 0 ? attachFiles : undefined, dependsIds.length > 0 ? dependsIds : undefined);
+            break;
+          }
+          case "plan": {
+            const planArgs = args.slice(2);
+            const yesFlag = planArgs.includes("--yes");
+            const descParts: string[] = [];
+            for (let i = 0; i < planArgs.length; i++) {
+              if (planArgs[i] === "--yes") {
+                continue; // skip flag
+              } else {
+                descParts.push(planArgs[i]);
+              }
+            }
+            const initialPlan = descParts.join(" ");
+            await runTaskPlan(initialPlan || undefined, yesFlag);
             break;
           }
           case "list":

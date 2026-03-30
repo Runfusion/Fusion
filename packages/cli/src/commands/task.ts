@@ -1,6 +1,8 @@
 import { TaskStore, COLUMNS, COLUMN_LABELS, type Column, type MergeResult, type StepStatus } from "@kb/core";
 import { aiMergeTask } from "@kb/engine";
 import { createInterface } from "node:readline/promises";
+import type { PlanningQuestion, PlanningSummary } from "@kb/core";
+import { createSession, submitResponse, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@kb/dashboard/planning";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -641,4 +643,373 @@ export async function runTaskImportFromGitHub(
   console.log();
   console.log(`  ✓ Imported ${created} tasks from ${owner}/${repo}${skipped > 0 ? ` (${skipped} skipped)` : ""}`);
   console.log();
+}
+
+// ── Planning Mode ───────────────────────────────────────────────────────────
+
+/** Helper to display thinking indicator */
+function showThinking(): void {
+  process.stdout.write("  AI is thinking...");
+}
+
+/** Helper to clear thinking indicator */
+function clearThinking(): void {
+  process.stdout.write("\r" + " ".repeat(20) + "\r");
+}
+
+/** Prompt for text (multi-line) question */
+async function promptText(question: PlanningQuestion): Promise<string> {
+  console.log(`\n  ${question.question}`);
+  if (question.description) {
+    console.log(`  ${question.description}`);
+  }
+  console.log("  (Enter your response. Type DONE on its own line when finished):\n");
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const lines: string[] = [];
+
+  return new Promise((resolve) => {
+    const askLine = () => {
+      rl.question("  ").then((line) => {
+        if (line.trim() === "DONE") {
+          rl.close();
+          resolve(lines.join("\n"));
+        } else {
+          lines.push(line);
+          askLine();
+        }
+      });
+    };
+    askLine();
+  });
+}
+
+/** Prompt for single_select question */
+async function promptSingleSelect(question: PlanningQuestion): Promise<string> {
+  console.log(`\n  ${question.question}`);
+  if (question.description) {
+    console.log(`  ${question.description}`);
+  }
+  console.log();
+
+  if (!question.options || question.options.length === 0) {
+    throw new Error("Single select question has no options");
+  }
+
+  for (let i = 0; i < question.options.length; i++) {
+    const opt = question.options[i];
+    console.log(`  ${i + 1}. ${opt.label}`);
+    if (opt.description) {
+      console.log(`     ${opt.description}`);
+    }
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  while (true) {
+    const answer = await rl.question("\n  Select (1-" + question.options.length + "): ");
+    const num = parseInt(answer.trim(), 10);
+
+    if (!isNaN(num) && num >= 1 && num <= question.options.length) {
+      rl.close();
+      return question.options[num - 1].id;
+    }
+
+    console.log(`  Invalid selection. Please enter a number between 1 and ${question.options.length}`);
+  }
+}
+
+/** Prompt for multi_select question */
+async function promptMultiSelect(question: PlanningQuestion): Promise<string[]> {
+  console.log(`\n  ${question.question}`);
+  if (question.description) {
+    console.log(`  ${question.description}`);
+  }
+  console.log("  (Enter comma-separated numbers, e.g., 1,3,4):\n");
+
+  if (!question.options || question.options.length === 0) {
+    throw new Error("Multi select question has no options");
+  }
+
+  for (let i = 0; i < question.options.length; i++) {
+    const opt = question.options[i];
+    console.log(`  ${i + 1}. ${opt.label}`);
+    if (opt.description) {
+      console.log(`     ${opt.description}`);
+    }
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  while (true) {
+    const answer = await rl.question("\n  Select (comma-separated): ");
+    const nums = answer
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => !isNaN(n));
+
+    if (nums.length === 0) {
+      console.log("  Please select at least one option");
+      continue;
+    }
+
+    const invalid = nums.filter((n) => n < 1 || n > question.options!.length);
+    if (invalid.length > 0) {
+      console.log(`  Invalid selection: ${invalid.join(", ")}. Range: 1-${question.options.length}`);
+      continue;
+    }
+
+    rl.close();
+    return nums.map((n) => question.options![n - 1].id);
+  }
+}
+
+/** Prompt for confirm question */
+async function promptConfirm(question: PlanningQuestion): Promise<boolean> {
+  console.log(`\n  ${question.question}`);
+  if (question.description) {
+    console.log(`  ${question.description}`);
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await rl.question("\n  [Y/n]: ");
+  rl.close();
+
+  const trimmed = answer.trim().toLowerCase();
+  return trimmed === "" || trimmed === "y" || trimmed === "yes";
+}
+
+/** Display planning summary */
+function displaySummary(summary: PlanningSummary): void {
+  console.log();
+  console.log("  ╔══════════════════════════════════════════════════════════════╗");
+  console.log("  ║                    Planning Summary                            ║");
+  console.log("  ╠══════════════════════════════════════════════════════════════╣");
+  console.log(`  ║ Title: ${summary.title.slice(0, 55).padEnd(55)} ║`);
+  console.log("  ╠══════════════════════════════════════════════════════════════╣");
+
+  // Description (wrapped to box width)
+  const descLines = wrapText(summary.description, 58);
+  for (const line of descLines.slice(0, 10)) {
+    console.log(`  ║ ${line.padEnd(58)} ║`);
+  }
+  if (descLines.length > 10) {
+    console.log(`  ║ ... (${descLines.length - 10} more lines) ...`.padEnd(62) + " ║");
+  }
+
+  console.log("  ╠══════════════════════════════════════════════════════════════╣");
+  console.log(`  ║ Size: ${summary.suggestedSize.padEnd(52)} ║`);
+
+  if (summary.suggestedDependencies.length > 0) {
+    console.log(`  ║ Dependencies: ${summary.suggestedDependencies.join(", ").slice(0, 45).padEnd(45)} ║`);
+  } else {
+    console.log(`  ║ Dependencies: none`.padEnd(62) + " ║");
+  }
+
+  console.log("  ╠══════════════════════════════════════════════════════════════╣");
+  console.log("  ║ Key Deliverables:                                              ║");
+  for (const deliverable of summary.keyDeliverables) {
+    console.log(`  ║   • ${deliverable.slice(0, 54).padEnd(54)} ║`);
+  }
+  console.log("  ╚══════════════════════════════════════════════════════════════╝");
+  console.log();
+}
+
+/** Wrap text to specified width */
+function wrapText(text: string, width: number): string[] {
+  const lines: string[] = [];
+  const paragraphs = text.split("\n");
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.trim() === "") {
+      lines.push("");
+      continue;
+    }
+
+    let remaining = paragraph.trim();
+    while (remaining.length > 0) {
+      if (remaining.length <= width) {
+        lines.push(remaining);
+        break;
+      }
+
+      let breakPoint = width;
+      while (breakPoint > 0 && remaining[breakPoint] !== " ") {
+        breakPoint--;
+      }
+
+      if (breakPoint === 0) {
+        // No space found, force break
+        breakPoint = width;
+      }
+
+      lines.push(remaining.slice(0, breakPoint));
+      remaining = remaining.slice(breakPoint).trim();
+    }
+  }
+
+  return lines;
+}
+
+/** Run the planning mode */
+export async function runTaskPlan(initialPlanArg?: string, yesFlag = false): Promise<void> {
+  let initialPlan = initialPlanArg;
+
+  // If no initial plan, prompt interactively
+  if (!initialPlan) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    console.log("\n  Let's plan your task. What would you like to accomplish?\n");
+    initialPlan = await rl.question("  Describe your idea: ");
+    rl.close();
+
+    if (!initialPlan?.trim()) {
+      console.error("\n  Description is required");
+      process.exit(1);
+    }
+  }
+
+  const store = await getStore();
+
+  // Create planning session
+  let sessionId: string;
+  let firstQuestion: PlanningQuestion;
+
+  try {
+    showThinking();
+    const result = await createSession("127.0.0.1", initialPlan.trim(), store, process.cwd());
+    clearThinking();
+    sessionId = result.sessionId;
+    firstQuestion = result.firstQuestion;
+  } catch (err) {
+    clearThinking();
+
+    if (err instanceof RateLimitError) {
+      console.error("\n  Rate limit exceeded. Maximum 5 planning sessions per hour.\n");
+      process.exit(1);
+    }
+
+    console.error(`\n  Failed to start planning session: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
+
+  // Interactive Q&A loop
+  let currentQuestion = firstQuestion;
+  let cancelled = false;
+
+  // Handle Ctrl+C gracefully
+  const handleSigint = () => {
+    cancelled = true;
+    console.log("\n\n  Planning session cancelled.\n");
+    process.exit(0);
+  };
+
+  process.on("SIGINT", handleSigint);
+
+  try {
+    while (!cancelled) {
+      // Get user response based on question type
+      let response: unknown;
+
+      try {
+        switch (currentQuestion.type) {
+          case "text": {
+            const textResponse = await promptText(currentQuestion);
+            response = { [currentQuestion.id]: textResponse };
+            break;
+          }
+          case "single_select": {
+            const selectResponse = await promptSingleSelect(currentQuestion);
+            response = { [currentQuestion.id]: selectResponse };
+            break;
+          }
+          case "multi_select": {
+            const multiResponse = await promptMultiSelect(currentQuestion);
+            response = { [currentQuestion.id]: multiResponse };
+            break;
+          }
+          case "confirm": {
+            const confirmResponse = await promptConfirm(currentQuestion);
+            response = { [currentQuestion.id]: confirmResponse };
+            break;
+          }
+          default: {
+            console.error(`\n  Unknown question type: ${(currentQuestion as any).type}`);
+            process.exit(1);
+          }
+        }
+      } catch (promptErr) {
+        // Prompt was cancelled (Ctrl+C handled above)
+        if (cancelled) {
+          return;
+        }
+        throw promptErr;
+      }
+
+      // Submit response and get next question or summary
+      let result: { type: "question"; data: PlanningQuestion } | { type: "complete"; data: PlanningSummary };
+
+      try {
+        showThinking();
+        result = await submitResponse(sessionId, response) as typeof result;
+        clearThinking();
+      } catch (err) {
+        clearThinking();
+
+        if (err instanceof SessionNotFoundError) {
+          console.error("\n  Session expired. Please start again.\n");
+          process.exit(1);
+        }
+        if (err instanceof InvalidSessionStateError) {
+          console.error(`\n  Invalid session state: ${err.message}\n`);
+          process.exit(1);
+        }
+
+        console.error(`\n  Error: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(1);
+      }
+
+      if (result.type === "complete") {
+        // Display summary
+        displaySummary(result.data);
+
+        // Ask for confirmation (unless --yes flag)
+        let confirmed = yesFlag;
+        if (!yesFlag) {
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          const answer = await rl.question("  Create this task? [Y/n]: ");
+          rl.close();
+          const trimmed = answer.trim().toLowerCase();
+          confirmed = trimmed === "" || trimmed === "y" || trimmed === "yes";
+        }
+
+        if (confirmed) {
+          // Create the task
+          const task = await store.createTask({
+            title: result.data.title,
+            description: result.data.description,
+            column: "triage",
+            dependencies: result.data.suggestedDependencies,
+          });
+
+          console.log();
+          console.log(`  ✓ Created ${task.id}: ${task.title || task.description.slice(0, 60)}${task.description.length > 60 ? "…" : ""}`);
+          console.log(`    Column: triage`);
+          if (task.dependencies.length > 0) {
+            console.log(`    Dependencies: ${task.dependencies.join(", ")}`);
+          }
+          console.log(`    Path:   .kb/tasks/${task.id}/`);
+          console.log();
+        } else {
+          console.log("\n  Task creation cancelled.\n");
+        }
+
+        break;
+      }
+
+      // Next question
+      currentQuestion = result.data;
+    }
+  } finally {
+    process.off("SIGINT", handleSigint);
+  }
 }

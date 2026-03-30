@@ -818,6 +818,77 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── kb_task_plan ────────────────────────────────────────────────
+  // Create a task via AI-guided planning mode
+
+  pi.registerTool({
+    name: "kb_task_plan",
+    label: "KB: Plan Task",
+    description:
+      "Create a task via AI-guided planning mode — interactive conversation to refine your idea into a well-specified task.",
+    promptSnippet: "Create a task via AI-guided planning mode",
+    promptGuidelines: [
+      "Use for breaking down vague ideas into actionable tasks",
+      "The AI will ask clarifying questions before creating the task",
+    ],
+    parameters: Type.Object({
+      description: Type.Optional(
+        Type.String({
+          description: "Initial plan description (optional) — the AI will ask clarifying questions if not provided",
+        })
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // Import the planning function dynamically to avoid circular dependencies
+      const { runTaskPlan } = await import("./commands/task.js");
+
+      // Capture console output
+      const originalLog = console.log;
+      const originalError = console.error;
+      const logs: string[] = [];
+
+      console.log = (...args: unknown[]) => {
+        const line = args.map(String).join(" ");
+        logs.push(line);
+        originalLog.apply(console, args);
+      };
+      console.error = (...args: unknown[]) => {
+        const line = args.map(String).join(" ");
+        logs.push(line);
+        originalError.apply(console, args);
+      };
+
+      try {
+        await runTaskPlan(params.description, true); // Use --yes flag for non-interactive
+      } catch (err: any) {
+        console.error = originalError;
+        console.log = originalLog;
+        throw new Error(`Planning mode failed: ${err.message}`);
+      } finally {
+        console.error = originalError;
+        console.log = originalLog;
+      }
+
+      // Parse created task ID from logs
+      const createdMatch = logs.find((l) => l.match(/Created (KB-\d+):/));
+      const taskId = createdMatch ? createdMatch.match(/Created (KB-\d+):/)?.[1] : undefined;
+
+      // Get summary line
+      const summaryLine = logs.find((l) => l.includes("✓ Created")) || "Task created";
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: summaryLine + (taskId ? `\n\nPlanning session completed. Task ${taskId} is now in triage and will be auto-specified by the AI triage agent.` : ""),
+          },
+        ],
+        details: { taskId, logs },
+      };
+    },
+  });
+
   // ── /kb command — start the dashboard + engine ───────────────────
 
   let dashboardProcess: ChildProcess | null = null;
