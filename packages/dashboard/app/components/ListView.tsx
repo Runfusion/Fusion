@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "react";
-import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Search, Link, Columns3 } from "lucide-react";
+import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Search, Link, Columns3, EyeOff, Eye } from "lucide-react";
 import type { Task, TaskDetail, Column, TaskStep } from "@kb/core";
 import { COLUMN_LABELS, COLUMNS } from "@kb/core";
 import { fetchTaskDetail } from "../api";
@@ -87,12 +87,34 @@ export function ListView({
     return new Set(ALL_LIST_COLUMNS);
   });
 
+  // Hide done tasks state - initialize from localStorage
+  const [hideDoneTasks, setHideDoneTasks] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("kb-dashboard-hide-done");
+        if (saved !== null) {
+          return saved === "true";
+        }
+      } catch {
+        // Invalid localStorage data - fall through to default
+      }
+    }
+    return false; // Default: show done tasks
+  });
+
   // Persist column visibility changes to localStorage
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem("kb-dashboard-list-columns", JSON.stringify([...visibleColumns]));
     }
   }, [visibleColumns]);
+
+  // Persist hide done tasks state to localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("kb-dashboard-hide-done", hideDoneTasks.toString());
+    }
+  }, [hideDoneTasks]);
 
   // Column dropdown state
   const [columnDropdownOpen, setColumnDropdownOpen] = useState(false);
@@ -161,14 +183,20 @@ export function ListView({
   }, [sortField]);
 
   const groupedTasks = useMemo(() => {
-    const filtered = filter
+    // First filter by search filter
+    let filtered = filter
       ? tasks.filter(
           (t) =>
             t.id.toLowerCase().includes(filter.toLowerCase()) ||
             (t.title && t.title.toLowerCase().includes(filter.toLowerCase())) ||
             t.description.toLowerCase().includes(filter.toLowerCase())
         )
-      : tasks;
+      : [...tasks];
+
+    // Then filter out done tasks if hideDoneTasks is enabled
+    if (hideDoneTasks) {
+      filtered = filtered.filter((t) => t.column !== "done");
+    }
 
     const sorted = [...filtered].sort((a, b) => {
       let comparison = 0;
@@ -205,12 +233,23 @@ export function ListView({
     };
     sorted.forEach(task => groups[task.column].push(task));
     return groups;
-  }, [tasks, filter, sortField, sortDirection]);
+  }, [tasks, filter, sortField, sortDirection, hideDoneTasks]);
 
   // Calculate total filtered count from groups
   const filteredCount = useMemo(() => {
     return Object.values(groupedTasks).reduce((sum, group) => sum + group.length, 0);
   }, [groupedTasks]);
+
+  // Calculate done task counts for stats display
+  const doneTaskCount = useMemo(() => {
+    return tasks.filter((t) => t.column === "done").length;
+  }, [tasks]);
+
+  // Calculate hidden done tasks count
+  const hiddenDoneCount = useMemo(() => {
+    if (!hideDoneTasks) return 0;
+    return doneTaskCount;
+  }, [hideDoneTasks, doneTaskCount]);
   const handleRowClick = useCallback(
     async (task: Task) => {
       try {
@@ -332,8 +371,20 @@ export function ListView({
             </div>
           )}
         </div>
+        <button
+          className="btn btn-sm list-hide-done-toggle"
+          onClick={() => setHideDoneTasks((prev) => !prev)}
+          aria-pressed={hideDoneTasks}
+          title={hideDoneTasks ? "Show done tasks" : "Hide done tasks"}
+        >
+          {hideDoneTasks ? <Eye size={14} /> : <EyeOff size={14} />}
+          {hideDoneTasks ? "Show Done" : "Hide Done"}
+        </button>
         <div className="list-stats">
           {filteredCount} of {tasks.length} tasks
+          {hiddenDoneCount > 0 && (
+            <span className="list-stats-hidden"> ({hiddenDoneCount} done hidden)</span>
+          )}
         </div>
         {onNewTask && (
           <button className="btn btn-primary btn-sm" onClick={onNewTask}>
@@ -343,22 +394,28 @@ export function ListView({
       </div>
 
       <div className="list-drop-zones">
-        {COLUMNS.map((column) => (
-          <div
-            key={column}
-            className={`list-drop-zone${dragOverColumn === column ? " drag-over" : ""}`}
-            onDragOver={(e) => handleColumnDragOver(e, column)}
-            onDragLeave={handleColumnDragLeave}
-            onDrop={(e) => handleColumnDrop(e, column)}
-            data-column={column}
-          >
-            <span className="drop-zone-dot" style={{ background: COLUMN_COLOR_MAP[column] }} />
-            <span className="drop-zone-label">{COLUMN_LABELS[column]}</span>
-            <span className="drop-zone-count">
-              {tasks.filter((t) => t.column === column).length}
-            </span>
-          </div>
-        ))}
+        {COLUMNS.map((column) => {
+          const totalCount = tasks.filter((t) => t.column === column).length;
+          const visibleCount = hideDoneTasks && column === "done" ? 0 : totalCount;
+          const showPartial = hideDoneTasks && column === "done" && totalCount > 0;
+
+          return (
+            <div
+              key={column}
+              className={`list-drop-zone${dragOverColumn === column ? " drag-over" : ""}`}
+              onDragOver={(e) => handleColumnDragOver(e, column)}
+              onDragLeave={handleColumnDragLeave}
+              onDrop={(e) => handleColumnDrop(e, column)}
+              data-column={column}
+            >
+              <span className="drop-zone-dot" style={{ background: COLUMN_COLOR_MAP[column] }} />
+              <span className="drop-zone-label">{COLUMN_LABELS[column]}</span>
+              <span className="drop-zone-count">
+                {showPartial ? `${visibleCount} of ${totalCount}` : totalCount}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       <div className="list-table-container">
@@ -410,6 +467,9 @@ export function ListView({
             </thead>
             <tbody>
               {COLUMNS.map((column) => {
+                // Skip done column section when hideDoneTasks is enabled
+                if (hideDoneTasks && column === "done") return null;
+
                 const columnTasks = groupedTasks[column];
                 const isEmpty = columnTasks.length === 0;
 

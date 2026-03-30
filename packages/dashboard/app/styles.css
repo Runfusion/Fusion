@@ -2295,6 +2295,11 @@ body {
   margin-left: auto;
 }
 
+.list-stats-hidden {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 /* Column toggle dropdown */
 .list-column-toggle {
   position: relative;
@@ -2365,6 +2370,13 @@ body {
 
 .list-column-dropdown-item.disabled input[type="checkbox"] {
   cursor: not-allowed;
+}
+
+/* Hide done tasks toggle */
+.list-hide-done-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* Drop zones for drag and drop */

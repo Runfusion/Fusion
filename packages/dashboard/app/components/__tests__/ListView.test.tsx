@@ -853,3 +853,175 @@ describe("ListView Column Visibility", () => {
     expect(columnBadge?.textContent).toContain("Triage");
   });
 });
+
+describe("ListView Hide Done Tasks", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("renders hide done tasks toggle button", () => {
+    renderListView();
+
+    const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
+    expect(hideDoneButton).toBeDefined();
+  });
+
+  it("hides done tasks when toggle is activated", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "done" }),
+      createMockTask({ id: "KB-002", column: "triage" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Both tasks should be visible initially
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.getByText("KB-002")).toBeDefined();
+
+    // Click hide done button
+    const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
+    fireEvent.click(hideDoneButton);
+
+    // Done task should be hidden, triage task should still be visible
+    expect(screen.queryByText("KB-001")).toBeNull();
+    expect(screen.getByText("KB-002")).toBeDefined();
+  });
+
+  it("shows done tasks when toggle is deactivated", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "done" }),
+      createMockTask({ id: "KB-002", column: "triage" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Click hide done button to hide done tasks
+    const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
+    fireEvent.click(hideDoneButton);
+
+    // Done task should be hidden
+    expect(screen.queryByText("KB-001")).toBeNull();
+
+    // Click again to show done tasks
+    fireEvent.click(hideDoneButton);
+
+    // Both tasks should be visible again
+    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.getByText("KB-002")).toBeDefined();
+  });
+
+  it("persists hide done preference to localStorage", () => {
+    const tasks = [createMockTask({ id: "KB-001", column: "done" })];
+    renderListView({ tasks });
+
+    // Click hide done button
+    const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
+    fireEvent.click(hideDoneButton);
+
+    // Verify localStorage was updated
+    expect(localStorage.getItem("kb-dashboard-hide-done")).toBe("true");
+  });
+
+  it("initializes hide done state from localStorage", () => {
+    // Set up localStorage with hide done enabled
+    localStorage.setItem("kb-dashboard-hide-done", "true");
+
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "done" }),
+      createMockTask({ id: "KB-002", column: "triage" }),
+    ];
+    renderListView({ tasks });
+
+    // Button should show "Show Done" text since done tasks are hidden
+    expect(screen.getByRole("button", { name: /show done/i })).toBeDefined();
+
+    // Done task should be hidden initially
+    expect(screen.queryByText("KB-001")).toBeNull();
+    expect(screen.getByText("KB-002")).toBeDefined();
+  });
+
+  it("updates stats text when done tasks are hidden", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "done" }),
+      createMockTask({ id: "KB-002", column: "triage" }),
+      createMockTask({ id: "KB-003", column: "done" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Initial stats should show all tasks
+    expect(screen.getByText("3 of 3 tasks")).toBeDefined();
+
+    // Click hide done button
+    const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
+    fireEvent.click(hideDoneButton);
+
+    // Stats should show filtered count with hidden indicator
+    expect(screen.getByText("1 of 3 tasks")).toBeDefined();
+    expect(screen.getByText(/2 done hidden/)).toBeDefined();
+  });
+
+  it("hides done column section header when hide done is active", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "done" }),
+      createMockTask({ id: "KB-002", column: "triage" }),
+    ];
+
+    renderListView({ tasks });
+
+    // All section headers should be visible initially
+    const sectionHeadersBefore = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
+    expect(sectionHeadersBefore.length).toBe(5); // All 5 columns
+
+    // Click hide done button
+    const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
+    fireEvent.click(hideDoneButton);
+
+    // Done section should be hidden - find section headers and verify done is not present
+    const doneSection = screen.getAllByRole("row").find(r => 
+      r.className.includes("list-section-header") && r.textContent?.includes("Done")
+    );
+    expect(doneSection).toBeUndefined();
+  });
+
+  it("shows done drop zone with count when hide done is active", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "done" }),
+      createMockTask({ id: "KB-002", column: "done" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Click hide done button
+    const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
+    fireEvent.click(hideDoneButton);
+
+    // Done drop zone should still be visible with "X of Y" format
+    const doneZone = document.querySelector('[data-column="done"].list-drop-zone');
+    expect(doneZone).toBeDefined();
+    expect(doneZone?.textContent).toContain("0 of 2");
+  });
+
+  it("preserves hide done state through filter changes", () => {
+    const tasks = [
+      createMockTask({ id: "KB-001", column: "done", title: "Alpha" }),
+      createMockTask({ id: "KB-002", column: "triage", title: "Beta" }),
+    ];
+
+    renderListView({ tasks });
+
+    // Hide done tasks
+    const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
+    fireEvent.click(hideDoneButton);
+
+    // Apply filter
+    const filterInput = screen.getByPlaceholderText("Filter by ID or title...");
+    fireEvent.change(filterInput, { target: { value: "Beta" } });
+
+    // Done task should remain hidden
+    expect(screen.queryByText("KB-001")).toBeNull();
+    // Filtered task should be visible
+    expect(screen.getByText("KB-002")).toBeDefined();
+  });
+});
