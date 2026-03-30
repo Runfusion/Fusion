@@ -21,9 +21,7 @@ function renderBoard() {
       onMoveTask={noopAsync}
       onOpenDetail={noop}
       addToast={noop}
-      isCreating={false}
-      onCancelCreate={noop}
-      onCreateTask={noopAsync}
+      onQuickCreate={noopAsync}
       onNewTask={noop}
       autoMerge={true}
       onToggleAutoMerge={noop}

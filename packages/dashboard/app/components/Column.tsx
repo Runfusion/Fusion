@@ -4,7 +4,7 @@ import type { Task, TaskDetail, TaskCreateInput, Column as ColumnType } from "@k
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS } from "@kb/core";
 import { TaskCard } from "./TaskCard";
 import { WorktreeGroup } from "./WorktreeGroup";
-import { InlineCreateCard } from "./InlineCreateCard";
+import { QuickEntryBox } from "./QuickEntryBox";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
 import { ChevronDown, ChevronUp } from "lucide-react";
@@ -17,9 +17,7 @@ interface ColumnProps {
   onMoveTask: (id: string, column: ColumnType) => Promise<Task>;
   onOpenDetail: (task: TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
-  isCreating?: boolean;
-  onCancelCreate?: () => void;
-  onCreateTask?: (input: TaskCreateInput) => Promise<Task>;
+  onQuickCreate?: (description: string) => Promise<void>;
   onNewTask?: () => void;
   autoMerge?: boolean;
   onToggleAutoMerge?: () => void;
@@ -34,7 +32,7 @@ interface ColumnProps {
   onToggleCollapse?: () => void;
 }
 
-export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, isCreating, onCancelCreate, onCreateTask, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, collapsed, onToggleCollapse }: ColumnProps) {
+export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, collapsed, onToggleCollapse }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const countFlashing = useFlashOnIncrease(tasks.length);
 
@@ -112,13 +110,8 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
       {!isCollapsed && <p className="column-desc">{COLUMN_DESCRIPTIONS[column]}</p>}
       {!isCollapsed && (
         <div className="column-body">
-          {column === "triage" && isCreating && onCancelCreate && onCreateTask && (
-            <InlineCreateCard
-              tasks={allTasks}
-              onSubmit={onCreateTask}
-              onCancel={onCancelCreate}
-              addToast={addToast}
-            />
+          {column === "triage" && onQuickCreate && (
+            <QuickEntryBox onCreate={onQuickCreate} addToast={addToast} />
           )}
           {column === "in-progress" ? (
             (() => {

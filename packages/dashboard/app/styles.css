@@ -5780,3 +5780,91 @@ html .column.drag-over * {
     margin-top: 8px;
   }
 }
+
+/* === Quick Entry Box === */
+.quick-entry-box {
+  padding: 8px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+}
+
+.quick-entry-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.quick-entry-input:focus {
+  border-bottom-color: var(--triage);
+  box-shadow: 0 1px 0 0 var(--triage);
+}
+
+.quick-entry-input::placeholder {
+  color: var(--text-dim);
+}
+
+.quick-entry-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* === New Task Modal === */
+.new-task-modal .modal-body {
+  padding: 16px 20px;
+}
+
+.selected-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.dep-chip-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  margin-left: 2px;
+}
+
+.dep-chip-remove:hover {
+  color: var(--color-error);
+}
+
+.model-select-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.model-select-label {
+  min-width: 70px;
+  font-size: 13px;
+  color: var(--text-muted);
+}

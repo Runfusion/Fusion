@@ -13,12 +13,13 @@ import { ToastContainer } from "./components/ToastContainer";
 import { GitHubImportModal } from "./components/GitHubImportModal";
 import { GitManagerModal } from "./components/GitManagerModal";
 import { UsageIndicator } from "./components/UsageIndicator";
+import { NewTaskModal } from "./components/NewTaskModal";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
 
 function AppInner() {
-  const [isCreating, setIsCreating] = useState(false);
+  const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
   const [isPlanningOpen, setIsPlanningOpen] = useState(false);
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -86,13 +87,19 @@ function AppInner() {
     setView(newView);
   }, []);
 
-  const handleCreateOpen = useCallback(() => setIsCreating(true), []);
-  const handleCancelCreate = useCallback(() => setIsCreating(false), []);
+  const handleNewTaskOpen = useCallback(() => setNewTaskModalOpen(true), []);
+  const handleNewTaskClose = useCallback(() => setNewTaskModalOpen(false), []);
 
-  const handleCreateTask = useCallback(
+  const handleQuickCreate = useCallback(
+    async (description: string): Promise<void> => {
+      await createTask({ description, column: "triage" });
+    },
+    [createTask],
+  );
+
+  const handleModalCreate = useCallback(
     async (input: TaskCreateInput): Promise<Task> => {
       const task = await createTask({ ...input, column: "triage" });
-      setIsCreating(false);
       return task;
     },
     [createTask],
@@ -180,10 +187,8 @@ function AppInner() {
           onMoveTask={moveTask}
           onOpenDetail={handleDetailOpen}
           addToast={addToast}
-          isCreating={isCreating}
-          onCancelCreate={handleCancelCreate}
-          onCreateTask={handleCreateTask}
-          onNewTask={handleCreateOpen}
+          onQuickCreate={handleQuickCreate}
+          onNewTask={handleNewTaskOpen}
           autoMerge={autoMerge}
           onToggleAutoMerge={handleToggleAutoMerge}
           globalPaused={globalPaused}
@@ -198,10 +203,7 @@ function AppInner() {
           onOpenDetail={handleDetailOpen}
           addToast={addToast}
           globalPaused={globalPaused}
-          isCreating={isCreating}
-          onCancelCreate={handleCancelCreate}
-          onCreateTask={handleCreateTask}
-          onNewTask={handleCreateOpen}
+          onNewTask={handleNewTaskOpen}
         />
       )}
       {detailTask && (
@@ -252,6 +254,13 @@ function AppInner() {
       <UsageIndicator
         isOpen={usageOpen}
         onClose={handleCloseUsage}
+      />
+      <NewTaskModal
+        isOpen={newTaskModalOpen}
+        onClose={handleNewTaskClose}
+        tasks={tasks}
+        onCreateTask={handleModalCreate}
+        addToast={addToast}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>

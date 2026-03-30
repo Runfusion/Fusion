@@ -10,8 +10,8 @@ vi.mock("../TaskCard", () => ({
 vi.mock("../WorktreeGroup", () => ({
   WorktreeGroup: () => <div />,
 }));
-vi.mock("../InlineCreateCard", () => ({
-  InlineCreateCard: () => <div />,
+vi.mock("../QuickEntryBox", () => ({
+  QuickEntryBox: () => <div data-testid="quick-entry-box" />,
 }));
 vi.mock("lucide-react", () => ({
   Link: () => null,
@@ -73,5 +73,25 @@ describe("Column count-flash", () => {
 
     const badge = screen.getByText("1");
     expect(badge.className).not.toContain("count-flash");
+  });
+});
+
+describe("Column QuickEntryBox", () => {
+  it("renders QuickEntryBox in triage column when onQuickCreate is provided", () => {
+    const tasks = [makeTask("KB-001")];
+    render(<Column {...defaultProps} tasks={tasks} onQuickCreate={vi.fn()} />);
+    expect(screen.getByTestId("quick-entry-box")).toBeTruthy();
+  });
+
+  it("does not render QuickEntryBox in triage column when onQuickCreate is not provided", () => {
+    const tasks = [makeTask("KB-001")];
+    render(<Column {...defaultProps} tasks={tasks} />);
+    expect(screen.queryByTestId("quick-entry-box")).toBeNull();
+  });
+
+  it("does not render QuickEntryBox in non-triage columns", () => {
+    const tasks = [makeTask("KB-001")];
+    render(<Column {...defaultProps} tasks={tasks} column="todo" onQuickCreate={vi.fn()} />);
+    expect(screen.queryByTestId("quick-entry-box")).toBeNull();
   });
 });
