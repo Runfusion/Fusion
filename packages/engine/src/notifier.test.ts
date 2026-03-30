@@ -374,6 +374,39 @@ describe("NtfyNotifier", () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
+    it("sends notification only once on merge when task:moved and task:merged both fire", async () => {
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      const task = createTask("KB-001", "Test Task");
+      const mergeResult: MergeResult = {
+        task,
+        branch: "kb/kb-001",
+        merged: true,
+        worktreeRemoved: true,
+        branchDeleted: true,
+      };
+
+      // completeTask() emits task:moved to done before task:merged
+      store.triggerTaskMoved(task, "in-review", "done");
+      store.triggerTaskMerged(mergeResult);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "Title": "Task KB-001 merged",
+            "Priority": "default",
+          }),
+          body: 'Task "Test Task" has been merged to main',
+        })
+      );
+    });
+
     it("prevents duplicate task:merged events for the same task", async () => {
       notifier = new NtfyNotifier(store);
       await notifier.start();
