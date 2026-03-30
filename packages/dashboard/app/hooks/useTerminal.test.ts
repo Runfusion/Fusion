@@ -1,36 +1,61 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@testing-library/react";
 import { useTerminal } from "./useTerminal";
 
-// Mock WebSocket
-global.WebSocket = vi.fn() as unknown as typeof WebSocket;
+class MockWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  static instances: MockWebSocket[] = [];
+
+  url: string;
+  readyState = MockWebSocket.CONNECTING;
+  sent: string[] = [];
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onclose: ((event: { code: number }) => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+    MockWebSocket.instances.push(this);
+  }
+
+  send = vi.fn((payload: string) => {
+    this.sent.push(payload);
+  });
+
+  close = vi.fn(() => {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.({ code: 1000 });
+  });
+
+  emitOpen(): void {
+    this.readyState = MockWebSocket.OPEN;
+    this.onopen?.(new Event("open"));
+  }
+
+  emitMessage(payload: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+  }
+
+  emitClose(code: number): void {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.({ code });
+  }
+}
 
 describe("useTerminal", () => {
-  let mockWebSocket: {
-    send: ReturnType<typeof vi.fn>;
-    close: ReturnType<typeof vi.fn>;
-    readyState: number;
-    onopen: (() => void) | null;
-    onmessage: ((event: { data: string }) => void) | null;
-    onclose: ((event?: { code: number }) => void) | null;
-    onerror: (() => void) | null;
-  };
+  const originalWebSocket = globalThis.WebSocket;
 
   beforeEach(() => {
-    mockWebSocket = {
-      send: vi.fn(),
-      close: vi.fn(),
-      readyState: WebSocket.CONNECTING,
-      onopen: null,
-      onmessage: null,
-      onclose: null,
-      onerror: null,
-    };
-
-    (global.WebSocket as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockWebSocket);
+    MockWebSocket.instances = [];
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = MockWebSocket as unknown as typeof WebSocket;
   });
 
   afterEach(() => {
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = originalWebSocket;
     vi.clearAllMocks();
   });
 
@@ -39,108 +64,72 @@ describe("useTerminal", () => {
     expect(result.current.connectionStatus).toBe("disconnected");
   });
 
-  it("establishes WebSocket connection on valid sessionId", () => {
-    renderHook(() => useTerminal("test-session-123"));
-
-    expect(global.WebSocket).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/ws?sessionId=test-session-123")
-    );
-  });
-
-  it("shows connecting status while establishing connection", () => {
+  it("establishes a websocket connection for a valid sessionId", () => {
     const { result } = renderHook(() => useTerminal("test-session-123"));
+
     expect(result.current.connectionStatus).toBe("connecting");
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(MockWebSocket.instances[0].url).toContain("/api/terminal/ws?sessionId=test-session-123");
   });
 
-  it("shows connected status when WebSocket opens", async () => {
+  it("reports connected status when the websocket opens", () => {
     const { result } = renderHook(() => useTerminal("test-session-123"));
 
-    mockWebSocket.readyState = WebSocket.OPEN;
-    mockWebSocket.onopen?.();
-
-    await waitFor(() => {
-      expect(result.current.connectionStatus).toBe("connected");
+    act(() => {
+      MockWebSocket.instances[0].emitOpen();
     });
+
+    expect(result.current.connectionStatus).toBe("connected");
   });
 
-  it("sends input data when connected", async () => {
+  it("sends terminal input when connected", () => {
     const { result } = renderHook(() => useTerminal("test-session-123"));
 
-    mockWebSocket.readyState = WebSocket.OPEN;
-    mockWebSocket.onopen?.();
-
-    await waitFor(() => {
+    act(() => {
+      MockWebSocket.instances[0].emitOpen();
       result.current.sendInput("ls -la");
     });
 
-    expect(mockWebSocket.send).toHaveBeenCalledWith(
-      JSON.stringify({ type: "input", data: "ls -la" })
-    );
+    expect(MockWebSocket.instances[0].send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "ls -la" }));
   });
 
-  it("calls onData callback when data received", async () => {
+  it("forwards websocket messages to registered callbacks", () => {
     const { result } = renderHook(() => useTerminal("test-session-123"));
-    const onDataMock = vi.fn();
+    const onData = vi.fn();
+    const onConnect = vi.fn();
+    const onExit = vi.fn();
+    const onScrollback = vi.fn();
 
-    const unsub = result.current.onData(onDataMock);
+    const unsubData = result.current.onData(onData);
+    const unsubConnect = result.current.onConnect(onConnect);
+    const unsubExit = result.current.onExit(onExit);
+    const unsubScrollback = result.current.onScrollback(onScrollback);
 
-    mockWebSocket.onmessage?.({
-      data: JSON.stringify({ type: "data", data: "hello world" }),
+    act(() => {
+      MockWebSocket.instances[0].emitMessage({ type: "connected", shell: "/bin/bash", cwd: "/project" });
+      MockWebSocket.instances[0].emitMessage({ type: "data", data: "hello world" });
+      MockWebSocket.instances[0].emitMessage({ type: "scrollback", data: "previous output" });
+      MockWebSocket.instances[0].emitMessage({ type: "exit", exitCode: 0 });
     });
 
-    expect(onDataMock).toHaveBeenCalledWith("hello world");
-    unsub();
+    expect(onConnect).toHaveBeenCalledWith({ shell: "/bin/bash", cwd: "/project" });
+    expect(onData).toHaveBeenCalledWith("hello world");
+    expect(onScrollback).toHaveBeenCalledWith("previous output");
+    expect(onExit).toHaveBeenCalledWith(0);
+
+    unsubData();
+    unsubConnect();
+    unsubExit();
+    unsubScrollback();
   });
 
-  it("calls onConnect callback when connected", async () => {
-    const { result } = renderHook(() => useTerminal("test-session-123"));
-    const onConnectMock = vi.fn();
-
-    const unsub = result.current.onConnect(onConnectMock);
-
-    mockWebSocket.onmessage?.({
-      data: JSON.stringify({ type: "connected", shell: "/bin/bash", cwd: "/project" }),
-    });
-
-    expect(onConnectMock).toHaveBeenCalledWith({ shell: "/bin/bash", cwd: "/project" });
-    unsub();
-  });
-
-  it("calls onExit callback when session exits", async () => {
-    const { result } = renderHook(() => useTerminal("test-session-123"));
-    const onExitMock = vi.fn();
-
-    const unsub = result.current.onExit(onExitMock);
-
-    mockWebSocket.onmessage?.({
-      data: JSON.stringify({ type: "exit", exitCode: 0 }),
-    });
-
-    expect(onExitMock).toHaveBeenCalledWith(0);
-    unsub();
-  });
-
-  it("calls onScrollback callback when scrollback received", async () => {
-    const { result } = renderHook(() => useTerminal("test-session-123"));
-    const onScrollbackMock = vi.fn();
-
-    const unsub = result.current.onScrollback(onScrollbackMock);
-
-    mockWebSocket.onmessage?.({
-      data: JSON.stringify({ type: "scrollback", data: "previous output" }),
-    });
-
-    expect(onScrollbackMock).toHaveBeenCalledWith("previous output");
-    unsub();
-  });
-
-  it("does not reconnect on 4004 session not found", async () => {
+  it("does not reconnect for terminal-not-found closes", () => {
     const { result } = renderHook(() => useTerminal("test-session-123"));
 
-    mockWebSocket.onclose?.({ code: 4004 });
-
-    await waitFor(() => {
-      expect(result.current.connectionStatus).toBe("disconnected");
+    act(() => {
+      MockWebSocket.instances[0].emitClose(4004);
     });
+
+    expect(result.current.connectionStatus).toBe("disconnected");
   });
 });

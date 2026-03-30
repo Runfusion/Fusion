@@ -56,6 +56,27 @@ Update it when:
 
 The extension has no skills — tool descriptions, `promptSnippet`, and `promptGuidelines` give the LLM everything it needs.
 
+## Dashboard badge WebSockets
+
+GitHub PR and issue badges in the dashboard now have a dedicated real-time WebSocket channel at `/api/ws`.
+
+### Frontend hook: `packages/dashboard/app/hooks/useBadgeWebSocket.ts`
+
+Use `useBadgeWebSocket()` when a UI surface needs live badge snapshots for specific tasks.
+
+- The hook uses a **shared singleton socket** so multiple `TaskCard` instances do not open duplicate WebSocket connections.
+- Subscribe with `subscribeToBadge(taskId)` only when the card is visible and already has `prInfo` and/or `issueInfo`.
+- Always pair subscriptions with `unsubscribeFromBadge(taskId)` on unmount or when the card leaves the viewport.
+- Treat websocket payloads as **timestamped badge snapshots**. Merge them with task data using freshness comparisons so stale cached websocket data does not override newer SSE/task state.
+- Preserve omitted fields on partial updates; only treat explicit `null` payloads as badge clears.
+
+### Server-side expectations
+
+- `/api/ws` is badge-specific; do **not** reuse it for general task updates.
+- Badge broadcasts should contain only `prInfo` / `issueInfo` snapshot data, never full task objects.
+- WebSocket subscription changes drive the focused GitHub poller so only actively viewed badge-linked tasks are polled.
+- Keep the existing 5-minute refresh endpoints as a fallback path when websocket delivery is unavailable.
+
 ## Git
 
 - Commit messages: `feat(KB-XXX):`, `fix(KB-XXX):`, `test(KB-XXX):`

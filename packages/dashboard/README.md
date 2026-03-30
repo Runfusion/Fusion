@@ -262,6 +262,9 @@ The dashboard server exposes a REST API at `/api`:
 - `POST /api/tasks/:id/pr/create` - Create PR
 - `GET /api/tasks/:id/pr/status` - Get PR status
 - `POST /api/tasks/:id/pr/refresh` - Refresh PR status
+- `GET /api/tasks/:id/issue/status` - Get cached issue status
+- `POST /api/tasks/:id/issue/refresh` - Refresh issue status
+- `WS /api/ws` - Real-time PR/issue badge updates for subscribed task cards
 
 ### PTY Terminal (WebSocket-based)
 - `POST /api/terminal/sessions` - Create session
@@ -281,7 +284,8 @@ The dashboard server exposes a REST API at `/api`:
 ## Architecture
 
 - **Frontend**: React + Vite, TypeScript, xterm.js for terminal emulation, CSS custom properties for theming
-- **Backend**: Express server with REST API, WebSocket for terminal, and Server-Sent Events (SSE) for live updates
+- **Backend**: Express server with REST API, badge WebSocket at `/api/ws`, terminal WebSocket at `/api/terminal/ws`, and Server-Sent Events (SSE) for task/log updates
 - **Terminal**: node-pty for PTY spawning, WebSocket for bidirectional I/O
-- **State Management**: Custom hooks with EventSource for real-time task updates
+- **Badge Updates**: `useBadgeWebSocket()` shares a single browser socket and subscribes per visible GitHub-linked task card
+- **State Management**: Custom hooks with EventSource for real-time task updates plus a dedicated WebSocket store for badge snapshots
 - **Git Integration**: Server-side git command execution with validation

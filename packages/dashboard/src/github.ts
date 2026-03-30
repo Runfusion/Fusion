@@ -1,7 +1,8 @@
-import type { PrInfo } from "@kb/core";
+import type { IssueInfo, PrInfo } from "@kb/core";
 import {
   isGhAvailable,
   isGhAuthenticated,
+  runGhAsync,
   runGhJsonAsync,
   getGhErrorMessage,
   getCurrentRepo,
@@ -67,6 +68,19 @@ export interface MergePrParams {
   method?: "merge" | "squash" | "rebase";
 }
 
+export interface BadgeBatchRequest {
+  alias: string;
+  type: "pr" | "issue";
+  number: number;
+}
+
+export type BadgeBatchResponse = Record<
+  string,
+  | { type: "pr"; prInfo: Omit<PrInfo, "lastCheckedAt"> }
+  | { type: "issue"; issueInfo: Omit<IssueInfo, "lastCheckedAt"> }
+  | null
+>;
+
 // gh CLI JSON output types
 interface GhPrViewJson {
   id?: string;
@@ -109,6 +123,34 @@ interface GhIssueViewJson {
   title: string;
   state: "OPEN" | "CLOSED";
   stateReason?: "completed" | "not_planned" | "reopened";
+}
+
+interface GraphQlBatchPullRequest {
+  number: number;
+  url: string;
+  title: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  baseRefName: string;
+  headRefName: string;
+  comments: {
+    totalCount: number;
+    nodes: Array<{ updatedAt: string } | null>;
+  };
+}
+
+interface GraphQlBatchIssue {
+  number: number;
+  url: string;
+  title: string;
+  state: "OPEN" | "CLOSED";
+  stateReason?: "COMPLETED" | "NOT_PLANNED" | "REOPENED" | null;
+}
+
+interface GraphQlBatchPayload {
+  data?: {
+    repository?: Record<string, GraphQlBatchPullRequest | GraphQlBatchIssue | null>;
+  };
+  errors?: Array<{ message: string }>;
 }
 
 function normalizeCheckState(state: string | null | undefined): PrCheckState {
@@ -927,6 +969,84 @@ export class GitHubClient {
     };
   }
 
+  async getBadgeStatusesBatch(
+    owner: string,
+    repo: string,
+    requests: BadgeBatchRequest[],
+  ): Promise<BadgeBatchResponse> {
+    if (requests.length === 0) {
+      return {};
+    }
+
+    if (this.hasGhAuth()) {
+      try {
+        return await this.getBadgeStatusesBatchWithGh(owner, repo, requests);
+      } catch (err) {
+        if (this.token) {
+          return this.getBadgeStatusesBatchWithApi(owner, repo, requests);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.getBadgeStatusesBatchWithApi(owner, repo, requests);
+    }
+
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+  }
+
+  private async getBadgeStatusesBatchWithGh(
+    owner: string,
+    repo: string,
+    requests: BadgeBatchRequest[],
+  ): Promise<BadgeBatchResponse> {
+    const query = buildBadgeBatchQuery(requests);
+    const output = await runGhAsync([
+      "api",
+      "graphql",
+      "-f",
+      `query=${query}`,
+      "-F",
+      `owner=${owner}`,
+      "-F",
+      `repo=${repo}`,
+    ]);
+
+    const payload = JSON.parse(output) as GraphQlBatchPayload;
+    if (payload.errors?.length) {
+      throw new Error(payload.errors[0].message);
+    }
+
+    return normalizeBadgeBatchPayload(payload.data?.repository, requests);
+  }
+
+  private async getBadgeStatusesBatchWithApi(
+    owner: string,
+    repo: string,
+    requests: BadgeBatchRequest[],
+  ): Promise<BadgeBatchResponse> {
+    const response = await fetch(`${this.baseUrl}/graphql`, {
+      method: "POST",
+      headers: {
+        ...this.buildHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: buildBadgeBatchQuery(requests),
+        variables: { owner, repo },
+      }),
+    });
+
+    const payload = (await response.json()) as GraphQlBatchPayload;
+    if (!response.ok || payload.errors?.length) {
+      const message = payload.errors?.[0]?.message || response.statusText;
+      throw new Error(`GitHub API error: ${response.status} ${message}`);
+    }
+
+    return normalizeBadgeBatchPayload(payload.data?.repository, requests);
+  }
+
   private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       Accept: "application/vnd.github+json",
@@ -1218,6 +1338,131 @@ export class GitHubClient {
       state: this.mapIssueState(data.state),
       stateReason: data.state_reason,
     };
+  }
+}
+
+function buildBadgeBatchQuery(requests: BadgeBatchRequest[]): string {
+  const selections = requests
+    .map((request) => {
+      if (request.type === "pr") {
+        return `${request.alias}: pullRequest(number: ${request.number}) {
+          number
+          url
+          title
+          state
+          baseRefName
+          headRefName
+          comments(last: 1) {
+            totalCount
+            nodes {
+              updatedAt
+            }
+          }
+        }`;
+      }
+
+      return `${request.alias}: issue(number: ${request.number}) {
+        number
+        url
+        title
+        state
+        stateReason
+      }`;
+    })
+    .join("\n");
+
+  return `query RepoBadgeStatuses($owner: String!, $repo: String!) {
+    repository(owner: $owner, name: $repo) {
+      ${selections}
+    }
+  }`;
+}
+
+function normalizeBadgeBatchPayload(
+  repository: Record<string, GraphQlBatchPullRequest | GraphQlBatchIssue | null> | undefined,
+  requests: BadgeBatchRequest[],
+): BadgeBatchResponse {
+  const response: BadgeBatchResponse = {};
+
+  for (const request of requests) {
+    const resource = repository?.[request.alias];
+    if (!resource) {
+      response[request.alias] = null;
+      continue;
+    }
+
+    if (request.type === "pr") {
+      if (!isGraphQlBatchPullRequest(resource)) {
+        response[request.alias] = null;
+        continue;
+      }
+
+      response[request.alias] = {
+        type: "pr",
+        prInfo: {
+          url: resource.url,
+          number: resource.number,
+          status: mapGraphQlBatchPrState(resource.state),
+          title: resource.title,
+          headBranch: resource.headRefName,
+          baseBranch: resource.baseRefName,
+          commentCount: resource.comments.totalCount,
+          lastCommentAt: resource.comments.nodes.find(Boolean)?.updatedAt,
+        },
+      };
+      continue;
+    }
+
+    if (isGraphQlBatchPullRequest(resource)) {
+      response[request.alias] = null;
+      continue;
+    }
+
+    response[request.alias] = {
+      type: "issue",
+      issueInfo: {
+        url: resource.url,
+        number: resource.number,
+        state: resource.state === "OPEN" ? "open" : "closed",
+        title: resource.title,
+        stateReason: mapGraphQlBatchIssueStateReason(resource.stateReason),
+      },
+    };
+  }
+
+  return response;
+}
+
+function isGraphQlBatchPullRequest(
+  resource: GraphQlBatchPullRequest | GraphQlBatchIssue,
+): resource is GraphQlBatchPullRequest {
+  return "headRefName" in resource;
+}
+
+function mapGraphQlBatchPrState(state: GraphQlBatchPullRequest["state"]): PrInfo["status"] {
+  switch (state) {
+    case "OPEN":
+      return "open";
+    case "MERGED":
+      return "merged";
+    case "CLOSED":
+    default:
+      return "closed";
+  }
+}
+
+function mapGraphQlBatchIssueStateReason(
+  stateReason: GraphQlBatchIssue["stateReason"],
+): IssueInfo["stateReason"] {
+  switch (stateReason) {
+    case "COMPLETED":
+      return "completed";
+    case "NOT_PLANNED":
+      return "not_planned";
+    case "REOPENED":
+      return "reopened";
+    default:
+      return undefined;
   }
 }
 

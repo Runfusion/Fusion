@@ -193,12 +193,13 @@ describe("TerminalService", () => {
     it("emits data events", async () => {
       const dataMock = vi.fn();
       service.onData(dataMock);
-      
+
       const session = await service.createSession();
       expect(session).toBeTruthy();
-      
+
       mockPtyProcess._onDataCallback?.("test data");
-      
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
       expect(dataMock).toHaveBeenCalledWith(session!.id, "test data");
     });
 
@@ -239,14 +240,14 @@ describe("TerminalService", () => {
       expect(service.getMaxSessions()).toBe(5);
     });
 
-    it("enforces minimum session limit", () => {
+    it("ignores values below the supported minimum", () => {
       service.setMaxSessions(0);
-      expect(service.getMaxSessions()).toBe(1);
+      expect(service.getMaxSessions()).toBe(10);
     });
 
-    it("enforces maximum session limit", () => {
+    it("ignores values above the supported maximum", () => {
       service.setMaxSessions(200);
-      expect(service.getMaxSessions()).toBe(100);
+      expect(service.getMaxSessions()).toBe(10);
     });
   });
 

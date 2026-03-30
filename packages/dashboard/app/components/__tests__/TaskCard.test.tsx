@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Column, Task, TaskDetail } from "@kb/core";
 import { TaskCard } from "../TaskCard";
@@ -8,6 +8,27 @@ vi.mock("../../api", () => ({
   fetchTaskDetail: vi.fn(),
   uploadAttachment: vi.fn(),
 }));
+
+const mockUseBadgeWebSocket = vi.fn(() => ({
+  badgeUpdates: new Map(),
+  isConnected: false,
+  subscribeToBadge: vi.fn(),
+  unsubscribeFromBadge: vi.fn(),
+}));
+
+vi.mock("../../hooks/useBadgeWebSocket", () => ({
+  useBadgeWebSocket: () => mockUseBadgeWebSocket(),
+}));
+
+beforeEach(() => {
+  mockUseBadgeWebSocket.mockReset();
+  mockUseBadgeWebSocket.mockReturnValue({
+    badgeUpdates: new Map(),
+    isConnected: false,
+    subscribeToBadge: vi.fn(),
+    unsubscribeFromBadge: vi.fn(),
+  });
+});
 
 /**
  * Tests for the agent-active class logic in TaskCard.
@@ -1526,5 +1547,264 @@ describe("TaskCard GitHub badges", () => {
 
     const badge = container.querySelector(".card-github-badge--merged");
     expect(badge).toBeDefined();
+  });
+
+  it("prefers newer live badge data over stale task badge data", () => {
+    mockUseBadgeWebSocket.mockReturnValue({
+      badgeUpdates: new Map([
+        [
+          "KB-099",
+          {
+            prInfo: {
+              url: "https://github.com/owner/repo/pull/42",
+              number: 42,
+              status: "merged",
+              title: "Merged PR",
+              headBranch: "feature/merged",
+              baseBranch: "main",
+              commentCount: 5,
+            },
+            issueInfo: null,
+            timestamp: "2026-03-30T12:00:00.000Z",
+          },
+        ],
+      ]),
+      isConnected: true,
+      subscribeToBadge: vi.fn(),
+      unsubscribeFromBadge: vi.fn(),
+    });
+
+    const task = makeTask({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Open PR",
+        headBranch: "feature/bugfix",
+        baseBranch: "main",
+        commentCount: 0,
+        lastCheckedAt: "2026-03-30T11:00:00.000Z",
+      },
+      updatedAt: "2026-03-30T11:00:00.000Z",
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByTitle("PR #42: Merged PR")).toBeDefined();
+  });
+
+  it("falls back to newer task badge data when cached live data is older", () => {
+    mockUseBadgeWebSocket.mockReturnValue({
+      badgeUpdates: new Map([
+        [
+          "KB-099",
+          {
+            prInfo: {
+              url: "https://github.com/owner/repo/pull/42",
+              number: 42,
+              status: "open",
+              title: "Older Live PR",
+              headBranch: "feature/bugfix",
+              baseBranch: "main",
+              commentCount: 0,
+            },
+            timestamp: "2026-03-30T11:00:00.000Z",
+          },
+        ],
+      ]),
+      isConnected: false,
+      subscribeToBadge: vi.fn(),
+      unsubscribeFromBadge: vi.fn(),
+    });
+
+    const task = makeTask({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "merged",
+        title: "Fresh Task PR",
+        headBranch: "feature/merged",
+        baseBranch: "main",
+        commentCount: 2,
+        lastCheckedAt: "2026-03-30T12:00:00.000Z",
+      },
+      updatedAt: "2026-03-30T12:00:00.000Z",
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByTitle("PR #42: Fresh Task PR")).toBeDefined();
+  });
+
+  it("keeps task-provided badges when the first live update only includes one badge field", () => {
+    mockUseBadgeWebSocket.mockReturnValue({
+      badgeUpdates: new Map([
+        [
+          "KB-099",
+          {
+            issueInfo: {
+              url: "https://github.com/owner/repo/issues/123",
+              number: 123,
+              state: "closed",
+              title: "Updated issue",
+              stateReason: "completed",
+            },
+            timestamp: "2026-03-30T12:00:00.000Z",
+          },
+        ],
+      ]),
+      isConnected: true,
+      subscribeToBadge: vi.fn(),
+      unsubscribeFromBadge: vi.fn(),
+    });
+
+    const task = makeTask({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Tracked PR",
+        headBranch: "feature/bugfix",
+        baseBranch: "main",
+        commentCount: 1,
+        lastCheckedAt: "2026-03-30T11:00:00.000Z",
+      },
+      issueInfo: {
+        url: "https://github.com/owner/repo/issues/123",
+        number: 123,
+        state: "open",
+        title: "Tracked issue",
+        lastCheckedAt: "2026-03-30T11:00:00.000Z",
+      },
+      updatedAt: "2026-03-30T11:00:00.000Z",
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByTitle("PR #42: Tracked PR")).toBeDefined();
+    expect(screen.getByTitle("Issue #123: Updated issue")).toBeDefined();
+  });
+
+  it("subscribes on mount and unsubscribes on unmount for linked GitHub tasks", () => {
+    const subscribeToBadge = vi.fn();
+    const unsubscribeFromBadge = vi.fn();
+    mockUseBadgeWebSocket.mockReturnValue({
+      badgeUpdates: new Map(),
+      isConnected: true,
+      subscribeToBadge,
+      unsubscribeFromBadge,
+    });
+
+    const task = makeTask({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Tracked PR",
+        headBranch: "feature/bugfix",
+        baseBranch: "main",
+        commentCount: 1,
+      },
+    });
+
+    const { unmount } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(subscribeToBadge).toHaveBeenCalledWith("KB-099");
+
+    unmount();
+
+    expect(unsubscribeFromBadge).toHaveBeenCalledWith("KB-099");
+  });
+
+  it("waits for viewport intersection before subscribing and unsubscribes when leaving", () => {
+    const subscribeToBadge = vi.fn();
+    const unsubscribeFromBadge = vi.fn();
+    mockUseBadgeWebSocket.mockReturnValue({
+      badgeUpdates: new Map(),
+      isConnected: true,
+      subscribeToBadge,
+      unsubscribeFromBadge,
+    });
+
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    const observers: Array<{ callback: IntersectionObserverCallback }> = [];
+
+    class MockIntersectionObserver {
+      observe = vi.fn();
+      disconnect = vi.fn();
+      unobserve = vi.fn();
+      root = null;
+      rootMargin = "200px";
+      thresholds = [0];
+      readonly takeRecords = vi.fn(() => []);
+
+      constructor(callback: IntersectionObserverCallback) {
+        observers.push({ callback });
+      }
+    }
+
+    (globalThis as unknown as { IntersectionObserver: typeof IntersectionObserver }).IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
+
+    const task = makeTask({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Tracked PR",
+        headBranch: "feature/bugfix",
+        baseBranch: "main",
+        commentCount: 1,
+      },
+    });
+
+    try {
+      render(
+        <TaskCard
+          task={task}
+          onOpenDetail={vi.fn()}
+          addToast={noopToast}
+        />
+      );
+
+      expect(subscribeToBadge).not.toHaveBeenCalled();
+
+      act(() => {
+        observers[0].callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+      });
+
+      expect(subscribeToBadge).toHaveBeenCalledWith("KB-099");
+
+      act(() => {
+        observers[0].callback([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver);
+      });
+
+      expect(unsubscribeFromBadge).toHaveBeenCalledWith("KB-099");
+    } finally {
+      (globalThis as unknown as { IntersectionObserver: typeof IntersectionObserver | undefined }).IntersectionObserver = originalIntersectionObserver;
+    }
   });
 });

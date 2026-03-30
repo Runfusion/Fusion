@@ -21,8 +21,8 @@ function renderHeader(props = {}) {
 describe("Header", () => {
   it("renders the logo and brand", () => {
     renderHeader();
-    expect(screen.getByText("kb")).toBeDefined();
-    expect(screen.getByText("board")).toBeDefined();
+    expect(screen.getByText("Fusion")).toBeDefined();
+    expect(screen.getByText("tasks")).toBeDefined();
   });
 
   it("renders action buttons", () => {

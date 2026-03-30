@@ -1301,23 +1301,40 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
 
-      const prevPrNumber = task.prInfo?.number;
-      const prevPrStatus = task.prInfo?.status;
+      const previous = task.prInfo;
+      const badgeChanged =
+        previous?.url !== prInfo?.url ||
+        previous?.number !== prInfo?.number ||
+        previous?.status !== prInfo?.status ||
+        previous?.title !== prInfo?.title ||
+        previous?.headBranch !== prInfo?.headBranch ||
+        previous?.baseBranch !== prInfo?.baseBranch ||
+        previous?.commentCount !== prInfo?.commentCount ||
+        previous?.lastCommentAt !== prInfo?.lastCommentAt;
+      const linkChanged = previous?.number !== prInfo?.number || previous?.url !== prInfo?.url;
 
       if (prInfo) {
         task.prInfo = prInfo;
-        task.log.push({
-          timestamp: new Date().toISOString(),
-          action: "PR linked",
-          outcome: `PR #${prInfo.number}: ${prInfo.url}`,
-        });
+        if (!previous || linkChanged) {
+          task.log.push({
+            timestamp: new Date().toISOString(),
+            action: "PR linked",
+            outcome: `PR #${prInfo.number}: ${prInfo.url}`,
+          });
+        } else if (badgeChanged) {
+          task.log.push({
+            timestamp: new Date().toISOString(),
+            action: "PR updated",
+            outcome: `PR #${prInfo.number} badge metadata refreshed`,
+          });
+        }
       } else {
         task.prInfo = undefined;
-        if (prevPrNumber) {
+        if (previous?.number) {
           task.log.push({
             timestamp: new Date().toISOString(),
             action: "PR unlinked",
-            outcome: `PR #${prevPrNumber} removed`,
+            outcome: `PR #${previous.number} removed`,
           });
         }
       }
@@ -1327,8 +1344,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       await this.atomicWriteTaskJson(dir, task);
       if (this.watcher) this.taskCache.set(id, { ...task });
 
-      // Only emit if PR info actually changed
-      if (prevPrNumber !== prInfo?.number || prevPrStatus !== prInfo?.status) {
+      if (badgeChanged) {
         this.emit("task:updated", task);
       }
 
@@ -1352,23 +1368,37 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
 
-      const prevIssueNumber = task.issueInfo?.number;
-      const prevIssueState = task.issueInfo?.state;
+      const previous = task.issueInfo;
+      const badgeChanged =
+        previous?.url !== issueInfo?.url ||
+        previous?.number !== issueInfo?.number ||
+        previous?.state !== issueInfo?.state ||
+        previous?.title !== issueInfo?.title ||
+        previous?.stateReason !== issueInfo?.stateReason;
+      const linkChanged = previous?.number !== issueInfo?.number || previous?.url !== issueInfo?.url;
 
       if (issueInfo) {
         task.issueInfo = issueInfo;
-        task.log.push({
-          timestamp: new Date().toISOString(),
-          action: "Issue linked",
-          outcome: `Issue #${issueInfo.number}: ${issueInfo.url}`,
-        });
+        if (!previous || linkChanged) {
+          task.log.push({
+            timestamp: new Date().toISOString(),
+            action: "Issue linked",
+            outcome: `Issue #${issueInfo.number}: ${issueInfo.url}`,
+          });
+        } else if (badgeChanged) {
+          task.log.push({
+            timestamp: new Date().toISOString(),
+            action: "Issue updated",
+            outcome: `Issue #${issueInfo.number} badge metadata refreshed`,
+          });
+        }
       } else {
         task.issueInfo = undefined;
-        if (prevIssueNumber) {
+        if (previous?.number) {
           task.log.push({
             timestamp: new Date().toISOString(),
             action: "Issue unlinked",
-            outcome: `Issue #${prevIssueNumber} removed`,
+            outcome: `Issue #${previous.number} removed`,
           });
         }
       }
@@ -1378,8 +1408,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       await this.atomicWriteTaskJson(dir, task);
       if (this.watcher) this.taskCache.set(id, { ...task });
 
-      // Only emit if Issue info actually changed
-      if (prevIssueNumber !== issueInfo?.number || prevIssueState !== issueInfo?.state) {
+      if (badgeChanged) {
         this.emit("task:updated", task);
       }
 

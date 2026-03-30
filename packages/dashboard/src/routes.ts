@@ -6,6 +6,7 @@ import type { TaskStore, Column, MergeResult } from "@kb/core";
 import { COLUMNS, VALID_TRANSITIONS, type PrInfo } from "@kb/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo } from "./github.js";
+import { githubPoller, githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
 import { listFiles, readFile, writeFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse } from "./file-service.js";
@@ -518,43 +519,8 @@ function pushGitBranch(): GitPushResult {
   }
 }
 
-/**
- * Per-repo GitHub API rate limiter.
- * Tracks requests per repo and enforces 60 requests per hour per repo.
- */
-class GitHubRateLimiter {
-  private requests = new Map<string, number[]>();
-  private readonly maxRequests = 60;
-  private readonly windowMs = 60 * 60 * 1000; // 1 hour
-
-  canMakeRequest(repo: string): boolean {
-    const now = Date.now();
-    const timestamps = this.requests.get(repo) || [];
-
-    // Remove timestamps outside the window
-    const validTimestamps = timestamps.filter((ts) => now - ts < this.windowMs);
-
-    if (validTimestamps.length >= this.maxRequests) {
-      return false;
-    }
-
-    validTimestamps.push(now);
-    this.requests.set(repo, validTimestamps);
-    return true;
-  }
-
-  getResetTime(repo: string): Date | null {
-    const timestamps = this.requests.get(repo);
-    if (!timestamps || timestamps.length === 0) return null;
-
-    const oldest = Math.min(...timestamps);
-    return new Date(oldest + this.windowMs);
-  }
-}
-
 export function createApiRoutes(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
-  const ghRateLimiter = new GitHubRateLimiter();
 
   // Get GitHub token from options or env
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
@@ -1540,8 +1506,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Check rate limit
       const repoKey = `${owner}/${repo}`;
-      if (!ghRateLimiter.canMakeRequest(repoKey)) {
-        const resetTime = ghRateLimiter.getResetTime(repoKey);
+      if (!githubRateLimiter.canMakeRequest(repoKey)) {
+        const resetTime = githubRateLimiter.getResetTime(repoKey);
         res.status(429).json({
           error: "GitHub API rate limit exceeded for this repository",
           resetAt: resetTime?.toISOString(),
@@ -1594,7 +1560,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Check if data is stale (>5 minutes since last check)
       const fiveMinutesMs = 5 * 60 * 1000;
-      const lastChecked = task.prInfo.lastCheckedAt || task.updatedAt;
+      const lastChecked = githubPoller.getLastCheckedAt(task.id, "pr")
+        || task.prInfo.lastCheckedAt
+        || task.updatedAt;
       const lastCheckedTime = new Date(lastChecked).getTime();
       const isStale = Date.now() - lastCheckedTime > fiveMinutesMs;
 
@@ -1653,8 +1621,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       // Check rate limit
       const repoKey = `${owner}/${repo}`;
-      if (!ghRateLimiter.canMakeRequest(repoKey)) {
-        const resetTime = ghRateLimiter.getResetTime(repoKey);
+      if (!githubRateLimiter.canMakeRequest(repoKey)) {
+        const resetTime = githubRateLimiter.getResetTime(repoKey);
         res.status(429).json({
           error: "GitHub API rate limit exceeded for this repository",
           resetAt: resetTime?.toISOString(),
@@ -1682,6 +1650,111 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         checks: mergeStatus.checks,
         automationStatus: task.status ?? null,
       });
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * GET /api/tasks/:id/issue/status
+   * Get cached issue status for a task. Triggers background refresh if stale (>5 min).
+   */
+  router.get("/tasks/:id/issue/status", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      if (!task.issueInfo) {
+        res.status(404).json({ error: "Task has no associated issue" });
+        return;
+      }
+
+      const fiveMinutesMs = 5 * 60 * 1000;
+      const lastChecked = githubPoller.getLastCheckedAt(task.id, "issue")
+        || task.issueInfo.lastCheckedAt
+        || task.updatedAt;
+      const lastCheckedTime = new Date(lastChecked).getTime();
+      const isStale = Date.now() - lastCheckedTime > fiveMinutesMs;
+
+      res.json({
+        issueInfo: task.issueInfo,
+        stale: isStale,
+      });
+
+      if (isStale) {
+        refreshIssueInBackground(store, task.id, task.issueInfo, githubToken);
+      }
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/tasks/:id/issue/refresh
+   * Force refresh issue status from GitHub API.
+   * Returns: Updated IssueInfo
+   */
+  router.post("/tasks/:id/issue/refresh", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      if (!task.issueInfo) {
+        res.status(404).json({ error: "Task has no associated issue" });
+        return;
+      }
+
+      let owner: string;
+      let repo: string;
+
+      const envRepo = process.env.GITHUB_REPOSITORY;
+      if (envRepo) {
+        const [o, r] = envRepo.split("/");
+        owner = o;
+        repo = r;
+      } else {
+        const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+        if (!gitRepo) {
+          res.status(400).json({ error: "Could not determine GitHub repository" });
+          return;
+        }
+        owner = gitRepo.owner;
+        repo = gitRepo.repo;
+      }
+
+      const repoKey = `${owner}/${repo}`;
+      if (!githubRateLimiter.canMakeRequest(repoKey)) {
+        const resetTime = githubRateLimiter.getResetTime(repoKey);
+        res.status(429).json({
+          error: "GitHub API rate limit exceeded for this repository",
+          resetAt: resetTime?.toISOString(),
+        });
+        return;
+      }
+
+      const client = new GitHubClient(githubToken);
+      const issueInfo = await client.getIssueStatus(owner, repo, task.issueInfo.number);
+
+      if (!issueInfo) {
+        res.status(404).json({ error: `Issue #${task.issueInfo.number} not found in ${owner}/${repo}` });
+        return;
+      }
+
+      const updatedIssueInfo = {
+        ...issueInfo,
+        lastCheckedAt: new Date().toISOString(),
+      };
+
+      await store.updateIssueInfo(task.id, updatedIssueInfo);
+      res.json(updatedIssueInfo);
     } catch (err: any) {
       if (err.code === "ENOENT") {
         res.status(404).json({ error: `Task ${req.params.id} not found` });
@@ -2211,11 +2284,58 @@ async function refreshPrInBackground(store: TaskStore, taskId: string, currentPr
       repo = gitRepo.repo;
     }
 
+    const repoKey = `${owner}/${repo}`;
+    if (!githubRateLimiter.canMakeRequest(repoKey)) {
+      return;
+    }
+
     const client = new GitHubClient(token);
 
     const prInfo = await client.getPrStatus(owner, repo, currentPrInfo.number);
     prInfo.lastCheckedAt = new Date().toISOString();
     await store.updatePrInfo(taskId, prInfo);
+  } catch {
+    // Silent fail - background refresh is best-effort
+  }
+}
+
+async function refreshIssueInBackground(
+  store: TaskStore,
+  taskId: string,
+  currentIssueInfo: import("@kb/core").IssueInfo,
+  token?: string,
+): Promise<void> {
+  try {
+    let owner: string;
+    let repo: string;
+
+    const envRepo = process.env.GITHUB_REPOSITORY;
+    if (envRepo) {
+      const [o, r] = envRepo.split("/");
+      owner = o;
+      repo = r;
+    } else {
+      const gitRepo = getCurrentGitHubRepo(store.getRootDir());
+      if (!gitRepo) return;
+      owner = gitRepo.owner;
+      repo = gitRepo.repo;
+    }
+
+    const repoKey = `${owner}/${repo}`;
+    if (!githubRateLimiter.canMakeRequest(repoKey)) {
+      return;
+    }
+
+    const client = new GitHubClient(token);
+    const issueInfo = await client.getIssueStatus(owner, repo, currentIssueInfo.number);
+    if (!issueInfo) {
+      return;
+    }
+
+    await store.updateIssueInfo(taskId, {
+      ...issueInfo,
+      lastCheckedAt: new Date().toISOString(),
+    });
   } catch {
     // Silent fail - background refresh is best-effort
   }

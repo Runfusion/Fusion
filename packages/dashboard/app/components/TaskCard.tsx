@@ -1,8 +1,9 @@
 import { useCallback, useState, useRef, useEffect } from "react";
 import { Link, Clock, Layers, Pencil, ChevronDown } from "lucide-react";
-import type { Task, TaskDetail, Column } from "@kb/core";
+import type { Task, TaskDetail, Column, PrInfo, IssueInfo } from "@kb/core";
 import { fetchTaskDetail, uploadAttachment } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
+import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
 import type { ToastType } from "../hooks/useToast";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
@@ -26,6 +27,23 @@ const COLUMN_TEXT_COLOR_MAP: Record<Column, string> = {
 const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "specifying"]);
+
+function pickPreferredBadge<T extends { lastCheckedAt?: string }>(
+  liveValue: T | null | undefined,
+  liveTimestamp: string | undefined,
+  taskValue: T | undefined,
+  taskTimestamp: string | undefined,
+): T | undefined {
+  if (liveValue === undefined || !liveTimestamp) {
+    return taskValue;
+  }
+
+  if (!taskTimestamp || liveTimestamp >= taskTimestamp) {
+    return liveValue ?? undefined;
+  }
+
+  return taskValue;
+}
 
 interface TaskCardProps {
   task: Task;
@@ -64,6 +82,9 @@ export function TaskCard({
   const titleInputRef = useRef<HTMLInputElement>(null);
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
   const touchOpenHandledRef = useRef(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [isInViewport, setIsInViewport] = useState(false);
+  const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket();
 
   const isInteractiveTarget = useCallback((target: EventTarget | null): boolean => {
     if (!(target instanceof HTMLElement)) return false;
@@ -83,6 +104,26 @@ export function TaskCard({
       titleInputRef.current?.select();
     }
   }, [isEditing]);
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") {
+      setIsInViewport(true);
+      return;
+    }
+
+    const element = cardRef.current;
+    if (!element) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsInViewport(entry?.isIntersecting ?? true);
+      },
+      { rootMargin: "200px" },
+    );
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [isEditing, task.id]);
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
     e.dataTransfer.setData("text/plain", task.id);
@@ -173,6 +214,33 @@ export function TaskCard({
 
   // Check if this card can be edited inline
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
+  const hasGitHubBadge = Boolean(task.prInfo || task.issueInfo);
+
+  useEffect(() => {
+    if (!hasGitHubBadge || !isInViewport) {
+      unsubscribeFromBadge(task.id);
+      return;
+    }
+
+    subscribeToBadge(task.id);
+    return () => {
+      unsubscribeFromBadge(task.id);
+    };
+  }, [hasGitHubBadge, isInViewport, subscribeToBadge, task.id, unsubscribeFromBadge]);
+
+  const liveBadgeData = badgeUpdates.get(task.id);
+  const livePrInfo = pickPreferredBadge<PrInfo>(
+    liveBadgeData?.prInfo,
+    liveBadgeData?.timestamp,
+    task.prInfo,
+    task.prInfo?.lastCheckedAt ?? task.updatedAt,
+  );
+  const liveIssueInfo = pickPreferredBadge<IssueInfo>(
+    liveBadgeData?.issueInfo,
+    liveBadgeData?.timestamp,
+    task.issueInfo,
+    task.issueInfo?.lastCheckedAt ?? task.updatedAt,
+  );
 
   const enterEditMode = useCallback((e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -281,6 +349,7 @@ export function TaskCard({
   if (isEditing) {
     return (
       <div
+        ref={cardRef}
         className={cardClass}
         data-id={task.id}
         onDoubleClick={handleDoubleClick}
@@ -321,6 +390,7 @@ export function TaskCard({
 
   return (
     <div
+      ref={cardRef}
       className={cardClass}
       data-id={task.id}
       draggable={isDraggable}
@@ -361,8 +431,8 @@ export function TaskCard({
           </span>
         )}
         {/* GitHub badges only for tasks explicitly linked to an issue or PR */}
-        {(task.prInfo || task.issueInfo) && (
-          <GitHubBadge prInfo={task.prInfo} issueInfo={task.issueInfo} />
+        {(livePrInfo || liveIssueInfo) && (
+          <GitHubBadge prInfo={livePrInfo} issueInfo={liveIssueInfo} />
         )}
         {/* Edit button - visible on hover for editable cards */}
         {canEdit && (

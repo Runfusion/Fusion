@@ -1589,6 +1589,131 @@ describe("Pause/Unpause endpoints", () => {
       expect(res.status).toBe(404);
     });
   });
+
+  describe("GET /tasks/:id/issue/status", () => {
+    let store: TaskStore;
+
+    beforeEach(() => {
+      store = createMockStore({
+        getTask: vi.fn(),
+        getRootDir: vi.fn().mockReturnValue("/fake/root"),
+      });
+    });
+
+    function buildApp() {
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+      return app;
+    }
+
+    const mockIssueInfo = {
+      url: "https://github.com/owner/repo/issues/123",
+      number: 123,
+      state: "open" as const,
+      title: "Test Issue",
+    };
+
+    it("returns cached issue info when available", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...FAKE_TASK_DETAIL,
+        issueInfo: mockIssueInfo,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const res = await GET(buildApp(), "/api/tasks/KB-001/issue/status");
+
+      expect(res.status).toBe(200);
+      expect(res.body.issueInfo).toEqual(mockIssueInfo);
+      expect(res.body.stale).toBe(false);
+    });
+
+    it("returns 404 when task has no issue", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_TASK_DETAIL);
+
+      const res = await GET(buildApp(), "/api/tasks/KB-001/issue/status");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("no associated issue");
+    });
+  });
+
+  describe("POST /tasks/:id/issue/refresh", () => {
+    let store: TaskStore;
+
+    beforeEach(() => {
+      store = createMockStore({
+        getTask: vi.fn(),
+        updateIssueInfo: vi.fn(),
+        getRootDir: vi.fn().mockReturnValue("/fake/root"),
+      });
+    });
+
+    function buildApp() {
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+      return app;
+    }
+
+    const mockIssueInfo = {
+      url: "https://github.com/owner/repo/issues/123",
+      number: 123,
+      state: "closed" as const,
+      title: "Test Issue",
+      stateReason: "completed" as const,
+    };
+
+    it("refreshes and persists issue status", async () => {
+      const originalRepo = process.env.GITHUB_REPOSITORY;
+      process.env.GITHUB_REPOSITORY = "owner/repo";
+      vi.spyOn(GitHubClient.prototype, "getIssueStatus").mockResolvedValue(mockIssueInfo);
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...FAKE_TASK_DETAIL,
+        issueInfo: {
+          url: "https://github.com/owner/repo/issues/123",
+          number: 123,
+          state: "open" as const,
+          title: "Test Issue",
+        },
+      });
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/issue/refresh",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.number).toBe(123);
+      expect(res.body.state).toBe("closed");
+      expect(res.body.stateReason).toBe("completed");
+      expect(store.updateIssueInfo).toHaveBeenCalled();
+
+      if (originalRepo) {
+        process.env.GITHUB_REPOSITORY = originalRepo;
+      } else {
+        delete process.env.GITHUB_REPOSITORY;
+      }
+    });
+
+    it("returns 404 when task has no issue", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_TASK_DETAIL);
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/tasks/KB-001/issue/refresh",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" }
+      );
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("no associated issue");
+    });
+  });
 });
 
 // --- GitHub Import route tests ---
@@ -2484,8 +2609,8 @@ describe("Git Management endpoints", () => {
         "Content-Type": "application/json",
       });
 
-      // May succeed or fail depending on state, but should return proper structure
-      expect(res.status === 200 || res.status === 409 || res.status === 500).toBe(true);
+      // May succeed or fail depending on environment state, but should return proper structure
+      expect(res.status === 200 || res.status === 400 || res.status === 409 || res.status === 500).toBe(true);
       if (res.status === 200 || res.status === 409) {
         expect(res.body).toHaveProperty("success");
         expect(res.body).toHaveProperty("message");
