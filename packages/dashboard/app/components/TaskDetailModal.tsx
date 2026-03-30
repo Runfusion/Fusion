@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Pencil } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo } from "@kb/core";
@@ -66,6 +67,8 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
+const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
+
 export function TaskDetailModal({
   task,
   tasks = [],
@@ -90,9 +93,98 @@ export function TaskDetailModal({
   const [showRefineModal, setShowRefineModal] = useState(false);
   const [refineFeedback, setRefineFeedback] = useState("");
   const [isRefining, setIsRefining] = useState(false);
+
+  // Edit mode state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(task.title || "");
+  const [editDescription, setEditDescription] = useState(task.description || "");
+  const [isSaving, setIsSaving] = useState(false);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  // Reset edit state when task changes
   useEffect(() => {
-    if (!showDepDropdown) setDepSearch("");
-  }, [showDepDropdown]);
+    setEditTitle(task.title || "");
+    setEditDescription(task.description || "");
+    setIsEditing(false);
+  }, [task.id, task.title, task.description]);
+
+  // Auto-focus title when entering edit mode
+  useEffect(() => {
+    if (isEditing) {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    }
+  }, [isEditing]);
+
+  // Check if task can be edited
+  const canEdit = EDITABLE_COLUMNS.has(task.column) && !isSaving;
+  const hasChanges = editTitle !== (task.title || "") || editDescription !== (task.description || "");
+
+  const enterEditMode = useCallback(() => {
+    if (!canEdit) return;
+    setIsEditing(true);
+    setEditTitle(task.title || "");
+    setEditDescription(task.description || "");
+  }, [canEdit, task.title, task.description]);
+
+  const exitEditMode = useCallback(() => {
+    setIsEditing(false);
+    setEditTitle(task.title || "");
+    setEditDescription(task.description || "");
+  }, [task.title, task.description]);
+
+  const handleSave = useCallback(async () => {
+    if (!hasChanges) {
+      exitEditMode();
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await updateTask(task.id, {
+        title: editTitle.trim() || undefined,
+        description: editDescription.trim() || undefined,
+      });
+      addToast(`Updated ${task.id}`, "success");
+      setIsEditing(false);
+    } catch (err: any) {
+      addToast(`Failed to update ${task.id}: ${err.message}`, "error");
+      // Stay in edit mode on error so user can retry
+    } finally {
+      setIsSaving(false);
+    }
+  }, [task.id, editTitle, editDescription, hasChanges, exitEditMode, addToast]);
+
+  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      // Move focus to description textarea
+      const textarea = document.querySelector('.modal-edit-textarea') as HTMLTextAreaElement;
+      textarea?.focus();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      exitEditMode();
+    }
+  }, [exitEditMode]);
+
+  const handleDescKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleSave();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      exitEditMode();
+    }
+  }, [handleSave, exitEditMode]);
+
+  const handleDescChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setEditDescription(e.target.value);
+    // Auto-resize textarea
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, []);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { entries: agentLogEntries, loading: agentLogLoading } = useAgentLogs(
     task.id,
@@ -100,11 +192,11 @@ export function TaskDetailModal({
   );
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !isEditing) onClose();
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+  }, [onClose, isEditing]);
 
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
@@ -403,16 +495,73 @@ export function TaskDetailModal({
               {COLUMN_LABELS[task.column]}
             </span>
           </div>
-          <button className="modal-close" onClick={onClose}>
-            &times;
-          </button>
+          <div className="modal-header-actions">
+            {!isEditing && canEdit && (
+              <button
+                className="modal-edit-btn"
+                onClick={enterEditMode}
+                title="Edit task"
+                aria-label="Edit task"
+              >
+                <Pencil size={14} />
+              </button>
+            )}
+            <button className="modal-close" onClick={onClose}>
+              &times;
+            </button>
+          </div>
         </div>
         <div className="detail-body">
-          <h2 className="detail-title">{task.title || task.description}</h2>
-          <div className="detail-meta">
-            Created {new Date(task.createdAt).toLocaleDateString()} · Updated{" "}
-            {new Date(task.updatedAt).toLocaleDateString()}
-          </div>
+          {isEditing ? (
+            <div className="modal-edit-form">
+              <input
+                ref={titleInputRef}
+                type="text"
+                className="modal-edit-input"
+                placeholder="Task title"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={handleTitleKeyDown}
+                disabled={isSaving}
+              />
+              <textarea
+                className="modal-edit-textarea"
+                placeholder="Task description"
+                value={editDescription}
+                onChange={handleDescChange}
+                onKeyDown={handleDescKeyDown}
+                disabled={isSaving}
+                rows={3}
+              />
+              <div className="modal-edit-actions">
+                <button
+                  className="btn btn-sm"
+                  onClick={exitEditMode}
+                  disabled={isSaving}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSave}
+                  disabled={!hasChanges || isSaving}
+                >
+                  {isSaving ? "Saving…" : "Save"}
+                </button>
+              </div>
+              <div className="modal-edit-hint">
+                <kbd>Ctrl+Enter</kbd> to save · <kbd>Escape</kbd> to cancel
+              </div>
+            </div>
+          ) : (
+            <>
+              <h2 className="detail-title">{task.title || task.description}</h2>
+              <div className="detail-meta">
+                Created {new Date(task.createdAt).toLocaleDateString()} · Updated{" "}
+                {new Date(task.updatedAt).toLocaleDateString()}
+              </div>
+            </>
+          )}
           {task.status === "failed" && task.error && (
             <div className="detail-error-alert">
               <span className="detail-error-icon">⚠</span>
@@ -422,6 +571,8 @@ export function TaskDetailModal({
               </div>
             </div>
           )}
+          {!isEditing && (
+            <>
           <div className="detail-tabs">
             <button
               className={`detail-tab${activeTab === "definition" ? " detail-tab-active" : ""}`}
@@ -734,6 +885,8 @@ export function TaskDetailModal({
               }}
               addToast={addToast}
             />
+          )}
+          </>
           )}
           </>
           )}

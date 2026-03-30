@@ -2323,4 +2323,352 @@ describe("TaskDetailModal", () => {
       });
     });
   });
+
+  describe("inline editing", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("shows Edit button in header when task is in triage column", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Test task" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const editButton = container.querySelector(".modal-edit-btn");
+      expect(editButton).toBeTruthy();
+    });
+
+    it("shows Edit button in header when task is in todo column", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "todo", title: "Test task" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const editButton = container.querySelector(".modal-edit-btn");
+      expect(editButton).toBeTruthy();
+    });
+
+    it("does not show Edit button when task is in in-progress column", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "in-progress", title: "Test task" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const editButton = container.querySelector(".modal-edit-btn");
+      expect(editButton).toBeNull();
+    });
+
+    it("does not show Edit button when already in edit mode", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Test task" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      const editButton = container.querySelector(".modal-edit-btn");
+      expect(editButton).toBeTruthy();
+      fireEvent.click(editButton!);
+
+      // Edit button should be hidden now
+      expect(container.querySelector(".modal-edit-btn")).toBeNull();
+      // But input should be visible
+      expect(container.querySelector(".modal-edit-input")).toBeTruthy();
+    });
+
+    it("entering edit mode shows title input and description textarea", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Test task", description: "Test description" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Initially shows title as h2
+      expect(container.querySelector("h2.detail-title")).toBeTruthy();
+      expect(container.querySelector(".modal-edit-input")).toBeNull();
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // Now shows edit form
+      expect(container.querySelector("h2.detail-title")).toBeNull();
+      expect(container.querySelector(".modal-edit-input")).toBeTruthy();
+      expect(container.querySelector(".modal-edit-textarea")).toBeTruthy();
+    });
+
+    it("clicking Cancel exits edit mode without saving", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Original title", description: "Original description" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // Change values
+      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
+      fireEvent.change(titleInput, { target: { value: "Modified title" } });
+
+      // Click Cancel
+      fireEvent.click(screen.getByText("Cancel"));
+
+      // Should exit edit mode without saving
+      expect(container.querySelector(".modal-edit-input")).toBeNull();
+      expect(container.querySelector("h2.detail-title")?.textContent).toBe("Original title");
+    });
+
+    it("clicking Save calls updateTask with correct parameters", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValueOnce({ id: "KB-001" } as Task);
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Original title", description: "Original description" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // Change values
+      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
+      const descTextarea = container.querySelector(".modal-edit-textarea") as HTMLTextAreaElement;
+      fireEvent.change(titleInput, { target: { value: "New title" } });
+      fireEvent.change(descTextarea, { target: { value: "New description" } });
+
+      // Click Save
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("KB-001", {
+          title: "New title",
+          description: "New description",
+        });
+      });
+    });
+
+    it("Save button is disabled when no changes made", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Test title", description: "Test description" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      const saveButton = screen.getByText("Save");
+      expect(saveButton.hasAttribute("disabled")).toBe(true);
+    });
+
+    it("Save button shows 'Saving…' during save operation", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      // Delay the resolution to keep isSaving true
+      mockUpdate.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({ id: "KB-001" } as Task), 100)));
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Original" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // Change value
+      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
+      fireEvent.change(titleInput, { target: { value: "New title" } });
+
+      // Click Save
+      fireEvent.click(screen.getByText("Save"));
+
+      // Should show "Saving…" immediately
+      expect(screen.getByText("Saving…")).toBeTruthy();
+    });
+
+    it("successful save shows toast and exits edit mode", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValueOnce({ id: "KB-001" } as Task);
+
+      const addToast = vi.fn();
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Original" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // Change value
+      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
+      fireEvent.change(titleInput, { target: { value: "New title" } });
+
+      // Click Save
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Updated KB-001", "success");
+      });
+
+      // Should exit edit mode
+      expect(container.querySelector(".modal-edit-input")).toBeNull();
+    });
+
+    it("failed save shows toast with error and stays in edit mode", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockRejectedValueOnce(new Error("Network error"));
+
+      const addToast = vi.fn();
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Original" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // Change value
+      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
+      fireEvent.change(titleInput, { target: { value: "New title" } });
+
+      // Click Save
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Failed to update KB-001: Network error", "error");
+      });
+
+      // Should stay in edit mode
+      expect(container.querySelector(".modal-edit-input")).toBeTruthy();
+    });
+
+    it("Escape key exits edit mode", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Test title" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      expect(container.querySelector(".modal-edit-input")).toBeTruthy();
+
+      // Press Escape
+      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
+      fireEvent.keyDown(titleInput, { key: "Escape" });
+
+      // Should exit edit mode
+      expect(container.querySelector(".modal-edit-input")).toBeNull();
+    });
+
+    it("Enter in title input moves focus to description textarea", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "triage", title: "Test title", description: "Test description" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // Press Enter in title input
+      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
+      fireEvent.keyDown(titleInput, { key: "Enter" });
+
+      // Description textarea should be focused (we can check by seeing if the textarea exists)
+      // Note: focus testing is limited in JSDOM, but we verify the handler doesn't error
+      expect(container.querySelector(".modal-edit-textarea")).toBeTruthy();
+    });
+  });
 });

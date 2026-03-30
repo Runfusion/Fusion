@@ -1941,6 +1941,127 @@ body {
   color: var(--text-muted);
 }
 
+/* === Modal Edit Mode Styles === */
+
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.modal-edit-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.modal-edit-btn:focus {
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+.modal-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-edit-input {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.modal-edit-input:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.modal-edit-input::placeholder {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.modal-edit-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modal-edit-textarea {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.modal-edit-textarea:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.modal-edit-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.modal-edit-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modal-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.modal-edit-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.modal-edit-hint kbd {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* Card saving state */
 .card.card-saving {
   opacity: 0.7;
