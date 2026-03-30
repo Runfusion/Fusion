@@ -2143,6 +2143,8 @@ async function refreshPrInBackground(store: TaskStore, taskId: string, currentPr
 function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike): void {
   router.get("/models", (_req, res) => {
     try {
+      // Always return 200 with empty array instead of 404 when no models available.
+      // This ensures the frontend can handle empty states gracefully.
       if (!modelRegistry) {
         res.json([]);
         return;
