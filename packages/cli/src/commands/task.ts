@@ -365,3 +365,87 @@ export async function fetchGitHubIssues(
     clearTimeout(timeoutId);
   }
 }
+
+export interface TaskImportOptions {
+  limit?: number;
+  labels?: string[];
+}
+
+export async function runTaskImportFromGitHub(
+  ownerRepo: string,
+  options: TaskImportOptions = {}
+): Promise<void> {
+  // Parse owner/repo
+  const match = ownerRepo.match(/^([^/]+)\/([^/]+)$/);
+  if (!match) {
+    console.error(`Invalid owner/repo format: ${ownerRepo}`);
+    console.error(`Expected format: owner/repo (e.g., dustinbyrne/kb)`);
+    process.exit(1);
+  }
+
+  const [, owner, repo] = match;
+  const { limit = 30, labels } = options;
+
+  console.log(`\n  Importing issues from ${owner}/${repo}...\n`);
+
+  const store = await getStore();
+  const existingTasks = await store.listTasks();
+
+  // Build a set of already-imported issue URLs
+  const importedUrls = new Map<string, string>();
+  for (const task of existingTasks) {
+    const sourceMatch = task.description.match(/Source: (https:\/\/github\.com\/[^\/]+\/[^\/]+\/issues\/\d+)$/m);
+    if (sourceMatch) {
+      importedUrls.set(sourceMatch[1], task.id);
+    }
+  }
+
+  let issues: GitHubIssue[];
+  try {
+    issues = await fetchGitHubIssues(owner, repo, { limit, labels });
+  } catch (err: any) {
+    console.error(`  ✗ ${err.message}\n`);
+    process.exit(1);
+  }
+
+  if (issues.length === 0) {
+    console.log(`  No open issues found in ${owner}/${repo}.\n`);
+    return;
+  }
+
+  let created = 0;
+  let skipped = 0;
+
+  for (const issue of issues) {
+    // Check if already imported
+    if (importedUrls.has(issue.html_url)) {
+      const existingId = importedUrls.get(issue.html_url)!;
+      console.log(`  → Skipping #${issue.number}: already imported as ${existingId}`);
+      skipped++;
+      continue;
+    }
+
+    // Prepare title (truncate to 200 chars)
+    const title = issue.title.slice(0, 200);
+
+    // Prepare description
+    const body = issue.body?.trim() || "(no description)";
+    const description = `${body}\n\nSource: ${issue.html_url}`;
+
+    // Create the task
+    const task = await store.createTask({
+      title: title || undefined,
+      description,
+      column: "triage",
+      dependencies: [],
+    });
+
+    const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");
+    console.log(`  ✓ Created ${task.id}: ${label}`);
+    created++;
+  }
+
+  console.log();
+  console.log(`  ✓ Imported ${created} tasks from ${owner}/${repo}${skipped > 0 ? ` (${skipped} skipped)` : ""}`);
+  console.log();
+}
