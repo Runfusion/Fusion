@@ -214,5 +214,18 @@ export function useTasks() {
     return task;
   }, []);
 
-  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, duplicateTask, updateTask, archiveTask, unarchiveTask };
+  const archiveAllDone = useCallback(async (): Promise<Task[]> => {
+    const archived = await api.archiveAllDone();
+    const normalized = archived.map(normalizeTask);
+    // Update local state by mapping over tasks and updating archived ones
+    setTasks((prev) =>
+      prev.map((t) => {
+        const updated = normalized.find((archived) => archived.id === t.id);
+        return updated || t;
+      })
+    );
+    return normalized;
+  }, []);
+
+  return { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, duplicateTask, updateTask, archiveTask, unarchiveTask, archiveAllDone };
 }

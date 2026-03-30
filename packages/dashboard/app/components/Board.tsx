@@ -22,6 +22,7 @@ interface BoardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
+  onArchiveAllDone?: () => Promise<Task[]>;
   searchQuery?: string;
 }
 
@@ -41,7 +42,7 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, searchQuery = "" }: BoardProps) {
+export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "" }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const { fetchBatch } = useBatchBadgeFetch();
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -147,6 +148,7 @@ export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast
           onUnarchiveTask={onUnarchiveTask}
           {...(col === "triage" ? { onQuickCreate, onNewTask } : {})}
           {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
+          {...(col === "done" ? { onArchiveAllDone } : {})}
           {...(col === "archived" ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse } : {})}
         />
       ))}

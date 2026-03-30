@@ -7,7 +7,7 @@ import { WorktreeGroup } from "./WorktreeGroup";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Archive } from "lucide-react";
 
 const PAGINATED_COLUMN_THRESHOLD = 100;
 const VISIBLE_TASKS_INITIAL = 50;
@@ -31,11 +31,12 @@ interface ColumnProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
+  onArchiveAllDone?: () => Promise<Task[]>;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }
 
-function ColumnComponent({ column, tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, collapsed, onToggleCollapse }: ColumnProps) {
+function ColumnComponent({ column, tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
@@ -99,6 +100,21 @@ function ColumnComponent({ column, tasks, maxConcurrent, onMoveTask, onOpenDetai
     setVisibleTaskCount((current) => Math.min(current + VISIBLE_TASKS_INCREMENT, tasks.length));
   }, [tasks.length]);
 
+  const handleArchiveAll = useCallback(async () => {
+    if (!onArchiveAllDone) return;
+    if (tasks.length === 0) return;
+
+    const confirmed = window.confirm(`Archive all ${tasks.length} done tasks?`);
+    if (!confirmed) return;
+
+    try {
+      const archived = await onArchiveAllDone();
+      addToast(`Archived ${archived.length} tasks`, "success");
+    } catch (err: any) {
+      addToast(err.message || "Failed to archive tasks", "error");
+    }
+  }, [onArchiveAllDone, tasks.length, addToast]);
+
   return (
     <div
       className={`column${dragOver ? " drag-over" : ""}${isArchived ? " column-archived" : ""}${isCollapsed ? " column-collapsed" : ""}`}
@@ -125,6 +141,17 @@ function ColumnComponent({ column, tasks, maxConcurrent, onMoveTask, onOpenDetai
         {onNewTask && (
           <button className="btn btn-primary btn-sm" onClick={onNewTask}>
             + New Task
+          </button>
+        )}
+        {column === "done" && onArchiveAllDone && (
+          <button
+            className="btn btn-icon btn-sm"
+            onClick={handleArchiveAll}
+            disabled={tasks.length === 0}
+            title="Archive all done tasks"
+            aria-label="Archive all done tasks"
+          >
+            <Archive size={16} />
           </button>
         )}
         {isArchived && onToggleCollapse && (

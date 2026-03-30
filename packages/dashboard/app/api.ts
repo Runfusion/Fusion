@@ -123,6 +123,12 @@ export function unarchiveTask(id: string): Promise<Task> {
   return api<Task>(`/tasks/${id}/unarchive`, { method: "POST" });
 }
 
+export function archiveAllDone(): Promise<Task[]> {
+  return api<{ archived: Task[] }>("/tasks/archive-all-done", { method: "POST" }).then(
+    (response) => response.archived
+  );
+}
+
 export function approvePlan(id: string): Promise<Task> {
   return api<Task>(`/tasks/${id}/approve-plan`, { method: "POST" });
 }

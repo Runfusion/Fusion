@@ -705,6 +705,63 @@ describe("POST /tasks/:id/unarchive", () => {
   });
 });
 
+describe("POST /tasks/archive-all-done", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      archiveAllDone: vi.fn(),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("archives all done tasks and returns the archived array", async () => {
+    const archivedTasks = [
+      { ...FAKE_TASK_DETAIL, id: "KB-001", column: "archived" },
+      { ...FAKE_TASK_DETAIL, id: "KB-002", column: "archived" },
+    ];
+    (store.archiveAllDone as ReturnType<typeof vi.fn>).mockResolvedValue(archivedTasks);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/archive-all-done", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.archived).toHaveLength(2);
+    expect(res.body.archived[0].column).toBe("archived");
+    expect(res.body.archived[1].column).toBe("archived");
+    expect(store.archiveAllDone).toHaveBeenCalled();
+  });
+
+  it("returns empty array when no done tasks exist", async () => {
+    (store.archiveAllDone as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/archive-all-done", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.archived).toEqual([]);
+  });
+
+  it("returns 500 on unexpected errors", async () => {
+    (store.archiveAllDone as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Database error"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/archive-all-done", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Database error");
+  });
+});
+
 describe("PATCH /tasks/:id", () => {
   let store: TaskStore;
 

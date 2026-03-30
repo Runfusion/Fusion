@@ -790,6 +790,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Archive all done tasks
+  router.post("/tasks/archive-all-done", async (req, res) => {
+    try {
+      const archived = await store.archiveAllDone();
+      res.json({ archived });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Upload attachment
   router.post("/tasks/:id/attachments", upload.single("file"), async (req, res) => {
     try {

@@ -876,6 +876,26 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
+   * Archive all tasks currently in the "done" column.
+   * Returns an array of archived tasks.
+   */
+  async archiveAllDone(): Promise<Task[]> {
+    const tasks = await this.listTasks();
+    const doneTasks = tasks.filter((t) => t.column === "done");
+    
+    if (doneTasks.length === 0) {
+      return [];
+    }
+
+    // Archive all done tasks concurrently
+    const archivedTasks = await Promise.all(
+      doneTasks.map((task) => this.archiveTask(task.id))
+    );
+
+    return archivedTasks;
+  }
+
+  /**
    * Archive a done task (move from done → archived).
    * Logs the action and emits `task:moved` event.
    * @param cleanup - If true, immediately cleans up the task directory after archiving

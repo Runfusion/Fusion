@@ -30,10 +30,14 @@ vi.mock("../../api", () => ({
   mergeTask: vi.fn(),
   retryTask: vi.fn(),
   updateTask: vi.fn(),
+  archiveTask: vi.fn(),
+  unarchiveTask: vi.fn(),
+  archiveAllDone: vi.fn(),
 }));
 
 const mockFetchTasks = vi.mocked(api.fetchTasks);
 const mockUpdateTask = vi.mocked(api.updateTask);
+const mockArchiveAllDone = vi.mocked(api.archiveAllDone);
 
 // Mock EventSource
 class MockEventSource {
@@ -641,6 +645,59 @@ describe("useTasks", () => {
       });
 
       expect(result.current.tasks[0].dependencies).toEqual(["KB-002", "KB-003"]);
+    });
+  });
+
+  describe("archiveAllDone", () => {
+    it("archives all done tasks and updates local state", async () => {
+      const doneTasks = [
+        createMockTask({ id: "KB-001", column: "done" as Column }),
+        createMockTask({ id: "KB-002", column: "done" as Column }),
+      ];
+      const todoTask = createMockTask({ id: "KB-003", column: "todo" as Column });
+      mockFetchTasks.mockResolvedValueOnce([...doneTasks, todoTask]);
+
+      const archivedTasks = [
+        createMockTask({ id: "KB-001", column: "archived" as Column }),
+        createMockTask({ id: "KB-002", column: "archived" as Column }),
+      ];
+      mockArchiveAllDone.mockResolvedValueOnce(archivedTasks);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(3);
+      });
+
+      await act(async () => {
+        await result.current.archiveAllDone();
+      });
+
+      expect(mockArchiveAllDone).toHaveBeenCalled();
+      // Done tasks should be archived
+      expect(result.current.tasks.find((t) => t.id === "KB-001")?.column).toBe("archived");
+      expect(result.current.tasks.find((t) => t.id === "KB-002")?.column).toBe("archived");
+      // Todo task should remain unchanged
+      expect(result.current.tasks.find((t) => t.id === "KB-003")?.column).toBe("todo");
+    });
+
+    it("returns empty array when no done tasks exist", async () => {
+      const todoTask = createMockTask({ id: "KB-001", column: "todo" as Column });
+      mockFetchTasks.mockResolvedValueOnce([todoTask]);
+      mockArchiveAllDone.mockResolvedValueOnce([]);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      const archived = await act(async () => {
+        return await result.current.archiveAllDone();
+      });
+
+      expect(archived).toEqual([]);
+      expect(result.current.tasks[0].column).toBe("todo");
     });
   });
 });

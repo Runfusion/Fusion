@@ -46,7 +46,7 @@ function AppInner() {
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
-  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask } = useTasks();
+  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone } = useTasks();
 
   // Theme management
   const { themeMode, colorTheme, setThemeMode, setColorTheme } = useTheme();
@@ -216,6 +216,7 @@ function AppInner() {
           onUpdateTask={updateTask}
           onArchiveTask={archiveTask}
           onUnarchiveTask={unarchiveTask}
+          onArchiveAllDone={archiveAllDone}
           searchQuery={searchQuery}
         />
       ) : (

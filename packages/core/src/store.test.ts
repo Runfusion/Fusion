@@ -2113,6 +2113,96 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("archiveAllDone", () => {
+    it("archives multiple done tasks", async () => {
+      const task1 = await store.createTask({ description: "Test task 1" });
+      const task2 = await store.createTask({ description: "Test task 2" });
+      const task3 = await store.createTask({ description: "Test task 3" });
+
+      // Move all to done
+      for (const task of [task1, task2, task3]) {
+        await store.moveTask(task.id, "todo");
+        await store.moveTask(task.id, "in-progress");
+        await store.moveTask(task.id, "in-review");
+        await store.moveTask(task.id, "done");
+      }
+
+      const archived = await store.archiveAllDone();
+
+      expect(archived).toHaveLength(3);
+      expect(archived.every((t) => t.column === "archived")).toBe(true);
+    });
+
+    it("returns empty array when no done tasks exist", async () => {
+      const result = await store.archiveAllDone();
+
+      expect(result).toEqual([]);
+    });
+
+    it("emits task:moved event for each archived task", async () => {
+      const task1 = await store.createTask({ description: "Test task 1" });
+      const task2 = await store.createTask({ description: "Test task 2" });
+
+      for (const task of [task1, task2]) {
+        await store.moveTask(task.id, "todo");
+        await store.moveTask(task.id, "in-progress");
+        await store.moveTask(task.id, "in-review");
+        await store.moveTask(task.id, "done");
+      }
+
+      const events: any[] = [];
+      store.on("task:moved", (data) => events.push(data));
+
+      await store.archiveAllDone();
+
+      expect(events).toHaveLength(2);
+      expect(events.every((e) => e.from === "done" && e.to === "archived")).toBe(true);
+    });
+
+    it("does not affect tasks in other columns", async () => {
+      const doneTask = await store.createTask({ description: "Done task" });
+      await store.moveTask(doneTask.id, "todo");
+      await store.moveTask(doneTask.id, "in-progress");
+      await store.moveTask(doneTask.id, "in-review");
+      await store.moveTask(doneTask.id, "done");
+
+      const todoTask = await store.createTask({ description: "Todo task" });
+      await store.moveTask(todoTask.id, "todo");
+
+      const inProgressTask = await store.createTask({ description: "In progress task" });
+      await store.moveTask(inProgressTask.id, "todo");
+      await store.moveTask(inProgressTask.id, "in-progress");
+
+      await store.archiveAllDone();
+
+      const fetchedTodo = await store.getTask(todoTask.id);
+      const fetchedInProgress = await store.getTask(inProgressTask.id);
+
+      expect(fetchedTodo.column).toBe("todo");
+      expect(fetchedInProgress.column).toBe("in-progress");
+    });
+
+    it("archives only done tasks when mixed columns exist", async () => {
+      const doneTask1 = await store.createTask({ description: "Done task 1" });
+      const doneTask2 = await store.createTask({ description: "Done task 2" });
+      const todoTask = await store.createTask({ description: "Todo task" });
+
+      for (const task of [doneTask1, doneTask2]) {
+        await store.moveTask(task.id, "todo");
+        await store.moveTask(task.id, "in-progress");
+        await store.moveTask(task.id, "in-review");
+        await store.moveTask(task.id, "done");
+      }
+
+      await store.moveTask(todoTask.id, "todo");
+
+      const archived = await store.archiveAllDone();
+
+      expect(archived).toHaveLength(2);
+      expect(archived.map((t) => t.id).sort()).toEqual([doneTask1.id, doneTask2.id].sort());
+    });
+  });
+
   describe("VALID_TRANSITIONS — invalid archived transitions via moveTask", () => {
     it("moveTask from archived → in-progress should fail", async () => {
       const task = await store.createTask({ description: "Test task" });
