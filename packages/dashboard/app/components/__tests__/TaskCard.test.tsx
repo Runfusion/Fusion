@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import type { Column, Task, TaskDetail } from "@kb/core";
 import { TaskCard } from "../TaskCard";
+import React, { useState } from "react";
 
 vi.mock("../../api", () => ({
   fetchTaskDetail: vi.fn(),
@@ -45,6 +46,207 @@ function computeCardClass(opts: { dragging?: boolean; queued?: boolean; status?:
   const isAgentActive = !globalPaused && !queued && !isFailed && (column === "in-progress" || ACTIVE_STATUSES.has(status as string));
   return `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}`;
 }
+
+describe("TaskCard memoization", () => {
+  const createTask = (overrides: Partial<Task> = {}): Task => ({
+    id: "KB-001",
+    description: "Test task",
+    column: "todo",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    columnMovedAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  } as Task);
+
+  it("does not re-render when parent re-renders with an equivalent task object", async () => {
+    const onOpenDetail = vi.fn();
+    const addToast = vi.fn();
+    const cardRenderSpy = vi.fn();
+
+    function MemoProbe({ task }: { task: Task }) {
+      cardRenderSpy();
+      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
+    }
+
+    const MemoizedProbe = React.memo(MemoProbe);
+
+    function Harness() {
+      const [count, setCount] = useState(0);
+      const task = createTask();
+
+      return (
+        <>
+          <button onClick={() => setCount((current) => current + 1)}>rerender {count}</button>
+          <MemoizedProbe task={{ ...task }} />
+        </>
+      );
+    }
+
+    render(<Harness />);
+    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole("button", { name: /rerender/i }));
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Test task")).toBeDefined();
+  });
+
+  it("re-renders when a render-relevant task field changes", () => {
+    const onOpenDetail = vi.fn();
+    const addToast = vi.fn();
+    const cardRenderSpy = vi.fn();
+
+    function MemoProbe({ task }: { task: Task }) {
+      cardRenderSpy();
+      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
+    }
+
+    const MemoizedProbe = React.memo(MemoProbe);
+    const { rerender } = render(<MemoizedProbe task={createTask({ title: "Original" })} />);
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(<MemoizedProbe task={createTask({ title: "Updated" })} />);
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Updated")).toBeDefined();
+  });
+
+  it("re-renders when dependency badges change", () => {
+    const onOpenDetail = vi.fn();
+    const addToast = vi.fn();
+    const cardRenderSpy = vi.fn();
+
+    function MemoProbe({ task }: { task: Task }) {
+      cardRenderSpy();
+      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
+    }
+
+    const MemoizedProbe = React.memo(MemoProbe);
+    const { rerender } = render(<MemoizedProbe task={createTask({ dependencies: ["KB-001"] })} />);
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(<MemoizedProbe task={createTask({ dependencies: ["KB-001", "KB-002"] })} />);
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByTitle(/Click to view/)).toHaveLength(2);
+  });
+
+  it("re-renders when PR badge data changes", () => {
+    const onOpenDetail = vi.fn();
+    const addToast = vi.fn();
+    const cardRenderSpy = vi.fn();
+
+    function MemoProbe({ task }: { task: Task }) {
+      cardRenderSpy();
+      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
+    }
+
+    const MemoizedProbe = React.memo(MemoProbe);
+    const basePrInfo = {
+      number: 42,
+      url: "https://github.com/example/repo/pull/42",
+      status: "open" as const,
+      title: "Initial PR",
+      headBranch: "kb/kb-129",
+      baseBranch: "main",
+      lastCheckedAt: "2026-01-01T00:00:00Z",
+    };
+    const { rerender } = render(<MemoizedProbe task={createTask({ prInfo: basePrInfo })} />);
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <MemoizedProbe
+        task={createTask({
+          prInfo: { ...basePrInfo, status: "merged", title: "Merged PR" },
+        })}
+      />,
+    );
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-renders when step progress changes", () => {
+    const onOpenDetail = vi.fn();
+    const addToast = vi.fn();
+    const cardRenderSpy = vi.fn();
+
+    function MemoProbe({ task }: { task: Task }) {
+      cardRenderSpy();
+      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
+    }
+
+    const MemoizedProbe = React.memo(MemoProbe);
+    const { rerender } = render(
+      <MemoizedProbe
+        task={createTask({
+          steps: [{ name: "Step 1", status: "pending" }],
+        })}
+      />,
+    );
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <MemoizedProbe
+        task={createTask({
+          steps: [{ name: "Step 1", status: "done" }],
+        })}
+      />,
+    );
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("1/1")).toBeDefined();
+  });
+
+  it("re-renders when blockedBy changes", () => {
+    const onOpenDetail = vi.fn();
+    const addToast = vi.fn();
+    const cardRenderSpy = vi.fn();
+
+    function MemoProbe({ task }: { task: Task }) {
+      cardRenderSpy();
+      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
+    }
+
+    const MemoizedProbe = React.memo(MemoProbe);
+    const { rerender } = render(<MemoizedProbe task={createTask()} />);
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(<MemoizedProbe task={createTask({ blockedBy: "KB-777" })} />);
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("KB-777")).toBeDefined();
+  });
+
+  it("re-renders when queued state changes", () => {
+    const onOpenDetail = vi.fn();
+    const addToast = vi.fn();
+    const cardRenderSpy = vi.fn();
+
+    function MemoProbe({ queued }: { queued?: boolean }) {
+      cardRenderSpy();
+      return <TaskCard task={createTask()} queued={queued} onOpenDetail={onOpenDetail} addToast={addToast} />;
+    }
+
+    const MemoizedProbe = React.memo(MemoProbe);
+    const { rerender } = render(<MemoizedProbe />);
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(<MemoizedProbe queued />);
+
+    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/Queued/)).toBeDefined();
+  });
+});
 
 describe("TaskCard agent-active class", () => {
   it("applies agent-active for an active status (executing)", () => {
@@ -352,7 +554,6 @@ describe("TaskCard clickable dependencies", () => {
         task={task}
         onOpenDetail={vi.fn()}
         addToast={noopToast}
-        tasks={allTasks}
       />
     );
 
@@ -396,7 +597,6 @@ describe("TaskCard clickable dependencies", () => {
         task={task}
         onOpenDetail={onOpenDetail}
         addToast={noopToast}
-        tasks={allTasks}
       />
     );
 

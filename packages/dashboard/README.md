@@ -216,6 +216,16 @@ To add a new color theme:
 3. Add the swatch class for the theme picker in the CSS
 4. Update `ThemeSelector.tsx` with the new theme option
 
+## Performance Characteristics
+
+The dashboard includes several runtime safeguards to stay responsive during long sessions and on larger boards:
+
+- **Agent log cap**: The UI keeps only the most recent **500 agent log entries per task** in memory. Historical log fetches and live SSE appends are both truncated to this window.
+- **Memoized task rendering**: `TaskCard`, `Column`, and worktree grouping are memoized so unrelated SSE updates do not force the whole board to repaint. The board also preserves stable per-column task arrays for unchanged columns.
+- **Large-column pagination**: Columns with more than **100 tasks** use incremental client-side pagination, rendering **50 tasks initially** and loading **25 more** at a time. This is applied to active non-archived, non-`in-progress` columns to avoid breaking worktree grouping and archived browsing behavior.
+- **Badge update isolation**: Live GitHub PR/issue badge websocket updates are rendered through a dedicated child component so badge freshness is preserved even when task cards are memoized.
+- **SSE cleanup and reconnects**: Task and log streaming hooks explicitly clean up EventSource listeners/connections and avoid duplicate stream setup during rerenders.
+
 ## Development
 
 ```bash

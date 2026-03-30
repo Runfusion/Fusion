@@ -367,7 +367,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return { ...task, prompt };
   }
 
-  async listTasks(): Promise<Task[]> {
+  async listTasks(options?: { limit?: number; offset?: number }): Promise<Task[]> {
     if (!existsSync(this.tasksDir)) return [];
 
     const entries = await readdir(this.tasksDir, { withFileTypes: true });
@@ -383,13 +383,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
     }
 
-    return tasks.sort((a, b) => {
+    const sorted = tasks.sort((a, b) => {
       const cmp = a.createdAt.localeCompare(b.createdAt);
       if (cmp !== 0) return cmp;
       const aNum = parseInt(a.id.slice(a.id.lastIndexOf("-") + 1), 10) || 0;
       const bNum = parseInt(b.id.slice(b.id.lastIndexOf("-") + 1), 10) || 0;
       return aNum - bNum;
     });
+
+    const offset = Math.max(0, options?.offset ?? 0);
+    const limit = options?.limit;
+
+    if (limit === undefined) {
+      return sorted.slice(offset);
+    }
+
+    return sorted.slice(offset, offset + Math.max(0, limit));
   }
 
   async moveTask(id: string, toColumn: Column): Promise<Task> {

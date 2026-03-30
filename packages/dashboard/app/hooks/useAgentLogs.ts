@@ -2,6 +2,14 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { AgentLogEntry } from "@kb/core";
 import { fetchAgentLogs } from "../api";
 
+export const MAX_LOG_ENTRIES = 500;
+
+function capLogEntries(entries: AgentLogEntry[]): AgentLogEntry[] {
+  return entries.length > MAX_LOG_ENTRIES
+    ? entries.slice(-MAX_LOG_ENTRIES)
+    : entries;
+}
+
 /**
  * Hook that manages agent log fetching and live SSE streaming for a task.
  *
@@ -33,9 +41,9 @@ export function useAgentLogs(taskId: string | null, enabled: boolean) {
     async function init() {
       setLoading(true);
       try {
-        const historical = await fetchAgentLogs(taskId!);
+        const historical = await fetchAgentLogs(taskId);
         if (cancelled) return;
-        setEntries(historical);
+        setEntries(capLogEntries(historical));
       } catch {
         if (cancelled) return;
         setEntries([]);
@@ -51,14 +59,14 @@ export function useAgentLogs(taskId: string | null, enabled: boolean) {
         if (cancelled) return;
         try {
           const entry: AgentLogEntry = JSON.parse(e.data);
-          setEntries((prev) => [...prev, entry]);
+          setEntries((prev) => capLogEntries([...prev, entry]));
         } catch {
           // skip malformed events
         }
       });
     }
 
-    init();
+    void init();
 
     return () => {
       cancelled = true;

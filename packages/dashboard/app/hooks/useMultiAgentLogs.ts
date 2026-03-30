@@ -2,6 +2,14 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { AgentLogEntry } from "@kb/core";
 import { fetchAgentLogs } from "../api";
 
+export const MAX_LOG_ENTRIES = 500;
+
+function capLogEntries(entries: AgentLogEntry[]): AgentLogEntry[] {
+  return entries.length > MAX_LOG_ENTRIES
+    ? entries.slice(-MAX_LOG_ENTRIES)
+    : entries;
+}
+
 export interface TaskLogState {
   entries: AgentLogEntry[];
   loading: boolean;
@@ -13,7 +21,6 @@ export type LogStateMap = Record<string, TaskLogState>;
 interface InitState {
   entries: AgentLogEntry[];
   loading: boolean;
-  es?: EventSource;
 }
 
 /**
@@ -30,9 +37,12 @@ interface InitState {
 export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
   // Store state per task
   const [stateMap, setStateMap] = useState<Record<string, InitState>>({});
-  
+
   // Ref to track active EventSources
   const sourcesRef = useRef<Record<string, EventSource>>({});
+  const initializingRef = useRef<Set<string>>(new Set());
+  const cancelledRef = useRef<Record<string, boolean>>({});
+  const pendingLiveEntriesRef = useRef<Record<string, AgentLogEntry[]>>({});
 
   // Create clear function for a specific task
   const createClearFn = useCallback((taskId: string) => {
@@ -40,6 +50,7 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
       setStateMap((prev) => {
         const current = prev[taskId];
         if (!current) return prev;
+        pendingLiveEntriesRef.current[taskId] = [];
         return {
           ...prev,
           [taskId]: { ...current, entries: [] },
@@ -52,17 +63,33 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
   useEffect(() => {
     const currentIds = new Set(taskIds);
     const sources = sourcesRef.current;
+    const initializing = initializingRef.current;
+    const cancelled = cancelledRef.current;
 
     // Close connections for tasks no longer in the list
     for (const [taskId, es] of Object.entries(sources)) {
       if (!currentIds.has(taskId)) {
+        cancelled[taskId] = true;
         es.close();
         delete sources[taskId];
+        initializing.delete(taskId);
+        delete cancelled[taskId];
+        delete pendingLiveEntriesRef.current[taskId];
+
         // Remove state for disconnected task
         setStateMap((prev) => {
           const { [taskId]: _, ...rest } = prev;
           return rest;
         });
+      }
+    }
+
+    // Mark removed pending initializations as cancelled even if EventSource not created yet
+    for (const taskId of Object.keys(cancelled)) {
+      if (!currentIds.has(taskId)) {
+        cancelled[taskId] = true;
+        initializing.delete(taskId);
+        delete pendingLiveEntriesRef.current[taskId];
       }
     }
 
@@ -74,68 +101,116 @@ export function useMultiAgentLogs(taskIds: string[]): LogStateMap {
         return { ...prev, [taskId]: { entries: [], loading: true } };
       });
 
-      // Skip if already connected
-      if (sources[taskId]) continue;
+      // Skip if already connected or currently initializing
+      if (sources[taskId] || initializing.has(taskId)) continue;
 
-      let cancelled = false;
+      initializing.add(taskId);
+      cancelled[taskId] = false;
+      pendingLiveEntriesRef.current[taskId] = [];
 
-      // Fetch historical logs and open SSE
-      const init = async () => {
+      // Open SSE connection immediately so rerenders cannot race a second setup
+      const es = new EventSource(`/api/tasks/${taskId}/logs/stream`);
+      sources[taskId] = es;
+
+      const handleAgentLog = (e: MessageEvent) => {
+        if (cancelled[taskId]) return;
+
         try {
-          const historical = await fetchAgentLogs(taskId);
-          if (cancelled) return;
-          
-          setStateMap((prev) => ({
-            ...prev,
-            [taskId]: { ...prev[taskId], entries: historical, loading: false },
-          }));
+          const entry: AgentLogEntry = JSON.parse(e.data);
+          pendingLiveEntriesRef.current[taskId] = capLogEntries([
+            ...(pendingLiveEntriesRef.current[taskId] ?? []),
+            entry,
+          ]);
+
+          setStateMap((prev) => {
+            const current = prev[taskId];
+            if (!current) return prev;
+            return {
+              ...prev,
+              [taskId]: { ...current, entries: capLogEntries([...current.entries, entry]) },
+            };
+          });
         } catch {
-          if (cancelled) return;
-          setStateMap((prev) => ({
-            ...prev,
-            [taskId]: { ...prev[taskId], entries: [], loading: false },
-          }));
+          // skip malformed events
         }
-
-        // Open SSE connection
-        const es = new EventSource(`/api/tasks/${taskId}/logs/stream`);
-        sources[taskId] = es;
-
-        es.addEventListener("agent:log", (e) => {
-          try {
-            const entry: AgentLogEntry = JSON.parse(e.data);
-            setStateMap((prev) => {
-              const current = prev[taskId];
-              if (!current) return prev;
-              return {
-                ...prev,
-                [taskId]: { ...current, entries: [...current.entries, entry] },
-              };
-            });
-          } catch {
-            // skip malformed events
-          }
-        });
       };
 
-      init();
+      const handleError = () => {
+        es.removeEventListener("agent:log", handleAgentLog);
+        es.removeEventListener("error", handleError);
+
+        if (sourcesRef.current[taskId] === es) {
+          es.close();
+          delete sourcesRef.current[taskId];
+        }
+
+        initializingRef.current.delete(taskId);
+      };
+
+      es.addEventListener("agent:log", handleAgentLog);
+      es.addEventListener("error", handleError);
+
+      // Fetch historical logs
+      void fetchAgentLogs(taskId)
+        .then((historical) => {
+          if (cancelled[taskId]) return;
+
+          const pendingLive = pendingLiveEntriesRef.current[taskId] ?? [];
+          setStateMap((prev) => ({
+            ...prev,
+            [taskId]: {
+              ...prev[taskId],
+              entries: capLogEntries([...historical, ...pendingLive]),
+              loading: false,
+            },
+          }));
+        })
+        .catch(() => {
+          if (cancelled[taskId]) return;
+
+          const pendingLive = pendingLiveEntriesRef.current[taskId] ?? [];
+          setStateMap((prev) => ({
+            ...prev,
+            [taskId]: { ...prev[taskId], entries: capLogEntries(pendingLive), loading: false },
+          }));
+        })
+        .finally(() => {
+          pendingLiveEntriesRef.current[taskId] = [];
+          initializingRef.current.delete(taskId);
+        });
     }
 
     // Cleanup on effect re-run or unmount
     return () => {
-      // In Strict Mode, React runs effects twice.
-      // We only want to close connections on actual unmount, not on every cleanup.
-      // The actual closing of connections for removed tasks is handled above.
+      for (const taskId of taskIds) {
+        cancelledRef.current[taskId] = true;
+
+        const es = sourcesRef.current[taskId];
+        if (es) {
+          es.close();
+          delete sourcesRef.current[taskId];
+        }
+
+        initializingRef.current.delete(taskId);
+      }
     };
   }, [taskIds]);
 
   // Close all connections on unmount
   useEffect(() => {
     return () => {
+      for (const taskId of Object.keys(cancelledRef.current)) {
+        cancelledRef.current[taskId] = true;
+      }
+
       for (const es of Object.values(sourcesRef.current)) {
         es.close();
       }
+
       sourcesRef.current = {};
+      initializingRef.current.clear();
+      cancelledRef.current = {};
+      pendingLiveEntriesRef.current = {};
     };
   }, []);
 

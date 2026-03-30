@@ -1,11 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import React from "react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Column } from "../Column";
 import type { Task, Column as ColumnType } from "@kb/core";
 
 // Mock child components to keep tests focused on the Column badge behavior
+const taskCardRenderSpy = vi.fn();
+
 vi.mock("../TaskCard", () => ({
-  TaskCard: ({ task }: { task: Task }) => <div data-testid={`task-${task.id}`} />,
+  TaskCard: React.memo(({ task }: { task: Task }) => {
+    taskCardRenderSpy(task.id);
+    return <div data-testid={`task-${task.id}`} />;
+  }),
 }));
 vi.mock("../WorktreeGroup", () => ({
   WorktreeGroup: () => <div />,
@@ -34,9 +41,12 @@ function makeTask(id: string): Task {
   };
 }
 
+beforeEach(() => {
+  taskCardRenderSpy.mockClear();
+});
+
 const defaultProps = {
   column: "triage" as ColumnType,
-  allTasks: [] as Task[],
   maxConcurrent: 2,
   onMoveTask: vi.fn().mockResolvedValue({} as Task),
   onOpenDetail: vi.fn(),
@@ -73,6 +83,100 @@ describe("Column count-flash", () => {
 
     const badge = screen.getByText("1");
     expect(badge.className).not.toContain("count-flash");
+  });
+});
+
+describe("Column memoization", () => {
+  it("does not re-render task cards when rerendered with the same task references", () => {
+    const tasks = [makeTask("KB-001")];
+    const props = { ...defaultProps, tasks };
+
+    const { rerender } = render(<Column {...props} />);
+    expect(taskCardRenderSpy).toHaveBeenCalledTimes(1);
+
+    rerender(<Column {...props} />);
+
+    expect(taskCardRenderSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Column pagination", () => {
+  it("shows only the initial page for large non-in-progress columns", () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
+    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
+
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
+    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
+  });
+
+  it("loads more tasks on demand", async () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
+    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
+
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
+  });
+
+  it("preserves pagination across task array updates", async () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
+    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
+
+    rerender(<Column {...defaultProps} column="todo" tasks={[...tasks]} />);
+
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
+  });
+
+  it("clamps visible tasks when a paginated list shrinks", async () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
+    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(75);
+
+    rerender(<Column {...defaultProps} column="todo" tasks={tasks.slice(0, 60)} />);
+
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(60);
+  });
+
+  it("still handles drops when pagination is enabled", () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
+    const onMoveTask = vi.fn().mockResolvedValue({} as Task);
+    render(<Column {...defaultProps} column="todo" tasks={tasks} onMoveTask={onMoveTask} />);
+
+    const column = screen.getByText("110").closest(".column") as HTMLElement;
+    const dataTransfer = {
+      getData: vi.fn().mockReturnValue("KB-999"),
+      dropEffect: "move",
+    };
+
+    fireEvent.drop(column, { dataTransfer });
+
+    expect(onMoveTask).toHaveBeenCalledWith("KB-999", "todo");
+  });
+
+  it("does not paginate at the threshold boundary", () => {
+    const tasks = Array.from({ length: 100 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
+    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
+
+    expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
+  });
+
+  it("does not paginate in-progress columns", () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => ({ ...makeTask(`KB-${String(index + 1).padStart(3, "0")}`), column: "in-progress" as ColumnType }));
+    render(<Column {...defaultProps} column="in-progress" tasks={tasks} />);
+
+    expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
+  });
+
+  it("does not paginate archived columns", () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => ({ ...makeTask(`KB-${String(index + 1).padStart(3, "0")}`), column: "archived" as ColumnType }));
+    render(<Column {...defaultProps} column="archived" tasks={tasks} collapsed={false} />);
+
+    expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
   });
 });
 

@@ -26,6 +26,7 @@ function compareTimestamps(a: string | undefined, b: string | undefined): number
 
 export function useTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [connectionNonce, setConnectionNonce] = useState(0);
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
 
@@ -36,14 +37,16 @@ export function useTasks() {
 
   // SSE live updates
   useEffect(() => {
+    let closedByCleanup = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const es = new EventSource("/api/events");
 
-    es.addEventListener("task:created", (e) => {
+    const handleCreated = (e: MessageEvent) => {
       const task = normalizeTask(JSON.parse(e.data) as Task);
       setTasks((prev) => [...prev, task]);
-    });
+    };
 
-    es.addEventListener("task:moved", (e) => {
+    const handleMoved = (e: MessageEvent) => {
       // Payload: { task, from, to } - task object includes server-set columnMovedAt
       // We use 'to' as the authoritative column and trust the server's columnMovedAt
       const { task, to }: { task: Task; from: Column; to: Column } = JSON.parse(e.data);
@@ -53,9 +56,9 @@ export function useTasks() {
           t.id === normalizedTask.id ? { ...normalizedTask, column: to } : t
         )
       );
-    });
+    };
 
-    es.addEventListener("task:updated", (e) => {
+    const handleUpdated = (e: MessageEvent) => {
       const incoming = normalizeTask(JSON.parse(e.data) as Task);
       setTasks((prev) =>
         prev.map((t) => {
@@ -80,14 +83,14 @@ export function useTasks() {
           return incoming;
         })
       );
-    });
+    };
 
-    es.addEventListener("task:deleted", (e) => {
+    const handleDeleted = (e: MessageEvent) => {
       const task = normalizeTask(JSON.parse(e.data) as Task);
       setTasks((prev) => prev.filter((t) => t.id !== task.id));
-    });
+    };
 
-    es.addEventListener("task:merged", (e) => {
+    const handleMerged = (e: MessageEvent) => {
       // Payload: { task, branch, merged, worktreeRemoved, branchDeleted, ... }
       // The task object has already been moved to 'done' by the server
       const { task }: { task: Task } = JSON.parse(e.data);
@@ -98,18 +101,44 @@ export function useTasks() {
           t.id === normalizedTask.id ? { ...normalizedTask, column: "done" as Column } : t
         )
       );
-    });
+    };
 
-    es.addEventListener("error", () => {
-      setTimeout(() => {
-        if (es.readyState === EventSource.CLOSED) {
-          // Will reconnect via new effect cycle
-        }
+    const cleanup = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+
+      es.removeEventListener("task:created", handleCreated);
+      es.removeEventListener("task:moved", handleMoved);
+      es.removeEventListener("task:updated", handleUpdated);
+      es.removeEventListener("task:deleted", handleDeleted);
+      es.removeEventListener("task:merged", handleMerged);
+      es.removeEventListener("error", handleError);
+      es.close();
+    };
+
+    const handleError = () => {
+      if (closedByCleanup) return;
+
+      cleanup();
+      reconnectTimer = setTimeout(() => {
+        setConnectionNonce((current) => current + 1);
       }, 3000);
-    });
+    };
 
-    return () => es.close();
-  }, []);
+    es.addEventListener("task:created", handleCreated);
+    es.addEventListener("task:moved", handleMoved);
+    es.addEventListener("task:updated", handleUpdated);
+    es.addEventListener("task:deleted", handleDeleted);
+    es.addEventListener("task:merged", handleMerged);
+    es.addEventListener("error", handleError);
+
+    return () => {
+      closedByCleanup = true;
+      cleanup();
+    };
+  }, [connectionNonce]);
 
   const createTask = useCallback(async (input: TaskCreateInput): Promise<Task> => {
     return normalizeTask(await api.createTask(input));

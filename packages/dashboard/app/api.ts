@@ -11,8 +11,12 @@ async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T
   return data as T;
 }
 
-export function fetchTasks(): Promise<Task[]> {
-  return api<Task[]>("/tasks");
+export function fetchTasks(limit?: number, offset?: number): Promise<Task[]> {
+  const search = new URLSearchParams();
+  if (limit !== undefined) search.set("limit", String(limit));
+  if (offset !== undefined) search.set("offset", String(offset));
+  const suffix = search.size > 0 ? `?${search.toString()}` : "";
+  return api<Task[]>(`/tasks${suffix}`);
 }
 
 export async function fetchTaskDetail(id: string): Promise<TaskDetail> {

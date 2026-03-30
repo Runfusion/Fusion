@@ -21,10 +21,13 @@ const mockUpdateTask = vi.mocked(api.updateTask);
 // Mock EventSource
 class MockEventSource {
   static instances: MockEventSource[] = [];
+  static CLOSED = 2;
   url: string;
   listeners: Record<string, ((e: any) => void)[]> = {};
   readyState = 0;
-  close = vi.fn();
+  close = vi.fn(() => {
+    this.readyState = MockEventSource.CLOSED;
+  });
 
   constructor(url: string) {
     this.url = url;
@@ -37,10 +40,14 @@ class MockEventSource {
     this.listeners[event].push(fn);
   }
 
+  removeEventListener(event: string, fn: (e: any) => void) {
+    this.listeners[event] = (this.listeners[event] || []).filter((listener) => listener !== fn);
+  }
+
   // Helper to simulate a server event
-  _emit(event: string, data: unknown) {
+  _emit(event: string, data?: unknown) {
     for (const fn of this.listeners[event] || []) {
-      fn({ data: JSON.stringify(data) });
+      fn(data === undefined ? {} : { data: JSON.stringify(data) });
     }
   }
 }
@@ -172,6 +179,48 @@ describe("useTasks", () => {
       expect(doneTasks).toHaveLength(1);
       expect(doneTasks[0].id).toBe("KB-001");
     });
+  });
+
+  it("closes the SSE connection on unmount", async () => {
+    const { unmount } = renderHook(() => useTasks());
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+
+    const es = MockEventSource.instances[0];
+    unmount();
+
+    expect(es.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the broken SSE connection and reconnects after an error", async () => {
+    vi.useFakeTimers();
+    try {
+      renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(1);
+      });
+
+      const first = MockEventSource.instances[0];
+
+      act(() => {
+        first._emit("error");
+      });
+
+      expect(first.close).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(2);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   describe("SSE event: task:updated", () => {

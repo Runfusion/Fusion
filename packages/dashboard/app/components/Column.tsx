@@ -1,6 +1,6 @@
-import { useState, useCallback } from "react";
+import { memo, useMemo, useState, useCallback, useEffect } from "react";
 import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
-import type { Task, TaskDetail, TaskCreateInput, Column as ColumnType } from "@kb/core";
+import type { Task, TaskDetail, Column as ColumnType } from "@kb/core";
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS } from "@kb/core";
 import { TaskCard } from "./TaskCard";
 import { WorktreeGroup } from "./WorktreeGroup";
@@ -9,10 +9,13 @@ import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
+const PAGINATED_COLUMN_THRESHOLD = 100;
+const VISIBLE_TASKS_INITIAL = 50;
+const VISIBLE_TASKS_INCREMENT = 25;
+
 interface ColumnProps {
   column: ColumnType;
   tasks: Task[];
-  allTasks: Task[];
   maxConcurrent: number;
   onMoveTask: (id: string, column: ColumnType) => Promise<Task>;
   onOpenDetail: (task: TaskDetail) => void;
@@ -32,13 +35,25 @@ interface ColumnProps {
   onToggleCollapse?: () => void;
 }
 
-export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, collapsed, onToggleCollapse }: ColumnProps) {
+function ColumnComponent({ column, tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, collapsed, onToggleCollapse }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
+  const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
 
   // Archived column is collapsed by default - don't show drag state when collapsed
   const isArchived = column === "archived";
   const isCollapsed = isArchived && collapsed;
+  const shouldPaginate = !isArchived && column !== "in-progress" && tasks.length > PAGINATED_COLUMN_THRESHOLD;
+
+  useEffect(() => {
+    setVisibleTaskCount((current) => {
+      if (column === "in-progress" || isArchived || tasks.length <= PAGINATED_COLUMN_THRESHOLD) {
+        return VISIBLE_TASKS_INITIAL;
+      }
+
+      return Math.min(Math.max(current, VISIBLE_TASKS_INITIAL), tasks.length);
+    });
+  }, [column, isArchived, tasks.length]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     // Don't allow dropping into archived column via drag-drop
@@ -67,6 +82,22 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
       addToast(err.message, "error");
     }
   }, [column, onMoveTask, addToast]);
+
+  const worktreeGroups = useMemo(() => {
+    if (column !== "in-progress") return [];
+    return groupByWorktree(tasks, tasks, maxConcurrent);
+  }, [column, tasks, maxConcurrent]);
+
+  const visibleTasks = useMemo(() => {
+    if (!shouldPaginate) return tasks;
+    return tasks.slice(0, visibleTaskCount);
+  }, [shouldPaginate, tasks, visibleTaskCount]);
+
+  const hiddenTaskCount = Math.max(0, tasks.length - visibleTasks.length);
+
+  const handleLoadMore = useCallback(() => {
+    setVisibleTaskCount((current) => Math.min(current + VISIBLE_TASKS_INCREMENT, tasks.length));
+  }, [tasks.length]);
 
   return (
     <div
@@ -114,45 +145,54 @@ export function Column({ column, tasks, allTasks, maxConcurrent, onMoveTask, onO
             <QuickEntryBox onCreate={onQuickCreate} addToast={addToast} />
           )}
           {column === "in-progress" ? (
-            (() => {
-              const groups = groupByWorktree(tasks, allTasks, maxConcurrent);
-              return groups.length === 0 ? (
-                <div className="empty-column">No tasks</div>
-              ) : (
-                groups.map((group) => (
-                  <WorktreeGroup
-                    key={group.label}
-                    label={group.label}
-                    activeTasks={group.activeTasks}
-                    queuedTasks={group.queuedTasks}
-                    onOpenDetail={onOpenDetail}
-                    addToast={addToast}
-                    globalPaused={globalPaused}
-                    tasks={allTasks}
-                    onUpdateTask={onUpdateTask}
-                  />
-                ))
-              );
-            })()
+            worktreeGroups.length === 0 ? (
+              <div className="empty-column">No tasks</div>
+            ) : (
+              worktreeGroups.map((group) => (
+                <WorktreeGroup
+                  key={group.label}
+                  label={group.label}
+                  activeTasks={group.activeTasks}
+                  queuedTasks={group.queuedTasks}
+                  onOpenDetail={onOpenDetail}
+                  addToast={addToast}
+                  globalPaused={globalPaused}
+                  onUpdateTask={onUpdateTask}
+                />
+              ))
+            )
           ) : tasks.length === 0 ? (
             <div className="empty-column">No tasks</div>
           ) : (
-            tasks.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                onOpenDetail={onOpenDetail}
-                addToast={addToast}
-                globalPaused={globalPaused}
-                tasks={allTasks}
-                onUpdateTask={onUpdateTask}
-                onArchiveTask={onArchiveTask}
-                onUnarchiveTask={onUnarchiveTask}
-              />
-            ))
+            <>
+              {visibleTasks.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  onOpenDetail={onOpenDetail}
+                  addToast={addToast}
+                  globalPaused={globalPaused}
+                  onUpdateTask={onUpdateTask}
+                  onArchiveTask={onArchiveTask}
+                  onUnarchiveTask={onUnarchiveTask}
+                />
+              ))}
+              {shouldPaginate && hiddenTaskCount > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleLoadMore}
+                >
+                  Load {Math.min(VISIBLE_TASKS_INCREMENT, hiddenTaskCount)} more ({hiddenTaskCount} remaining)
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
     </div>
   );
 }
+
+export const Column = memo(ColumnComponent);
+Column.displayName = "Column";

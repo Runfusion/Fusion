@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { useMultiAgentLogs } from "../useMultiAgentLogs";
+import { MAX_LOG_ENTRIES, useMultiAgentLogs } from "../useMultiAgentLogs";
 import { fetchAgentLogs } from "../../api";
 
 // Mock the api module
@@ -15,7 +15,9 @@ class MockEventSource {
   url: string;
   listeners: Record<string, ((e: { data: string }) => void)[]> = {};
   readyState = 0;
-  close = vi.fn();
+  close = vi.fn(() => {
+    this.readyState = 2;
+  });
 
   constructor(url: string) {
     this.url = url;
@@ -27,10 +29,14 @@ class MockEventSource {
     this.listeners[event].push(fn);
   }
 
+  removeEventListener(event: string, fn: (e: { data: string }) => void) {
+    this.listeners[event] = (this.listeners[event] || []).filter((listener) => listener !== fn);
+  }
+
   // Helper to simulate a server event
-  _emit(event: string, data: unknown) {
+  _emit(event: string, data?: unknown) {
     for (const fn of this.listeners[event] || []) {
-      fn({ data: JSON.stringify(data) });
+      fn(data === undefined ? ({ } as { data: string }) : { data: JSON.stringify(data) });
     }
   }
 }
@@ -311,8 +317,13 @@ describe("useMultiAgentLogs", () => {
     expect(result.current["KB-001"].entries).toEqual([]);
   });
 
-  it("only opens one connection per task ID (no duplicates)", async () => {
-    mockFetchAgentLogs.mockResolvedValue([]);
+  it("does not create duplicate connections while historical fetch is still pending", async () => {
+    let resolveFetch: ((value: never[]) => void) | undefined;
+    mockFetchAgentLogs.mockImplementation(
+      () => new Promise((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
 
     const instances: MockEventSource[] = [];
     (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
@@ -328,21 +339,152 @@ describe("useMultiAgentLogs", () => {
     );
 
     await waitFor(() => {
-      expect(instances.length).toBeGreaterThanOrEqual(1);
+      expect(instances.filter((es) => es.url === "/api/tasks/KB-001/logs/stream")).toHaveLength(1);
     });
 
-    const initialCount = instances.length;
-
-    // Re-render with same task ID (should not create new connection)
     rerender({ taskIds: ["KB-001"] });
 
-    // Wait a bit
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    
-    // In strict mode, we may have more instances due to double-run, 
-    // but the active (non-closed) connections should remain stable
-    const activeConnections = instances.filter((es) => !es.close.mock?.calls?.length);
-    expect(activeConnections.length).toBeLessThanOrEqual(initialCount);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(instances.filter((es) => es.url === "/api/tasks/KB-001/logs/stream")).toHaveLength(1);
+
+    resolveFetch?.([]);
+
+    await waitFor(() => {
+      expect(mockFetchAgentLogs).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("closes a task connection when its stream emits an error", async () => {
+    mockFetchAgentLogs.mockResolvedValue([]);
+
+    const instances: MockEventSource[] = [];
+    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
+      constructor(url: string) {
+        super(url);
+        instances.push(this);
+      }
+    };
+
+    renderHook(() => useMultiAgentLogs(["KB-001"]));
+
+    await waitFor(() => {
+      expect(instances).toHaveLength(1);
+    });
+
+    const es = instances[0];
+
+    act(() => {
+      es._emit("error");
+    });
+
+    expect(es.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("truncates oversized historical logs per task to the most recent entries", async () => {
+    const oversized = Array.from({ length: MAX_LOG_ENTRIES + 10 }, (_, index) => ({
+      timestamp: `2026-01-01T00:${String(index).padStart(2, "0")}:00Z`,
+      taskId: "KB-001",
+      text: `entry-${index}`,
+      type: "text" as const,
+    }));
+
+    mockFetchAgentLogs.mockResolvedValue(oversized);
+
+    const { result } = renderHook(() => useMultiAgentLogs(["KB-001"]));
+
+    await waitFor(() => {
+      expect(result.current["KB-001"].entries).toHaveLength(MAX_LOG_ENTRIES);
+    });
+
+    expect(result.current["KB-001"].entries[0].text).toBe("entry-10");
+    expect(result.current["KB-001"].entries.at(-1)?.text).toBe(`entry-${MAX_LOG_ENTRIES + 9}`);
+  });
+
+  it("preserves streamed entries that arrive before historical fetch resolves", async () => {
+    let resolveFetch: ((value: Array<{ timestamp: string; taskId: string; text: string; type: "text" }>) => void) | undefined;
+    mockFetchAgentLogs.mockImplementation(
+      () => new Promise((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+
+    const instances: MockEventSource[] = [];
+    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
+      constructor(url: string) {
+        super(url);
+        instances.push(this);
+      }
+    };
+
+    const { result } = renderHook(() => useMultiAgentLogs(["KB-001"]));
+
+    await waitFor(() => {
+      expect(instances).toHaveLength(1);
+    });
+
+    act(() => {
+      instances[0]._emit("agent:log", {
+        timestamp: "2026-01-01T00:01:00Z",
+        taskId: "KB-001",
+        text: "live-before-history",
+        type: "text",
+      });
+    });
+
+    act(() => {
+      resolveFetch?.([
+        {
+          timestamp: "2026-01-01T00:00:00Z",
+          taskId: "KB-001",
+          text: "historical",
+          type: "text",
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(result.current["KB-001"].entries).toHaveLength(2);
+    });
+
+    expect(result.current["KB-001"].entries[0].text).toBe("historical");
+    expect(result.current["KB-001"].entries[1].text).toBe("live-before-history");
+  });
+
+  it("truncates live SSE entries per task to the most recent entries", async () => {
+    mockFetchAgentLogs.mockResolvedValue([]);
+
+    const instances: MockEventSource[] = [];
+    (globalThis as unknown as Record<string, unknown>).EventSource = class extends MockEventSource {
+      constructor(url: string) {
+        super(url);
+        instances.push(this);
+      }
+    };
+
+    const { result } = renderHook(() => useMultiAgentLogs(["KB-001"]));
+
+    await waitFor(() => {
+      expect(instances).toHaveLength(1);
+    });
+
+    act(() => {
+      for (let index = 0; index < MAX_LOG_ENTRIES + 15; index++) {
+        instances[0]._emit("agent:log", {
+          timestamp: `2026-01-01T00:${String(index).padStart(2, "0")}:00Z`,
+          taskId: "KB-001",
+          text: `live-${index}`,
+          type: "text",
+        });
+      }
+    });
+
+    await waitFor(() => {
+      expect(result.current["KB-001"].entries).toHaveLength(MAX_LOG_ENTRIES);
+    });
+
+    expect(result.current["KB-001"].entries[0].text).toBe("live-15");
+    expect(result.current["KB-001"].entries.at(-1)?.text).toBe(`live-${MAX_LOG_ENTRIES + 14}`);
   });
 
   it("handles SSE events for multiple tasks independently", async () => {

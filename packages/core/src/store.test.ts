@@ -562,6 +562,17 @@ describe("TaskStore", () => {
       expect(tasks).toHaveLength(2);
       expect(tasks.map((t) => t.id).sort()).toEqual(["KB-001", "PROJ-002"]);
     });
+
+    it("supports pagination with limit and offset", async () => {
+      await store.createTask({ description: "Task 1" });
+      await store.createTask({ description: "Task 2" });
+      await store.createTask({ description: "Task 3" });
+
+      const paged = await store.listTasks({ limit: 1, offset: 1 });
+
+      expect(paged).toHaveLength(1);
+      expect(paged[0].id).toBe("KB-002");
+    });
   });
 
   describe("pauseTask", () => {

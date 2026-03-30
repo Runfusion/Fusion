@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { useAgentLogs } from "../useAgentLogs";
+import { MAX_LOG_ENTRIES, useAgentLogs } from "../useAgentLogs";
 import { fetchAgentLogs } from "../../api";
 
 // Mock the api module
@@ -16,7 +16,9 @@ class MockEventSource {
   url: string;
   listeners: Record<string, ((e: any) => void)[]> = {};
   readyState = 0;
-  close = vi.fn();
+  close = vi.fn(() => {
+    this.readyState = 2;
+  });
 
   constructor(url: string) {
     this.url = url;
@@ -133,6 +135,54 @@ describe("useAgentLogs", () => {
     unmount();
 
     expect(es.close).toHaveBeenCalled();
+  });
+
+  it("truncates oversized historical logs to the most recent entries", async () => {
+    const historicalLogs = Array.from({ length: MAX_LOG_ENTRIES + 25 }, (_, index) => ({
+      timestamp: `2026-01-01T00:${String(index).padStart(2, "0")}:00Z`,
+      taskId: "KB-001",
+      text: `entry-${index}`,
+      type: "text" as const,
+    }));
+    mockFetchAgentLogs.mockResolvedValueOnce(historicalLogs);
+
+    const { result } = renderHook(() => useAgentLogs("KB-001", true));
+
+    await waitFor(() => {
+      expect(result.current.entries).toHaveLength(MAX_LOG_ENTRIES);
+    });
+
+    expect(result.current.entries[0].text).toBe("entry-25");
+    expect(result.current.entries.at(-1)?.text).toBe(`entry-${MAX_LOG_ENTRIES + 24}`);
+  });
+
+  it("truncates live SSE entries to the most recent entries", async () => {
+    mockFetchAgentLogs.mockResolvedValueOnce([]);
+
+    const { result } = renderHook(() => useAgentLogs("KB-001", true));
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+
+    const es = MockEventSource.instances[0];
+    act(() => {
+      for (let index = 0; index < MAX_LOG_ENTRIES + 20; index++) {
+        es._emit("agent:log", {
+          timestamp: `2026-01-01T00:${String(index).padStart(2, "0")}:00Z`,
+          taskId: "KB-001",
+          text: `live-${index}`,
+          type: "text",
+        });
+      }
+    });
+
+    await waitFor(() => {
+      expect(result.current.entries).toHaveLength(MAX_LOG_ENTRIES);
+    });
+
+    expect(result.current.entries[0].text).toBe("live-20");
+    expect(result.current.entries.at(-1)?.text).toBe(`live-${MAX_LOG_ENTRIES + 19}`);
   });
 
   it("does not fetch when taskId is null", () => {

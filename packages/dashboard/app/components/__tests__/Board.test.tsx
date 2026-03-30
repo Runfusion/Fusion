@@ -1,36 +1,55 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import React from "react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { Board } from "../Board";
 import { COLUMNS } from "@kb/core";
 
 import type { Task } from "@kb/core";
 
+const columnRenderCounts: Record<string, number> = {};
+
 // Mock child components so we only test Board's own rendering
 vi.mock("../Column", () => ({
-  Column: ({ column, tasks }: { column: string; tasks: Task[] }) => (
-    <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} />
-  ),
+  Column: React.memo(({ column, tasks, onToggleCollapse }: { column: string; tasks: Task[]; onToggleCollapse?: () => void }) => {
+    columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
+    return (
+      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)}>
+        {onToggleCollapse && <button onClick={onToggleCollapse}>toggle-{column}</button>}
+      </div>
+    );
+  }),
 }));
 
 const noop = () => {};
 const noopAsync = () => Promise.resolve({} as any);
 
+beforeEach(() => {
+  for (const key of Object.keys(columnRenderCounts)) {
+    delete columnRenderCounts[key];
+  }
+});
+
+function createBoardProps(overrides = {}) {
+  return {
+    tasks: [],
+    maxConcurrent: 2,
+    onMoveTask: noopAsync,
+    onOpenDetail: noop,
+    addToast: noop,
+    onQuickCreate: noopAsync,
+    onNewTask: noop,
+    autoMerge: true,
+    onToggleAutoMerge: noop,
+    globalPaused: false,
+    onUpdateTask: undefined,
+    onArchiveTask: undefined,
+    onUnarchiveTask: undefined,
+    ...overrides,
+  };
+}
+
 function renderBoard(props = {}) {
-  return render(
-    <Board
-      tasks={[]}
-      maxConcurrent={2}
-      onMoveTask={noopAsync}
-      onOpenDetail={noop}
-      addToast={noop}
-      onQuickCreate={noopAsync}
-      onNewTask={noop}
-      autoMerge={true}
-      onToggleAutoMerge={noop}
-      globalPaused={false}
-      {...props}
-    />,
-  );
+  return render(<Board {...createBoardProps(props)} />);
 }
 
 describe("Board", () => {
@@ -193,6 +212,51 @@ describe("Board", () => {
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
       expect(todoTasks).toHaveLength(0);
+    });
+
+    it("keeps unaffected columns stable when archived collapse toggles", () => {
+      const tasks: Task[] = [
+        createTask({ id: "KB-001", description: "Todo task", column: "todo" }),
+        createTask({ id: "KB-002", description: "Archived task", column: "archived" }),
+      ];
+
+      renderBoard({ tasks });
+
+      const initialTodoRenders = columnRenderCounts.todo;
+      const initialArchivedRenders = columnRenderCounts.archived;
+
+      fireEvent.click(screen.getByRole("button", { name: "toggle-archived" }));
+
+      expect(columnRenderCounts.archived).toBeGreaterThan(initialArchivedRenders);
+      expect(columnRenderCounts.todo).toBe(initialTodoRenders);
+    });
+
+    it("only re-renders the affected column when a task updates", () => {
+      const tasks: Task[] = [
+        createTask({ id: "KB-001", description: "Todo task", column: "todo", title: "Original" }),
+        createTask({ id: "KB-002", description: "Done task", column: "done", title: "Done" }),
+      ];
+
+      const { rerender } = renderBoard({ tasks });
+
+      const initialTodoRenders = columnRenderCounts.todo;
+      const initialDoneRenders = columnRenderCounts.done;
+
+      rerender(
+        <Board
+          {...createBoardProps({
+            tasks: [
+              { ...tasks[0], title: "Updated" },
+              tasks[1],
+            ],
+          })}
+        />,
+      );
+
+      const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]");
+      expect(todoTasks[0].title).toBe("Updated");
+      expect(columnRenderCounts.todo).toBeGreaterThan(initialTodoRenders);
+      expect(columnRenderCounts.done).toBe(initialDoneRenders);
     });
 
     it("filtered tasks are sorted correctly (columnMovedAt, createdAt)", () => {

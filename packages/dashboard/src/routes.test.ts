@@ -118,6 +118,38 @@ function buildMultipart(fieldName: string, filename: string, contentType: string
   return { body, boundary };
 }
 
+describe("GET /tasks", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns tasks with optional pagination params", async () => {
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+    const res = await GET(buildApp(), "/api/tasks?limit=10&offset=5");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(store.listTasks).toHaveBeenCalledWith({ limit: 10, offset: 5 });
+  });
+
+  it("returns 400 for invalid pagination params", async () => {
+    const res = await GET(buildApp(), "/api/tasks?limit=-1");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("limit");
+  });
+});
+
 describe("GET /tasks/:id", () => {
   let store: TaskStore;
 

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Task, TaskDetail } from "@kb/core";
 import { ClipboardList, GitBranch } from "lucide-react";
 import { TaskCard } from "./TaskCard";
@@ -10,21 +11,19 @@ interface WorktreeGroupProps {
   onOpenDetail: (task: TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
-  tasks?: Task[]; // All tasks for dependency lookup
   onUpdateTask?: (
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
 }
 
-export function WorktreeGroup({
+function WorktreeGroupComponent({
   label,
   activeTasks,
   queuedTasks,
   onOpenDetail,
   addToast,
   globalPaused,
-  tasks = [],
   onUpdateTask,
 }: WorktreeGroupProps) {
   return (
@@ -36,7 +35,7 @@ export function WorktreeGroup({
         <span className="worktree-label">{label}</span>
       </div>
       {activeTasks.map((task) => (
-        <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} tasks={tasks} onUpdateTask={onUpdateTask} />
+        <TaskCard key={task.id} task={task} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} />
       ))}
       {queuedTasks.map((task) => (
         <TaskCard
@@ -46,10 +45,12 @@ export function WorktreeGroup({
           onOpenDetail={onOpenDetail}
           addToast={addToast}
           globalPaused={globalPaused}
-          tasks={tasks}
           onUpdateTask={onUpdateTask}
         />
       ))}
     </div>
   );
 }
+
+export const WorktreeGroup = memo(WorktreeGroupComponent);
+WorktreeGroup.displayName = "WorktreeGroup";

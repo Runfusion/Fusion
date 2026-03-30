@@ -582,9 +582,22 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   registerModelsRoute(router, options?.modelRegistry);
 
   // List all tasks
-  router.get("/tasks", async (_req, res) => {
+  router.get("/tasks", async (req, res) => {
     try {
-      const tasks = await store.listTasks();
+      const limit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
+      const offset = typeof req.query.offset === "string" ? Number.parseInt(req.query.offset, 10) : undefined;
+
+      if (limit !== undefined && (!Number.isFinite(limit) || limit < 0)) {
+        res.status(400).json({ error: "limit must be a non-negative integer" });
+        return;
+      }
+
+      if (offset !== undefined && (!Number.isFinite(offset) || offset < 0)) {
+        res.status(400).json({ error: "offset must be a non-negative integer" });
+        return;
+      }
+
+      const tasks = await store.listTasks({ limit, offset });
       res.json(tasks);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

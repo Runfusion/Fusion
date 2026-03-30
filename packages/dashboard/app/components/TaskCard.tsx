@@ -1,9 +1,8 @@
-import { useCallback, useState, useRef, useEffect } from "react";
+import { memo, useCallback, useState, useRef, useEffect } from "react";
 import { Link, Clock, Layers, Pencil, ChevronDown } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo } from "@kb/core";
 import { fetchTaskDetail, uploadAttachment } from "../api";
-import { GitHubBadge } from "./GitHubBadge";
-import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
+import { TaskCardBadge } from "./TaskCardBadge";
 import type { ToastType } from "../hooks/useToast";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
@@ -28,30 +27,12 @@ const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "specifying"]);
 
-function pickPreferredBadge<T extends { lastCheckedAt?: string }>(
-  liveValue: T | null | undefined,
-  liveTimestamp: string | undefined,
-  taskValue: T | undefined,
-  taskTimestamp: string | undefined,
-): T | undefined {
-  if (liveValue === undefined || !liveTimestamp) {
-    return taskValue;
-  }
-
-  if (!taskTimestamp || liveTimestamp >= taskTimestamp) {
-    return liveValue ?? undefined;
-  }
-
-  return taskValue;
-}
-
 interface TaskCardProps {
   task: Task;
   queued?: boolean;
   onOpenDetail: (task: TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
-  tasks?: Task[]; // All tasks for dependency lookup
   onUpdateTask?: (
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
@@ -60,13 +41,82 @@ interface TaskCardProps {
   onUnarchiveTask?: (id: string) => Promise<Task>;
 }
 
-export function TaskCard({
+function areTaskBadgeInfosEqual(
+  previous: PrInfo | IssueInfo | undefined,
+  next: PrInfo | IssueInfo | undefined,
+): boolean {
+  if (!previous && !next) return true;
+  if (!previous || !next) return false;
+
+  const previousKeys = Object.keys(previous) as Array<keyof typeof previous>;
+  const nextKeys = Object.keys(next) as Array<keyof typeof next>;
+
+  if (previousKeys.length !== nextKeys.length) return false;
+
+  return previousKeys.every((key) => previous[key] === next[key]);
+}
+
+function areTaskStepsEqual(previous: Task["steps"], next: Task["steps"]): boolean {
+  if (previous.length !== next.length) return false;
+  return previous.every((step, index) => step.name === next[index]?.name && step.status === next[index]?.status);
+}
+
+function areTaskDependenciesEqual(previous: string[], next: string[]): boolean {
+  if (previous.length !== next.length) return false;
+  return previous.every((dependency, index) => dependency === next[index]);
+}
+
+// Keep this comparator aligned with the fields TaskCard renders directly and the
+// task metadata that influences child badge freshness/subscriptions.
+function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): boolean {
+  const previousTask = previous.task;
+  const nextTask = next.task;
+
+  return (
+    previous.queued === next.queued &&
+    previous.globalPaused === next.globalPaused &&
+    previous.onOpenDetail === next.onOpenDetail &&
+    previous.addToast === next.addToast &&
+    previous.onUpdateTask === next.onUpdateTask &&
+    previous.onArchiveTask === next.onArchiveTask &&
+    previous.onUnarchiveTask === next.onUnarchiveTask &&
+    previousTask.id === nextTask.id &&
+    previousTask.title === nextTask.title &&
+    previousTask.description === nextTask.description &&
+    previousTask.column === nextTask.column &&
+    previousTask.columnMovedAt === nextTask.columnMovedAt &&
+    previousTask.updatedAt === nextTask.updatedAt &&
+    previousTask.createdAt === nextTask.createdAt &&
+    previousTask.status === nextTask.status &&
+    previousTask.paused === nextTask.paused &&
+    previousTask.error === nextTask.error &&
+    previousTask.size === nextTask.size &&
+    previousTask.blockedBy === nextTask.blockedBy &&
+    previousTask.worktree === nextTask.worktree &&
+    previousTask.baseBranch === nextTask.baseBranch &&
+    previousTask.breakIntoSubtasks === nextTask.breakIntoSubtasks &&
+    previousTask.currentStep === nextTask.currentStep &&
+    previousTask.modelProvider === nextTask.modelProvider &&
+    previousTask.modelId === nextTask.modelId &&
+    previousTask.validatorModelProvider === nextTask.validatorModelProvider &&
+    previousTask.validatorModelId === nextTask.validatorModelId &&
+    previousTask.reviewLevel === nextTask.reviewLevel &&
+    previousTask.mergeRetries === nextTask.mergeRetries &&
+    JSON.stringify(previousTask.attachments ?? []) === JSON.stringify(nextTask.attachments ?? []) &&
+    JSON.stringify(previousTask.steeringComments ?? []) === JSON.stringify(nextTask.steeringComments ?? []) &&
+    areTaskDependenciesEqual(previousTask.dependencies, nextTask.dependencies) &&
+    areTaskStepsEqual(previousTask.steps, nextTask.steps) &&
+    areTaskBadgeInfosEqual(previousTask.prInfo, nextTask.prInfo) &&
+    areTaskBadgeInfosEqual(previousTask.issueInfo, nextTask.issueInfo)
+  );
+}
+
+function TaskCardComponent({
   task,
   queued,
   onOpenDetail,
   addToast,
   globalPaused,
-  tasks = [],
   onUpdateTask,
   onArchiveTask,
   onUnarchiveTask,
@@ -84,7 +134,6 @@ export function TaskCard({
   const touchOpenHandledRef = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
-  const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket();
 
   const isInteractiveTarget = useCallback((target: EventTarget | null): boolean => {
     if (!(target instanceof HTMLElement)) return false;
@@ -176,7 +225,7 @@ export function TaskCard({
     try {
       const detail = await fetchTaskDetail(task.id);
       onOpenDetail(detail);
-    } catch (err: any) {
+    } catch {
       addToast("Failed to load task details", "error");
     }
   }, [task.id, onOpenDetail, addToast, isEditing]);
@@ -187,13 +236,13 @@ export function TaskCard({
       return;
     }
     if (isInteractiveTarget(e.target)) return;
-    handleClick();
+    void handleClick();
   }, [handleClick, isInteractiveTarget]);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     if (isInteractiveTarget(e.target)) return;
     touchOpenHandledRef.current = true;
-    handleClick();
+    void handleClick();
   }, [handleClick, isInteractiveTarget]);
 
   const handleDepClick = useCallback(async (e: React.MouseEvent, depId: string) => {
@@ -215,32 +264,6 @@ export function TaskCard({
   // Check if this card can be edited inline
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
   const hasGitHubBadge = Boolean(task.prInfo || task.issueInfo);
-
-  useEffect(() => {
-    if (!hasGitHubBadge || !isInViewport) {
-      unsubscribeFromBadge(task.id);
-      return;
-    }
-
-    subscribeToBadge(task.id);
-    return () => {
-      unsubscribeFromBadge(task.id);
-    };
-  }, [hasGitHubBadge, isInViewport, subscribeToBadge, task.id, unsubscribeFromBadge]);
-
-  const liveBadgeData = badgeUpdates.get(task.id);
-  const livePrInfo = pickPreferredBadge<PrInfo>(
-    liveBadgeData?.prInfo,
-    liveBadgeData?.timestamp,
-    task.prInfo,
-    task.prInfo?.lastCheckedAt ?? task.updatedAt,
-  );
-  const liveIssueInfo = pickPreferredBadge<IssueInfo>(
-    liveBadgeData?.issueInfo,
-    liveBadgeData?.timestamp,
-    task.issueInfo,
-    task.issueInfo?.lastCheckedAt ?? task.updatedAt,
-  );
 
   const enterEditMode = useCallback((e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -297,7 +320,7 @@ export function TaskCard({
   const handleDescKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      saveChanges();
+      void saveChanges();
     } else if (e.key === "Escape") {
       e.preventDefault();
       exitEditMode();
@@ -316,7 +339,7 @@ export function TaskCard({
 
       if (!isFocusInEditArea) {
         if (hasChanges()) {
-          saveChanges();
+          void saveChanges();
         } else {
           exitEditMode();
         }
@@ -342,6 +365,33 @@ export function TaskCard({
     const el = e.target;
     el.style.height = "auto";
     el.style.height = el.scrollHeight + "px";
+  }, []);
+
+  const handleArchiveClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (!onArchiveTask) return;
+
+    void onArchiveTask(task.id).then(() => {
+      addToast(`Archived ${task.id}`, "success");
+    }).catch((err: any) => {
+      addToast(`Failed to archive ${task.id}: ${err.message}`, "error");
+    });
+  }, [addToast, onArchiveTask, task.id]);
+
+  const handleUnarchiveClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (!onUnarchiveTask) return;
+
+    void onUnarchiveTask(task.id).then(() => {
+      addToast(`Unarchived ${task.id}`, "success");
+    }).catch((err: any) => {
+      addToast(`Failed to unarchive ${task.id}: ${err.message}`, "error");
+    });
+  }, [addToast, onUnarchiveTask, task.id]);
+
+  const handleToggleSteps = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    setShowSteps((current) => !current);
   }, []);
 
   const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
@@ -424,17 +474,20 @@ export function TaskCard({
             {task.status}
           </span>
         )}
-        {/* Size Indicator */}
         {task.size && (
           <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
             {task.size}
           </span>
         )}
-        {/* GitHub badges only for tasks explicitly linked to an issue or PR */}
-        {(livePrInfo || liveIssueInfo) && (
-          <GitHubBadge prInfo={livePrInfo} issueInfo={liveIssueInfo} />
+        {hasGitHubBadge && (
+          <TaskCardBadge
+            taskId={task.id}
+            prInfo={task.prInfo}
+            issueInfo={task.issueInfo}
+            updatedAt={task.updatedAt}
+            isInViewport={isInViewport}
+          />
         )}
-        {/* Edit button - visible on hover for editable cards */}
         {canEdit && (
           <button
             className="card-edit-btn"
@@ -445,36 +498,20 @@ export function TaskCard({
             <Pencil size={12} />
           </button>
         )}
-        {/* Archive button for done column tasks */}
         {task.column === "done" && onArchiveTask && (
           <button
             className="card-archive-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onArchiveTask(task.id).then(() => {
-                addToast(`Archived ${task.id}`, "success");
-              }).catch((err: any) => {
-                addToast(`Failed to archive ${task.id}: ${err.message}`, "error");
-              });
-            }}
+            onClick={handleArchiveClick}
             title="Archive task"
             aria-label="Archive task"
           >
             Archive
           </button>
         )}
-        {/* Unarchive button for archived column tasks */}
         {task.column === "archived" && onUnarchiveTask && (
           <button
             className="card-unarchive-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onUnarchiveTask(task.id).then(() => {
-                addToast(`Unarchived ${task.id}`, "success");
-              }).catch((err: any) => {
-                addToast(`Failed to unarchive ${task.id}: ${err.message}`, "error");
-              });
-            }}
+            onClick={handleUnarchiveClick}
             title="Unarchive task"
             aria-label="Unarchive task"
           >
@@ -492,7 +529,7 @@ export function TaskCard({
         {task.title || (task.description ? task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "") : task.id)}
       </div>
       {task.steps.length > 0 && (() => {
-        const completedSteps = task.steps.filter(s => s.status === "done" || s.status === "skipped").length;
+        const completedSteps = task.steps.filter((s) => s.status === "done" || s.status === "skipped").length;
         const totalSteps = task.steps.length;
         return (
           <>
@@ -511,10 +548,7 @@ export function TaskCard({
             <button
               type="button"
               className="card-steps-toggle"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowSteps(!showSteps);
-              }}
+              onClick={handleToggleSteps}
               aria-expanded={showSteps}
               aria-label={showSteps ? "Hide steps" : "Show steps"}
             >
@@ -544,28 +578,31 @@ export function TaskCard({
       })()}
       {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy) && (
         <div className="card-meta">
-      {task.dependencies && task.dependencies.length > 0 && (
-        <div className="card-dep-list">
-          {task.dependencies.map((depId) => (
-            <span
-              key={depId}
-              className="card-dep-badge clickable"
-              onClick={(e) => handleDepClick(e, depId)}
-              title={`Click to view ${depId}`}
-            >
-              <Link size={12} style={{ verticalAlign: 'middle' }} /> {depId}
-            </span>
-          ))}
-        </div>
-      )}
+          {task.dependencies && task.dependencies.length > 0 && (
+            <div className="card-dep-list">
+              {task.dependencies.map((depId) => (
+                <span
+                  key={depId}
+                  className="card-dep-badge clickable"
+                  onClick={(e) => void handleDepClick(e, depId)}
+                  title={`Click to view ${depId}`}
+                >
+                  <Link size={12} style={{ verticalAlign: "middle" }} /> {depId}
+                </span>
+              ))}
+            </div>
+          )}
           {task.blockedBy && (
             <span className="card-scope-badge" data-tooltip={`Blocked by ${task.blockedBy} (file overlap)`}>
-              <Layers size={12} style={{ verticalAlign: 'middle' }} /> {task.blockedBy}
+              <Layers size={12} style={{ verticalAlign: "middle" }} /> {task.blockedBy}
             </span>
           )}
-          {(queued || task.status === "queued") && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: 'middle' }} /> Queued</span>}
+          {(queued || task.status === "queued") && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}
         </div>
       )}
     </div>
   );
 }
+
+export const TaskCard = memo(TaskCardComponent, areTaskCardPropsEqual);
+TaskCard.displayName = "TaskCard";
