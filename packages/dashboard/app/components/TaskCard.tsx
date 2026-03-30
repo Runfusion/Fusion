@@ -370,9 +370,6 @@ export function TaskCard({
           </button>
         )}
       </div>
-      <div className="card-title">
-        {task.title || (task.description ? task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "") : task.id)}
-      </div>
       {task.steps.length > 0 && (() => {
         const completedSteps = task.steps.filter(s => s.status === "done").length;
         const totalSteps = task.steps.length;
@@ -424,6 +421,9 @@ export function TaskCard({
           </>
         );
       })()}
+      <div className="card-title">
+        {task.title || (task.description ? task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "") : task.id)}
+      </div>
       {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy) && (
         <div className="card-meta">
       {task.dependencies && task.dependencies.length > 0 && (
