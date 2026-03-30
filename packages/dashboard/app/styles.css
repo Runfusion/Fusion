@@ -117,12 +117,17 @@ body {
 }
 
 .btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  width: 28px;
   background: none;
   border: none;
   color: var(--text-muted);
   font-size: 18px;
   cursor: pointer;
-  padding: var(--space-xs) var(--space-sm);
+  padding: 0;
   border-radius: var(--radius-md);
   transition:
     color var(--transition-fast),
@@ -181,10 +186,12 @@ body {
   display: flex;
   align-items: center;
   gap: 2px;
+  height: 28px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 2px;
+  box-sizing: border-box;
 }
 
 .view-toggle-btn {
@@ -224,10 +231,12 @@ body {
   flex: 1;
   min-width: 160px;
   max-width: 280px;
+  height: 28px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 6px 12px;
+  padding: 0 8px;
+  box-sizing: border-box;
   transition: border-color var(--transition-fast);
 }
 
