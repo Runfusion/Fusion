@@ -271,6 +271,23 @@ export function refreshPrStatus(id: string): Promise<PrInfo> {
   });
 }
 
+// --- Issue Management API ---
+
+/** Re-export IssueInfo type for convenience */
+export type { IssueInfo } from "@kb/core";
+
+/** Fetch cached issue status for a task */
+export function fetchIssueStatus(id: string): Promise<{ issueInfo: import("@kb/core").IssueInfo; stale: boolean }> {
+  return api<{ issueInfo: import("@kb/core").IssueInfo; stale: boolean }>(`/tasks/${id}/issue/status`);
+}
+
+/** Force refresh issue status from GitHub */
+export function refreshIssueStatus(id: string): Promise<import("@kb/core").IssueInfo> {
+  return api<import("@kb/core").IssueInfo>(`/tasks/${id}/issue/refresh`, {
+    method: "POST",
+  });
+}
+
 // --- Git Management API ---
 
 /** Current git status */

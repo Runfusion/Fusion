@@ -19,6 +19,17 @@ export interface PrInfo {
   lastCheckedAt?: string;
 }
 
+export type IssueState = "open" | "closed";
+
+export interface IssueInfo {
+  url: string;
+  number: number;
+  state: IssueState;
+  title: string;
+  stateReason?: "completed" | "not_planned" | "reopened";
+  lastCheckedAt?: string;
+}
+
 export type StepStatus = "pending" | "in-progress" | "done" | "skipped";
 
 export interface TaskStep {
@@ -97,6 +108,8 @@ export interface Task {
   steeringComments?: SteeringComment[];
   /** PR information for tasks linked to GitHub pull requests */
   prInfo?: PrInfo;
+  /** Issue information for tasks imported from GitHub issues */
+  issueInfo?: IssueInfo;
   log: TaskLogEntry[];
   size?: "S" | "M" | "L";
   reviewLevel?: number;

@@ -220,6 +220,56 @@ export class GitHubClient {
   private mapPrState(state: string): "open" | "closed" {
     return state === "open" ? "open" : "closed";
   }
+
+  /**
+   * Fetch current issue status from GitHub API.
+   * Returns null if the issue is not found or is a pull request.
+   */
+  async getIssueStatus(
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<Omit<import("@kb/core").IssueInfo, "lastCheckedAt"> | null> {
+    const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}`;
+
+    const headers = this.buildHeaders();
+
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null;
+      }
+      const error = await response.json().catch(() => ({ message: response.statusText }));
+      throw new Error(`GitHub API error: ${response.status} ${error.message || response.statusText}`);
+    }
+
+    const data = (await response.json()) as {
+      number: number;
+      html_url: string;
+      title: string;
+      state: string;
+      state_reason?: "completed" | "not_planned" | "reopened";
+      pull_request?: unknown;
+    };
+
+    // Filter out pull requests - this endpoint returns both issues and PRs
+    if (data.pull_request) {
+      return null;
+    }
+
+    return {
+      url: data.html_url,
+      number: data.number,
+      state: this.mapIssueState(data.state),
+      title: data.title,
+      stateReason: data.state_reason,
+    };
+  }
+
+  private mapIssueState(state: string): "open" | "closed" {
+    return state === "open" ? "open" : "closed";
+  }
 }
 
 /**

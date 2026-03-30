@@ -1650,7 +1650,218 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // ── Issue Status Routes ─────────────────────────────────────────────
+
+  /**
+   * Helper to extract GitHub issue owner/repo/number from a URL.
+   * Returns null if the URL is not a valid GitHub issue URL.
+   */
+  function parseGitHubIssueUrl(url: string): { owner: string; repo: string; number: number } | null {
+    const match = url.match(/https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/issues\/(\d+)/);
+    if (!match) return null;
+    const [, owner, repo, numberStr] = match;
+    const number = parseInt(numberStr, 10);
+    if (isNaN(number) || number < 1) return null;
+    return { owner, repo, number };
+  }
+
+  /**
+   * GET /api/tasks/:id/issue/status
+   * Get cached issue status for a task. Triggers background refresh if stale (>5 min).
+   */
+  router.get("/tasks/:id/issue/status", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      // Use cached issueInfo if available
+      if (task.issueInfo) {
+        // Check if data is stale (>5 minutes since last check)
+        const fiveMinutesMs = 5 * 60 * 1000;
+        const lastChecked = task.issueInfo.lastCheckedAt || task.updatedAt;
+        const lastCheckedTime = new Date(lastChecked).getTime();
+        const isStale = Date.now() - lastCheckedTime > fiveMinutesMs;
+
+        res.json({
+          issueInfo: task.issueInfo,
+          stale: isStale,
+        });
+
+        // Trigger background refresh if stale (don't await)
+        if (isStale) {
+          refreshIssueInBackground(store, task.id, task.issueInfo, githubToken);
+        }
+        return;
+      }
+
+      // Try to extract issue URL from description
+      const issueUrlMatch = task.description.match(/https:\/\/github\.com\/[^\/]+\/[^\/]+\/issues\/\d+/);
+      if (!issueUrlMatch) {
+        res.status(404).json({ error: "Task has no associated issue" });
+        return;
+      }
+
+      const parsed = parseGitHubIssueUrl(issueUrlMatch[0]);
+      if (!parsed) {
+        res.status(404).json({ error: "Task has no associated issue" });
+        return;
+      }
+
+      // Check rate limit before fetching
+      const repoKey = `${parsed.owner}/${parsed.repo}`;
+      if (!ghRateLimiter.canMakeRequest(repoKey)) {
+        const resetTime = ghRateLimiter.getResetTime(repoKey);
+        res.status(429).json({
+          error: "GitHub API rate limit exceeded for this repository",
+          resetAt: resetTime?.toISOString(),
+        });
+        return;
+      }
+
+      // Fetch fresh issue status
+      const client = new GitHubClient(githubToken);
+      const issueData = await client.getIssueStatus(parsed.owner, parsed.repo, parsed.number);
+
+      if (!issueData) {
+        res.status(404).json({ error: "Issue not found or is a pull request" });
+        return;
+      }
+
+      // Build IssueInfo with timestamp
+      const issueInfo: import("@kb/core").IssueInfo = {
+        ...issueData,
+        lastCheckedAt: new Date().toISOString(),
+      };
+
+      // Store issue info
+      await store.updateIssueInfo(task.id, issueInfo);
+
+      res.json({
+        issueInfo,
+        stale: false,
+      });
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/tasks/:id/issue/refresh
+   * Force refresh issue status from GitHub API.
+   */
+  router.post("/tasks/:id/issue/refresh", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+
+      // Get owner/repo/number from cached issueInfo or description
+      let owner: string;
+      let repo: string;
+      let issueNumber: number;
+
+      if (task.issueInfo) {
+        const parsed = parseGitHubIssueUrl(task.issueInfo.url);
+        if (!parsed) {
+          res.status(400).json({ error: "Invalid cached issue URL" });
+          return;
+        }
+        owner = parsed.owner;
+        repo = parsed.repo;
+        issueNumber = parsed.number;
+      } else {
+        const issueUrlMatch = task.description.match(/https:\/\/github\.com\/[^\/]+\/[^\/]+\/issues\/\d+/);
+        if (!issueUrlMatch) {
+          res.status(404).json({ error: "Task has no associated issue" });
+          return;
+        }
+        const parsed = parseGitHubIssueUrl(issueUrlMatch[0]);
+        if (!parsed) {
+          res.status(404).json({ error: "Task has no associated issue" });
+          return;
+        }
+        owner = parsed.owner;
+        repo = parsed.repo;
+        issueNumber = parsed.number;
+      }
+
+      // Check rate limit
+      const repoKey = `${owner}/${repo}`;
+      if (!ghRateLimiter.canMakeRequest(repoKey)) {
+        const resetTime = ghRateLimiter.getResetTime(repoKey);
+        res.status(429).json({
+          error: "GitHub API rate limit exceeded for this repository",
+          resetAt: resetTime?.toISOString(),
+        });
+        return;
+      }
+
+      // Fetch fresh issue status
+      const client = new GitHubClient(githubToken);
+      const issueData = await client.getIssueStatus(owner, repo, issueNumber);
+
+      if (!issueData) {
+        res.status(404).json({ error: "Issue not found or is a pull request" });
+        return;
+      }
+
+      // Build IssueInfo with timestamp
+      const issueInfo: import("@kb/core").IssueInfo = {
+        ...issueData,
+        lastCheckedAt: new Date().toISOString(),
+      };
+
+      // Store issue info
+      await store.updateIssueInfo(task.id, issueInfo);
+
+      res.json(issueInfo);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
   return router;
+}
+
+/**
+ * Background Issue refresh - updates issue status without blocking the response.
+ * Silently logs errors without affecting the user experience.
+ */
+async function refreshIssueInBackground(
+  store: TaskStore,
+  taskId: string,
+  currentIssueInfo: import("@kb/core").IssueInfo,
+  token?: string,
+): Promise<void> {
+  try {
+    // Parse owner/repo/number from the cached issue URL
+    const match = currentIssueInfo.url.match(/https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/issues\/(\d+)/);
+    if (!match) return; // Silent fail - invalid URL format
+
+    const [, owner, repo, numberStr] = match;
+    const number = parseInt(numberStr, 10);
+    if (isNaN(number) || number < 1) return;
+
+    const client = new GitHubClient(token);
+
+    const issueData = await client.getIssueStatus(owner, repo, number);
+    if (!issueData) return; // Silent fail - issue not found or is a PR
+
+    const issueInfo: import("@kb/core").IssueInfo = {
+      ...issueData,
+      lastCheckedAt: new Date().toISOString(),
+    };
+    await store.updateIssueInfo(taskId, issueInfo);
+  } catch {
+    // Silent fail - background refresh is best-effort
+  }
 }
 
 /**

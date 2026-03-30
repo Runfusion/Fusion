@@ -1207,6 +1207,57 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
+   * Update or clear Issue information for a task.
+   * Updates task.json atomically and emits `task:updated` event.
+   *
+   * @param id - The task ID
+   * @param issueInfo - The Issue info to set, or null to clear
+   * @returns The updated task
+   */
+  async updateIssueInfo(
+    id: string,
+    issueInfo: import("./types.js").IssueInfo | null,
+  ): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      const prevIssueNumber = task.issueInfo?.number;
+      const prevIssueState = task.issueInfo?.state;
+
+      if (issueInfo) {
+        task.issueInfo = issueInfo;
+        task.log.push({
+          timestamp: new Date().toISOString(),
+          action: "Issue linked",
+          outcome: `Issue #${issueInfo.number}: ${issueInfo.url}`,
+        });
+      } else {
+        task.issueInfo = undefined;
+        if (prevIssueNumber) {
+          task.log.push({
+            timestamp: new Date().toISOString(),
+            action: "Issue unlinked",
+            outcome: `Issue #${prevIssueNumber} removed`,
+          });
+        }
+      }
+
+      task.updatedAt = new Date().toISOString();
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.watcher) this.taskCache.set(id, { ...task });
+
+      // Only emit if Issue info actually changed
+      if (prevIssueNumber !== issueInfo?.number || prevIssueState !== issueInfo?.state) {
+        this.emit("task:updated", task);
+      }
+
+      return task;
+    });
+  }
+
+  /**
    * Read all historical agent log entries for a task from its agent log file.
    * Returns entries in chronological order (oldest first).
    *

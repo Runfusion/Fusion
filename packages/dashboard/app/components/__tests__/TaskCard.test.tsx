@@ -1238,3 +1238,214 @@ describe("TaskCard steps toggle", () => {
     expect(chevron?.classList.contains("expanded")).toBe(true);
   });
 });
+
+/**
+ * Tests for GitHub badges rendering in TaskCard.
+ */
+describe("TaskCard GitHub badges", () => {
+  const noopToast = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders GitHubBadge when task has prInfo", () => {
+    const task = makeTask({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Fix bug",
+        headBranch: "feature/bugfix",
+        baseBranch: "main",
+        commentCount: 3,
+      },
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Should show the PR badge with the PR number
+    expect(screen.getByText("#42")).toBeDefined();
+    expect(screen.getByTitle("PR #42: Fix bug")).toBeDefined();
+  });
+
+  it("renders GitHubBadge when task has issueInfo", () => {
+    const task = makeTask({
+      issueInfo: {
+        url: "https://github.com/owner/repo/issues/123",
+        number: 123,
+        state: "open",
+        title: "Feature request",
+      },
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Should show the Issue badge with the issue number
+    expect(screen.getByText("#123")).toBeDefined();
+    expect(screen.getByTitle("Issue #123: Feature request")).toBeDefined();
+  });
+
+  it("renders both PR and Issue badges when task has both", () => {
+    const task = makeTask({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Fix bug",
+        headBranch: "feature/bugfix",
+        baseBranch: "main",
+        commentCount: 3,
+      },
+      issueInfo: {
+        url: "https://github.com/owner/repo/issues/123",
+        number: 123,
+        state: "closed",
+        stateReason: "completed",
+        title: "Related issue",
+      },
+    });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Both badges should appear
+    expect(screen.getByText("#42")).toBeDefined();
+    expect(screen.getByText("#123")).toBeDefined();
+    expect(screen.getByTitle("PR #42: Fix bug")).toBeDefined();
+    expect(screen.getByTitle("Issue #123: Related issue")).toBeDefined();
+  });
+
+  it("does not render GitHubBadge when task has neither prInfo nor issueInfo", () => {
+    const task = makeTask();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // No badge numbers should appear
+    const badgeNumbers = screen.queryAllByText(/^#\d+$/);
+    expect(badgeNumbers.length).toBe(0);
+  });
+
+  it("renders PR badge in all columns (not just in-review)", () => {
+    const columns: Column[] = ["triage", "todo", "in-progress", "in-review", "done"];
+
+    for (const column of columns) {
+      const task = makeTask({
+        column,
+        prInfo: {
+          url: "https://github.com/owner/repo/pull/42",
+          number: 42,
+          status: "open",
+          title: "Fix bug",
+          headBranch: "feature/bugfix",
+          baseBranch: "main",
+          commentCount: 3,
+        },
+      });
+
+      const { unmount } = render(
+        <TaskCard
+          task={task}
+          onOpenDetail={vi.fn()}
+          addToast={noopToast}
+        />
+      );
+
+      expect(screen.getByText("#42")).toBeDefined();
+      unmount();
+    }
+  });
+
+  it("renders Issue badge with correct color class for open state", () => {
+    const task = makeTask({
+      issueInfo: {
+        url: "https://github.com/owner/repo/issues/123",
+        number: 123,
+        state: "open",
+        title: "Open issue",
+      },
+    });
+
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const badge = container.querySelector(".card-github-badge--open");
+    expect(badge).toBeDefined();
+  });
+
+  it("renders Issue badge with correct color class for completed state", () => {
+    const task = makeTask({
+      issueInfo: {
+        url: "https://github.com/owner/repo/issues/123",
+        number: 123,
+        state: "closed",
+        stateReason: "completed",
+        title: "Completed issue",
+      },
+    });
+
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const badge = container.querySelector(".card-github-badge--completed");
+    expect(badge).toBeDefined();
+  });
+
+  it("renders PR badge with correct color class for merged status", () => {
+    const task = makeTask({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "merged",
+        title: "Merged PR",
+        headBranch: "feature/merged",
+        baseBranch: "main",
+        commentCount: 5,
+      },
+    });
+
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const badge = container.querySelector(".card-github-badge--merged");
+    expect(badge).toBeDefined();
+  });
+});
