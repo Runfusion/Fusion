@@ -1,19 +1,40 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { PlanningModeModal } from "./PlanningModeModal";
-import type { Task, PlanningQuestion, PlanningSummary } from "@kb/core";
+import { TaskDetailModal } from "./TaskDetailModal";
+import type { Task, TaskDetail, PlanningQuestion, PlanningSummary, MergeResult } from "@kb/core";
 
 // Mock the API functions
 const mockStartPlanning = vi.fn();
 const mockRespondToPlanning = vi.fn();
 const mockCancelPlanning = vi.fn();
 const mockCreateTaskFromPlanning = vi.fn();
+const mockUploadAttachment = vi.fn();
+const mockDeleteAttachment = vi.fn();
+const mockUpdateTask = vi.fn();
+const mockPauseTask = vi.fn();
+const mockUnpauseTask = vi.fn();
+const mockFetchTaskDetail = vi.fn();
+const mockRequestSpecRevision = vi.fn();
+const mockApprovePlan = vi.fn();
+const mockRejectPlan = vi.fn();
+const mockRefineTask = vi.fn();
 
 vi.mock("../api", () => ({
   startPlanning: (...args: any[]) => mockStartPlanning(...args),
   respondToPlanning: (...args: any[]) => mockRespondToPlanning(...args),
   cancelPlanning: (...args: any[]) => mockCancelPlanning(...args),
   createTaskFromPlanning: (...args: any[]) => mockCreateTaskFromPlanning(...args),
+  uploadAttachment: (...args: any[]) => mockUploadAttachment(...args),
+  deleteAttachment: (...args: any[]) => mockDeleteAttachment(...args),
+  updateTask: (...args: any[]) => mockUpdateTask(...args),
+  pauseTask: (...args: any[]) => mockPauseTask(...args),
+  unpauseTask: (...args: any[]) => mockUnpauseTask(...args),
+  fetchTaskDetail: (...args: any[]) => mockFetchTaskDetail(...args),
+  requestSpecRevision: (...args: any[]) => mockRequestSpecRevision(...args),
+  approvePlan: (...args: any[]) => mockApprovePlan(...args),
+  rejectPlan: (...args: any[]) => mockRejectPlan(...args),
+  refineTask: (...args: any[]) => mockRefineTask(...args),
 }));
 
 const mockTasks: Task[] = [
@@ -50,6 +71,22 @@ const mockSummary: PlanningSummary = {
   keyDeliverables: ["Login page", "Signup page", "Auth API"],
 };
 
+const mockTaskDetail = {
+  id: "KB-999",
+  title: "Example task",
+  description: "Example description",
+  column: "todo",
+  dependencies: [],
+  steps: [],
+  currentStep: 0,
+  log: [],
+  attachments: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  prompt: "# Task\n\nExample prompt",
+  paused: false,
+} as TaskDetail;
+
 describe("PlanningModeModal", () => {
   const mockOnClose = vi.fn();
   const mockOnTaskCreated = vi.fn();
@@ -61,7 +98,7 @@ describe("PlanningModeModal", () => {
 
   describe("Initial view", () => {
     it("renders the initial input view when open", () => {
-      render(
+      const { container } = render(
         <PlanningModeModal
           isOpen={true}
           onClose={mockOnClose}
@@ -72,6 +109,9 @@ describe("PlanningModeModal", () => {
 
       expect(screen.getByText("Planning Mode")).toBeDefined();
       expect(screen.getByPlaceholderText(/e.g., Build a user authentication/)).toBeDefined();
+      expect(container.querySelector(".planning-modal-body")).not.toBeNull();
+      expect(container.querySelector(".planning-modal-body")?.classList.contains("modal-body")).toBe(false);
+      expect(container.querySelector(".planning-examples-label")?.textContent).toBe("Try an example:");
     });
 
     it("does not render when closed", () => {
@@ -174,13 +214,7 @@ describe("PlanningModeModal", () => {
 
   describe("Question view", () => {
     it("renders single_select question with options", async () => {
-      mockStartPlanning.mockResolvedValue({
-        sessionId: "session-123",
-        currentQuestion: mockQuestion,
-        summary: null,
-      });
-
-      render(
+      const { container } = render(
         <PlanningModeModal
           isOpen={true}
           onClose={mockOnClose}
@@ -188,6 +222,12 @@ describe("PlanningModeModal", () => {
           tasks={mockTasks}
         />
       );
+
+      mockStartPlanning.mockResolvedValue({
+        sessionId: "session-123",
+        currentQuestion: mockQuestion,
+        summary: null,
+      });
 
       const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
       fireEvent.change(textarea, { target: { value: "Build auth system" } });
@@ -198,6 +238,9 @@ describe("PlanningModeModal", () => {
         expect(screen.getByText("Medium")).toBeDefined();
         expect(screen.getByText("Large")).toBeDefined();
       });
+
+      expect(container.querySelector(".planning-question-form > .planning-view-scroll")).not.toBeNull();
+      expect(container.querySelector(".planning-question-form > .planning-actions")).not.toBeNull();
     });
   });
 
@@ -209,7 +252,7 @@ describe("PlanningModeModal", () => {
         summary: mockSummary,
       });
 
-      render(
+      const { container } = render(
         <PlanningModeModal
           isOpen={true}
           onClose={mockOnClose}
@@ -225,6 +268,10 @@ describe("PlanningModeModal", () => {
       await waitFor(() => {
         expect(screen.getByText("Planning Complete!")).toBeDefined();
       });
+
+      expect(container.querySelector(".planning-summary > .planning-view-scroll")).not.toBeNull();
+      expect(container.querySelector(".planning-summary > .planning-actions")).not.toBeNull();
+      expect(container.querySelector(".planning-summary .planning-deps-list")).not.toBeNull();
     });
 
     it("creates task from summary", async () => {
@@ -272,6 +319,32 @@ describe("PlanningModeModal", () => {
         expect(mockCreateTaskFromPlanning).toHaveBeenCalledWith("session-123");
         expect(mockOnTaskCreated).toHaveBeenCalledWith(createdTask);
       });
+    });
+  });
+
+  describe("Modal smoke checks", () => {
+    it("renders TaskDetailModal with the standard detail body structure", () => {
+      const onMoveTask = vi.fn<(_: string, __: any) => Promise<Task>>().mockResolvedValue(mockTasks[0]);
+      const onDeleteTask = vi.fn<(_: string) => Promise<Task>>().mockResolvedValue(mockTasks[0]);
+      const onMergeTask = vi
+        .fn<(_: string) => Promise<MergeResult>>()
+        .mockResolvedValue({ merged: true, branch: "kb/kb-999" });
+
+      const { container } = render(
+        <TaskDetailModal
+          task={mockTaskDetail}
+          tasks={mockTasks}
+          onClose={mockOnClose}
+          onOpenDetail={vi.fn()}
+          onMoveTask={onMoveTask}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={onMergeTask}
+          addToast={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText("Definition")).toBeDefined();
+      expect(container.querySelector(".detail-body")).not.toBeNull();
     });
   });
 });

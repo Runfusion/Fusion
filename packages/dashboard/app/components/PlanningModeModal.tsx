@@ -195,66 +195,70 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks }: Pla
           </button>
         </div>
 
-        <div className="modal-body planning-content">
+        <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
 
           {view.type === "initial" && (
             <div className="planning-initial">
-              <div className="planning-intro">
-                <Sparkles size={32} style={{ color: "var(--triage)", marginBottom: "12px" }} />
-                <h4>Transform your idea into a detailed task</h4>
-                <p className="text-muted">
-                  Describe what you want to build in plain language. The AI will ask clarifying
-                  questions and help you structure a well-defined task.
-                </p>
-              </div>
+              <div className="planning-view-scroll">
+                <div className="planning-intro">
+                  <Sparkles size={32} style={{ color: "var(--triage)", marginBottom: "12px" }} />
+                  <h4>Transform your idea into a detailed task</h4>
+                  <p className="text-muted">
+                    Describe what you want to build in plain language. The AI will ask clarifying
+                    questions and help you structure a well-defined task.
+                  </p>
+                </div>
 
-              <div className="form-group">
-                <label htmlFor="initial-plan">What do you want to build?</label>
-                <textarea
-                  ref={textareaRef}
-                  id="initial-plan"
-                  rows={4}
-                  className="planning-textarea"
-                  placeholder="e.g., Build a user authentication system with login, signup, and password reset..."
-                  value={initialPlan}
-                  onChange={(e) => setInitialPlan(e.target.value.slice(0, 500))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey && initialPlan.trim()) {
-                      e.preventDefault();
-                      handleStartPlanning();
-                    }
-                  }}
-                  maxLength={500}
-                />
-                <div className="planning-char-counter">
-                  {initialPlan.length}/500 characters
+                <div className="form-group">
+                  <label htmlFor="initial-plan">What do you want to build?</label>
+                  <textarea
+                    ref={textareaRef}
+                    id="initial-plan"
+                    rows={4}
+                    className="planning-textarea"
+                    placeholder="e.g., Build a user authentication system with login, signup, and password reset..."
+                    value={initialPlan}
+                    onChange={(e) => setInitialPlan(e.target.value.slice(0, 500))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey && initialPlan.trim()) {
+                        e.preventDefault();
+                        handleStartPlanning();
+                      }
+                    }}
+                    maxLength={500}
+                  />
+                  <div className="planning-char-count">
+                    {initialPlan.length}/500 characters
+                  </div>
+                </div>
+
+                <div className="planning-examples">
+                  <span className="planning-examples-label">Try an example:</span>
+                  <div className="planning-example-chips">
+                    {EXAMPLE_PLANS.map((plan, i) => (
+                      <button
+                        key={i}
+                        className="planning-example-chip"
+                        onClick={() => setInitialPlan(plan)}
+                      >
+                        {plan.length > 40 ? plan.slice(0, 40) + "..." : plan}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              <div className="planning-examples">
-                <span className="text-muted">Try an example:</span>
-                <div className="planning-example-chips">
-                  {EXAMPLE_PLANS.map((plan, i) => (
-                    <button
-                      key={i}
-                      className="planning-example-chip"
-                      onClick={() => setInitialPlan(plan)}
-                    >
-                      {plan.length > 40 ? plan.slice(0, 40) + "..." : plan}
-                    </button>
-                  ))}
-                </div>
+              <div className="planning-view-footer">
+                <button
+                  className="btn btn-primary planning-start-btn"
+                  onClick={handleStartPlanning}
+                  disabled={!initialPlan.trim()}
+                >
+                  <Lightbulb size={16} style={{ marginRight: "8px" }} />
+                  Start Planning
+                </button>
               </div>
-
-              <button
-                className="btn btn-primary planning-start-btn"
-                onClick={handleStartPlanning}
-                disabled={!initialPlan.trim()}
-              >
-                <Lightbulb size={16} style={{ marginRight: "8px" }} />
-                Start Planning
-              </button>
             </div>
           )}
 
@@ -267,24 +271,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks }: Pla
 
           {view.type === "question" && view.session.currentQuestion && (
             <div className="planning-question">
-              <div className="planning-progress">
-                <div className="planning-progress-bar">
-                  {[1, 2, 3].map((step) => (
-                    <div
-                      key={step}
-                      className={`planning-progress-step ${
-                        step <= getProgress() ? "active" : ""
-                      }`}
-                    />
-                  ))}
-                </div>
-                <span className="planning-progress-text">
-                  Question {getProgress()} of ~3
-                </span>
-              </div>
-
               <QuestionForm
                 question={view.session.currentQuestion}
+                progress={getProgress()}
                 onSubmit={handleSubmitResponse}
                 onBack={responseHistory.length > 0 ? handleBack : undefined}
               />
@@ -312,11 +301,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks }: Pla
 
 interface QuestionFormProps {
   question: PlanningQuestion;
+  progress: number;
   onSubmit: (responses: QuestionResponse) => void;
   onBack?: () => void;
 }
 
-function QuestionForm({ question, onSubmit, onBack }: QuestionFormProps) {
+function QuestionForm({ question, progress, onSubmit, onBack }: QuestionFormProps) {
   const [response, setResponse] = useState<QuestionResponse>({});
   const [textValue, setTextValue] = useState("");
 
@@ -353,97 +343,115 @@ function QuestionForm({ question, onSubmit, onBack }: QuestionFormProps) {
 
   return (
     <div className="planning-question-form">
-      <h4 className="planning-question-text">{question.question}</h4>
-      {question.description && (
-        <p className="planning-question-description">{question.description}</p>
-      )}
-
-      <div className="planning-options">
-        {question.type === "text" && (
-          <textarea
-            className="planning-textarea"
-            rows={4}
-            placeholder="Type your answer here..."
-            value={textValue}
-            onChange={(e) => setTextValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && textValue.trim()) {
-                e.preventDefault();
-                handleSubmit();
-              }
-            }}
-          />
-        )}
-
-        {question.type === "single_select" && question.options && (
-          <div className="planning-radio-group" role="radiogroup">
-            {question.options.map((option) => (
-              <label key={option.id} className="planning-option planning-option--radio">
-                <input
-                  type="radio"
-                  name={question.id}
-                  value={option.id}
-                  checked={response[question.id] === option.id}
-                  onChange={() => setResponse({ [question.id]: option.id })}
+      <div className="planning-view-scroll planning-question-scroll">
+        <div className="planning-question-panel">
+          <div className="planning-progress">
+            <div className="planning-progress-bar">
+              {[1, 2, 3].map((step) => (
+                <div
+                  key={step}
+                  className={`planning-progress-step ${step <= progress ? "active" : ""}`}
                 />
-                <div className="planning-option-content">
-                  <span className="planning-option-label">{option.label}</span>
-                  {option.description && (
-                    <span className="planning-option-description">{option.description}</span>
-                  )}
+              ))}
+            </div>
+            <span className="planning-progress-text">Question {progress} of ~3</span>
+          </div>
+
+          <div className="planning-question-content">
+            <h4 className="planning-question-text">{question.question}</h4>
+            {question.description && (
+              <p className="planning-question-desc">{question.description}</p>
+            )}
+
+            <div className="planning-options">
+              {question.type === "text" && (
+                <textarea
+                  className="planning-textarea"
+                  rows={4}
+                  placeholder="Type your answer here..."
+                  value={textValue}
+                  onChange={(e) => setTextValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && textValue.trim()) {
+                      e.preventDefault();
+                      handleSubmit();
+                    }
+                  }}
+                />
+              )}
+
+              {question.type === "single_select" && question.options && (
+                <div className="planning-radio-group" role="radiogroup">
+                  {question.options.map((option) => (
+                    <label key={option.id} className="planning-option planning-option--radio">
+                      <input
+                        type="radio"
+                        name={question.id}
+                        value={option.id}
+                        checked={response[question.id] === option.id}
+                        onChange={() => setResponse({ [question.id]: option.id })}
+                      />
+                      <div className="planning-option-content">
+                        <span className="planning-option-label">{option.label}</span>
+                        {option.description && (
+                          <span className="planning-option-desc">{option.description}</span>
+                        )}
+                      </div>
+                    </label>
+                  ))}
                 </div>
-              </label>
-            ))}
-          </div>
-        )}
+              )}
 
-        {question.type === "multi_select" && question.options && (
-          <div className="planning-checkbox-group">
-            {question.options.map((option) => {
-              const selected = (response[question.id] as string[]) || [];
-              return (
-                <label key={option.id} className="planning-option planning-option--checkbox">
-                  <input
-                    type="checkbox"
-                    value={option.id}
-                    checked={selected.includes(option.id)}
-                    onChange={(e) => {
-                      const newSelected = e.target.checked
-                        ? [...selected, option.id]
-                        : selected.filter((id) => id !== option.id);
-                      setResponse({ [question.id]: newSelected });
-                    }}
-                  />
-                  <div className="planning-option-content">
-                    <span className="planning-option-label">{option.label}</span>
-                    {option.description && (
-                      <span className="planning-option-description">{option.description}</span>
-                    )}
-                  </div>
-                </label>
-              );
-            })}
-          </div>
-        )}
+              {question.type === "multi_select" && question.options && (
+                <div className="planning-checkbox-group">
+                  {question.options.map((option) => {
+                    const selected = (response[question.id] as string[]) || [];
+                    return (
+                      <label key={option.id} className="planning-option planning-option--checkbox">
+                        <input
+                          type="checkbox"
+                          value={option.id}
+                          checked={selected.includes(option.id)}
+                          onChange={(e) => {
+                            const newSelected = e.target.checked
+                              ? [...selected, option.id]
+                              : selected.filter((id) => id !== option.id);
+                            setResponse({ [question.id]: newSelected });
+                          }}
+                        />
+                        <div className="planning-option-content">
+                          <span className="planning-option-label">{option.label}</span>
+                          {option.description && (
+                            <span className="planning-option-desc">{option.description}</span>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
 
-        {question.type === "confirm" && (
-          <div className="planning-confirm-group">
-            <button
-              className={`planning-confirm-btn ${response[question.id] === true ? "selected" : ""}`}
-              onClick={() => setResponse({ [question.id]: true })}
-            >
-              <CheckCircle size={18} />
-              Yes
-            </button>
-            <button
-              className={`planning-confirm-btn ${response[question.id] === false ? "selected" : ""}`}
-              onClick={() => setResponse({ [question.id]: false })}
-            >
-              <X size={18} />
-              No
-            </button>
+              {question.type === "confirm" && (
+                <div className="planning-confirm-group">
+                  <button
+                    className={`planning-confirm-btn ${response[question.id] === true ? "selected" : ""}`}
+                    onClick={() => setResponse({ [question.id]: true })}
+                  >
+                    <CheckCircle size={18} />
+                    Yes
+                  </button>
+                  <button
+                    className={`planning-confirm-btn ${response[question.id] === false ? "selected" : ""}`}
+                    onClick={() => setResponse({ [question.id]: false })}
+                  >
+                    <X size={18} />
+                    No
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        </div>
       </div>
 
       <div className="planning-actions">
@@ -454,10 +462,9 @@ function QuestionForm({ question, onSubmit, onBack }: QuestionFormProps) {
           </button>
         )}
         <button
-          className="btn btn-primary"
+          className="btn btn-primary planning-actions-primary"
           onClick={handleSubmit}
           disabled={!isValid()}
-          style={{ marginLeft: "auto" }}
         >
           Continue
           <ArrowRight size={16} style={{ marginLeft: "4px" }} />
@@ -503,87 +510,94 @@ function SummaryView({
 
   return (
     <div className="planning-summary">
-      <div className="planning-summary-header">
-        <CheckCircle size={24} style={{ color: "var(--color-success)" }} />
-        <h4>Planning Complete!</h4>
-        <p className="text-muted">Review and refine your task before creating it.</p>
-      </div>
-
-      <div className="planning-summary-form">
-        <div className="form-group">
-          <label htmlFor="summary-title">Title</label>
-          <input
-            id="summary-title"
-            type="text"
-            value={summary.title}
-            onChange={(e) => onSummaryChange({ ...summary, title: e.target.value })}
-          />
+      <div className="planning-view-scroll planning-summary-scroll">
+        <div className="planning-summary-header">
+          <CheckCircle size={24} style={{ color: "var(--color-success)" }} />
+          <h4>Planning Complete!</h4>
+          <p className="text-muted">Review and refine your task before creating it.</p>
         </div>
 
-        <div className="form-group">
-          <label>
-            Description
-            <button
-              className="planning-expand-btn"
-              onClick={() => setIsExpanded(!isExpanded)}
-            >
-              {isExpanded ? "Collapse" : "Expand"}
-            </button>
-          </label>
-          <textarea
-            className={`planning-textarea ${isExpanded ? "expanded" : ""}`}
-            rows={isExpanded ? 10 : 4}
-            value={summary.description}
-            onChange={(e) => onSummaryChange({ ...summary, description: e.target.value })}
-          />
-        </div>
-
-        <div className="form-group">
-          <label>Suggested Size</label>
-          <div className="planning-size-selector">
-            {(["S", "M", "L"] as const).map((size) => (
-              <button
-                key={size}
-                className={`planning-size-btn ${summary.suggestedSize === size ? "selected" : ""}`}
-                onClick={() => handleSizeChange(size)}
-              >
-                {size}
-                <span className="planning-size-label">
-                  {size === "S" ? "Small" : size === "M" ? "Medium" : "Large"}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {tasks.length > 0 && (
+        <div className="planning-summary-form">
           <div className="form-group">
-            <label>Suggested Dependencies</label>
-            <div className="planning-deps-list">
-              {tasks.map((task) => (
-                <label key={task.id} className="planning-dep-chip">
-                  <input
-                    type="checkbox"
-                    checked={selectedDependencies.includes(task.id)}
-                    onChange={() => handleDependencyToggle(task.id)}
-                  />
-                  <span className="planning-dep-id">{task.id}</span>
-                  <span className="planning-dep-title">
-                    {task.title || task.description.slice(0, 30)}
+            <label htmlFor="summary-title">Title</label>
+            <input
+              id="summary-title"
+              type="text"
+              value={summary.title}
+              onChange={(e) => onSummaryChange({ ...summary, title: e.target.value })}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>
+              Description
+              <button
+                type="button"
+                className="planning-expand-btn"
+                onClick={() => setIsExpanded(!isExpanded)}
+              >
+                {isExpanded ? "Collapse" : "Expand"}
+              </button>
+            </label>
+            <textarea
+              className={`planning-textarea ${isExpanded ? "expanded" : ""}`}
+              rows={isExpanded ? 10 : 4}
+              value={summary.description}
+              onChange={(e) => onSummaryChange({ ...summary, description: e.target.value })}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Suggested Size</label>
+            <div className="planning-size-selector">
+              {(["S", "M", "L"] as const).map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  className={`planning-size-btn ${summary.suggestedSize === size ? "selected" : ""}`}
+                  onClick={() => handleSizeChange(size)}
+                >
+                  {size}
+                  <span className="planning-size-label">
+                    {size === "S" ? "Small" : size === "M" ? "Medium" : "Large"}
                   </span>
-                </label>
+                </button>
               ))}
             </div>
           </div>
-        )}
 
-        <div className="form-group">
-          <label>Key Deliverables</label>
-          <ul className="planning-deliverables">
-            {summary.keyDeliverables.map((item, i) => (
-              <li key={i}>{item}</li>
-            ))}
-          </ul>
+          {tasks.length > 0 && (
+            <div className="form-group">
+              <label>Suggested Dependencies</label>
+              <div className="planning-deps-list">
+                {tasks.map((task) => (
+                  <label
+                    key={task.id}
+                    className={`planning-dep-chip ${selectedDependencies.includes(task.id) ? "selected" : ""}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedDependencies.includes(task.id)}
+                      onChange={() => handleDependencyToggle(task.id)}
+                    />
+                    <span className="planning-dep-id">{task.id}</span>
+                    <span className="planning-dep-title">
+                      {task.title || task.description.slice(0, 30)}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="form-group">
+            <label>Key Deliverables</label>
+            <ul className="planning-deliverables">
+              {summary.keyDeliverables.map((item, i) => (
+                <li key={i}>{item}</li>
+              ))}
+            </ul>
+          </div>
         </div>
       </div>
 
