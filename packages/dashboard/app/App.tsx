@@ -12,6 +12,7 @@ import type { SectionId } from "./components/SettingsModal";
 import { ToastContainer } from "./components/ToastContainer";
 import { GitHubImportModal } from "./components/GitHubImportModal";
 import { GitManagerModal } from "./components/GitManagerModal";
+import { UsageIndicator } from "./components/UsageIndicator";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
@@ -22,6 +23,7 @@ function AppInner() {
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [githubImportOpen, setGitHubImportOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
@@ -104,6 +106,10 @@ function AppInner() {
     setIsPlanningOpen(false);
   }, [addToast]);
 
+  // Usage indicator handlers
+  const handleOpenUsage = useCallback(() => setUsageOpen(true), []);
+  const handleCloseUsage = useCallback(() => setUsageOpen(false), []);
+
   const handleToggleAutoMerge = useCallback(async () => {
     const next = !autoMerge;
     setAutoMerge(next);
@@ -158,6 +164,7 @@ function AppInner() {
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenGitHubImport={() => setGitHubImportOpen(true)}
         onOpenPlanning={handlePlanningOpen}
+        onOpenUsage={handleOpenUsage}
         onToggleTerminal={handleToggleTerminal}
         globalPaused={globalPaused}
         enginePaused={enginePaused}
@@ -241,6 +248,10 @@ function AppInner() {
       <TerminalModal
         isOpen={terminalOpen}
         onClose={handleTerminalClose}
+      />
+      <UsageIndicator
+        isOpen={usageOpen}
+        onClose={handleCloseUsage}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>
