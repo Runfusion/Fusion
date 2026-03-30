@@ -372,27 +372,42 @@ describe("SettingsModal", () => {
   });
 
   it("shows model selector with available models grouped by provider", async () => {
+    const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     fireEvent.click(screen.getByText("Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-    expect(screen.getByLabelText("Default Model")).toBeTruthy();
+    // Dropdown trigger should be present
+    const trigger = screen.getByLabelText("Default Model");
+    expect(trigger).toBeTruthy();
+    expect(trigger.tagName).toBe("BUTTON");
+
+    // Open dropdown to see models
+    await user.click(trigger);
+
+    // Models should be visible in dropdown
     expect(screen.getByText("Claude Sonnet 4.5")).toBeTruthy();
     expect(screen.getByText("GPT-4o")).toBeTruthy();
-    expect(screen.getByText("Use default")).toBeTruthy();
+
+    // "Use default" appears twice (trigger text + dropdown option) - use getAllByText
+    const useDefaultElements = screen.getAllByText("Use default");
+    expect(useDefaultElements.length).toBeGreaterThanOrEqual(1);
   });
 
   it("selecting a model updates form with provider and model ID", async () => {
+    const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     fireEvent.click(screen.getByText("Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "anthropic/claude-sonnet-4-5" } });
+    // Open dropdown and select a model
+    const trigger = screen.getByLabelText("Default Model");
+    await user.click(trigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
 
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
@@ -403,6 +418,7 @@ describe("SettingsModal", () => {
   });
 
   it("Use default option clears model selection", async () => {
+    const user = userEvent.setup();
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ...defaultSettings,
       defaultProvider: "anthropic",
@@ -415,8 +431,18 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "" } });
+    // Open dropdown and select "Use default"
+    const trigger = screen.getByLabelText("Default Model");
+    await user.click(trigger);
+
+    // Find and click the "Use default" option in the dropdown
+    const defaultOptions = screen.getAllByText("Use default");
+    const dropdownDefault = defaultOptions.find((el) =>
+      el.classList.contains("model-combobox-option-text--default")
+    );
+    if (dropdownDefault) {
+      await user.click(dropdownDefault);
+    }
 
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
@@ -542,15 +568,23 @@ describe("SettingsModal", () => {
     expect(providerRow).toBeTruthy();
   });
 
-  it("model section renders select element", async () => {
+  it("model section renders CustomModelDropdown button", async () => {
+    const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     fireEvent.click(screen.getByText("Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
-    expect(select.tagName).toBe("SELECT");
+    // CustomModelDropdown renders as a button trigger, not a select element
+    const trigger = screen.getByLabelText("Default Model");
+    expect(trigger.tagName).toBe("BUTTON");
+    expect(trigger).toHaveAttribute("aria-haspopup", "listbox");
+
+    // Open dropdown to verify it works
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByPlaceholderText("Filter models…")).toBeTruthy();
   });
 
   it("checkbox labels use checkbox-label class", async () => {
@@ -907,15 +941,20 @@ describe("SettingsModal", () => {
     expect(screen.getByLabelText("ntfy Topic")).toBeTruthy();
   });
 
-  // Model filter tests
-  it("renders filter input in Model section", async () => {
+  // Model filter tests with CustomModelDropdown
+  it("renders filter input in Model section dropdown", async () => {
+    const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     fireEvent.click(screen.getByText("Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-    // Filter input should be present
+    // Open dropdown to access filter input
+    const trigger = screen.getByLabelText("Default Model");
+    await user.click(trigger);
+
+    // Filter input should be present in dropdown
     expect(screen.getByPlaceholderText("Filter models…")).toBeTruthy();
   });
 
@@ -927,6 +966,10 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
+    // Open dropdown
+    const trigger = screen.getByLabelText("Default Model");
+    await user.click(trigger);
+
     // Type a filter - only claude model should match
     const filterInput = screen.getByPlaceholderText("Filter models…");
     await user.type(filterInput, "claude");
@@ -934,12 +977,9 @@ describe("SettingsModal", () => {
     // Should show result count (1 model matches "claude")
     expect(screen.getByText("1 model")).toBeTruthy();
 
-    // The select should be updated (Use default + 1 filtered model)
-    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
-    const options = Array.from(select.options).map((o) => o.textContent);
-    expect(options).toContain("Use default");
-    expect(options).toContain("Claude Sonnet 4.5");
-    expect(options).not.toContain("GPT-4o");
+    // Only Claude should be visible, GPT-4o should be filtered out
+    expect(screen.getByText("Claude Sonnet 4.5")).toBeTruthy();
+    expect(screen.queryByText("GPT-4o")).not.toBeInTheDocument();
   });
 
   it("clear button resets filter in Model section", async () => {
@@ -949,6 +989,10 @@ describe("SettingsModal", () => {
 
     fireEvent.click(screen.getByText("Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Open dropdown
+    const trigger = screen.getByLabelText("Default Model");
+    await user.click(trigger);
 
     // Type a filter
     const filterInput = screen.getByPlaceholderText("Filter models…");
@@ -966,10 +1010,8 @@ describe("SettingsModal", () => {
     expect(screen.getByText("2 models")).toBeTruthy();
 
     // All models should be visible again
-    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
-    const options = Array.from(select.options).map((o) => o.textContent);
-    expect(options).toContain("GPT-4o");
-    expect(options).toContain("Claude Sonnet 4.5");
+    expect(screen.getByText("GPT-4o")).toBeTruthy();
+    expect(screen.getByText("Claude Sonnet 4.5")).toBeTruthy();
   });
 
   it("shows empty state in Model section when filter matches nothing", async () => {
@@ -980,12 +1022,16 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
+    // Open dropdown
+    const trigger = screen.getByLabelText("Default Model");
+    await user.click(trigger);
+
     // Type a filter that matches nothing
     const filterInput = screen.getByPlaceholderText("Filter models…");
     await user.type(filterInput, "nonexistent");
 
     // Should show no results message
-    expect(screen.getByText("No models match 'nonexistent'")).toBeTruthy();
+    expect(screen.getByText(/No models match/)).toBeTruthy();
     expect(screen.getByText("0 models")).toBeTruthy();
   });
 });

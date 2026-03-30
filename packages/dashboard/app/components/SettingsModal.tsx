@@ -5,7 +5,7 @@ import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutPr
 import type { AuthProvider, ModelInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
-import { filterModels } from "../utils/modelFilter";
+import { CustomModelDropdown } from "./CustomModelDropdown";
 
 /**
  * Settings sections configuration.
@@ -78,7 +78,6 @@ export function SettingsModal({
   // Model state
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelFilter, setModelFilter] = useState("");
 
   useEffect(() => {
     fetchSettings()
@@ -243,12 +242,6 @@ export function SettingsModal({
           </>
         );
       case "model": {
-        // Filter and group models by provider
-        const filteredModels = filterModels(availableModels, modelFilter);
-        const modelsByProvider = filteredModels.reduce<Record<string, ModelInfo[]>>((acc, m) => {
-          (acc[m.provider] ??= []).push(m);
-          return acc;
-        }, {});
         const selectedValue = form.defaultProvider && form.defaultModelId
           ? `${form.defaultProvider}/${form.defaultModelId}`
           : "";
@@ -264,34 +257,12 @@ export function SettingsModal({
             ) : (
               <div className="form-group">
                 <label htmlFor="defaultModel">Default Model</label>
-                {/* Filter input */}
-                <div className="model-selector-filter">
-                  <input
-                    type="text"
-                    className="model-selector-filter-input"
-                    placeholder="Filter models…"
-                    value={modelFilter}
-                    onChange={(e) => setModelFilter(e.target.value)}
-                  />
-                  {modelFilter && (
-                    <button
-                      type="button"
-                      className="model-selector-filter-clear"
-                      onClick={() => setModelFilter("")}
-                      aria-label="Clear filter"
-                    >
-                      ×
-                    </button>
-                  )}
-                  <span className="model-selector-results-count">
-                    {filteredModels.length} model{filteredModels.length !== 1 ? "s" : ""}
-                  </span>
-                </div>
-                <select
+                <CustomModelDropdown
                   id="defaultModel"
+                  label="Default Model"
+                  models={availableModels}
                   value={selectedValue}
-                  onChange={(e) => {
-                    const val = e.target.value;
+                  onChange={(val) => {
                     if (!val) {
                       setForm((f) => ({ ...f, defaultProvider: undefined, defaultModelId: undefined }));
                     } else {
@@ -303,23 +274,8 @@ export function SettingsModal({
                       }));
                     }
                   }}
-                >
-                  <option value="">Use default</option>
-                  {Object.entries(modelsByProvider).map(([provider, models]) => (
-                    <optgroup key={provider} label={provider}>
-                      {models.map((m) => (
-                        <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                {filteredModels.length === 0 && modelFilter && (
-                  <div className="model-selector-no-results">
-                    No models match &apos;{modelFilter}&apos;
-                  </div>
-                )}
+                  placeholder="Use default"
+                />
                 <small>Select the AI model used for agent sessions. &quot;Use default&quot; lets the engine choose automatically.</small>
               </div>
             )}
