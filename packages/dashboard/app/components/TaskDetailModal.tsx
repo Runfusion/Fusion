@@ -407,6 +407,15 @@ export function TaskDetailModal({
             Created {new Date(task.createdAt).toLocaleDateString()} · Updated{" "}
             {new Date(task.updatedAt).toLocaleDateString()}
           </div>
+          {task.status === "failed" && task.error && (
+            <div className="detail-error-alert">
+              <span className="detail-error-icon">⚠</span>
+              <div className="detail-error-content">
+                <div className="detail-error-title">Task Failed</div>
+                <div className="detail-error-message">{task.error}</div>
+              </div>
+            </div>
+          )}
           <div className="detail-tabs">
             <button
               className={`detail-tab${activeTab === "definition" ? " detail-tab-active" : ""}`}
