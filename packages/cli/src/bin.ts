@@ -39,7 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete } = await import("./commands/task.js");
 
 const HELP = `
 kb — AI-orchestrated task board
@@ -61,6 +61,7 @@ Usage:
   kb task refine <id> [opts]          Create a refinement task from done/in-review
   kb task archive <id>                Archive a done task
   kb task unarchive <id>              Unarchive an archived task
+  kb task delete <id> [--force]       Delete a task (use --force to skip confirmation)
   kb task attach <id> <file>          Attach a file to a task
   kb task pause <id>                  Pause a task (stops all automation)
   kb task unpause <id>                Unpause a task (resumes automation)
@@ -218,6 +219,13 @@ async function main() {
             const id = args[2];
             if (!id) { console.error("Usage: kb task unarchive <id>"); process.exit(1); }
             await runTaskUnarchive(id);
+            break;
+          }
+          case "delete": {
+            const id = args[2];
+            if (!id) { console.error("Usage: kb task delete <id> [--force]"); process.exit(1); }
+            const force = args.includes("--force");
+            await runTaskDelete(id, force);
             break;
           }
           case "attach": {

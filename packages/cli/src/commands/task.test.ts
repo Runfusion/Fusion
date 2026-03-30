@@ -28,7 +28,7 @@ vi.mock("@kb/engine", () => ({ aiMergeTask: vi.fn() }));
 
 import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@kb/core";
-import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine } from "./task.js";
+import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine, runTaskDelete } from "./task.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -1024,5 +1024,154 @@ describe("runTaskRefine", () => {
     mockRefineTask.mockRejectedValueOnce(new Error("Task KB-999 not found"));
 
     await expect(runTaskRefine("KB-999", "Some feedback")).rejects.toThrow("Task KB-999 not found");
+  });
+});
+
+// --- Delete Tests ---
+
+describe("runTaskDelete", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let mockGetTask: ReturnType<typeof vi.fn>;
+  let mockDeleteTask: ReturnType<typeof vi.fn>;
+  let mockRlQuestion: ReturnType<typeof vi.fn>;
+  let mockRlClose: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    mockRlQuestion = vi.fn();
+    mockRlClose = vi.fn();
+
+    (createInterface as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      question: mockRlQuestion,
+      close: mockRlClose,
+    });
+
+    mockGetTask = vi.fn().mockResolvedValue({
+      id: "KB-001",
+      description: "Test task",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    mockDeleteTask = vi.fn().mockResolvedValue({
+      id: "KB-001",
+      description: "Test task",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      getTask: mockGetTask,
+      deleteTask: mockDeleteTask,
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("deletes task successfully with force=true (no prompt)", async () => {
+    await runTaskDelete("KB-001", true);
+
+    expect(mockGetTask).toHaveBeenCalledOnce();
+    expect(mockGetTask).toHaveBeenCalledWith("KB-001");
+    expect(mockRlQuestion).not.toHaveBeenCalled();
+    expect(mockDeleteTask).toHaveBeenCalledOnce();
+    expect(mockDeleteTask).toHaveBeenCalledWith("KB-001");
+
+    const successLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),
+    );
+    expect(successLine).toBeDefined();
+    expect(successLine![0]).toContain("KB-001");
+  });
+
+  it("deletes task after confirmation prompt with 'y'", async () => {
+    mockRlQuestion.mockResolvedValue("y");
+
+    await runTaskDelete("KB-001", false);
+
+    expect(mockRlQuestion).toHaveBeenCalledOnce();
+    expect(mockRlQuestion).toHaveBeenCalledWith("Are you sure you want to delete KB-001? [y/N] ");
+    expect(mockRlClose).toHaveBeenCalled();
+    expect(mockDeleteTask).toHaveBeenCalledOnce();
+    expect(mockDeleteTask).toHaveBeenCalledWith("KB-001");
+
+    const successLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),
+    );
+    expect(successLine).toBeDefined();
+  });
+
+  it("deletes task after confirmation prompt with 'yes'", async () => {
+    mockRlQuestion.mockResolvedValue("yes");
+
+    await runTaskDelete("KB-001", false);
+
+    expect(mockDeleteTask).toHaveBeenCalledOnce();
+  });
+
+  it("cancels deletion on 'n' response", async () => {
+    mockRlQuestion.mockResolvedValue("n");
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
+
+    await runTaskDelete("KB-001", false);
+
+    expect(mockRlQuestion).toHaveBeenCalledOnce();
+    expect(mockRlClose).toHaveBeenCalled();
+    expect(mockDeleteTask).not.toHaveBeenCalled();
+
+    exitSpy.mockRestore();
+  });
+
+  it("cancels deletion on empty response", async () => {
+    mockRlQuestion.mockResolvedValue("");
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
+
+    await runTaskDelete("KB-001", false);
+
+    expect(mockRlQuestion).toHaveBeenCalledOnce();
+    expect(mockDeleteTask).not.toHaveBeenCalled();
+
+    exitSpy.mockRestore();
+  });
+
+  it("exits with error when task not found", async () => {
+    mockGetTask.mockRejectedValueOnce(new Error("Task KB-999 not found"));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
+
+    await runTaskDelete("KB-999", true);
+
+    expect(errorSpy).toHaveBeenCalledWith("✗ Task KB-999 not found");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(mockDeleteTask).not.toHaveBeenCalled();
+
+    exitSpy.mockRestore();
+  });
+
+  it("exits with error when deleteTask fails", async () => {
+    mockDeleteTask.mockRejectedValueOnce(new Error("Task has dependencies"));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
+
+    await runTaskDelete("KB-001", true);
+
+    expect(errorSpy).toHaveBeenCalledWith("✗ Failed to delete KB-001: Task has dependencies");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    exitSpy.mockRestore();
   });
 });

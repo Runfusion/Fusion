@@ -339,13 +339,40 @@ export async function runTaskArchive(id: string) {
   console.log();
 }
 
-export async function runTaskUnarchive(id: string) {
+export async function runTaskDelete(id: string, force?: boolean) {
   const store = await getStore();
-  const task = await store.unarchiveTask(id);
 
-  console.log();
-  console.log(`  ✓ Unarchived ${task.id} → ${COLUMN_LABELS[task.column]}`);
-  console.log();
+  // Check if task exists first
+  let task;
+  try {
+    task = await store.getTask(id);
+  } catch (err: any) {
+    console.error(`✗ Task ${id} not found`);
+    process.exit(1);
+  }
+
+  // Prompt for confirmation unless force is used
+  if (!force) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await rl.question(`Are you sure you want to delete ${id}? [y/N] `);
+    rl.close();
+
+    const trimmed = answer.trim().toLowerCase();
+    if (trimmed !== "y" && trimmed !== "yes") {
+      console.log("Cancelled.");
+      process.exit(0);
+    }
+  }
+
+  try {
+    await store.deleteTask(id);
+    console.log();
+    console.log(`  ✓ Deleted ${id}`);
+    console.log();
+  } catch (err: any) {
+    console.error(`✗ Failed to delete ${id}: ${err.message}`);
+    process.exit(1);
+  }
 }
 
 export async function runTaskImportGitHubInteractive(

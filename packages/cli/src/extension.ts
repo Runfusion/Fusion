@@ -466,6 +466,35 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── kb_task_delete ─────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_delete",
+    label: "KB: Delete Task",
+    description:
+      "Permanently delete a task from the kb board. " +
+      "Tasks are deleted immediately and cannot be recovered.",
+    promptSnippet: "Delete a kb task",
+    promptGuidelines: [
+      "Use for cleaning up test tasks or tasks created in error",
+      "Tasks are permanently deleted and cannot be recovered",
+      "Consider archiving instead of deleting for completed work you may need to reference later",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID to delete (e.g. KB-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const task = await store.deleteTask(params.id);
+
+      return {
+        content: [{ type: "text", text: `Deleted ${task.id}` }],
+        details: { taskId: task.id },
+      };
+    },
+  });
+
   // ── kb_task_import_github ─────────────────────────────────────────
 
   pi.registerTool({
