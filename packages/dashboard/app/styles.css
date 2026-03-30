@@ -7198,19 +7198,19 @@ html .column.drag-over * {
   font-weight: 500;
 }
 
-/* ahead = using faster than expected (warning - over consuming) */
+/* ahead = consuming faster than expected (now shown in info color) */
 .pace-ahead {
-  color: var(--color-error);
+  color: #3b82f6; /* blue - was var(--color-error) */
 }
 
-/* on-track = good/expected usage */
+/* on-track = good/expected usage (unchanged) */
 .pace-ontrack {
   color: var(--color-success);
 }
 
-/* behind = using slower than expected (info - under consuming) */
+/* behind = consuming slower than expected (now shown in warning color) */
 .pace-behind {
-  color: #3b82f6; /* blue info color */
+  color: var(--color-error); /* red - was #3b82f6 */
 }
 
 /* Empty state */
