@@ -8,12 +8,21 @@ interface UsageIndicatorProps {
   onClose: () => void;
 }
 
+/**
+ * Get color class for usage percentage
+ * - >90%: high (red/error color)
+ * - >70%: medium (yellow/triage color)
+ * - <=70%: low (green/success color)
+ */
 function getUsageColorClass(percentUsed: number): string {
   if (percentUsed > 90) return "usage-progress-fill--high";
   if (percentUsed > 70) return "usage-progress-fill--medium";
   return "usage-progress-fill--low";
 }
 
+/**
+ * Single usage window row with progress bar
+ */
 function UsageWindowRow({ window }: { window: UsageWindow }) {
   const colorClass = getUsageColorClass(window.percentUsed);
 
@@ -44,6 +53,9 @@ function UsageWindowRow({ window }: { window: UsageWindow }) {
   );
 }
 
+/**
+ * Provider card showing status and usage windows
+ */
 function ProviderCard({ provider }: { provider: ProviderUsage }) {
   const getStatusBadge = () => {
     switch (provider.status) {
@@ -107,6 +119,9 @@ function ProviderCard({ provider }: { provider: ProviderUsage }) {
   );
 }
 
+/**
+ * Loading skeleton for usage providers
+ */
 function UsageSkeleton() {
   return (
     <div className="usage-skeleton">
@@ -125,20 +140,29 @@ function UsageSkeleton() {
   );
 }
 
+/**
+ * Usage Indicator Modal
+ *
+ * Displays AI provider subscription usage across multiple providers.
+ * Shows hourly and weekly usage windows with percentage bars,
+ * reset timers, and pace indicators.
+ */
 export function UsageIndicator({ isOpen, onClose }: UsageIndicatorProps) {
   const { providers, loading, error, lastUpdated, refresh } = useUsageData({
-    autoRefresh: isOpen,
+    autoRefresh: isOpen, // Only poll when modal is open
   });
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
+  // Handle manual refresh
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     await refresh();
     setIsRefreshing(false);
   }, [refresh]);
 
+  // Close on Escape key
   useEffect(() => {
     if (!isOpen) return;
 
@@ -152,6 +176,7 @@ export function UsageIndicator({ isOpen, onClose }: UsageIndicatorProps) {
     return () => document.removeEventListener("keydown", handleKey);
   }, [isOpen, onClose]);
 
+  // Close on overlay click
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === e.currentTarget) {
