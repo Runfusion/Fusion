@@ -7453,8 +7453,14 @@ html .column.drag-over * {
   margin-bottom: 12px;
 }
 
+.model-select-row:last-child {
+  margin-bottom: 0;
+}
+
 .model-select-label {
-  min-width: 70px;
+  width: 70px;
+  flex-shrink: 0;
   font-size: 13px;
   color: var(--text-muted);
+  text-align: right;
 }

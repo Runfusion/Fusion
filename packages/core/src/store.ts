@@ -186,10 +186,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     const id = await this.allocateId();
+    // Generate title from description if not provided
+    const title = input.title?.trim() || generateTitleFromDescription(input.description);
+
     const now = new Date().toISOString();
     const task: Task = {
       id,
-      title: input.title || undefined,
+      title: title || undefined,
       description: input.description,
       column: input.column || "triage",
       dependencies: input.dependencies || [],
@@ -1515,4 +1518,57 @@ ${notificationsSection}`;
       return DEFAULT_SETTINGS;
     }
   }
+}
+
+/**
+ * Generate a concise title from a description by extracting the first N words.
+ * Uses first 8-10 words, capped at ~50 characters.
+ * Handles edge cases: very short descriptions, descriptions with only special chars.
+ *
+ * @param description - The task description
+ * @returns A generated title string, or empty string if no valid words found
+ */
+function generateTitleFromDescription(description: string): string {
+  if (!description?.trim()) {
+    return "";
+  }
+
+  // Normalize whitespace and remove extra newlines
+  const normalized = description.trim().replace(/\s+/g, " ");
+
+  // Extract words (sequences of alphanumeric chars, preserving internal hyphens/apostrophes)
+  const words = normalized.match(/[a-zA-Z0-9]+(?:['\-_][a-zA-Z0-9]+)*/g) || [];
+
+  if (words.length === 0) {
+    // If no alphanumeric words found, fallback to first 50 chars of normalized text
+    const fallback = normalized.slice(0, 50).trim();
+    return fallback || "";
+  }
+
+  // Build title from first 8-10 words (max ~50 chars)
+  const maxWords = Math.min(10, words.length);
+  const minWords = Math.min(8, words.length);
+
+  let title = "";
+  let wordCount = 0;
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+
+    // Check if adding this word would exceed ~50 chars
+    const candidate = wordCount === 0 ? word : `${title} ${word}`;
+    if (candidate.length > 50 && wordCount >= minWords) {
+      break;
+    }
+
+    title = candidate;
+    wordCount++;
+
+    // Stop at max words
+    if (wordCount >= maxWords) {
+      break;
+    }
+  }
+
+  return title || "";
 }

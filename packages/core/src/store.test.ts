@@ -62,11 +62,11 @@ describe("TaskStore", () => {
       const task = await store.createTask({ description: "Fix the login bug" });
       const detail = await store.getTask(task.id);
 
-      // Heading should be just the ID, not the description
-      expect(detail.prompt).toMatch(/^# KB-001\n/);
+      // Heading should include auto-generated title from description
+      expect(detail.prompt).toMatch(/^# KB-001: Fix the login bug\n/);
       // Description appears exactly once
       const count = detail.prompt.split("Fix the login bug").length - 1;
-      expect(count).toBe(1);
+      expect(count).toBe(2); // Once in heading, once in body
     });
 
     it("triage task with title uses title in heading and description in body", async () => {
@@ -87,11 +87,11 @@ describe("TaskStore", () => {
       });
       const detail = await store.getTask(task.id);
 
-      // Heading should be just the ID
-      expect(detail.prompt).toMatch(/^# KB-001\n/);
+      // Heading should include auto-generated title
+      expect(detail.prompt).toMatch(/^# KB-001: Implement caching layer\n/);
       // Description appears exactly once (in Mission section)
       const count = detail.prompt.split("Implement caching layer").length - 1;
-      expect(count).toBe(1);
+      expect(count).toBe(2); // Once in heading, once in body
     });
 
     it("generateSpecifiedPrompt uses title in heading when present", async () => {
@@ -1733,7 +1733,7 @@ describe("TaskStore", () => {
       expect(refined.id).not.toBe(task.id);
       expect(refined.id).toMatch(/^KB-\d+$/);
       expect(refined.column).toBe("triage");
-      expect(refined.title).toBe(`Refinement: ${task.id}`);
+      expect(refined.title).toBe(`Refinement: ${task.title}`);
     });
 
     it("creates refinement from in-review task", async () => {
@@ -1745,7 +1745,7 @@ describe("TaskStore", () => {
       const refined = await store.refineTask(task.id, "Need improvements");
 
       expect(refined.column).toBe("triage");
-      expect(refined.title).toBe(`Refinement: ${task.id}`);
+      expect(refined.title).toBe(`Refinement: ${task.title}`);
     });
 
     it("throws error when refining task in triage", async () => {
@@ -1811,7 +1811,7 @@ describe("TaskStore", () => {
 
       const refined = await store.refineTask(task.id, "Add more tests");
 
-      expect(refined.title).toBe(`Refinement: ${task.id}`);
+      expect(refined.title).toBe(`Refinement: ${task.title}`);
     });
 
     it("description includes feedback and refines reference", async () => {
@@ -1943,7 +1943,7 @@ describe("TaskStore", () => {
       const refined = await store.refineTask(task.id, "Need improvements");
 
       const detail = await store.getTask(refined.id);
-      expect(detail.prompt).toContain(`Refinement: ${task.id}`);
+      expect(detail.prompt).toContain(`Refinement: ${task.title}`);
       expect(detail.prompt).toContain("Need improvements");
       expect(detail.prompt).toContain(`Refines: ${task.id}`);
     });
@@ -2176,6 +2176,112 @@ describe("TaskStore", () => {
       await store.moveTask(task.id, "in-review");
 
       await expect(store.moveTask(task.id, "archived")).rejects.toThrow("Invalid transition");
+    });
+});
+
+  // ── Title Generation Tests ───────────────────────────────────────
+
+  describe("title generation from description", () => {
+    it("generates title from description when title is not provided", async () => {
+      const task = await store.createTask({ description: "Fix the login bug on the settings page" });
+
+      expect(task.title).toBe("Fix the login bug on the settings page");
+      expect(task.title).toBeTruthy();
+
+      // Verify persisted to disk
+      const fetched = await store.getTask(task.id);
+      expect(fetched.title).toBe("Fix the login bug on the settings page");
+    });
+
+    it("generates title from description when title is empty string", async () => {
+      const task = await store.createTask({ title: "", description: "Implement caching layer for API responses" });
+
+      expect(task.title).toBe("Implement caching layer for API responses");
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.title).toBe("Implement caching layer for API responses");
+    });
+
+    it("generates title from description when title is whitespace only", async () => {
+      const task = await store.createTask({ title: "   ", description: "Add dark mode support to the dashboard" });
+
+      expect(task.title).toBe("Add dark mode support to the dashboard");
+    });
+
+    it("uses provided title when available (does not override)", async () => {
+      const task = await store.createTask({
+        title: "Custom Title",
+        description: "This is the description that should not become the title",
+      });
+
+      expect(task.title).toBe("Custom Title");
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.title).toBe("Custom Title");
+    });
+
+    it("handles very long descriptions gracefully (truncates to ~50 chars)", async () => {
+      const longDescription = "This is a very long description with many words that should be truncated to around fifty characters when generating the title automatically";
+      const task = await store.createTask({ description: longDescription });
+
+      // Should be truncated to ~50 chars with 8-10 words
+      expect(task.title!.length).toBeLessThanOrEqual(55);
+      expect(task.title).toBe("This is a very long description with many words");
+    });
+
+    it("handles short descriptions (less than 3 words)", async () => {
+      const task = await store.createTask({ description: "Fix bug" });
+
+      expect(task.title).toBe("Fix bug");
+    });
+
+    it("handles single word descriptions", async () => {
+      const task = await store.createTask({ description: "Refactoring" });
+
+      expect(task.title).toBe("Refactoring");
+    });
+
+    it("handles descriptions with special characters", async () => {
+      const task = await store.createTask({ description: "Fix \$\$\$ bug @ home-page (urgent!)" });
+
+      // Should extract alphanumeric words, dropping special chars
+      expect(task.title).toBe("Fix bug home-page urgent");
+    });
+
+    it("handles descriptions with only special characters (fallback)", async () => {
+      const task = await store.createTask({ description: "!!! @@@ ###" });
+
+      // Should fallback to first 50 chars of normalized text
+      expect(task.title).toBe("!!! @@@ ###");
+    });
+
+    it("handles empty description gracefully (should throw)", async () => {
+      await expect(store.createTask({ description: "" })).rejects.toThrow("Description is required");
+    });
+
+    it("preserves hyphenated and apostrophe words correctly", async () => {
+      const task = await store.createTask({ description: "Fix user-input validation for today's date" });
+
+      expect(task.title).toBe("Fix user-input validation for today's date");
+    });
+
+    it("includes generated title in PROMPT.md heading for triage tasks", async () => {
+      const task = await store.createTask({ description: "Implement the new feature for users" });
+      const detail = await store.getTask(task.id);
+
+      // PROMPT.md heading should include the generated title
+      expect(detail.prompt).toMatch(/^# KB-001: Implement the new feature/);
+    });
+
+    it("includes generated title in PROMPT.md heading for todo tasks", async () => {
+      const task = await store.createTask({
+        description: "Build the authentication system for admins",
+        column: "todo",
+      });
+      const detail = await store.getTask(task.id);
+
+      // PROMPT.md heading should include the generated title
+      expect(detail.prompt).toMatch(/^# KB-001: Build the authentication system/);
     });
   });
 });
