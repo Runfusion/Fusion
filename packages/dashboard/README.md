@@ -39,7 +39,7 @@ AI-guided interactive planning for creating well-specified tasks from high-level
 
 ### Task Management
 - **Kanban Board**: Drag-and-drop task management across columns (Triage, Todo, In Progress, In Review, Done)
-- **Inline Editing**: Quick-edit task title and description directly on the board for Triage and Todo columns. Double-click a card or use the pencil icon that appears on hover.
+- **Inline Editing**: Quick-edit task title and description directly on the board for Triage and Todo columns. Double-click a card or use the pencil icon — visible on hover for desktop, always visible on mobile for touch accessibility.
 - **Task Detail Editing**: Edit task title and description directly in the task detail modal. Click the pencil icon in the modal header (available for Triage and Todo tasks) to enter edit mode.
 - **List View**: Alternative tabular view for tasks with sorting and filtering. The "Hide Done" toggle hides both Done and Archived tasks for an active-work-only view.
 - **Model Selection at Creation**: Choose executor and validator AI models while creating tasks from the board or list view, or leave them unset to use the global defaults.
