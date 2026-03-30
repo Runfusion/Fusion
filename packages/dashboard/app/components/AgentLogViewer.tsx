@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import type { AgentLogEntry } from "@kb/core";
 
 interface AgentLogViewerProps {
@@ -8,30 +7,9 @@ interface AgentLogViewerProps {
 
 /**
  * Renders agent log entries in a scrollable, monospace container.
- * Auto-scrolls to the bottom as new entries arrive, but pauses
- * auto-scroll when the user scrolls up (scroll-lock).
+ * Displays entries in reverse chronological order (newest first).
  */
-const SCROLL_THRESHOLD = 40;
-
 export function AgentLogViewer({ entries, loading }: AgentLogViewerProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
-
-  // Auto-scroll to bottom when new entries arrive (if scroll-lock is not active)
-  useEffect(() => {
-    if (autoScroll && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [entries, autoScroll]);
-
-  const handleScroll = () => {
-    const el = containerRef.current;
-    if (!el) return;
-    // Enable auto-scroll only when user is near the bottom of the container
-    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_THRESHOLD;
-    setAutoScroll(nearBottom);
-  };
-
   if (loading && entries.length === 0) {
     return (
       <div className="agent-log-viewer" data-testid="agent-log-viewer">
@@ -48,12 +26,13 @@ export function AgentLogViewer({ entries, loading }: AgentLogViewerProps) {
     );
   }
 
+  // Reverse entries so newest appear first
+  const reversedEntries = [...entries].reverse();
+
   return (
     <div
       className="agent-log-viewer"
       data-testid="agent-log-viewer"
-      ref={containerRef}
-      onScroll={handleScroll}
       style={{
         fontFamily: "monospace",
         fontSize: "13px",
@@ -67,11 +46,12 @@ export function AgentLogViewer({ entries, loading }: AgentLogViewerProps) {
         wordBreak: "break-word",
       }}
     >
-      {entries.map((entry, i) => {
-        const prev = entries[i - 1];
+      {reversedEntries.map((entry, i) => {
+        // Look at previous entry in reversed array (= next chronologically) for deduplication
+        const prev = reversedEntries[i - 1];
         const isBlockLevel = entry.type === "tool" || entry.type === "tool_result" || entry.type === "tool_error";
         const showBadge = entry.agent
-          ? isBlockLevel || i === 0 || prev?.agent !== entry.agent || prev?.type !== entry.type
+          ? isBlockLevel || i === 0 || (prev && (prev.agent !== entry.agent || prev.type !== entry.type))
           : false;
 
         const agentBadge = showBadge ? (

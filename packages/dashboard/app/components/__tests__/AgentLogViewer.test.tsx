@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { AgentLogViewer } from "../AgentLogViewer";
 import type { AgentLogEntry } from "@kb/core";
 
@@ -24,7 +24,7 @@ describe("AgentLogViewer", () => {
     expect(screen.getByText("No agent output yet.")).toBeTruthy();
   });
 
-  it("renders text entries as spans", () => {
+  it("renders text entries as spans in reverse order (newest first)", () => {
     const entries = [
       makeEntry({ text: "first chunk" }),
       makeEntry({ text: "second chunk" }),
@@ -32,8 +32,9 @@ describe("AgentLogViewer", () => {
     const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
     const textSpans = container.querySelectorAll(".agent-log-text");
     expect(textSpans).toHaveLength(2);
-    expect(textSpans[0].textContent).toBe("first chunk");
-    expect(textSpans[1].textContent).toBe("second chunk");
+    // Reversed order: second chunk first, then first chunk
+    expect(textSpans[0].textContent).toBe("second chunk");
+    expect(textSpans[1].textContent).toBe("first chunk");
   });
 
   it("renders tool entries with distinct styling", () => {
@@ -46,15 +47,21 @@ describe("AgentLogViewer", () => {
     expect(toolDiv!.textContent).toContain("Read");
   });
 
-  it("renders a mix of text and tool entries", () => {
+  it("renders a mix of text and tool entries in reverse order", () => {
     const entries = [
       makeEntry({ text: "Starting...", type: "text" }),
       makeEntry({ text: "Bash", type: "tool" }),
       makeEntry({ text: "Done!", type: "text" }),
     ];
     const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-    expect(container.querySelectorAll(".agent-log-text")).toHaveLength(2);
-    expect(container.querySelectorAll(".agent-log-tool")).toHaveLength(1);
+    // Reversed order: Done! (text), Bash (tool), Starting... (text)
+    const textSpans = container.querySelectorAll(".agent-log-text");
+    expect(textSpans).toHaveLength(2);
+    expect(textSpans[0].textContent).toBe("Done!");
+    expect(textSpans[1].textContent).toBe("Starting...");
+
+    const toolDivs = container.querySelectorAll(".agent-log-tool");
+    expect(toolDivs).toHaveLength(1);
   });
 
   it("renders tool entry detail when present", () => {
@@ -97,86 +104,8 @@ describe("AgentLogViewer", () => {
     expect(viewer.style.fontFamily).toBe("monospace");
   });
 
-  it("auto-scrolls to the bottom by default when entries are present", () => {
-    const entries = [makeEntry({ text: "line 1" }), makeEntry({ text: "line 2" })];
-    const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-    const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-    // After render with autoScroll=true, scrollTop should be set to scrollHeight
-    expect(viewer.scrollTop).toBe(viewer.scrollHeight);
-  });
-
-  it("disables auto-scroll when user scrolls away from bottom", () => {
-    const entries = [makeEntry({ text: "line 1" })];
-    const { container, rerender } = render(
-      <AgentLogViewer entries={entries} loading={false} />,
-    );
-    const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-
-    // Simulate a container with content taller than viewport
-    Object.defineProperty(viewer, "scrollHeight", { value: 1000, writable: true, configurable: true });
-    Object.defineProperty(viewer, "clientHeight", { value: 500, writable: true, configurable: true });
-    // User is scrolled far from bottom
-    Object.defineProperty(viewer, "scrollTop", { value: 100, writable: true, configurable: true });
-    fireEvent.scroll(viewer);
-
-    // Re-render with new entries — auto-scroll should be disabled, so scrollTop stays
-    const newEntries = [...entries, makeEntry({ text: "line 2" })];
-    rerender(<AgentLogViewer entries={newEntries} loading={false} />);
-
-    // scrollTop should remain at 100, not jump to scrollHeight
-    expect(viewer.scrollTop).toBe(100);
-  });
-
-  it("re-enables auto-scroll when user scrolls to near the bottom", () => {
-    const entries = [makeEntry({ text: "line 1" })];
-    const { container, rerender } = render(
-      <AgentLogViewer entries={entries} loading={false} />,
-    );
-    const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-
-    // First scroll away from bottom to disable auto-scroll
-    Object.defineProperty(viewer, "scrollHeight", { value: 1000, writable: true, configurable: true });
-    Object.defineProperty(viewer, "clientHeight", { value: 500, writable: true, configurable: true });
-    Object.defineProperty(viewer, "scrollTop", { value: 100, writable: true, configurable: true });
-    fireEvent.scroll(viewer);
-
-    // Now scroll to near the bottom (within threshold of 40px)
-    Object.defineProperty(viewer, "scrollTop", { value: 480, writable: true, configurable: true });
-    fireEvent.scroll(viewer);
-
-    // Re-render with new entries — auto-scroll should be re-enabled
-    const newEntries = [...entries, makeEntry({ text: "line 2" })];
-    rerender(<AgentLogViewer entries={newEntries} loading={false} />);
-
-    // scrollTop should jump to scrollHeight since auto-scroll is re-enabled
-    expect(viewer.scrollTop).toBe(viewer.scrollHeight);
-  });
-
-  it("does NOT re-enable auto-scroll when user scrolls down but not near bottom", () => {
-    const entries = [makeEntry({ text: "line 1" })];
-    const { container, rerender } = render(
-      <AgentLogViewer entries={entries} loading={false} />,
-    );
-    const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-
-    // Container with scrollable content
-    Object.defineProperty(viewer, "scrollHeight", { value: 1000, writable: true, configurable: true });
-    Object.defineProperty(viewer, "clientHeight", { value: 500, writable: true, configurable: true });
-
-    // User scrolls partway down — not near bottom
-    Object.defineProperty(viewer, "scrollTop", { value: 200, writable: true, configurable: true });
-    fireEvent.scroll(viewer);
-
-    // Re-render with new entries — auto-scroll should stay disabled
-    const newEntries = [...entries, makeEntry({ text: "line 2" })];
-    rerender(<AgentLogViewer entries={newEntries} loading={false} />);
-
-    // scrollTop should remain where user left it
-    expect(viewer.scrollTop).toBe(200);
-  });
-
   describe("agent badge deduplication", () => {
-    it("shows badge only on the first of consecutive text entries from the same agent", () => {
+    it("shows badge only on the first (newest) of consecutive text entries from the same agent", () => {
       const entries = [
         makeEntry({ text: "chunk 1", type: "text", agent: "executor" }),
         makeEntry({ text: "chunk 2", type: "text", agent: "executor" }),
@@ -185,10 +114,11 @@ describe("AgentLogViewer", () => {
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const badges = container.querySelectorAll(".agent-log-agent-badge");
       expect(badges).toHaveLength(1);
+      // In reversed order, the newest (chunk 3) gets the badge
       expect(badges[0].textContent).toBe("[executor]");
     });
 
-    it("shows badge on each agent transition for consecutive text entries", () => {
+    it("shows badge on each agent transition in reversed order", () => {
       const entries = [
         makeEntry({ text: "hello", type: "text", agent: "triage" }),
         makeEntry({ text: "world", type: "text", agent: "triage" }),
@@ -198,11 +128,13 @@ describe("AgentLogViewer", () => {
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const badges = container.querySelectorAll(".agent-log-agent-badge");
       expect(badges).toHaveLength(2);
-      expect(badges[0].textContent).toBe("[triage]");
-      expect(badges[1].textContent).toBe("[executor]");
+      // Reversed order: done (executor), starting (executor), world (triage), hello (triage)
+      // Badge on done (i=0) and world (transition from executor to triage)
+      expect(badges[0].textContent).toBe("[executor]");
+      expect(badges[1].textContent).toBe("[triage]");
     });
 
-    it("shows badge on text, tool, and text-after-tool (same agent, type change)", () => {
+    it("shows badge on text, tool, and text-after-tool (same agent, type change) in reversed order", () => {
       const entries = [
         makeEntry({ text: "reading...", type: "text", agent: "executor" }),
         makeEntry({ text: "Read", type: "tool", agent: "executor" }),
@@ -210,11 +142,12 @@ describe("AgentLogViewer", () => {
       ];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const badges = container.querySelectorAll(".agent-log-agent-badge");
-      // Badge on first text, on the tool (always), and on the text after tool (type changed)
+      // Reversed: got it (text), Read (tool), reading... (text)
+      // Badge on got it (i=0), Read (always block-level), reading... (type changed from tool)
       expect(badges).toHaveLength(3);
     });
 
-    it("shows badge only on the first of consecutive thinking entries from the same agent", () => {
+    it("shows badge only on the first (newest) of consecutive thinking entries from the same agent", () => {
       const entries = [
         makeEntry({ text: "hmm", type: "thinking", agent: "triage" }),
         makeEntry({ text: "let me think", type: "thinking", agent: "triage" }),
@@ -223,6 +156,7 @@ describe("AgentLogViewer", () => {
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const badges = container.querySelectorAll(".agent-log-agent-badge");
       expect(badges).toHaveLength(1);
+      // In reversed order, the newest (ok) gets the badge
       expect(badges[0].textContent).toBe("[triage]");
     });
 
@@ -258,26 +192,5 @@ describe("AgentLogViewer", () => {
       const badges = container.querySelectorAll(".agent-log-agent-badge");
       expect(badges).toHaveLength(0);
     });
-  });
-
-  it("enables auto-scroll when user is exactly at the bottom", () => {
-    const entries = [makeEntry({ text: "line 1" })];
-    const { container, rerender } = render(
-      <AgentLogViewer entries={entries} loading={false} />,
-    );
-    const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-
-    // Container at exact bottom: scrollTop + clientHeight === scrollHeight
-    Object.defineProperty(viewer, "scrollHeight", { value: 1000, writable: true, configurable: true });
-    Object.defineProperty(viewer, "clientHeight", { value: 500, writable: true, configurable: true });
-    Object.defineProperty(viewer, "scrollTop", { value: 500, writable: true, configurable: true });
-    fireEvent.scroll(viewer);
-
-    // Re-render with new entries — auto-scroll should be enabled
-    const newEntries = [...entries, makeEntry({ text: "line 2" })];
-    rerender(<AgentLogViewer entries={newEntries} loading={false} />);
-
-    // scrollTop should jump to scrollHeight
-    expect(viewer.scrollTop).toBe(viewer.scrollHeight);
   });
 });
