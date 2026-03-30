@@ -14,6 +14,7 @@ import { GitHubImportModal } from "./components/GitHubImportModal";
 import { GitManagerModal } from "./components/GitManagerModal";
 import { UsageIndicator } from "./components/UsageIndicator";
 import { NewTaskModal } from "./components/NewTaskModal";
+import { ScheduledTasksModal } from "./components/ScheduledTasksModal";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
@@ -24,6 +25,7 @@ function AppInner() {
   const [planningInitialPlan, setPlanningInitialPlan] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [githubImportOpen, setGitHubImportOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -129,6 +131,10 @@ function AppInner() {
   const handleOpenUsage = useCallback(() => setUsageOpen(true), []);
   const handleCloseUsage = useCallback(() => setUsageOpen(false), []);
 
+  // Schedules modal handlers
+  const handleOpenSchedules = useCallback(() => setSchedulesOpen(true), []);
+  const handleCloseSchedules = useCallback(() => setSchedulesOpen(false), []);
+
   const handleToggleAutoMerge = useCallback(async () => {
     const next = !autoMerge;
     setAutoMerge(next);
@@ -184,6 +190,7 @@ function AppInner() {
         onOpenGitHubImport={() => setGitHubImportOpen(true)}
         onOpenPlanning={handlePlanningOpen}
         onOpenUsage={handleOpenUsage}
+        onOpenSchedules={handleOpenSchedules}
         onToggleTerminal={handleToggleTerminal}
         globalPaused={globalPaused}
         enginePaused={enginePaused}
@@ -273,6 +280,12 @@ function AppInner() {
         isOpen={usageOpen}
         onClose={handleCloseUsage}
       />
+      {schedulesOpen && (
+        <ScheduledTasksModal
+          onClose={handleCloseSchedules}
+          addToast={addToast}
+        />
+      )}
       <NewTaskModal
         isOpen={newTaskModalOpen}
         onClose={handleNewTaskClose}

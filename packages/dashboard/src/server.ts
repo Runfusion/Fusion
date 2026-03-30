@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { Task, TaskStore, MergeResult } from "@kb/core";
+import type { Task, TaskStore, MergeResult, AutomationStore } from "@kb/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE } from "./sse.js";
@@ -31,6 +31,8 @@ export interface ServerOptions {
   modelRegistry?: ModelRegistryLike;
   /** Optional BadgePubSub adapter for cross-instance badge snapshot fan-out — if not provided, creates from env or falls back to in-memory */
   badgePubSub?: BadgePubSub;
+  /** Optional AutomationStore for scheduled task management */
+  automationStore?: AutomationStore;
 }
 
 type DashboardExpressApp = ReturnType<typeof express> & {

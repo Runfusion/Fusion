@@ -28,6 +28,11 @@ function makeMockStore() {
 
 vi.mock("@kb/core", () => ({
   TaskStore: vi.fn().mockImplementation(() => makeMockStore()),
+  AutomationStore: vi.fn().mockImplementation(() => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    listSchedules: vi.fn().mockResolvedValue([]),
+    getDueSchedules: vi.fn().mockResolvedValue([]),
+  })),
 }));
 
 // ── Mock @kb/dashboard ─────────────────────────────────────────────
@@ -84,6 +89,10 @@ vi.mock("@kb/engine", async (importOriginal) => {
       stop: vi.fn(),
     })),
     aiMergeTask: vi.fn().mockResolvedValue({ merged: true }),
+    CronRunner: vi.fn().mockImplementation(() => ({
+      start: vi.fn(),
+      stop: vi.fn(),
+    })),
     scanIdleWorktrees: vi.fn().mockResolvedValue([]),
     cleanupOrphanedWorktrees: vi.fn().mockResolvedValue(0),
   };

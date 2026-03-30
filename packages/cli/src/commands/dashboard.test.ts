@@ -37,6 +37,16 @@ function makeMockStore() {
 
 vi.mock("@kb/core", () => ({
   TaskStore: vi.fn().mockImplementation(() => makeMockStore()),
+  AutomationStore: vi.fn().mockImplementation(() => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    listSchedules: vi.fn().mockResolvedValue([]),
+    getSchedule: vi.fn().mockResolvedValue(null),
+    createSchedule: vi.fn().mockResolvedValue({}),
+    updateSchedule: vi.fn().mockResolvedValue({}),
+    deleteSchedule: vi.fn().mockResolvedValue({}),
+    recordRun: vi.fn().mockResolvedValue({}),
+    getDueSchedules: vi.fn().mockResolvedValue([]),
+  })),
 }));
 
 // ── Hoisted shared mocks ───────────────────────────────────────────
@@ -145,6 +155,10 @@ vi.mock("@kb/engine", async (importOriginal) => {
       handleNewComments: vi.fn().mockResolvedValue(undefined),
     })),
     aiMergeTask: vi.fn().mockImplementation(() => Promise.resolve({ merged: true })),
+    CronRunner: vi.fn().mockImplementation(() => ({
+      start: vi.fn(),
+      stop: vi.fn(),
+    })),
     scanIdleWorktrees: vi.fn().mockResolvedValue([]),
     cleanupOrphanedWorktrees: vi.fn().mockResolvedValue(0),
   };

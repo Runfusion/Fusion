@@ -30,5 +30,8 @@
     "typescript": "^5.7.0",
     "vitest": "^3.1.0"
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "cron-parser": "^5.5.0"
+  }
 }

@@ -3817,3 +3817,216 @@ describe("Terminal WebSocket close handler", () => {
     vi.restoreAllMocks();
   });
 });
+
+// ── Automation Routes ─────────────────────────────────────────────
+
+describe("Automation routes", () => {
+  const FAKE_SCHEDULE = {
+    id: "sched-001",
+    name: "Test Schedule",
+    description: "A test schedule",
+    scheduleType: "hourly",
+    cronExpression: "0 * * * *",
+    command: "echo hello",
+    enabled: true,
+    runCount: 0,
+    runHistory: [],
+    nextRunAt: "2026-04-01T00:00:00.000Z",
+    createdAt: "2026-03-30T00:00:00.000Z",
+    updatedAt: "2026-03-30T00:00:00.000Z",
+  };
+
+  function createMockAutomationStore() {
+    return {
+      listSchedules: vi.fn().mockResolvedValue([FAKE_SCHEDULE]),
+      createSchedule: vi.fn().mockResolvedValue(FAKE_SCHEDULE),
+      getSchedule: vi.fn().mockResolvedValue(FAKE_SCHEDULE),
+      updateSchedule: vi.fn().mockResolvedValue(FAKE_SCHEDULE),
+      deleteSchedule: vi.fn().mockResolvedValue(FAKE_SCHEDULE),
+      recordRun: vi.fn().mockResolvedValue(FAKE_SCHEDULE),
+    };
+  }
+
+  function buildApp(automationStoreOverride?: ReturnType<typeof createMockAutomationStore>) {
+    const store = createMockStore();
+    const automationStore = automationStoreOverride ?? createMockAutomationStore();
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { automationStore: automationStore as any }));
+    return { app, automationStore };
+  }
+
+  describe("GET /automations", () => {
+    it("returns all schedules", async () => {
+      const { app, automationStore } = buildApp();
+      const res = await GET(app, "/api/automations");
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(automationStore.listSchedules).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns empty array when no automationStore provided", async () => {
+      const store = createMockStore();
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+      const res = await GET(app, "/api/automations");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+  });
+
+  describe("POST /automations", () => {
+    it("creates a schedule", async () => {
+      const { app, automationStore } = buildApp();
+      const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
+        name: "Test",
+        command: "echo test",
+        scheduleType: "hourly",
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(201);
+      expect(automationStore.createSchedule).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns 400 for missing name", async () => {
+      const { app } = buildApp();
+      const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
+        command: "echo test",
+        scheduleType: "hourly",
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Name is required");
+    });
+
+    it("returns 400 for missing command", async () => {
+      const { app } = buildApp();
+      const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
+        name: "Test",
+        scheduleType: "hourly",
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Command is required");
+    });
+
+    it("returns 400 for invalid schedule type", async () => {
+      const { app } = buildApp();
+      const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
+        name: "Test",
+        command: "echo test",
+        scheduleType: "invalid",
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid schedule type");
+    });
+
+    it("returns 400 for custom type with missing cron", async () => {
+      const { app } = buildApp();
+      const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
+        name: "Test",
+        command: "echo test",
+        scheduleType: "custom",
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Cron expression is required");
+    });
+  });
+
+  describe("GET /automations/:id", () => {
+    it("returns a schedule by id", async () => {
+      const { app } = buildApp();
+      const res = await GET(app, "/api/automations/sched-001");
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe("sched-001");
+    });
+
+    it("returns 404 for missing schedule", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockRejectedValue(Object.assign(new Error("not found"), { code: "ENOENT" }));
+      const { app } = buildApp(mockStore);
+      const res = await GET(app, "/api/automations/missing");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("PATCH /automations/:id", () => {
+    it("updates a schedule", async () => {
+      const { app, automationStore } = buildApp();
+      const res = await REQUEST(app, "PATCH", "/api/automations/sched-001", JSON.stringify({
+        name: "Updated",
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(200);
+      expect(automationStore.updateSchedule).toHaveBeenCalledWith("sched-001", expect.objectContaining({ name: "Updated" }));
+    });
+
+    it("returns 404 for missing schedule", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.updateSchedule.mockRejectedValue(Object.assign(new Error("not found"), { code: "ENOENT" }));
+      const { app } = buildApp(mockStore);
+      const res = await REQUEST(app, "PATCH", "/api/automations/missing", JSON.stringify({
+        name: "Updated",
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("DELETE /automations/:id", () => {
+    it("deletes a schedule", async () => {
+      const { app, automationStore } = buildApp();
+      const res = await REQUEST(app, "DELETE", "/api/automations/sched-001");
+      expect(res.status).toBe(200);
+      expect(automationStore.deleteSchedule).toHaveBeenCalledWith("sched-001");
+    });
+
+    it("returns 404 for missing schedule", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.deleteSchedule.mockRejectedValue(Object.assign(new Error("not found"), { code: "ENOENT" }));
+      const { app } = buildApp(mockStore);
+      const res = await REQUEST(app, "DELETE", "/api/automations/missing");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("POST /automations/:id/run", () => {
+    it("runs a schedule and records the result", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({
+        ...FAKE_SCHEDULE,
+        command: "echo manual-run",
+      });
+      const { app } = buildApp(mockStore);
+      const res = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+      expect(res.status).toBe(200);
+      expect(res.body.result).toBeDefined();
+      expect(res.body.result.startedAt).toBeTruthy();
+      expect(res.body.result.completedAt).toBeTruthy();
+      expect(mockStore.recordRun).toHaveBeenCalledWith(
+        "sched-001",
+        expect.objectContaining({
+          success: expect.any(Boolean),
+          startedAt: expect.any(String),
+          completedAt: expect.any(String),
+        }),
+      );
+    });
+
+    it("returns 404 for missing schedule", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockRejectedValue(Object.assign(new Error("not found"), { code: "ENOENT" }));
+      const { app } = buildApp(mockStore);
+      const res = await REQUEST(app, "POST", "/api/automations/missing/run");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("POST /automations/:id/toggle", () => {
+    it("toggles enabled state", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({ ...FAKE_SCHEDULE, enabled: true });
+      mockStore.updateSchedule.mockResolvedValue({ ...FAKE_SCHEDULE, enabled: false });
+      const { app } = buildApp(mockStore);
+      const res = await REQUEST(app, "POST", "/api/automations/sched-001/toggle");
+      expect(res.status).toBe(200);
+      expect(mockStore.updateSchedule).toHaveBeenCalledWith("sched-001", { enabled: false });
+    });
+  });
+});

@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal } from "lucide-react";
+import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock } from "lucide-react";
 
 interface HeaderProps {
   onOpenSettings?: () => void;
   onOpenGitHubImport?: () => void;
   onOpenPlanning?: () => void;
   onOpenUsage?: () => void;
+  onOpenSchedules?: () => void;
   onToggleTerminal?: () => void;
   globalPaused?: boolean;
   enginePaused?: boolean;
@@ -39,6 +40,7 @@ export function Header({
   onOpenGitHubImport,
   onOpenPlanning,
   onOpenUsage,
+  onOpenSchedules,
   onToggleTerminal,
   globalPaused,
   enginePaused,
@@ -236,6 +238,18 @@ export function Header({
           </button>
         )}
 
+        {/* Schedules button - desktop only (moved to overflow on mobile) */}
+        {!isMobile && (
+          <button
+            className="btn-icon"
+            onClick={onOpenSchedules}
+            title="Scheduled tasks"
+            data-testid="schedules-btn"
+          >
+            <Clock size={16} />
+          </button>
+        )}
+
         {/* Terminal button - desktop only (moved to overflow on mobile) */}
         {!isMobile && (
           <button
@@ -323,6 +337,15 @@ export function Header({
             >
               <Lightbulb size={16} />
               <span>Create a task with AI planning</span>
+            </button>
+            <button
+              className="mobile-overflow-item"
+              onClick={() => handleOverflowAction(onOpenSchedules)}
+              role="menuitem"
+              data-testid="overflow-schedules-btn"
+            >
+              <Clock size={16} />
+              <span>Scheduled Tasks</span>
             </button>
             <button
               className="mobile-overflow-item"

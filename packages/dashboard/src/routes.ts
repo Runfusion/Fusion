@@ -2,8 +2,8 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import multer from "multer";
 import { createReadStream } from "node:fs";
 import { execSync } from "node:child_process";
-import type { TaskStore, Column, MergeResult } from "@kb/core";
-import { COLUMNS, VALID_TRANSITIONS, type PrInfo, isGhAuthenticated } from "@kb/core";
+import type { TaskStore, Column, MergeResult, ScheduleType } from "@kb/core";
+import { COLUMNS, VALID_TRANSITIONS, type PrInfo, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore } from "@kb/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -2752,6 +2752,232 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.json({ providers });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to fetch usage data" });
+    }
+  });
+
+  // ── Automation / Scheduled Task Routes ────────────────────────────
+
+  const automationStore = options?.automationStore;
+
+  // GET /automations — list all scheduled tasks
+  router.get("/automations", async (_req: Request, res: Response) => {
+    if (!automationStore) {
+      return res.json([]);
+    }
+    try {
+      const schedules = await automationStore.listSchedules();
+      res.json(schedules);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /automations — create a new schedule
+  router.post("/automations", async (req: Request, res: Response) => {
+    if (!automationStore) {
+      return res.status(503).json({ error: "Automation store not available" });
+    }
+    try {
+      const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs } = req.body;
+
+      // Validation
+      if (!name?.trim()) {
+        return res.status(400).json({ error: "Name is required" });
+      }
+      if (!command?.trim()) {
+        return res.status(400).json({ error: "Command is required" });
+      }
+      const validTypes = ["hourly", "daily", "weekly", "monthly", "custom"];
+      if (!scheduleType || !validTypes.includes(scheduleType)) {
+        return res.status(400).json({ error: `Invalid schedule type. Must be one of: ${validTypes.join(", ")}` });
+      }
+      if (scheduleType === "custom") {
+        if (!cronExpression?.trim()) {
+          return res.status(400).json({ error: "Cron expression is required for custom schedule type" });
+        }
+        if (!AutomationStore.isValidCron(cronExpression)) {
+          return res.status(400).json({ error: `Invalid cron expression: "${cronExpression}"` });
+        }
+      }
+
+      const schedule = await automationStore.createSchedule({
+        name,
+        description,
+        scheduleType: scheduleType as ScheduleType,
+        cronExpression,
+        command,
+        enabled,
+        timeoutMs,
+      });
+      res.status(201).json(schedule);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /automations/:id — get a single schedule
+  router.get("/automations/:id", async (req, res) => {
+    if (!automationStore) {
+      return res.status(503).json({ error: "Automation store not available" });
+    }
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const schedule = await automationStore.getSchedule(id);
+      res.json(schedule);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        return res.status(404).json({ error: "Schedule not found" });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH /automations/:id — update a schedule
+  router.patch("/automations/:id", async (req, res) => {
+    if (!automationStore) {
+      return res.status(503).json({ error: "Automation store not available" });
+    }
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs } = req.body;
+
+      // Validate cron if switching to custom
+      if (scheduleType === "custom" && cronExpression) {
+        if (!AutomationStore.isValidCron(cronExpression)) {
+          return res.status(400).json({ error: `Invalid cron expression: "${cronExpression}"` });
+        }
+      }
+
+      const schedule = await automationStore.updateSchedule(id, {
+        name,
+        description,
+        scheduleType,
+        cronExpression,
+        command,
+        enabled,
+        timeoutMs,
+      });
+      res.json(schedule);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        return res.status(404).json({ error: "Schedule not found" });
+      }
+      if (err.message?.includes("cannot be empty") || err.message?.includes("Invalid cron")) {
+        return res.status(400).json({ error: err.message });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // DELETE /automations/:id — delete a schedule
+  router.delete("/automations/:id", async (req, res) => {
+    if (!automationStore) {
+      return res.status(503).json({ error: "Automation store not available" });
+    }
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const deleted = await automationStore.deleteSchedule(id);
+      res.json(deleted);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        return res.status(404).json({ error: "Schedule not found" });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /automations/:id/run — trigger a manual run
+  router.post("/automations/:id/run", async (req, res) => {
+    if (!automationStore) {
+      return res.status(503).json({ error: "Automation store not available" });
+    }
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const schedule = await automationStore.getSchedule(id);
+
+      // Execute the command directly
+      const { exec } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execAsync = promisify(exec);
+
+      const startedAt = new Date().toISOString();
+      let result: import("@kb/core").AutomationRunResult;
+
+      try {
+        const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+        const MAX_BUFFER = 1024 * 1024;
+        const { stdout, stderr } = await execAsync(schedule.command, {
+          timeout: schedule.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          maxBuffer: MAX_BUFFER,
+          shell: "/bin/sh",
+        });
+
+        let output = stdout;
+        if (stderr) {
+          output += stdout ? "\n--- stderr ---\n" : "";
+          output += stderr;
+        }
+        if (output.length > 10240) {
+          output = output.slice(0, 10240) + "\n[output truncated]";
+        }
+
+        result = {
+          success: true,
+          output,
+          startedAt,
+          completedAt: new Date().toISOString(),
+        };
+      } catch (err: any) {
+        const stdout = err.stdout ?? "";
+        const stderr = err.stderr ?? "";
+        let output = stdout;
+        if (stderr) {
+          output += stdout ? "\n--- stderr ---\n" : "";
+          output += stderr;
+        }
+        if (output.length > 10240) {
+          output = output.slice(0, 10240) + "\n[output truncated]";
+        }
+
+        result = {
+          success: false,
+          output,
+          error: err.killed
+            ? `Command timed out after ${(schedule.timeoutMs ?? 300000) / 1000}s`
+            : err.message ?? String(err),
+          startedAt,
+          completedAt: new Date().toISOString(),
+        };
+      }
+
+      // Record the result
+      const updated = await automationStore.recordRun(schedule.id, result);
+      res.json({ schedule: updated, result });
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        return res.status(404).json({ error: "Schedule not found" });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /automations/:id/toggle — toggle enabled/disabled
+  router.post("/automations/:id/toggle", async (req, res) => {
+    if (!automationStore) {
+      return res.status(503).json({ error: "Automation store not available" });
+    }
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const schedule = await automationStore.getSchedule(id);
+      const updated = await automationStore.updateSchedule(id, {
+        enabled: !schedule.enabled,
+      });
+      res.json(updated);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        return res.status(404).json({ error: "Schedule not found" });
+      }
+      res.status(500).json({ error: err.message });
     }
   });
 

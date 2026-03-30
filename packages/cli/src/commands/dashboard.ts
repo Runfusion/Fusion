@@ -1,10 +1,10 @@
 import { execSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
-import { TaskStore } from "@kb/core";
+import { TaskStore, AutomationStore } from "@kb/core";
 import type { Settings, TaskDetail, PrInfo } from "@kb/core";
 import { createServer, GitHubClient } from "@kb/dashboard";
-import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler } from "@kb/engine";
+import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner } from "@kb/engine";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 
 /**
@@ -202,6 +202,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   const store = new TaskStore(cwd);
   await store.init();
   await store.watch();
+
+  // ── AutomationStore: scheduled task persistence ──────────────────────
+  const automationStore = new AutomationStore(cwd);
+  await automationStore.init();
 
   // ── NtfyNotifier: push notifications for task completion and failures ─
   const notifier = new NtfyNotifier(store);
@@ -450,7 +454,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   const modelRegistry = new ModelRegistry(authStorage);
 
   // Start the web server with AI merge, auth, and model registry wired in
-  const app = createServer(store, { onMerge, authStorage, modelRegistry });
+  const app = createServer(store, { onMerge, authStorage, modelRegistry, automationStore });
 
   // Start the AI engine (unless in dev mode)
   if (!opts.dev) {
@@ -484,6 +488,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       onSchedule: (t) => console.log(`[engine] Scheduled ${t.id}`),
       onBlocked: (t, deps) => console.log(`[engine] ${t.id} blocked by ${deps.join(", ")}`),
     });
+
+    // ── CronRunner: scheduled task execution ──────────────────────────
+    const cronRunner = new CronRunner(store, automationStore);
+    cronRunner.start();
 
     triage.start();
     scheduler.start();
@@ -589,6 +597,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     process.on("SIGINT", () => {
       triage.stop();
       scheduler.stop();
+      cronRunner.stop();
       notifier.stop();
       if (mergeRetryTimer) clearTimeout(mergeRetryTimer);
       store.stopWatching();
@@ -636,6 +645,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       console.log(`  AI engine:  ✓ active`);
       console.log(`    • triage: auto-specifying tasks`);
       console.log(`    • scheduler: dependency-aware execution`);
+      console.log(`    • cron: scheduled task execution`);
     }
     console.log(`  File watcher: ✓ active`);
     console.log(`  Press Ctrl+C to stop`);

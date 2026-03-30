@@ -1,5 +1,6 @@
 import type { Task, TaskDetail, TaskAttachment, TaskCreateInput, AgentLogEntry, Column, MergeResult, Settings } from "@kb/core";
 import type { PlanningQuestion, PlanningSummary, PlanningResponse } from "@kb/core";
+import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult } from "@kb/core";
 
 async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -837,4 +838,54 @@ export function connectPlanningStream(
     close,
     isConnected: () => !isClosed && eventSource.readyState === EventSource.OPEN,
   };
+}
+
+// ── Automation / Scheduled Tasks ──────────────────────────────────
+
+/** Response from the manual run trigger endpoint. */
+export interface AutomationRunResponse {
+  schedule: ScheduledTask;
+  result: AutomationRunResult;
+}
+
+export function fetchAutomations(): Promise<ScheduledTask[]> {
+  return api<ScheduledTask[]>("/automations");
+}
+
+export function fetchAutomation(id: string): Promise<ScheduledTask> {
+  return api<ScheduledTask>(`/automations/${id}`);
+}
+
+export function createAutomation(input: ScheduledTaskCreateInput): Promise<ScheduledTask> {
+  const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs } = input;
+  return api<ScheduledTask>("/automations", {
+    method: "POST",
+    body: JSON.stringify({ name, description, scheduleType, cronExpression, command, enabled, timeoutMs }),
+  });
+}
+
+export function updateAutomation(id: string, updates: ScheduledTaskUpdateInput): Promise<ScheduledTask> {
+  const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs } = updates;
+  return api<ScheduledTask>(`/automations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name, description, scheduleType, cronExpression, command, enabled, timeoutMs }),
+  });
+}
+
+export async function deleteAutomation(id: string): Promise<void> {
+  await api(`/automations/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function runAutomation(id: string): Promise<AutomationRunResponse> {
+  return api<AutomationRunResponse>(`/automations/${id}/run`, {
+    method: "POST",
+  });
+}
+
+export function toggleAutomation(id: string): Promise<ScheduledTask> {
+  return api<ScheduledTask>(`/automations/${id}/toggle`, {
+    method: "POST",
+  });
 }

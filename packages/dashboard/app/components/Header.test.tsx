@@ -325,4 +325,42 @@ describe("Header", () => {
       expect(input).toBeDefined();
     });
   });
+
+  describe("schedules button", () => {
+    it("renders schedules button on desktop", () => {
+      renderHeader({ onOpenSchedules: vi.fn() }, false);
+      expect(screen.getByTitle("Scheduled tasks")).toBeDefined();
+    });
+
+    it("does not render schedules button inline on mobile", () => {
+      renderHeader({ onOpenSchedules: vi.fn() }, true);
+      expect(screen.queryByTitle("Scheduled tasks")).toBeNull();
+    });
+
+    it("calls onOpenSchedules when schedules button is clicked", () => {
+      const onOpenSchedules = vi.fn();
+      renderHeader({ onOpenSchedules }, false);
+      fireEvent.click(screen.getByTitle("Scheduled tasks"));
+      expect(onOpenSchedules).toHaveBeenCalled();
+    });
+
+    it("has correct data-testid for testing on desktop", () => {
+      renderHeader({ onOpenSchedules: vi.fn() }, false);
+      expect(screen.getByTestId("schedules-btn")).toBeDefined();
+    });
+
+    it("includes scheduled tasks in overflow menu on mobile", () => {
+      renderHeader({ onOpenSchedules: vi.fn() }, true);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      expect(screen.getByText("Scheduled Tasks")).toBeDefined();
+    });
+
+    it("calls onOpenSchedules from mobile overflow menu", () => {
+      const onOpenSchedules = vi.fn();
+      renderHeader({ onOpenSchedules }, true);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByTestId("overflow-schedules-btn"));
+      expect(onOpenSchedules).toHaveBeenCalled();
+    });
+  });
 });

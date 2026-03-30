@@ -15,3 +15,7 @@ export {
   getCurrentRepo,
   type GhError,
 } from "./gh-cli.js";
+export { AUTOMATION_PRESETS, MAX_RUN_HISTORY } from "./automation.js";
+export type { ScheduleType, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult } from "./automation.js";
+export { AutomationStore } from "./automation-store.js";
+export type { AutomationStoreEvents } from "./automation-store.js";
