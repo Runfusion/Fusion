@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { THINKING_LEVELS } from "@kb/core";
-import type { Settings } from "@kb/core";
+import type { Settings, ThemeMode, ColorTheme } from "@kb/core";
 import { fetchSettings, updateSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels } from "../api";
 import type { AuthProvider, ModelInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
+import { ThemeSelector } from "./ThemeSelector";
 
 /**
  * Settings sections configuration.
@@ -15,16 +16,19 @@ import type { ToastType } from "../hooks/useToast";
  *
  * Sections:
  *   - general: Task prefix configuration
+ *   - model: Default AI model selection
+ *   - appearance: Theme and color settings
  *   - scheduling: Concurrency, poll interval, file overlap serialization
  *   - worktrees: Worktree limits, init commands, recycling
  *   - commands: Test and build command configuration
  *   - merge: Auto-merge settings
- *   - model: Default AI model selection for agent sessions
+ *   - notifications: ntfy.sh notification settings
  *   - authentication: OAuth provider status, login/logout (operates independently of Save)
  */
 const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
   { id: "model", label: "Model" },
+  { id: "appearance", label: "Appearance" },
   { id: "scheduling", label: "Scheduling" },
   { id: "worktrees", label: "Worktrees" },
   { id: "commands", label: "Commands" },
@@ -40,9 +44,25 @@ interface SettingsModalProps {
   addToast: (message: string, type?: ToastType) => void;
   /** Optional section to show when the modal first opens. Defaults to "general". */
   initialSection?: SectionId;
+  /** Current theme mode */
+  themeMode?: ThemeMode;
+  /** Current color theme */
+  colorTheme?: ColorTheme;
+  /** Called when theme mode changes */
+  onThemeModeChange?: (mode: ThemeMode) => void;
+  /** Called when color theme changes */
+  onColorThemeChange?: (theme: ColorTheme) => void;
 }
 
-export function SettingsModal({ onClose, addToast, initialSection }: SettingsModalProps) {
+export function SettingsModal({
+  onClose,
+  addToast,
+  initialSection,
+  themeMode = "dark",
+  colorTheme = "default",
+  onThemeModeChange,
+  onColorThemeChange,
+}: SettingsModalProps) {
   const [form, setForm] = useState<Settings & { worktreeInitCommand?: string }>({ maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 15000, groupOverlappingFiles: false, autoMerge: true, recycleWorktrees: false, includeTaskIdInCommit: true, worktreeInitCommand: "" });
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<SectionId>(initialSection ?? SETTINGS_SECTIONS[0].id);
@@ -302,6 +322,18 @@ export function SettingsModal({ onClose, addToast, initialSection }: SettingsMod
           </>
         );
       }
+      case "appearance":
+        return (
+          <>
+            <h4 className="settings-section-heading">Appearance</h4>
+            <ThemeSelector
+              themeMode={themeMode}
+              colorTheme={colorTheme}
+              onThemeModeChange={onThemeModeChange || (() => {})}
+              onColorThemeChange={onColorThemeChange || (() => {})}
+            />
+          </>
+        );
       case "scheduling":
         return (
           <>

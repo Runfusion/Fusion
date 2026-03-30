@@ -187,5 +187,70 @@ describe("Header", () => {
     expect(boardBtn.className).not.toContain("active");
     expect(boardBtn.getAttribute("aria-pressed")).toBe("false");
   });
+
+  // ── Theme Toggle ─────────────────────────────────────────────────
+
+  it("renders theme toggle button when onToggleTheme is provided", () => {
+    const onToggleTheme = vi.fn();
+    render(<Header themeMode="dark" onToggleTheme={onToggleTheme} />);
+    const btn = screen.getByTestId("theme-toggle-btn");
+    expect(btn).toBeDefined();
+  });
+
+  it("does not render theme toggle when onToggleTheme is not provided", () => {
+    render(<Header />);
+    const btn = screen.queryByTestId("theme-toggle-btn");
+    expect(btn).toBeNull();
+  });
+
+  it("calls onToggleTheme when theme toggle button is clicked", () => {
+    const onToggleTheme = vi.fn();
+    render(<Header themeMode="dark" onToggleTheme={onToggleTheme} />);
+    const btn = screen.getByTestId("theme-toggle-btn");
+    fireEvent.click(btn);
+    expect(onToggleTheme).toHaveBeenCalledOnce();
+  });
+
+  it("shows Moon icon for dark mode", () => {
+    const onToggleTheme = vi.fn();
+    render(<Header themeMode="dark" onToggleTheme={onToggleTheme} />);
+    const btn = screen.getByTestId("theme-toggle-btn");
+    expect(btn.querySelector("svg")).toBeDefined();
+  });
+
+  it("shows Sun icon for light mode", () => {
+    const onToggleTheme = vi.fn();
+    render(<Header themeMode="light" onToggleTheme={onToggleTheme} />);
+    const btn = screen.getByTestId("theme-toggle-btn");
+    expect(btn.querySelector("svg")).toBeDefined();
+  });
+
+  it("shows Monitor icon for system mode", () => {
+    const onToggleTheme = vi.fn();
+    render(<Header themeMode="system" onToggleTheme={onToggleTheme} />);
+    const btn = screen.getByTestId("theme-toggle-btn");
+    expect(btn.querySelector("svg")).toBeDefined();
+  });
+
+  it("shows correct title for dark mode", () => {
+    const onToggleTheme = vi.fn();
+    render(<Header themeMode="dark" onToggleTheme={onToggleTheme} />);
+    const btn = screen.getByTitle("Toggle theme (Dark)");
+    expect(btn).toBeDefined();
+  });
+
+  it("shows correct title for light mode", () => {
+    const onToggleTheme = vi.fn();
+    render(<Header themeMode="light" onToggleTheme={onToggleTheme} />);
+    const btn = screen.getByTitle("Toggle theme (Light)");
+    expect(btn).toBeDefined();
+  });
+
+  it("shows correct title for system mode", () => {
+    const onToggleTheme = vi.fn();
+    render(<Header themeMode="system" onToggleTheme={onToggleTheme} />);
+    const btn = screen.getByTitle("Toggle theme (System)");
+    expect(btn).toBeDefined();
+  });
 });
 

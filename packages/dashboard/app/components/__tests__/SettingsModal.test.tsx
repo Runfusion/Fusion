@@ -690,10 +690,10 @@ describe("SettingsModal", () => {
     const sidebar = container.querySelector(".settings-sidebar");
     expect(sidebar).toBeTruthy();
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
-    expect(navItems.length).toBe(8);
+    expect(navItems.length).toBe(9);
 
     const labels = Array.from(navItems).map((el) => el.textContent);
-    expect(labels).toEqual(["General", "Model", "Scheduling", "Worktrees", "Commands", "Merge", "Notifications", "Authentication"]);
+    expect(labels).toEqual(["General", "Model", "Appearance", "Scheduling", "Worktrees", "Commands", "Merge", "Notifications", "Authentication"]);
   });
 
   it("has .settings-content as sibling of .settings-sidebar", async () => {

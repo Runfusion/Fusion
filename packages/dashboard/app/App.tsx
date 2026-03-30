@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import type { TaskDetail, TaskCreateInput, Task } from "@kb/core";
+import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@kb/core";
 import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
@@ -13,6 +13,7 @@ import { GitHubImportModal } from "./components/GitHubImportModal";
 import { GitManagerModal } from "./components/GitManagerModal";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
+import { useTheme } from "./hooks/useTheme";
 
 function AppInner() {
   const [isCreating, setIsCreating] = useState(false);
@@ -37,6 +38,17 @@ function AppInner() {
   });
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
   const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask } = useTasks();
+
+  // Theme management
+  const { themeMode, colorTheme, setThemeMode, setColorTheme } = useTheme();
+
+  // Theme toggle handler: cycles Dark → Light → System → Dark
+  const handleToggleTheme = useCallback(() => {
+    const cycle: ThemeMode[] = ["dark", "light", "system"];
+    const currentIndex = cycle.indexOf(themeMode);
+    const nextMode = cycle[(currentIndex + 1) % cycle.length];
+    setThemeMode(nextMode);
+  }, [themeMode, setThemeMode]);
 
   useEffect(() => {
     fetchConfig()
@@ -145,6 +157,8 @@ function AppInner() {
         onToggleEnginePause={handleToggleEnginePause}
         view={view}
         onChangeView={handleChangeView}
+        themeMode={themeMode}
+        onToggleTheme={handleToggleTheme}
       />
       {view === "board" ? (
         <Board
@@ -200,6 +214,10 @@ function AppInner() {
           }}
           addToast={addToast}
           initialSection={settingsInitialSection}
+          themeMode={themeMode}
+          colorTheme={colorTheme}
+          onThemeModeChange={setThemeMode}
+          onColorThemeChange={setColorTheme}
         />
       )}
       <GitHubImportModal

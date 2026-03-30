@@ -44,10 +44,47 @@ The Git Manager provides comprehensive repository visualization and management d
 - View operation results and error states
 
 ### Configuration
-- **Settings Modal**: Configure scheduling, worktrees, build commands, merge preferences, and notifications
+- **Settings Modal**: Configure scheduling, worktrees, build commands, merge preferences, notifications, and appearance
 - **Notifications**: ntfy.sh integration for push notifications when tasks complete or fail
 - **Authentication**: OAuth provider management for AI model access
 - **Pause Controls**: Soft pause (stop new work) and hard stop (kill all agents)
+- **Theming**: Light/dark/system mode toggle and 8 color themes (see Theming section below)
+
+## Theming
+
+The dashboard supports a comprehensive theming system with both light/dark mode and color theme options.
+
+### Theme Modes
+- **Dark** (default): Classic dark theme, GitHub-inspired
+- **Light**: Light backgrounds with dark text
+- **System**: Automatically follows your operating system preference
+
+Toggle between modes using the theme button in the header (cycles Dark → Light → System) or select from the Appearance section in Settings.
+
+### Color Themes
+Choose from 8 distinct color palettes in the Appearance settings:
+
+| Theme | Description |
+|-------|-------------|
+| **Default** | Classic blue accent colors (GitHub-inspired) |
+| **Ocean** | Deep blues with cyan accents |
+| **Forest** | Deep greens with emerald accents |
+| **Sunset** | Warm oranges and reds |
+| **Berry** | Purple/pink tones |
+| **Monochrome** | Pure grayscale |
+| **High Contrast** | Extreme contrast for accessibility |
+| **Solarized** | Classic solarized palette |
+
+### Theme Persistence
+Theme preferences are automatically saved to localStorage and persist across sessions. The effective theme is applied immediately to prevent flash of unstyled content.
+
+### Adding New Themes
+To add a new color theme:
+
+1. Add the theme to `COLOR_THEMES` in `packages/core/src/types.ts`
+2. Add CSS variables in `packages/dashboard/app/styles.css` under `[data-color-theme="your-theme"]`
+3. Add the swatch class for the theme picker in the CSS
+4. Update `ThemeSelector.tsx` with the new theme option
 
 ## Development
 

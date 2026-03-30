@@ -1,4 +1,5 @@
-import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal } from "lucide-react";
+import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal, Moon, Sun, Monitor } from "lucide-react";
+import type { ThemeMode } from "@kb/core";
 
 interface HeaderProps {
   onOpenSettings?: () => void;
@@ -11,6 +12,8 @@ interface HeaderProps {
   onToggleEnginePause?: () => void;
   view?: "board" | "list";
   onChangeView?: (view: "board" | "list") => void;
+  themeMode?: ThemeMode;
+  onToggleTheme?: () => void;
 }
 
 export function Header({
@@ -24,6 +27,8 @@ export function Header({
   onToggleEnginePause,
   view = "board",
   onChangeView,
+  themeMode = "dark",
+  onToggleTheme,
 }: HeaderProps) {
   const hasInProgressTasks = inProgressCount > 0;
 
@@ -57,6 +62,24 @@ export function Header({
               <List size={16} />
             </button>
           </div>
+        )}
+        {/* Theme Toggle */}
+        {onToggleTheme && (
+          <button
+            className="btn-icon"
+            onClick={onToggleTheme}
+            title={`Toggle theme (${themeMode === "dark" ? "Dark" : themeMode === "light" ? "Light" : "System"})`}
+            aria-label={`Toggle theme (${themeMode === "dark" ? "Dark" : themeMode === "light" ? "Light" : "System"})`}
+            data-testid="theme-toggle-btn"
+          >
+            {themeMode === "dark" ? (
+              <Moon size={16} />
+            ) : themeMode === "light" ? (
+              <Sun size={16} />
+            ) : (
+              <Monitor size={16} />
+            )}
+          </button>
         )}
         {/* Import from GitHub */}
         <button className="btn-icon" onClick={onOpenGitHubImport} title="Import from GitHub">

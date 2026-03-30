@@ -5,6 +5,23 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done", "archived"] as const;
 export type Column = (typeof COLUMNS)[number];
 
+/** Theme mode for light/dark/system preference */
+export const THEME_MODES = ["dark", "light", "system"] as const;
+export type ThemeMode = (typeof THEME_MODES)[number];
+
+/** Color theme options for the dashboard */
+export const COLOR_THEMES = [
+  "default",
+  "ocean",
+  "forest",
+  "sunset",
+  "berry",
+  "monochrome",
+  "high-contrast",
+  "solarized",
+] as const;
+export type ColorTheme = (typeof COLOR_THEMES)[number];
+
 export type PrStatus = "open" | "closed" | "merged";
 
 export interface PrInfo {
@@ -228,6 +245,10 @@ export interface Settings {
   /** When true, enables ntfy.sh push notifications for task completion and failures.
    *  Requires ntfyTopic to be set. Default: false. */
   ntfyEnabled?: boolean;
+  /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
+  themeMode?: ThemeMode;
+  /** Color theme preference for accent colors and styling. Default: "default". */
+  colorTheme?: ColorTheme;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -250,6 +271,8 @@ export const DEFAULT_SETTINGS: Settings = {
   requirePlanApproval: false,
   ntfyEnabled: false,
   ntfyTopic: undefined,
+  themeMode: "dark",
+  colorTheme: "default",
 };
 
 export interface BoardConfig {
