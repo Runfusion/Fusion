@@ -39,7 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine } = await import("./commands/task.js");
 
 const HELP = `
 kb — AI-orchestrated task board
@@ -56,6 +56,7 @@ Usage:
   kb task log <id> <message>          Add a log entry
   kb task merge <id>                  Merge an in-review task and close it
   kb task duplicate <id>              Duplicate a task (creates copy in triage)
+  kb task refine <id> [opts]          Create a refinement task from done/in-review
   kb task archive <id>                Archive a done task
   kb task unarchive <id>              Unarchive an archived task
   kb task attach <id> <file>          Attach a file to a task
@@ -69,6 +70,7 @@ Options:
   --dev                      Start dashboard only (no AI engine)
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
+  --feedback <text>          Refinement feedback (non-interactive mode)
   --limit, -l <n>            Max issues to import (default: 30, max: 100)
   --labels, -L <labels>      Comma-separated label filter for import
   --interactive, -i          Interactive mode for issue selection
@@ -174,6 +176,17 @@ async function main() {
             const id = args[2];
             if (!id) { console.error("Usage: kb task duplicate <id>"); process.exit(1); }
             await runTaskDuplicate(id);
+            break;
+          }
+          case "refine": {
+            const id = args[2];
+            if (!id) { console.error("Usage: kb task refine <id> [--feedback <text>]"); process.exit(1); }
+            // Parse optional --feedback flag
+            const feedbackIdx = args.indexOf("--feedback");
+            const feedback = feedbackIdx !== -1 && feedbackIdx + 1 < args.length
+              ? args[feedbackIdx + 1]
+              : undefined;
+            await runTaskRefine(id, feedback);
             break;
           }
           case "archive": {

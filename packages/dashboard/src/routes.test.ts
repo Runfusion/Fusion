@@ -263,6 +263,131 @@ describe("POST /tasks/:id/duplicate", () => {
   });
 });
 
+describe("POST /tasks/:id/refine", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      refineTask: vi.fn(),
+      logEntry: vi.fn(),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("creates refinement task from done task and returns 201", async () => {
+    const refinedTask = { ...FAKE_TASK_DETAIL, id: "KB-002", column: "triage", title: "Refinement: KB-001" };
+    (store.refineTask as ReturnType<typeof vi.fn>).mockResolvedValue(refinedTask);
+    (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_TASK_DETAIL);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({ feedback: "Need improvements" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("KB-002");
+    expect(res.body.column).toBe("triage");
+    expect(store.refineTask).toHaveBeenCalledWith("KB-001", "Need improvements");
+    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Refinement requested", "Need improvements");
+  });
+
+  it("creates refinement task from in-review task and returns 201", async () => {
+    const refinedTask = { ...FAKE_TASK_DETAIL, id: "KB-002", column: "triage", title: "Refinement: My Feature" };
+    (store.refineTask as ReturnType<typeof vi.fn>).mockResolvedValue(refinedTask);
+    (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_TASK_DETAIL);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({ feedback: "Fix edge cases" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.column).toBe("triage");
+    expect(store.refineTask).toHaveBeenCalledWith("KB-001", "Fix edge cases");
+  });
+
+  it("returns 400 when task is not in done or in-review column", async () => {
+    (store.refineTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Cannot refine KB-001: task is in 'triage', must be in 'done' or 'in-review'"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({ feedback: "Need improvements" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("must be in 'done' or 'in-review'");
+  });
+
+  it("returns 400 when feedback is missing", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("feedback is required");
+    expect(store.refineTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when feedback is empty string", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({ feedback: "" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("feedback is required");
+    expect(store.refineTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when feedback exceeds 2000 characters", async () => {
+    const longFeedback = "x".repeat(2001);
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({ feedback: longFeedback }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("feedback must be between 1 and 2000 characters");
+    expect(store.refineTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when source task not found", async () => {
+    const error = new Error("Task not found") as NodeJS.ErrnoException;
+    error.code = "ENOENT";
+    (store.refineTask as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-999/refine", JSON.stringify({ feedback: "Need improvements" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("not found");
+  });
+
+  it("returns 400 when feedback is whitespace only (rejected by store)", async () => {
+    (store.refineTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Feedback is required and cannot be empty"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({ feedback: "   " }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Feedback is required");
+  });
+
+  it("returns 500 on unexpected errors", async () => {
+    (store.refineTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Database error"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({ feedback: "Need improvements" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Database error");
+  });
+});
+
 describe("POST /tasks/:id/archive", () => {
   let store: TaskStore;
 

@@ -28,7 +28,7 @@ vi.mock("@kb/engine", () => ({ aiMergeTask: vi.fn() }));
 
 import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@kb/core";
-import { runTaskShow, runTaskCreate, runTaskDuplicate } from "./task.js";
+import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine } from "./task.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -890,5 +890,139 @@ describe("runTaskDuplicate", () => {
     mockDuplicateTask.mockRejectedValueOnce(new Error("Task KB-999 not found"));
 
     await expect(runTaskDuplicate("KB-999")).rejects.toThrow("Task KB-999 not found");
+  });
+});
+
+// --- Refine Tests ---
+
+describe("runTaskRefine", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let mockRefineTask: ReturnType<typeof vi.fn>;
+  let mockRlQuestion: ReturnType<typeof vi.fn>;
+  let mockRlClose: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    mockRlQuestion = vi.fn();
+    mockRlClose = vi.fn();
+
+    (createInterface as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      question: mockRlQuestion,
+      close: mockRlClose,
+    });
+
+    mockRefineTask = vi.fn().mockResolvedValue({
+      id: "KB-002",
+      description: "Refinement of KB-001",
+      column: "triage",
+      dependencies: ["KB-001"],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      refineTask: mockRefineTask,
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("refines task with interactive feedback and prints success", async () => {
+    mockRlQuestion.mockResolvedValue("Need to add more tests");
+
+    await runTaskRefine("KB-001");
+
+    expect(mockRlQuestion).toHaveBeenCalledWith("What needs to be refined? ");
+    expect(mockRlClose).toHaveBeenCalled();
+    expect(mockRefineTask).toHaveBeenCalledOnce();
+    expect(mockRefineTask).toHaveBeenCalledWith("KB-001", "Need to add more tests");
+
+    const successLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("✓ Created refinement"),
+    );
+    expect(successLine).toBeDefined();
+    expect(successLine![0]).toContain("KB-002");
+    expect(successLine![0]).toContain("KB-001");
+
+    // Check that dependency is printed
+    const depLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("Dependency:"),
+    );
+    expect(depLine).toBeDefined();
+    expect(depLine![0]).toContain("KB-001");
+  });
+
+  it("refines task with provided feedback (non-interactive)", async () => {
+    await runTaskRefine("KB-001", "Fix the error handling");
+
+    expect(mockRlQuestion).not.toHaveBeenCalled();
+    expect(mockRefineTask).toHaveBeenCalledOnce();
+    expect(mockRefineTask).toHaveBeenCalledWith("KB-001", "Fix the error handling");
+  });
+
+  it("exits when interactive feedback is empty", async () => {
+    mockRlQuestion.mockResolvedValue("  ");
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
+
+    await runTaskRefine("KB-001");
+
+    expect(mockRlClose).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith("Feedback is required");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    exitSpy.mockRestore();
+  });
+
+  it("exits when provided feedback is empty", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
+
+    await runTaskRefine("KB-001", "   ");
+
+    expect(errorSpy).toHaveBeenCalledWith("Feedback is required");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    exitSpy.mockRestore();
+  });
+
+  it("exits when feedback exceeds 2000 characters", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
+
+    await runTaskRefine("KB-001", "A".repeat(2001));
+
+    expect(errorSpy).toHaveBeenCalledWith("Feedback must be 2000 characters or less");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    exitSpy.mockRestore();
+  });
+
+  it("allows feedback at exactly 2000 characters", async () => {
+    const longFeedback = "A".repeat(2000);
+
+    await runTaskRefine("KB-001", longFeedback);
+
+    expect(mockRefineTask).toHaveBeenCalledOnce();
+    expect(mockRefineTask).toHaveBeenCalledWith("KB-001", longFeedback);
+  });
+
+  it("throws when task not in done or in-review", async () => {
+    mockRefineTask.mockRejectedValueOnce(new Error("Task must be in 'done' or 'in-review' column to refine"));
+
+    await expect(runTaskRefine("KB-001", "Some feedback")).rejects.toThrow("done' or 'in-review'");
+  });
+
+  it("throws when task not found", async () => {
+    mockRefineTask.mockRejectedValueOnce(new Error("Task KB-999 not found"));
+
+    await expect(runTaskRefine("KB-999", "Some feedback")).rejects.toThrow("Task KB-999 not found");
   });
 });

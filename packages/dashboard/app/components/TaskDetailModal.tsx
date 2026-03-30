@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo } from "@kb/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@kb/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, requestSpecRevision, approvePlan, rejectPlan } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, requestSpecRevision, approvePlan, rejectPlan, refineTask } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -86,6 +86,9 @@ export function TaskDetailModal({
   const [depSearch, setDepSearch] = useState("");
   const [isSavingSpec, setIsSavingSpec] = useState(false);
   const [isRequestingRevision, setIsRequestingRevision] = useState(false);
+  const [showRefineModal, setShowRefineModal] = useState(false);
+  const [refineFeedback, setRefineFeedback] = useState("");
+  const [isRefining, setIsRefining] = useState(false);
   useEffect(() => {
     if (!showDepDropdown) setDepSearch("");
   }, [showDepDropdown]);
@@ -207,6 +210,38 @@ export function TaskDetailModal({
       addToast(err.message, "error");
     }
   }, [task.id, onClose, addToast]);
+
+  const handleOpenRefineModal = useCallback(() => {
+    setShowRefineModal(true);
+    setRefineFeedback("");
+  }, []);
+
+  const handleCloseRefineModal = useCallback(() => {
+    setShowRefineModal(false);
+    setRefineFeedback("");
+    setIsRefining(false);
+  }, []);
+
+  const handleSubmitRefine = useCallback(async () => {
+    if (!refineFeedback.trim()) {
+      addToast("Please enter feedback describing what needs refinement", "error");
+      return;
+    }
+    if (refineFeedback.length > 2000) {
+      addToast("Feedback must be 2000 characters or less", "error");
+      return;
+    }
+    setIsRefining(true);
+    try {
+      const newTask = await refineTask(task.id, refineFeedback.trim());
+      addToast(`Refinement task created: ${newTask.id}`, "success");
+      onClose();
+    } catch (err: any) {
+      addToast(err.message, "error");
+    } finally {
+      setIsRefining(false);
+    }
+  }, [task.id, refineFeedback, addToast, onClose]);
 
   const uploadFile = useCallback(async (file: File) => {
     setUploading(true);
@@ -680,6 +715,11 @@ export function TaskDetailModal({
               Duplicate
             </button>
           )}
+          {(task.column === "done" || task.column === "in-review") && (
+            <button className="btn btn-sm" onClick={handleOpenRefineModal}>
+              Request Refinement
+            </button>
+          )}
           {task.status === "failed" && onRetryTask && (
             <button className="btn btn-warning btn-sm" onClick={handleRetry}>
               Retry
@@ -719,6 +759,76 @@ export function TaskDetailModal({
             ))
           )}
         </div>
+        {showRefineModal && (
+          <div
+            className="modal-overlay open"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0, 0, 0, 0.7)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 100,
+            }}
+            onClick={handleCloseRefineModal}
+          >
+            <div
+              className="modal"
+              style={{ maxWidth: "500px", width: "90%", margin: "0" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <h3 style={{ margin: 0 }}>Request Refinement</h3>
+                <button className="modal-close" onClick={handleCloseRefineModal}>
+                  &times;
+                </button>
+              </div>
+              <div className="detail-body">
+                <p style={{ marginBottom: "12px", opacity: 0.8 }}>
+                  Describe what needs to be refined or improved...
+                </p>
+                <textarea
+                  value={refineFeedback}
+                  onChange={(e) => setRefineFeedback(e.target.value)}
+                  placeholder="Enter your feedback here..."
+                  rows={6}
+                  style={{
+                    width: "100%",
+                    padding: "12px",
+                    borderRadius: "6px",
+                    border: "1px solid var(--border, #30363d)",
+                    background: "var(--bg-primary, #0d1117)",
+                    color: "var(--text-primary, #c9d1d9)",
+                    fontSize: "14px",
+                    resize: "vertical",
+                    minHeight: "120px",
+                  }}
+                  maxLength={2000}
+                  autoFocus
+                />
+                <div style={{ marginTop: "8px", textAlign: "right", fontSize: "12px", opacity: 0.6 }}>
+                  {refineFeedback.length}/2000 characters
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button className="btn btn-sm" onClick={handleCloseRefineModal} disabled={isRefining}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSubmitRefine}
+                  disabled={!refineFeedback.trim() || isRefining}
+                >
+                  {isRefining ? "Creating..." : "Create Refinement Task"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

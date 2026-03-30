@@ -1564,6 +1564,241 @@ describe("TaskStore", () => {
     });
   });
 
+  // ── Refine Task Tests ────────────────────────────────────────────
+
+  describe("refineTask", () => {
+    it("creates refinement from done task", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Need to fix edge case");
+
+      expect(refined.id).not.toBe(task.id);
+      expect(refined.id).toMatch(/^KB-\d+$/);
+      expect(refined.column).toBe("triage");
+      expect(refined.title).toBe(`Refinement: ${task.id}`);
+    });
+
+    it("creates refinement from in-review task", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+
+      expect(refined.column).toBe("triage");
+      expect(refined.title).toBe(`Refinement: ${task.id}`);
+    });
+
+    it("throws error when refining task in triage", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      // Task starts in triage
+
+      await expect(store.refineTask(task.id, "Feedback")).rejects.toThrow("must be in 'done' or 'in-review'");
+    });
+
+    it("throws error when refining task in todo", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+
+      await expect(store.refineTask(task.id, "Feedback")).rejects.toThrow("must be in 'done' or 'in-review'");
+    });
+
+    it("throws error when refining task in in-progress", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      await expect(store.refineTask(task.id, "Feedback")).rejects.toThrow("must be in 'done' or 'in-review'");
+    });
+
+    it("throws error when feedback is empty", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      await expect(store.refineTask(task.id, "")).rejects.toThrow("Feedback is required");
+    });
+
+    it("throws error when feedback is whitespace only", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      await expect(store.refineTask(task.id, "   ")).rejects.toThrow("Feedback is required");
+    });
+
+    it("sets correct title format with original title", async () => {
+      const task = await store.createTask({ title: "My Feature", description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Add more tests");
+
+      expect(refined.title).toBe("Refinement: My Feature");
+    });
+
+    it("sets correct title format without original title (uses ID)", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Add more tests");
+
+      expect(refined.title).toBe(`Refinement: ${task.id}`);
+    });
+
+    it("description includes feedback and refines reference", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Fix the edge case handling");
+
+      expect(refined.description).toBe(`Fix the edge case handling\n\nRefines: ${task.id}`);
+    });
+
+    it("sets dependency on original task", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+
+      expect(refined.dependencies).toEqual([task.id]);
+    });
+
+    it("adds log entry for refinement creation", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+
+      expect(refined.log).toHaveLength(1);
+      expect(refined.log[0].action).toBe(`Created as refinement of ${task.id}`);
+    });
+
+    it("emits task:created event", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const events: any[] = [];
+      store.on("task:created", (t) => events.push(t));
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+
+      expect(events).toHaveLength(1);
+      expect(events[0].id).toBe(refined.id);
+    });
+
+    it("copies attachments from original task", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      // Add an attachment
+      await store.addAttachment(task.id, "test.png", Buffer.from("fake image"), "image/png");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+
+      expect(refined.attachments).toHaveLength(1);
+      expect(refined.attachments![0].originalName).toBe("test.png");
+      expect(refined.attachments![0].mimeType).toBe("image/png");
+    });
+
+    it("copies attachment files to new task directory", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      // Add an attachment
+      await store.addAttachment(task.id, "test.png", Buffer.from("fake image data"), "image/png");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+
+      // Verify file exists in new task directory
+      const attachDir = join(rootDir, ".kb", "tasks", refined.id, "attachments");
+      const files = await readdir(attachDir);
+      expect(files.length).toBe(1);
+
+      // Verify content was copied
+      const content = await readFile(join(attachDir, files[0]));
+      expect(content.toString()).toBe("fake image data");
+    });
+
+    it("works when source has no attachments", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+
+      expect(refined.attachments).toBeUndefined();
+    });
+
+    it("resets execution state (no steps, no worktree, etc.)", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+
+      expect(refined.steps).toEqual([]);
+      expect(refined.currentStep).toBe(0);
+      expect(refined.worktree).toBeUndefined();
+      expect(refined.status).toBeUndefined();
+    });
+
+    it("creates PROMPT.md for the refinement", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+
+      const detail = await store.getTask(refined.id);
+      expect(detail.prompt).toContain(`Refinement: ${task.id}`);
+      expect(detail.prompt).toContain("Need improvements");
+      expect(detail.prompt).toContain(`Refines: ${task.id}`);
+    });
+
+    it("throws ENOENT when source task does not exist", async () => {
+      await expect(store.refineTask("KB-999", "Feedback")).rejects.toThrow();
+    });
+  });
+
 
   // ── Archive/Unarchive Tests ──────────────────────────────────────
 

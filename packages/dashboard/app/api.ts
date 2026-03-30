@@ -140,6 +140,13 @@ export function requestSpecRevision(id: string, feedback: string): Promise<Task>
   });
 }
 
+export function refineTask(id: string, feedback: string): Promise<Task> {
+  return api<Task>(`/tasks/${id}/refine`, {
+    method: "POST",
+    body: JSON.stringify({ feedback }),
+  });
+}
+
 // --- Models API ---
 
 /** Available AI model info returned by the models endpoint */

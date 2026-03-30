@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchTaskDetail, updateTask, archiveTask, unarchiveTask, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, addSteeringComment, fetchGitRemotes } from "./api";
+import { fetchTaskDetail, updateTask, archiveTask, unarchiveTask, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, addSteeringComment, fetchGitRemotes, refineTask } from "./api";
 import type { Task, TaskDetail } from "@kb/core";
 
 const FAKE_DETAIL: TaskDetail = {
@@ -368,6 +368,59 @@ describe("rejectPlan", () => {
     );
 
     await expect(rejectPlan("KB-001")).rejects.toThrow("awaiting-approval");
+  });
+});
+
+// --- Refinement API tests ---
+
+describe("refineTask", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const FAKE_REFINED_TASK: Task = {
+    id: "KB-002",
+    description: "Refinement of KB-001",
+    column: "triage",
+    dependencies: ["KB-001"],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("sends POST with feedback and returns new refinement task", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_REFINED_TASK));
+
+    const result = await refineTask("KB-001", "Need to add more tests and improve error handling");
+
+    expect(result.id).toBe("KB-002");
+    expect(result.column).toBe("triage");
+    expect(result.dependencies).toContain("KB-001");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/refine", {
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      body: JSON.stringify({ feedback: "Need to add more tests and improve error handling" }),
+    });
+  });
+
+  it("throws on error response when task not found", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Task not found" }, 404)
+    );
+
+    await expect(refineTask("KB-999", "feedback")).rejects.toThrow("Task not found");
+  });
+
+  it("throws on error response when task not in done/in-review", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Task must be in 'done' or 'in-review' column to refine" }, 400)
+    );
+
+    await expect(refineTask("KB-001", "feedback")).rejects.toThrow("done' or 'in-review'");
   });
 });
 

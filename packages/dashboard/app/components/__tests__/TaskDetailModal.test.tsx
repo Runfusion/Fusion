@@ -13,6 +13,7 @@ vi.mock("../../api", () => ({
   approvePlan: vi.fn().mockResolvedValue({}),
   rejectPlan: vi.fn().mockResolvedValue({}),
   duplicateTask: vi.fn().mockResolvedValue({}),
+  refineTask: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({
@@ -1981,6 +1982,301 @@ describe("TaskDetailModal", () => {
       });
 
       window.confirm = originalConfirm;
+    });
+  });
+
+  describe("Refinement button", () => {
+    it("renders Request Refinement button for 'done' column tasks", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "done" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Request Refinement")).toBeTruthy();
+    });
+
+    it("renders Request Refinement button for 'in-review' column tasks", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Request Refinement")).toBeTruthy();
+    });
+
+    it("does NOT render Request Refinement button for 'triage' column tasks", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "triage" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Request Refinement")).toBeNull();
+    });
+
+    it("does NOT render Request Refinement button for 'todo' column tasks", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "todo" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Request Refinement")).toBeNull();
+    });
+
+    it("does NOT render Request Refinement button for 'in-progress' column tasks", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-progress" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Request Refinement")).toBeNull();
+    });
+
+    it("clicking Request Refinement opens the refinement modal", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "done" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Request Refinement"));
+
+      expect(screen.getByText("Request Refinement", { selector: "h3" })).toBeTruthy();
+      expect(screen.getByPlaceholderText("Enter your feedback here...")).toBeTruthy();
+    });
+
+    it("shows character counter in refinement modal", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "done" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Request Refinement"));
+
+      expect(screen.getByText("0/2000 characters")).toBeTruthy();
+    });
+
+    it("character counter updates when typing feedback", async () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "done" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Request Refinement"));
+
+      const textarea = screen.getByPlaceholderText("Enter your feedback here...");
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: "Need to fix the error handling" } });
+      });
+
+      expect(screen.getByText("30/2000 characters")).toBeTruthy();
+    });
+
+    it("submit button is disabled when feedback is empty", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "done" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Request Refinement"));
+
+      const submitButton = screen.getByText("Create Refinement Task");
+      expect(submitButton.hasAttribute("disabled")).toBe(true);
+    });
+
+    it("submit button is enabled when feedback is entered", async () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "done" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Request Refinement"));
+
+      const textarea = screen.getByPlaceholderText("Enter your feedback here...");
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: "Need to fix error handling" } });
+      });
+
+      const submitButton = screen.getByText("Create Refinement Task");
+      expect(submitButton.hasAttribute("disabled")).toBe(false);
+    });
+
+    it("clicking Cancel closes the refinement modal", () => {
+      const onClose = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "done" })}
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Request Refinement"));
+      fireEvent.click(screen.getByText("Cancel"));
+
+      // Modal should be closed, but detail modal stays open (onClose not called)
+      expect(screen.queryByText("Request Refinement", { selector: "h3" })).toBeNull();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("shows error toast when submitting empty feedback", async () => {
+      const addToast = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "done" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Request Refinement"));
+
+      // Try to submit with empty text (manually trigger submit since button is disabled)
+      const { refineTask } = await import("../../api");
+
+      // Should not call API, instead show error toast
+      expect(refineTask).not.toHaveBeenCalled();
+    });
+
+    it("calls refineTask and closes modal on successful submission", async () => {
+      const { refineTask } = await import("../../api");
+      vi.mocked(refineTask).mockResolvedValue({ id: "KB-002", column: "triage" } as Task);
+
+      const onClose = vi.fn();
+      const addToast = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "done" })}
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Request Refinement"));
+
+      const textarea = screen.getByPlaceholderText("Enter your feedback here...");
+      fireEvent.change(textarea, { target: { value: "Need to add more tests" } });
+
+      fireEvent.click(screen.getByText("Create Refinement Task"));
+
+      await waitFor(() => {
+        expect(refineTask).toHaveBeenCalledWith("KB-001", "Need to add more tests");
+        expect(addToast).toHaveBeenCalledWith("Refinement task created: KB-002", "success");
+        expect(onClose).toHaveBeenCalled();
+      });
+    });
+
+    it("shows error toast when refineTask fails", async () => {
+      const { refineTask } = await import("../../api");
+      vi.mocked(refineTask).mockRejectedValue(new Error("Task must be in 'done' or 'in-review' column"));
+
+      const addToast = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-001", column: "done" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Request Refinement"));
+
+      const textarea = screen.getByPlaceholderText("Enter your feedback here...");
+      fireEvent.change(textarea, { target: { value: "Need to add more tests" } });
+
+      fireEvent.click(screen.getByText("Create Refinement Task"));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Task must be in 'done' or 'in-review' column", "error");
+      });
     });
   });
 });

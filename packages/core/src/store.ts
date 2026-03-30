@@ -264,6 +264,80 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
+   * Create a refinement task from a completed or in-review task.
+   * The new task is created in triage with a dependency on the original task.
+   * Validates the original is in 'done' or 'in-review' column.
+   */
+  async refineTask(id: string, feedback: string): Promise<Task> {
+    // Read the source task with its prompt
+    const sourceTask = await this.getTask(id);
+
+    // Validate task is in done or in-review column
+    if (sourceTask.column !== "done" && sourceTask.column !== "in-review") {
+      throw new Error(
+        `Cannot refine ${id}: task is in '${sourceTask.column}', must be in 'done' or 'in-review'`,
+      );
+    }
+
+    // Validate feedback is not empty
+    if (!feedback?.trim()) {
+      throw new Error("Feedback is required and cannot be empty");
+    }
+
+    // Allocate a new ID
+    const newId = await this.allocateId();
+    const now = new Date().toISOString();
+
+    // Create new refinement task
+    const newTask: Task = {
+      id: newId,
+      title: `Refinement: ${sourceTask.title || sourceTask.id}`,
+      description: `${feedback.trim()}\n\nRefines: ${id}`,
+      column: "triage",
+      dependencies: [id], // Refinement depends on the original being complete
+      steps: [], // Reset execution state
+      currentStep: 0,
+      log: [{ timestamp: now, action: `Created as refinement of ${id}` }],
+      columnMovedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      // Copy attachments from original for context (defensive copy)
+      attachments: sourceTask.attachments ? [...sourceTask.attachments] : undefined,
+    };
+
+    const newDir = this.taskDir(newId);
+    await mkdir(newDir, { recursive: true });
+    await this.atomicWriteTaskJson(newDir, newTask);
+
+    // Create a PROMPT.md for the refinement
+    const heading = newTask.title;
+    const prompt = `# ${heading}\n\n${newTask.description}\n`;
+    await writeFile(join(newDir, "PROMPT.md"), prompt);
+
+    // Copy attachments from source if any
+    if (sourceTask.attachments && sourceTask.attachments.length > 0) {
+      const sourceAttachDir = join(this.taskDir(id), "attachments");
+      const targetAttachDir = join(newDir, "attachments");
+      await mkdir(targetAttachDir, { recursive: true });
+
+      for (const attachment of sourceTask.attachments) {
+        const sourcePath = join(sourceAttachDir, attachment.filename);
+        const targetPath = join(targetAttachDir, attachment.filename);
+        if (existsSync(sourcePath)) {
+          const content = await readFile(sourcePath);
+          await writeFile(targetPath, content);
+        }
+      }
+    }
+
+    // Update cache if watcher is active
+    if (this.watcher) this.taskCache.set(newId, { ...newTask });
+
+    this.emit("task:created", newTask);
+    return newTask;
+  }
+
+  /**
    * Read a task's JSON and prompt content.
    *
    * Retries once after a short delay on non-ENOENT errors to handle

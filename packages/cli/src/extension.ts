@@ -371,6 +371,44 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── kb_task_refine ──────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "kb_task_refine",
+    label: "KB: Refine Task",
+    description:
+      "Request a refinement of a completed or in-review task. " +
+      "Creates a new follow-up task in triage that references the original task as a dependency. " +
+      "Use this when a done or in-review task needs additional work, improvements, or follow-up changes.",
+    promptSnippet: "Create a refinement task for follow-up work on a completed task",
+    promptGuidelines: [
+      "Use when a completed or in-review task needs follow-up work or improvements",
+      "The original task must be in 'done' or 'in-review' column",
+      "The refinement task will be created in triage and depend on the original task",
+      "Provide clear feedback about what needs to be refined or improved",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID to refine (e.g. KB-001). Must be in 'done' or 'in-review' column." }),
+      feedback: Type.String({ 
+        description: "Description of what needs to be refined or improved",
+        minLength: 1,
+        maxLength: 2000,
+      }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const newTask = await store.refineTask(params.id, params.feedback);
+
+      return {
+        content: [
+          { type: "text", text: `Created refinement ${newTask.id} for ${params.id}` },
+        ],
+        details: { sourceId: params.id, newTaskId: newTask.id, feedback: params.feedback },
+      };
+    },
+  });
+
   // ── kb_task_archive ───────────────────────────────────────────────
 
   pi.registerTool({

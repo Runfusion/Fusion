@@ -651,6 +651,33 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Refine task (done/in-review → creates new refinement task in triage)
+  router.post("/tasks/:id/refine", async (req, res) => {
+    try {
+      const { feedback } = req.body;
+      if (!feedback || typeof feedback !== "string") {
+        res.status(400).json({ error: "feedback is required and must be a string" });
+        return;
+      }
+      if (feedback.length === 0 || feedback.length > 2000) {
+        res.status(400).json({ error: "feedback must be between 1 and 2000 characters" });
+        return;
+      }
+
+      const newTask = await store.refineTask(req.params.id, feedback);
+
+      // Log the refinement action on the original task
+      await store.logEntry(req.params.id, "Refinement requested", feedback.slice(0, 100));
+
+      res.status(201).json(newTask);
+    } catch (err: any) {
+      const status = err.message?.includes("Cannot refine") || err.message?.includes("Feedback is required")
+        ? 400
+        : err.code === "ENOENT" ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // Archive task (done → archived)
   router.post("/tasks/:id/archive", async (req, res) => {
     try {

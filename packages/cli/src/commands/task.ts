@@ -296,6 +296,38 @@ export async function runTaskDuplicate(id: string) {
   console.log();
 }
 
+export async function runTaskRefine(id: string, feedbackArg?: string) {
+  const store = await getStore();
+  
+  // Get feedback interactively only if not provided (undefined)
+  let feedback = feedbackArg;
+  if (feedback === undefined) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    feedback = await rl.question("What needs to be refined? ");
+    rl.close();
+  }
+
+  if (!feedback?.trim()) {
+    console.error("Feedback is required");
+    process.exit(1);
+  }
+
+  // Validate length (matches API validation)
+  if (feedback.length > 2000) {
+    console.error("Feedback must be 2000 characters or less");
+    process.exit(1);
+  }
+
+  const newTask = await store.refineTask(id, feedback.trim());
+
+  console.log();
+  console.log(`  ✓ Created refinement ${newTask.id} for ${id}`);
+  console.log(`    Column: triage`);
+  console.log(`    Dependency: ${id}`);
+  console.log(`    Path: .kb/tasks/${newTask.id}/`);
+  console.log();
+}
+
 export async function runTaskArchive(id: string) {
   const store = await getStore();
   const task = await store.archiveTask(id);
