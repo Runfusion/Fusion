@@ -14,6 +14,7 @@ const defaultSettings: Settings = {
   testCommand: "",
   buildCommand: "",
   autoResolveConflicts: true,
+  smartConflictResolution: true,
 };
 
 vi.mock("../../api", () => ({
@@ -105,6 +106,7 @@ describe("SettingsModal", () => {
     expect(screen.getByText("Auto-merge completed tasks")).toBeTruthy();
     expect(screen.getByText("Include task ID in commit scope")).toBeTruthy();
     expect(screen.getByText("Auto-resolve conflicts in lock files and generated files")).toBeTruthy();
+    expect(screen.getByText("Smart conflict resolution")).toBeTruthy();
   });
 
   it("shows Recycle worktrees checkbox in Worktrees section", async () => {
@@ -247,6 +249,67 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Merge"));
     const checkbox = screen.getByLabelText("Auto-resolve conflicts in lock files and generated files") as HTMLInputElement;
     expect(checkbox.checked).toBe(true);
+  });
+
+  it("shows Smart conflict resolution checkbox in Merge section", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const checkbox = screen.getByLabelText("Smart conflict resolution");
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.getAttribute("type")).toBe("checkbox");
+  });
+
+  it("toggling smartConflictResolution checkbox sends false in save payload when unchecked", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const checkbox = screen.getByLabelText("Smart conflict resolution");
+    // Default is checked (true), click to uncheck
+    fireEvent.click(checkbox);
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.smartConflictResolution).toBe(false);
+  });
+
+  it("smartConflictResolution defaults to enabled (true) when setting is true", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      smartConflictResolution: true,
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const checkbox = screen.getByLabelText("Smart conflict resolution") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+  });
+
+  it("smartConflictResolution checkbox submits true in save payload when checked", async () => {
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      smartConflictResolution: false,
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Merge"));
+    const checkbox = screen.getByLabelText("Smart conflict resolution");
+    // Default is unchecked (false), click to check
+    fireEvent.click(checkbox);
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.smartConflictResolution).toBe(true);
   });
 
   it("groupOverlappingFiles input has type checkbox", async () => {
