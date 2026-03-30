@@ -26,16 +26,79 @@ export type OnNewCommentsCallback = (
   comments: PrComment[]
 ) => void | Promise<void>;
 
+// gh CLI JSON output type for comments
+interface GhPrViewJson {
+  comments: Array<{
+    id: string;
+    body: string;
+    author: { login: string };
+    createdAt: string;
+    updatedAt: string;
+    url: string;
+  }>;
+}
+
+/**
+ * Check if gh CLI is available and authenticated.
+ * Lazy-loaded to avoid issues during module load in tests.
+ */
+async function checkGhAuth(): Promise<boolean> {
+  try {
+    const { isGhAvailable, isGhAuthenticated } = await import("@kb/core");
+    return isGhAvailable() && isGhAuthenticated();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fetch PR comments using gh CLI.
+ */
+async function fetchCommentsWithGh(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  since?: string
+): Promise<PrComment[]> {
+  const { runGhJson } = await import("@kb/core");
+  
+  const pr = await runGhJson<GhPrViewJson>([
+    "pr", "view", String(prNumber),
+    "--repo", `${owner}/${repo}`,
+    "--json", "comments",
+  ]);
+
+  let comments = pr.comments.map((c) => ({
+    id: parseInt(c.id, 10),
+    body: c.body,
+    user: { login: c.author.login },
+    created_at: c.createdAt,
+    updated_at: c.updatedAt,
+    html_url: c.url,
+  }));
+
+  // Filter by timestamp if since is provided
+  if (since) {
+    const sinceDate = new Date(since);
+    comments = comments.filter((c) => new Date(c.created_at) > sinceDate);
+  }
+
+  return comments;
+}
+
 /**
  * Monitors GitHub PRs for new comments.
  * Uses adaptive polling: 30s when active, 5min when idle.
  * Implements exponential backoff on errors.
+ * 
+ * NOTE: Uses gh CLI for all GitHub operations. Requires gh CLI to be installed
+ * and authenticated (run `gh auth login`). The GITHUB_TOKEN fallback is no
+ * longer supported - monitoring will fail if gh CLI is not available.
  */
 export class PrMonitor {
   private trackedPrs = new Map<string, TrackedPr>();
   private intervals = new Map<string, ReturnType<typeof setInterval>>();
   private newCommentsCallback?: OnNewCommentsCallback;
-  private getGitHubToken: () => string | undefined;
 
   // Polling intervals in ms
   private readonly ACTIVE_INTERVAL = 30 * 1000; // 30 seconds
@@ -43,8 +106,12 @@ export class PrMonitor {
   private readonly MIN_INTERVAL = 30 * 1000;
   private readonly MAX_INTERVAL = 15 * 60 * 1000; // 15 minutes max backoff
 
-  constructor(options: { getGitHubToken?: () => string | undefined } = {}) {
-    this.getGitHubToken = options.getGitHubToken ?? (() => process.env.GITHUB_TOKEN);
+  /**
+   * Create a PR monitor.
+   * @param _options Deprecated - no longer used. gh CLI authentication is now required.
+   */
+  constructor(_options?: { getGitHubToken?: () => string | undefined }) {
+    // getGitHubToken option is no longer used - gh CLI auth is required
   }
 
   /**
@@ -146,21 +213,20 @@ export class PrMonitor {
     taskId: string,
     tracked: TrackedPr
   ): Promise<boolean> {
-    const token = this.getGitHubToken();
-    if (!token) {
-      prMonitorLog.warn(`No GitHub token available for task ${taskId}`);
+    // Check if gh CLI is available
+    if (!(await checkGhAuth())) {
+      prMonitorLog.warn(`GitHub CLI (gh) not available or not authenticated for task ${taskId}. Run 'gh auth login' to enable PR monitoring.`);
       tracked.consecutiveErrors++;
-      return false; // Don't reschedule - wait for next scheduled check
+      return false;
     }
 
     try {
       const since = tracked.lastCheckedAt.toISOString();
-      const comments = await this.fetchComments(
+      const comments = await fetchCommentsWithGh(
         tracked.owner,
         tracked.repo,
         tracked.prInfo.number,
-        since,
-        token
+        since
       );
 
       // Filter to only new comments (by ID)
@@ -218,44 +284,5 @@ export class PrMonitor {
       }
       return false;
     }
-  }
-
-  private async fetchComments(
-    owner: string,
-    repo: string,
-    prNumber: number,
-    since: string,
-    token: string
-  ): Promise<PrComment[]> {
-    const params = new URLSearchParams();
-    params.append("per_page", "100");
-    if (since) {
-      params.append("since", since);
-    }
-
-    const url = `https://api.github.com/repos/${encodeURIComponent(
-      owner
-    )}/${encodeURIComponent(repo)}/issues/${prNumber}/comments?${params}`;
-
-    const headers: Record<string, string> = {
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "kb-engine/1.0",
-      Authorization: `Bearer ${token}`,
-    };
-
-    const response = await fetch(url, { headers });
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`PR #${prNumber} not found in ${owner}/${repo}`);
-      }
-      if (response.status === 401 || response.status === 403) {
-        throw new Error("Authentication failed or rate limited");
-      }
-      throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
-    }
-
-    return response.json() as Promise<PrComment[]>;
   }
 }

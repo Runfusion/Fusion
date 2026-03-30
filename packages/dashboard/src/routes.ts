@@ -515,45 +515,10 @@ function pushGitBranch(): GitPushResult {
   }
 }
 
-/**
- * Per-repo GitHub API rate limiter.
- * Tracks requests per repo and enforces 60 requests per hour per repo.
- */
-class GitHubRateLimiter {
-  private requests = new Map<string, number[]>();
-  private readonly maxRequests = 60;
-  private readonly windowMs = 60 * 60 * 1000; // 1 hour
-
-  canMakeRequest(repo: string): boolean {
-    const now = Date.now();
-    const timestamps = this.requests.get(repo) || [];
-
-    // Remove timestamps outside the window
-    const validTimestamps = timestamps.filter((ts) => now - ts < this.windowMs);
-
-    if (validTimestamps.length >= this.maxRequests) {
-      return false;
-    }
-
-    validTimestamps.push(now);
-    this.requests.set(repo, validTimestamps);
-    return true;
-  }
-
-  getResetTime(repo: string): Date | null {
-    const timestamps = this.requests.get(repo);
-    if (!timestamps || timestamps.length === 0) return null;
-
-    const oldest = Math.min(...timestamps);
-    return new Date(oldest + this.windowMs);
-  }
-}
-
 export function createApiRoutes(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
-  const ghRateLimiter = new GitHubRateLimiter();
 
-  // Get GitHub token from options or env
+  // Get GitHub token from options or env (for REST API fallback)
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
 
   // Scheduler config (includes persisted settings)
@@ -1505,17 +1470,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         repo = gitRepo.repo;
       }
 
-      // Check rate limit
-      const repoKey = `${owner}/${repo}`;
-      if (!ghRateLimiter.canMakeRequest(repoKey)) {
-        const resetTime = ghRateLimiter.getResetTime(repoKey);
-        res.status(429).json({
-          error: "GitHub API rate limit exceeded for this repository",
-          resetAt: resetTime?.toISOString(),
-        });
-        return;
-      }
-
       // Create the PR
       const client = new GitHubClient(githubToken);
 
@@ -1617,17 +1571,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         repo = gitRepo.repo;
       }
 
-      // Check rate limit
-      const repoKey = `${owner}/${repo}`;
-      if (!ghRateLimiter.canMakeRequest(repoKey)) {
-        const resetTime = ghRateLimiter.getResetTime(repoKey);
-        res.status(429).json({
-          error: "GitHub API rate limit exceeded for this repository",
-          resetAt: resetTime?.toISOString(),
-        });
-        return;
-      }
-
       // Fetch fresh PR status
       const client = new GitHubClient(githubToken);
 
@@ -1707,17 +1650,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      // Check rate limit before fetching
-      const repoKey = `${parsed.owner}/${parsed.repo}`;
-      if (!ghRateLimiter.canMakeRequest(repoKey)) {
-        const resetTime = ghRateLimiter.getResetTime(repoKey);
-        res.status(429).json({
-          error: "GitHub API rate limit exceeded for this repository",
-          resetAt: resetTime?.toISOString(),
-        });
-        return;
-      }
-
       // Fetch fresh issue status
       const client = new GitHubClient(githubToken);
       const issueData = await client.getIssueStatus(parsed.owner, parsed.repo, parsed.number);
@@ -1785,17 +1717,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         owner = parsed.owner;
         repo = parsed.repo;
         issueNumber = parsed.number;
-      }
-
-      // Check rate limit
-      const repoKey = `${owner}/${repo}`;
-      if (!ghRateLimiter.canMakeRequest(repoKey)) {
-        const resetTime = ghRateLimiter.getResetTime(repoKey);
-        res.status(429).json({
-          error: "GitHub API rate limit exceeded for this repository",
-          resetAt: resetTime?.toISOString(),
-        });
-        return;
       }
 
       // Fetch fresh issue status

@@ -440,7 +440,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     promptSnippet: "Import GitHub issues as kb tasks",
     promptGuidelines: [
       "Use for syncing GitHub issue backlog to kb board",
-      "Requires GITHUB_TOKEN env var for private repositories",
+      "Uses gh CLI authentication when available (run 'gh auth login')",
+      "Falls back to GITHUB_TOKEN env var for private repositories without gh CLI",
       "Use --limit to control how many issues to import (default: 30)",
       "Use --labels to filter by specific labels",
     ],
@@ -528,7 +529,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     promptSnippet: "Import a specific GitHub issue as a kb task",
     promptGuidelines: [
       "Use for importing a single known issue by its number",
-      "Requires GITHUB_TOKEN env var for private repositories",
+      "Uses gh CLI authentication when available (run 'gh auth login')",
+      "Falls back to GITHUB_TOKEN env var for private repositories without gh CLI",
       "Skips import if the issue is already imported (checks for existing Source URL)",
     ],
     parameters: Type.Object({

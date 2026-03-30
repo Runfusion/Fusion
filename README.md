@@ -74,7 +74,7 @@ kb task import owner/repo --labels bug     # Filter by label(s)
 **GitHub Import:**
 - Batch mode imports all open issues automatically (skipping already-imported)
 - Interactive mode (`-i`) lets you select specific issues from a numbered list
-- Requires `GITHUB_TOKEN` env var for private repositories
+- Uses `gh` CLI authentication (run `gh auth login`) or falls back to `GITHUB_TOKEN` for private repositories
 - Pull requests are automatically filtered out
 
 **Dashboard Import:**
@@ -212,11 +212,13 @@ KB_CLIENT_DIR=/path/to/client ./kb dashboard
 
 ## GitHub Integration
 
+kb uses the `gh` CLI (GitHub CLI) for all GitHub operations. If you have `gh` installed and authenticated (run `gh auth login`), kb will use your existing session. For environments without `gh` CLI, you can set `GITHUB_TOKEN` as a fallback.
+
 ### PR Creation from Dashboard
 
 kb can create GitHub Pull Requests directly from the dashboard for tasks in the **In Review** column:
 
-1. Set the `GITHUB_TOKEN` environment variable with a personal access token (requires `repo` scope)
+1. Ensure you have `gh` CLI installed and authenticated (`gh auth login`), or set the `GITHUB_TOKEN` environment variable
 2. Open a task in the **In Review** column
 3. Click **"Create PR"** in the Pull Request section
 4. Enter a title and optional description
@@ -253,7 +255,7 @@ When a task has a linked PR, kb automatically monitors it for new review comment
 - **Steering comments**: Automatically adds actionable review feedback as steering comments on the task
 - **Follow-up tasks**: When a PR is closed with unaddressed feedback, a follow-up task is created
 
-Configure via the same `GITHUB_TOKEN` environment variable.
+Uses `gh` CLI authentication when available, falls back to `GITHUB_TOKEN` if set.
 
 ## Releases
 

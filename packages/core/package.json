@@ -6,6 +6,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./gh-cli": {
+      "import": "./dist/gh-cli.js",
+      "types": "./dist/gh-cli.d.ts"
     }
   },
   "publishConfig": {

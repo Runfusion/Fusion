@@ -1102,12 +1102,15 @@ describe("Pause/Unpause endpoints", () => {
       expect(res.body.error).toContain("title is required");
     });
 
-    it("returns 429 when rate limit exceeded", { timeout: 15000 }, async () => {
+    it("no longer has in-app rate limiter (gh CLI handles rate limiting)", async () => {
+      // Previously this test checked for a 429 response from an in-memory rate limiter.
+      // Now gh CLI handles rate limiting internally, so multiple rapid requests
+      // are allowed (gh CLI has its own rate limiting and caching).
       // Set up GITHUB_REPOSITORY env to bypass git lookup
       const originalEnv = process.env.GITHUB_REPOSITORY;
       process.env.GITHUB_REPOSITORY = "owner/rate-test";
 
-      // Create a fresh store mock for this test to isolate rate limit state
+      // Create a fresh store mock for this test
       const freshStore = createMockStore({
         getTask: vi.fn(),
         updatePrInfo: vi.fn(),
@@ -1122,39 +1125,24 @@ describe("Pause/Unpause endpoints", () => {
         return app;
       }
 
-      // Make 60 requests to hit the rate limit
+      // Make multiple rapid requests - should not be rate limited by our code
+      // (gh CLI handles rate limiting with GitHub)
       const app = buildFreshApp();
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 5; i++) {
         (freshStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
           ...mockInReviewTask,
           id: `KB-RATE-${i}`,
         });
-        await REQUEST(
+        const res = await REQUEST(
           app,
           "POST",
           `/api/tasks/KB-RATE-${i}/pr/create`,
           JSON.stringify({ title: `Test PR ${i}` }),
           { "Content-Type": "application/json" }
         );
+        // Should not get 429 from our code (may get 500 from gh CLI not being available in test)
+        expect(res.status).not.toBe(429);
       }
-
-      // 61st request should be rate limited
-      (freshStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-        ...mockInReviewTask,
-        id: "KB-RATE-61",
-      });
-
-      const res = await REQUEST(
-        app,
-        "POST",
-        "/api/tasks/KB-RATE-61/pr/create",
-        JSON.stringify({ title: "Test PR 61" }),
-        { "Content-Type": "application/json" }
-      );
-
-      expect(res.status).toBe(429);
-      expect(res.body.error).toContain("rate limit exceeded");
-      expect(res.body.resetAt).toBeDefined();
 
       // Restore env
       if (originalEnv) {
