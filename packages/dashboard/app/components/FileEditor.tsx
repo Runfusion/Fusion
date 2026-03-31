@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FileEdit, Eye } from "lucide-react";
+import { FileEdit, Eye, WrapText } from "lucide-react";
 
 interface FileEditorProps {
   content: string;
@@ -18,6 +18,7 @@ function isMarkdownFile(filePath?: string): boolean {
 
 export function FileEditor({ content, onChange, readOnly, filePath }: FileEditorProps) {
   const [showPreview, setShowPreview] = useState(false);
+  const [wordWrap, setWordWrap] = useState(true);
   const isMarkdown = isMarkdownFile(filePath);
 
   // For markdown files in readOnly mode, default to preview
@@ -31,9 +32,13 @@ export function FileEditor({ content, onChange, readOnly, filePath }: FileEditor
     setShowPreview(true);
   }, []);
 
+  const handleWordWrapToggle = useCallback(() => {
+    setWordWrap((prev) => !prev);
+  }, []);
+
   return (
     <div className="file-editor-container">
-      {isMarkdown && (
+      {isMarkdown ? (
         <div className="file-editor-toolbar">
           <div className="file-editor-mode-toggle">
             {!readOnly && (
@@ -57,7 +62,31 @@ export function FileEditor({ content, onChange, readOnly, filePath }: FileEditor
               Preview
             </button>
           </div>
+          {!readOnly && (
+            <button
+              className={`btn btn-sm ${wordWrap ? "btn-primary" : ""}`}
+              onClick={handleWordWrapToggle}
+              aria-label="Toggle word wrap"
+              title="Toggle word wrap"
+            >
+              <WrapText size={14} />
+            </button>
+          )}
         </div>
+      ) : (
+        !readOnly && (
+          <div className="file-editor-toolbar">
+            <div className="file-editor-mode-toggle" />
+            <button
+              className={`btn btn-sm ${wordWrap ? "btn-primary" : ""}`}
+              onClick={handleWordWrapToggle}
+              aria-label="Toggle word wrap"
+              title="Toggle word wrap"
+            >
+              <WrapText size={14} />
+            </button>
+          </div>
+        )
       )}
 
       {effectiveShowPreview ? (
@@ -68,7 +97,7 @@ export function FileEditor({ content, onChange, readOnly, filePath }: FileEditor
         </div>
       ) : (
         <textarea
-          className="file-editor-textarea"
+          className={`file-editor-textarea ${wordWrap ? "file-editor-textarea--wrap" : ""}`}
           value={content}
           onChange={(e) => onChange(e.target.value)}
           readOnly={readOnly}

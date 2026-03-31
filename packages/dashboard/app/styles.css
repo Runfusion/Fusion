@@ -6279,9 +6279,10 @@ html .column.drag-over * {
 /* File Editor Preview */
 .file-editor-preview {
   flex: 1;
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
   padding: 16px;
-  min-height: 0;
 }
 
 /* Textarea-based file editor */
@@ -6305,6 +6306,11 @@ html .column.drag-over * {
   white-space: pre;
   overflow-wrap: normal;
   tab-size: 2;
+}
+
+.file-editor-textarea.file-editor-textarea--wrap {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .file-editor-textarea:focus {

@@ -177,4 +177,81 @@ describe("FileEditor", () => {
       expect(editButton).toBeDisabled();
     });
   });
+
+  describe("word wrap toggle", () => {
+    it("shows word wrap toggle button for markdown files in edit mode", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+      
+      expect(screen.getByRole("button", { name: /toggle word wrap/i })).toBeInTheDocument();
+    });
+
+    it("shows word wrap toggle button for non-markdown files", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+      
+      expect(screen.getByRole("button", { name: /toggle word wrap/i })).toBeInTheDocument();
+    });
+
+    it("does not show word wrap toggle button in readOnly mode", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" readOnly />);
+      
+      expect(screen.queryByRole("button", { name: /toggle word wrap/i })).not.toBeInTheDocument();
+    });
+
+    it("word wrap is enabled by default", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+      
+      const textarea = screen.getByRole("textbox");
+      expect(textarea.classList.contains("file-editor-textarea--wrap")).toBe(true);
+    });
+
+    it("toggle button shows active state when word wrap is enabled", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+      
+      const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
+      expect(wrapButton.classList.contains("btn-primary")).toBe(true);
+    });
+
+    it("clicking toggle button disables word wrap", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+      
+      const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
+      fireEvent.click(wrapButton);
+      
+      const textarea = screen.getByRole("textbox");
+      expect(textarea.classList.contains("file-editor-textarea--wrap")).toBe(false);
+    });
+
+    it("clicking toggle button again re-enables word wrap", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+      
+      const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
+      fireEvent.click(wrapButton); // turn off
+      fireEvent.click(wrapButton); // turn on
+      
+      const textarea = screen.getByRole("textbox");
+      expect(textarea.classList.contains("file-editor-textarea--wrap")).toBe(true);
+    });
+
+    it("toggle button loses active state when word wrap is disabled", () => {
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+      
+      const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
+      fireEvent.click(wrapButton);
+      
+      expect(wrapButton.classList.contains("btn-primary")).toBe(false);
+    });
+  });
+
+  describe("markdown preview scrollability", () => {
+    it("preview container has correct CSS classes for scrolling", () => {
+      render(<FileEditor content="# Hello World" onChange={vi.fn()} filePath="readme.md" />);
+      
+      // Switch to preview mode
+      const previewButton = screen.getByRole("button", { name: /preview/i });
+      fireEvent.click(previewButton);
+      
+      const preview = document.querySelector(".file-editor-preview");
+      expect(preview).toBeInTheDocument();
+    });
+  });
 });
