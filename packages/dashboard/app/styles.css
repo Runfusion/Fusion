@@ -9058,3 +9058,1086 @@ html .column.drag-over * {
   background: #dc2626;
   border-color: #dc2626;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   GIT MANAGER MODAL
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Modal size override */
+.gm-modal {
+  width: 900px;
+  max-width: 95vw;
+  max-height: 85vh;
+}
+
+/* Main layout: sidebar + content */
+.gm-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Sidebar ── */
+
+.gm-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 160px;
+  min-width: 160px;
+  border-right: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.05);
+  padding: var(--space-sm) 0;
+  overflow-y: auto;
+}
+
+.gm-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+  width: 100%;
+  border-left: 3px solid transparent;
+}
+
+.gm-nav-item:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.gm-nav-item.active {
+  color: var(--text);
+  background: rgba(88, 166, 255, 0.08);
+  border-left-color: var(--todo);
+  font-weight: 500;
+}
+
+/* ── Header Actions ── */
+
+.gm-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* ── Content Area ── */
+
+.gm-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+  min-height: 400px;
+  position: relative;
+}
+
+/* ── Loading / Error ── */
+
+.gm-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-2xl);
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.gm-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--color-error);
+  font-size: 13px;
+}
+
+.gm-error .btn {
+  margin-left: auto;
+}
+
+/* ── Panel Container ── */
+
+.gm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.gm-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.gm-panel-header h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+/* ── Empty State ── */
+
+.gm-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xl);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* ── Status Panel ── */
+
+.gm-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-md);
+}
+
+.gm-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.gm-status-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.gm-status-value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.gm-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.gm-status-badge.clean {
+  color: var(--color-success);
+  background: rgba(63, 185, 80, 0.1);
+}
+
+.gm-status-badge.dirty {
+  color: var(--color-error);
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.gm-hash {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--todo);
+}
+
+.gm-ahead {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--color-success);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.gm-behind {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--color-error);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.gm-in-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-success);
+  font-size: 13px;
+}
+
+/* ── Icon Button ── */
+
+.gm-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.gm-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+/* ── Search Box ── */
+
+.gm-search-box {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 4px 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+  max-width: 200px;
+}
+
+.gm-search-box input {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+}
+
+.gm-search-box svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ── Changes Panel ── */
+
+.gm-changes-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.gm-branch-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.gm-dirty-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--color-error);
+}
+
+/* ── File Section ── */
+
+.gm-file-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.gm-file-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid var(--border);
+}
+
+.gm-file-section-header h5 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.gm-file-section-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+/* ── File List ── */
+
+.gm-file-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.gm-file-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  font-size: 13px;
+  transition: background var(--transition-fast);
+}
+
+.gm-file-item:last-child {
+  border-bottom: none;
+}
+
+.gm-file-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gm-file-item.staged {
+  background: rgba(63, 185, 80, 0.03);
+}
+
+.gm-file-checkbox {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.gm-file-checkbox input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--todo);
+}
+
+.gm-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.gm-file-icon {
+  flex-shrink: 0;
+}
+
+.gm-file-added { color: var(--color-success); }
+.gm-file-modified { color: var(--todo); }
+.gm-file-deleted { color: var(--color-error); }
+.gm-file-renamed { color: var(--in-progress); }
+
+.gm-file-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.gm-file-badge-added,
+.gm-file-badge-untracked {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--color-success);
+}
+
+.gm-file-badge-modified {
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--todo);
+}
+
+.gm-file-badge-deleted {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--color-error);
+}
+
+.gm-file-badge-renamed,
+.gm-file-badge-copied {
+  background: rgba(188, 140, 255, 0.15);
+  color: var(--in-progress);
+}
+
+/* ── Diff Viewer ── */
+
+.gm-diff-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.gm-diff-viewer {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.gm-diff-stat {
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(0, 0, 0, 0.1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.gm-diff-patch {
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  max-height: 300px;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.gm-diff-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.gm-diff-error {
+  padding: var(--space-md);
+  color: var(--color-error);
+  font-size: 13px;
+}
+
+/* ── Commit Form ── */
+
+.gm-commit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.gm-commit-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: var(--space-sm);
+  resize: vertical;
+  min-height: 60px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.gm-commit-input:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.gm-commit-actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+}
+
+/* ── Commits Panel ── */
+
+.gm-commits-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.gm-commit-item {
+  display: flex;
+  gap: var(--space-sm);
+  position: relative;
+}
+
+.gm-commit-graph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 20px;
+  flex-shrink: 0;
+  padding-top: 12px;
+}
+
+.gm-commit-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--todo);
+  border: 2px solid var(--card);
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.gm-commit-line {
+  width: 2px;
+  flex: 1;
+  background: var(--border);
+  margin-top: -1px;
+}
+
+.gm-commit-body {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: var(--space-sm);
+}
+
+.gm-commit-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.gm-commit-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gm-commit-top-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.gm-commit-message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.gm-commit-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.gm-merge-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(188, 140, 255, 0.15);
+  color: var(--in-progress);
+  text-transform: uppercase;
+}
+
+.gm-commit-actions-row {
+  display: flex;
+  gap: var(--space-xs);
+  padding-left: var(--space-sm);
+}
+
+.gm-commit-diff {
+  margin-top: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.gm-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-sm);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  width: 100%;
+  margin-top: var(--space-sm);
+}
+
+.gm-load-more:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ── Create Form (branches, stashes) ── */
+
+.gm-create-form {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.gm-create-form input,
+.gm-create-form select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.gm-create-form input:focus,
+.gm-create-form select:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.gm-branch-select {
+  max-width: 150px;
+}
+
+/* ── Branches List ── */
+
+.gm-branches-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+.gm-branch-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  transition: background var(--transition-fast);
+}
+
+.gm-branch-item:last-child {
+  border-bottom: none;
+}
+
+.gm-branch-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gm-branch-item.current {
+  background: rgba(88, 166, 255, 0.05);
+}
+
+.gm-branch-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1;
+}
+
+.gm-branch-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.gm-current-icon {
+  color: var(--color-success);
+}
+
+.gm-branch-remote {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.gm-branch-date {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.gm-branch-actions {
+  display: flex;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* ── Worktrees Panel ── */
+
+.gm-worktree-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.gm-stat-separator {
+  color: var(--text-dim);
+}
+
+.gm-worktrees-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.gm-worktree-item {
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+}
+
+.gm-worktree-item:hover {
+  background: var(--card-hover);
+}
+
+.gm-worktree-item.main {
+  border-left: 3px solid var(--color-success);
+}
+
+.gm-worktree-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.gm-worktree-path-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.gm-worktree-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.gm-worktree-detail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.gm-worktree-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.gm-worktree-task {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--todo);
+}
+
+.gm-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.gm-badge.main {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--color-success);
+}
+
+.gm-badge.bare {
+  background: rgba(139, 148, 158, 0.15);
+  color: var(--text-muted);
+}
+
+/* ── Stash Panel ── */
+
+.gm-stash-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.gm-stash-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.gm-stash-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.gm-stash-ref {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--todo);
+}
+
+.gm-stash-message {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gm-stash-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.gm-stash-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gm-stash-actions {
+  display: flex;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* ── Remote Panel ── */
+
+.gm-remote-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.gm-remote-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.gm-remote-indicator.ahead {
+  background: rgba(63, 185, 80, 0.08);
+  color: var(--color-success);
+}
+
+.gm-remote-indicator.behind {
+  background: rgba(248, 81, 73, 0.08);
+  color: var(--color-error);
+}
+
+.gm-remote-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.gm-remote-result {
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 640px) {
+  .gm-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .gm-layout {
+    flex-direction: column;
+  }
+
+  .gm-sidebar {
+    flex-direction: row;
+    width: 100%;
+    min-width: unset;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    padding: var(--space-xs) var(--space-sm);
+    gap: var(--space-xs);
+  }
+
+  .gm-nav-item {
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--space-xs) var(--space-sm);
+    border-left: none;
+    border-bottom: 2px solid transparent;
+    font-size: 10px;
+    min-width: 56px;
+    text-align: center;
+    justify-content: center;
+  }
+
+  .gm-nav-item.active {
+    border-left-color: transparent;
+    border-bottom-color: var(--todo);
+  }
+
+  .gm-content {
+    min-height: 300px;
+    padding: var(--space-md);
+  }
+
+  .gm-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gm-create-form {
+    flex-wrap: wrap;
+  }
+
+  .gm-create-form input,
+  .gm-create-form select {
+    flex: 1 1 100%;
+  }
+
+  .gm-branch-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+  }
+
+  .gm-stash-item {
+    flex-direction: column;
+  }
+
+  .gm-remote-actions {
+    flex-wrap: wrap;
+  }
+
+  .gm-commit-form .gm-commit-actions {
+    flex-direction: column;
+  }
+}
+
+/* ── Light Theme Overrides ── */
+
+[data-theme="light"] .gm-sidebar {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .gm-nav-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .gm-nav-item.active {
+  background: rgba(9, 105, 218, 0.06);
+}
+
+[data-theme="light"] .gm-file-item:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .gm-file-item.staged {
+  background: rgba(26, 127, 55, 0.04);
+}
+
+[data-theme="light"] .gm-commit-header:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .gm-branch-item:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .gm-branch-item.current {
+  background: rgba(9, 105, 218, 0.04);
+}
+
+[data-theme="light"] .gm-hash {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .gm-icon-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .gm-file-section-header {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .gm-load-more:hover {
+  background: rgba(0, 0, 0, 0.03);
+}

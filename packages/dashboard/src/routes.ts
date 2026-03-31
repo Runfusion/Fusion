@@ -563,6 +563,253 @@ function pushGitBranch(): GitPushResult {
   }
 }
 
+// ── Git Stash, Stage, Commit Helper Functions ────────────────────────────
+
+/** Git stash entry */
+export interface GitStash {
+  index: number;
+  message: string;
+  date: string;
+  branch: string;
+}
+
+/** Individual file change with staging status */
+export interface GitFileChange {
+  file: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked";
+  staged: boolean;
+  oldFile?: string;
+}
+
+/**
+ * Get list of stash entries.
+ */
+function getGitStashList(): GitStash[] {
+  try {
+    const output = execSync('git stash list --format="%gd|%gs|%ai"', {
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+    if (!output) return [];
+
+    const stashes: GitStash[] = [];
+    for (const line of output.split("\n")) {
+      const parts = line.split("|");
+      if (parts.length < 3) continue;
+      const [ref, message, date] = parts;
+      const indexMatch = ref.match(/stash@\{(\d+)\}/);
+      const index = indexMatch ? parseInt(indexMatch[1], 10) : stashes.length;
+      // Extract branch from message like "WIP on main: abc1234 ..."
+      const branchMatch = message.match(/(?:WIP on|On) ([^:]+):/);
+      const branch = branchMatch ? branchMatch[1] : "";
+      stashes.push({ index, message, date, branch });
+    }
+    return stashes;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Create a new stash.
+ */
+function createGitStash(message?: string): string {
+  let output: string;
+  if (message) {
+    // Sanitize message: remove shell metacharacters to prevent injection
+    const sanitized = message.replace(/[`$\\!"]/g, "").trim();
+    if (!sanitized) {
+      throw new Error("Invalid stash message");
+    }
+    output = execSync(`git stash push -m '${sanitized.replace(/'/g, "'\\''")}'`, { encoding: "utf-8", timeout: 10000 }).trim();
+  } else {
+    output = execSync("git stash push", { encoding: "utf-8", timeout: 10000 }).trim();
+  }
+  if (output.includes("No local changes to save")) {
+    throw new Error("No local changes to stash");
+  }
+  return output || "Stash created";
+}
+
+/**
+ * Apply a stash entry.
+ */
+function applyGitStash(index: number, drop: boolean = false): string {
+  if (index < 0 || !Number.isInteger(index)) throw new Error("Invalid stash index");
+  const cmd = drop ? `git stash pop stash@{${index}}` : `git stash apply stash@{${index}}`;
+  const output = execSync(cmd, { encoding: "utf-8", timeout: 10000 }).trim();
+  return output || (drop ? "Stash popped" : "Stash applied");
+}
+
+/**
+ * Drop a stash entry.
+ */
+function dropGitStash(index: number): string {
+  if (index < 0 || !Number.isInteger(index)) throw new Error("Invalid stash index");
+  const output = execSync(`git stash drop stash@{${index}}`, {
+    encoding: "utf-8",
+    timeout: 10000,
+  }).trim();
+  return output || "Stash dropped";
+}
+
+/**
+ * Get file changes (staged and unstaged).
+ */
+function getGitFileChanges(): GitFileChange[] {
+  try {
+    const output = execSync("git status --porcelain=v1", {
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+    if (!output) return [];
+
+    const changes: GitFileChange[] = [];
+    for (const line of output.split("\n")) {
+      if (line.length < 3) continue;
+      const indexStatus = line[0];
+      const workTreeStatus = line[1];
+      const filePath = line.slice(3).trim();
+
+      // Map git status codes to our status type
+      const mapStatus = (code: string): GitFileChange["status"] => {
+        switch (code) {
+          case "A": return "added";
+          case "M": return "modified";
+          case "D": return "deleted";
+          case "R": return "renamed";
+          case "C": return "copied";
+          case "?": return "untracked";
+          default: return "modified";
+        }
+      };
+
+      // Handle renamed files: "R  old -> new"
+      let file = filePath;
+      let oldFile: string | undefined;
+      if (filePath.includes(" -> ")) {
+        const [old, newF] = filePath.split(" -> ");
+        oldFile = old.trim();
+        file = newF.trim();
+      }
+
+      // Staged changes (index status is not space and not ?)
+      if (indexStatus !== " " && indexStatus !== "?") {
+        changes.push({
+          file,
+          status: mapStatus(indexStatus),
+          staged: true,
+          oldFile,
+        });
+      }
+
+      // Unstaged changes (work tree status is not space)
+      if (workTreeStatus !== " ") {
+        changes.push({
+          file,
+          status: workTreeStatus === "?" ? "untracked" : mapStatus(workTreeStatus),
+          staged: false,
+          oldFile,
+        });
+      }
+    }
+    return changes;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get working directory diff.
+ */
+function getGitWorkingDiff(): { stat: string; patch: string } {
+  try {
+    const stat = execSync("git diff --stat", { encoding: "utf-8", timeout: 10000 }).trim();
+    const patch = execSync("git diff", { encoding: "utf-8", timeout: 10000 });
+    return { stat, patch };
+  } catch {
+    return { stat: "", patch: "" };
+  }
+}
+
+/**
+ * Stage specific files.
+ */
+function stageGitFiles(files: string[]): string[] {
+  if (!files.length) throw new Error("No files specified");
+  // Validate file paths - no shell metacharacters
+  for (const f of files) {
+    if (/[;&|`$(){}[\]\r\n]/.test(f)) {
+      throw new Error(`Invalid file path: ${f}`);
+    }
+  }
+  const escaped = files.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
+  execSync(`git add ${escaped}`, { encoding: "utf-8", timeout: 10000 });
+  return files;
+}
+
+/**
+ * Unstage specific files.
+ */
+function unstageGitFiles(files: string[]): string[] {
+  if (!files.length) throw new Error("No files specified");
+  for (const f of files) {
+    if (/[;&|`$(){}[\]\r\n]/.test(f)) {
+      throw new Error(`Invalid file path: ${f}`);
+    }
+  }
+  const escaped = files.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
+  execSync(`git reset HEAD ${escaped}`, { encoding: "utf-8", timeout: 10000 });
+  return files;
+}
+
+/**
+ * Create a commit with staged changes.
+ */
+function createGitCommit(message: string): { hash: string; message: string } {
+  if (!message || !message.trim()) throw new Error("Commit message is required");
+  // Check there are staged changes
+  const staged = execSync("git diff --cached --name-only", { encoding: "utf-8", timeout: 5000 }).trim();
+  if (!staged) throw new Error("No staged changes to commit");
+  // Sanitize: use single quotes and escape embedded single quotes for shell safety
+  const sanitized = message.trim().replace(/'/g, "'\\''");
+  execSync(`git commit -m '${sanitized}'`, { encoding: "utf-8", timeout: 10000 });
+  const hash = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
+  return { hash, message: message.trim() };
+}
+
+/**
+ * Discard changes for specific files.
+ */
+function discardGitChanges(files: string[]): string[] {
+  if (!files.length) throw new Error("No files specified");
+  for (const f of files) {
+    if (/[;&|`$(){}[\]\r\n]/.test(f)) {
+      throw new Error(`Invalid file path: ${f}`);
+    }
+  }
+  // Separate untracked from tracked
+  const statusOutput = execSync("git status --porcelain=v1", { encoding: "utf-8", timeout: 5000 }).trim();
+  const untracked = new Set<string>();
+  for (const line of statusOutput.split("\n")) {
+    if (line.startsWith("??")) {
+      untracked.add(line.slice(3).trim());
+    }
+  }
+  const trackedFiles = files.filter((f) => !untracked.has(f));
+  const untrackedFiles = files.filter((f) => untracked.has(f));
+
+  if (trackedFiles.length) {
+    const escaped = trackedFiles.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
+    execSync(`git checkout -- ${escaped}`, { encoding: "utf-8", timeout: 10000 });
+  }
+  if (untrackedFiles.length) {
+    const escaped = untrackedFiles.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
+    execSync(`git clean -f -- ${escaped}`, { encoding: "utf-8", timeout: 10000 });
+  }
+  return files;
+}
+
 export function createApiRoutes(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
 
@@ -1458,6 +1705,224 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       } else {
         res.status(500).json({ error: err.message });
       }
+    }
+  });
+
+// ── Git Stash, Stage, Commit Routes ────────────────────────────────
+
+  /**
+   * GET /api/git/stashes
+   * Returns list of stash entries.
+   */
+  router.get("/git/stashes", (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const stashes = getGitStashList();
+      res.json(stashes);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/git/stashes
+   * Create a new stash.
+   * Body: { message?: string }
+   */
+  router.post("/git/stashes", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { message } = req.body;
+      const result = createGitStash(message);
+      res.status(201).json({ message: result });
+    } catch (err: any) {
+      if (err.message?.includes("No local changes")) {
+        res.status(400).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/git/stashes/:index/apply
+   * Apply a stash entry.
+   * Body: { drop?: boolean }
+   */
+  router.post("/git/stashes/:index/apply", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const index = parseInt(req.params.index, 10);
+      if (isNaN(index) || index < 0) {
+        res.status(400).json({ error: "Invalid stash index" });
+        return;
+      }
+      const { drop } = req.body;
+      const result = applyGitStash(index, drop === true);
+      res.json({ message: result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/git/stashes/:index
+   * Drop a stash entry.
+   */
+  router.delete("/git/stashes/:index", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const index = parseInt(req.params.index, 10);
+      if (isNaN(index) || index < 0) {
+        res.status(400).json({ error: "Invalid stash index" });
+        return;
+      }
+      const result = dropGitStash(index);
+      res.json({ message: result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/diff
+   * Returns working directory diff (unstaged changes).
+   */
+  router.get("/git/diff", (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const diff = getGitWorkingDiff();
+      res.json(diff);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/changes
+   * Returns file changes (staged and unstaged).
+   */
+  router.get("/git/changes", (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const changes = getGitFileChanges();
+      res.json(changes);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/git/stage
+   * Stage specific files.
+   * Body: { files: string[] }
+   */
+  router.post("/git/stage", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { files } = req.body;
+      if (!Array.isArray(files) || files.length === 0) {
+        res.status(400).json({ error: "files array is required" });
+        return;
+      }
+      const staged = stageGitFiles(files);
+      res.json({ staged });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/git/unstage
+   * Unstage specific files.
+   * Body: { files: string[] }
+   */
+  router.post("/git/unstage", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { files } = req.body;
+      if (!Array.isArray(files) || files.length === 0) {
+        res.status(400).json({ error: "files array is required" });
+        return;
+      }
+      const unstaged = unstageGitFiles(files);
+      res.json({ unstaged });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/git/commit
+   * Create a commit with staged changes.
+   * Body: { message: string }
+   */
+  router.post("/git/commit", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { message } = req.body;
+      if (!message || typeof message !== "string" || !message.trim()) {
+        res.status(400).json({ error: "Commit message is required" });
+        return;
+      }
+      const result = createGitCommit(message);
+      res.status(201).json(result);
+    } catch (err: any) {
+      if (err.message?.includes("No staged changes")) {
+        res.status(400).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/git/discard
+   * Discard working directory changes for specific files.
+   * Body: { files: string[] }
+   */
+  router.post("/git/discard", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { files } = req.body;
+      if (!Array.isArray(files) || files.length === 0) {
+        res.status(400).json({ error: "files array is required" });
+        return;
+      }
+      const discarded = discardGitChanges(files);
+      res.json({ discarded });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { Task } from "@kb/core";
 import type { ToastType } from "../hooks/useToast";
 import type {
@@ -9,6 +9,8 @@ import type {
   GitFetchResult,
   GitPullResult,
   GitPushResult,
+  GitStash,
+  GitFileChange,
 } from "../api";
 import {
   fetchGitStatus,
@@ -22,6 +24,16 @@ import {
   fetchRemote,
   pullBranch,
   pushBranch,
+  fetchGitStashList,
+  createStash,
+  applyStash,
+  dropStash,
+  fetchFileChanges,
+  stageFiles,
+  unstageFiles,
+  createCommit,
+  discardChanges,
+  fetchUnstagedDiff,
 } from "../api";
 import {
   GitBranch as GitBranchIcon,
@@ -41,17 +53,98 @@ import {
   ArrowUp,
   ArrowDown,
   AlertCircle,
+  Copy,
+  Search,
+  FileText,
+  FolderGit2,
+  Archive,
+  FilePlus,
+  FileMinus,
+  FileEdit,
+  FileQuestion,
+  FileDiff,
+  CheckCircle,
+  XCircle,
+  Send,
 } from "lucide-react";
 
-type SectionId = "status" | "commits" | "branches" | "worktrees" | "remotes";
+// ── Types & Constants ─────────────────────────────────────────────
 
-const SECTIONS = [
-  { id: "status" as SectionId, label: "Status", icon: Radio },
-  { id: "commits" as SectionId, label: "Commits", icon: GitCommitIcon },
-  { id: "branches" as SectionId, label: "Branches", icon: GitBranchIcon },
-  { id: "worktrees" as SectionId, label: "Worktrees", icon: HardDrive },
-  { id: "remotes" as SectionId, label: "Remotes", icon: GitMerge },
+type SectionId = "status" | "changes" | "commits" | "branches" | "worktrees" | "stashes" | "remotes";
+
+const SECTIONS: { id: SectionId; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+  { id: "status", label: "Status", icon: Radio },
+  { id: "changes", label: "Changes", icon: FileDiff },
+  { id: "commits", label: "Commits", icon: GitCommitIcon },
+  { id: "branches", label: "Branches", icon: GitBranchIcon },
+  { id: "worktrees", label: "Worktrees", icon: HardDrive },
+  { id: "stashes", label: "Stashes", icon: Archive },
+  { id: "remotes", label: "Remotes", icon: GitMerge },
 ];
+
+// ── Helper Utilities ──────────────────────────────────────────────
+
+/** Icon for a file change status */
+function FileStatusIcon({ status }: { status: GitFileChange["status"] }) {
+  switch (status) {
+    case "added":
+    case "untracked":
+      return <FilePlus size={14} className="gm-file-icon gm-file-added" />;
+    case "modified":
+      return <FileEdit size={14} className="gm-file-icon gm-file-modified" />;
+    case "deleted":
+      return <FileMinus size={14} className="gm-file-icon gm-file-deleted" />;
+    case "renamed":
+    case "copied":
+      return <FileText size={14} className="gm-file-icon gm-file-renamed" />;
+    default:
+      return <FileQuestion size={14} className="gm-file-icon" />;
+  }
+}
+
+/** Label badge for file status */
+function FileStatusBadge({ status }: { status: GitFileChange["status"] }) {
+  const label =
+    status === "untracked" ? "U" :
+    status === "added" ? "A" :
+    status === "modified" ? "M" :
+    status === "deleted" ? "D" :
+    status === "renamed" ? "R" :
+    status === "copied" ? "C" : "?";
+  return <span className={`gm-file-badge gm-file-badge-${status}`}>{label}</span>;
+}
+
+/** Copy text to clipboard with toast feedback */
+function useCopyToClipboard(addToast: (msg: string, type?: ToastType) => void) {
+  return useCallback(
+    async (text: string, label?: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        addToast(`Copied ${label || "to clipboard"}`, "success");
+      } catch {
+        addToast("Failed to copy", "error");
+      }
+    },
+    [addToast]
+  );
+}
+
+/** Format relative date */
+function relativeDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
+
+// ── Props ─────────────────────────────────────────────────────────
 
 interface GitManagerModalProps {
   isOpen: boolean;
@@ -60,53 +153,101 @@ interface GitManagerModalProps {
   addToast: (message: string, type?: ToastType) => void;
 }
 
+// ── Main Component ────────────────────────────────────────────────
+
 export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManagerModalProps) {
   const [activeSection, setActiveSection] = useState<SectionId>("status");
   const [loading, setLoading] = useState(false);
+  const [sectionError, setSectionError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const copyToClipboard = useCopyToClipboard(addToast);
+
+  // ── Status state
   const [status, setStatus] = useState<GitStatus | null>(null);
+
+  // ── Changes state
+  const [fileChanges, setFileChanges] = useState<GitFileChange[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [commitMessage, setCommitMessage] = useState("");
+  const [committing, setCommitting] = useState(false);
+  const [changeDiff, setChangeDiff] = useState<{ stat: string; patch: string } | null>(null);
+  const [loadingChangeDiff, setLoadingChangeDiff] = useState(false);
+
+  // ── Commits state
   const [commits, setCommits] = useState<GitCommit[]>([]);
-  const [branches, setBranches] = useState<GitBranch[]>([]);
-  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
   const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
   const [commitDiff, setCommitDiff] = useState<{ stat: string; patch: string } | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [commitsLimit, setCommitsLimit] = useState(20);
+  const [commitSearch, setCommitSearch] = useState("");
+
+  // ── Branches state
+  const [branches, setBranches] = useState<GitBranch[]>([]);
   const [newBranchName, setNewBranchName] = useState("");
   const [branchBase, setBranchBase] = useState("");
-  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [branchSearch, setBranchSearch] = useState("");
+
+  // ── Worktrees state
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
+
+  // ── Stashes state
+  const [stashes, setStashes] = useState<GitStash[]>([]);
+  const [stashMessage, setStashMessage] = useState("");
+  const [stashLoading, setStashLoading] = useState<string | null>(null);
+
+  // ── Remotes state
   const [remoteLoading, setRemoteLoading] = useState<string | null>(null);
   const [lastRemoteResult, setLastRemoteResult] = useState<GitFetchResult | GitPullResult | GitPushResult | null>(null);
-  const [commitsLimit, setCommitsLimit] = useState(20);
-  const modalRef = useRef<HTMLDivElement>(null);
 
-  // Fetch data when section changes or modal opens
+  // ── Data Fetching ───────────────────────────────────────────────
+
   const fetchSectionData = useCallback(async () => {
     if (!isOpen) return;
     setLoading(true);
+    setSectionError(null);
     try {
       switch (activeSection) {
-        case "status":
+        case "status": {
           const statusData = await fetchGitStatus();
           setStatus(statusData);
           break;
-        case "commits":
+        }
+        case "changes": {
+          const [statusData, changes] = await Promise.all([fetchGitStatus(), fetchFileChanges()]);
+          setStatus(statusData);
+          setFileChanges(changes);
+          setSelectedFiles(new Set());
+          break;
+        }
+        case "commits": {
           const commitsData = await fetchGitCommits(commitsLimit);
           setCommits(commitsData);
           break;
-        case "branches":
+        }
+        case "branches": {
           const [branchesData, statusForBranch] = await Promise.all([fetchGitBranches(), fetchGitStatus()]);
           setBranches(branchesData);
           setStatus(statusForBranch);
           break;
-        case "worktrees":
+        }
+        case "worktrees": {
           const worktreesData = await fetchGitWorktrees();
           setWorktrees(worktreesData);
           break;
-        case "remotes":
-          // Just refresh status for remote section
+        }
+        case "stashes": {
+          const stashesData = await fetchGitStashList();
+          setStashes(stashesData);
+          break;
+        }
+        case "remotes": {
           const remoteStatus = await fetchGitStatus();
           setStatus(remoteStatus);
           break;
+        }
       }
     } catch (err: any) {
+      setSectionError(err.message || "Failed to fetch git data");
       addToast(err.message || "Failed to fetch git data", "error");
     } finally {
       setLoading(false);
@@ -119,17 +260,136 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
     }
   }, [fetchSectionData, isOpen]);
 
-  // Keyboard support
+  // ── Keyboard Navigation ─────────────────────────────────────────
+
   useEffect(() => {
     if (!isOpen) return;
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      // Arrow key navigation between sections
+      if ((e.key === "ArrowUp" || e.key === "ArrowDown") && e.altKey) {
+        e.preventDefault();
+        const currentIndex = SECTIONS.findIndex((s) => s.id === activeSection);
+        if (e.key === "ArrowUp" && currentIndex > 0) {
+          setActiveSection(SECTIONS[currentIndex - 1].id);
+        } else if (e.key === "ArrowDown" && currentIndex < SECTIONS.length - 1) {
+          setActiveSection(SECTIONS[currentIndex + 1].id);
+        }
+      }
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, activeSection]);
 
-  // Handle commit selection and diff loading
+  // ── Changes Handlers ────────────────────────────────────────────
+
+  const handleStageFiles = useCallback(async (files: string[]) => {
+    try {
+      await stageFiles(files);
+      addToast(`Staged ${files.length} file(s)`, "success");
+      const changes = await fetchFileChanges();
+      setFileChanges(changes);
+      setSelectedFiles(new Set());
+    } catch (err: any) {
+      addToast(err.message || "Failed to stage files", "error");
+    }
+  }, [addToast]);
+
+  const handleUnstageFiles = useCallback(async (files: string[]) => {
+    try {
+      await unstageFiles(files);
+      addToast(`Unstaged ${files.length} file(s)`, "success");
+      const changes = await fetchFileChanges();
+      setFileChanges(changes);
+      setSelectedFiles(new Set());
+    } catch (err: any) {
+      addToast(err.message || "Failed to unstage files", "error");
+    }
+  }, [addToast]);
+
+  const handleDiscardChanges = useCallback(async (files: string[]) => {
+    if (!confirm(`Discard changes to ${files.length} file(s)? This cannot be undone.`)) return;
+    try {
+      await discardChanges(files);
+      addToast(`Discarded changes to ${files.length} file(s)`, "success");
+      const [changes, statusData] = await Promise.all([fetchFileChanges(), fetchGitStatus()]);
+      setFileChanges(changes);
+      setStatus(statusData);
+      setSelectedFiles(new Set());
+    } catch (err: any) {
+      addToast(err.message || "Failed to discard changes", "error");
+    }
+  }, [addToast]);
+
+  const handleCommit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!commitMessage.trim()) return;
+    setCommitting(true);
+    try {
+      const result = await createCommit(commitMessage.trim());
+      addToast(`Committed: ${result.hash}`, "success");
+      setCommitMessage("");
+      // Refresh changes and status
+      const [changes, statusData] = await Promise.all([fetchFileChanges(), fetchGitStatus()]);
+      setFileChanges(changes);
+      setStatus(statusData);
+    } catch (err: any) {
+      addToast(err.message || "Failed to commit", "error");
+    } finally {
+      setCommitting(false);
+    }
+  }, [commitMessage, addToast]);
+
+  const handleStageAllAndCommit = useCallback(async () => {
+    if (!commitMessage.trim()) return;
+    setCommitting(true);
+    try {
+      const unstaged = fileChanges.filter((f) => !f.staged).map((f) => f.file);
+      if (unstaged.length > 0) {
+        await stageFiles(unstaged);
+      }
+      const result = await createCommit(commitMessage.trim());
+      addToast(`Committed: ${result.hash}`, "success");
+      setCommitMessage("");
+      const [changes, statusData] = await Promise.all([fetchFileChanges(), fetchGitStatus()]);
+      setFileChanges(changes);
+      setStatus(statusData);
+    } catch (err: any) {
+      addToast(err.message || "Failed to commit", "error");
+    } finally {
+      setCommitting(false);
+    }
+  }, [commitMessage, fileChanges, addToast]);
+
+  const handleViewDiff = useCallback(async () => {
+    setLoadingChangeDiff(true);
+    try {
+      const diff = await fetchUnstagedDiff();
+      setChangeDiff(diff);
+    } catch (err: any) {
+      addToast(err.message || "Failed to load diff", "error");
+    } finally {
+      setLoadingChangeDiff(false);
+    }
+  }, [addToast]);
+
+  const toggleFileSelection = useCallback((file: string) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(file)) {
+        next.delete(file);
+      } else {
+        next.add(file);
+      }
+      return next;
+    });
+  }, []);
+
+  // ── Commit Handlers ─────────────────────────────────────────────
+
   const handleCommitClick = useCallback(async (hash: string) => {
     if (selectedCommit === hash) {
       setSelectedCommit(null);
@@ -149,7 +409,23 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
     }
   }, [selectedCommit, addToast]);
 
-  // Handle branch creation
+  const handleLoadMoreCommits = useCallback(() => {
+    setCommitsLimit((prev) => Math.min(prev + 20, 100));
+  }, []);
+
+  const filteredCommits = useMemo(() => {
+    if (!commitSearch.trim()) return commits;
+    const q = commitSearch.toLowerCase();
+    return commits.filter(
+      (c) =>
+        c.message.toLowerCase().includes(q) ||
+        c.author.toLowerCase().includes(q) ||
+        c.shortHash.toLowerCase().includes(q)
+    );
+  }, [commits, commitSearch]);
+
+  // ── Branch Handlers ─────────────────────────────────────────────
+
   const handleCreateBranch = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBranchName.trim()) return;
@@ -159,7 +435,6 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
       addToast(`Created branch ${newBranchName}`, "success");
       setNewBranchName("");
       setBranchBase("");
-      // Refresh branches
       const branchesData = await fetchGitBranches();
       setBranches(branchesData);
     } catch (err: any) {
@@ -169,13 +444,11 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
     }
   }, [newBranchName, branchBase, addToast]);
 
-  // Handle branch checkout
   const handleCheckoutBranch = useCallback(async (name: string) => {
     setLoading(true);
     try {
       await checkoutBranch(name);
       addToast(`Switched to ${name}`, "success");
-      // Refresh status and branches
       const [statusData, branchesData] = await Promise.all([fetchGitStatus(), fetchGitBranches()]);
       setStatus(statusData);
       setBranches(branchesData);
@@ -186,14 +459,12 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
     }
   }, [addToast]);
 
-  // Handle branch deletion
   const handleDeleteBranch = useCallback(async (name: string) => {
     if (!confirm(`Delete branch "${name}"?`)) return;
     setLoading(true);
     try {
       await deleteBranch(name);
       addToast(`Deleted branch ${name}`, "success");
-      // Refresh branches
       const branchesData = await fetchGitBranches();
       setBranches(branchesData);
     } catch (err: any) {
@@ -216,14 +487,67 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
     }
   }, [addToast]);
 
-  // Handle fetch
+  const filteredBranches = useMemo(() => {
+    if (!branchSearch.trim()) return branches;
+    const q = branchSearch.toLowerCase();
+    return branches.filter((b) => b.name.toLowerCase().includes(q));
+  }, [branches, branchSearch]);
+
+  // ── Stash Handlers ──────────────────────────────────────────────
+
+  const handleCreateStash = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStashLoading("create");
+    try {
+      await createStash(stashMessage.trim() || undefined);
+      addToast("Changes stashed", "success");
+      setStashMessage("");
+      const stashesData = await fetchGitStashList();
+      setStashes(stashesData);
+    } catch (err: any) {
+      addToast(err.message || "Failed to stash changes", "error");
+    } finally {
+      setStashLoading(null);
+    }
+  }, [stashMessage, addToast]);
+
+  const handleApplyStash = useCallback(async (index: number, drop: boolean = false) => {
+    setStashLoading(`apply-${index}`);
+    try {
+      await applyStash(index, drop);
+      addToast(drop ? "Stash popped" : "Stash applied", "success");
+      const stashesData = await fetchGitStashList();
+      setStashes(stashesData);
+    } catch (err: any) {
+      addToast(err.message || "Failed to apply stash", "error");
+    } finally {
+      setStashLoading(null);
+    }
+  }, [addToast]);
+
+  const handleDropStash = useCallback(async (index: number) => {
+    if (!confirm(`Drop stash@{${index}}? This cannot be undone.`)) return;
+    setStashLoading(`drop-${index}`);
+    try {
+      await dropStash(index);
+      addToast("Stash dropped", "success");
+      const stashesData = await fetchGitStashList();
+      setStashes(stashesData);
+    } catch (err: any) {
+      addToast(err.message || "Failed to drop stash", "error");
+    } finally {
+      setStashLoading(null);
+    }
+  }, [addToast]);
+
+  // ── Remote Handlers ─────────────────────────────────────────────
+
   const handleFetch = useCallback(async () => {
     setRemoteLoading("fetch");
     try {
       const result = await fetchRemote();
       setLastRemoteResult(result);
       addToast(result.message || "Fetch completed", result.fetched ? "success" : "info");
-      // Refresh status
       const statusData = await fetchGitStatus();
       setStatus(statusData);
     } catch (err: any) {
@@ -233,7 +557,6 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
     }
   }, [addToast]);
 
-  // Handle pull
   const handlePull = useCallback(async () => {
     setRemoteLoading("pull");
     try {
@@ -244,7 +567,6 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
       } else {
         addToast(result.message || "Pull completed", "success");
       }
-      // Refresh status
       const statusData = await fetchGitStatus();
       setStatus(statusData);
     } catch (err: any) {
@@ -254,14 +576,12 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
     }
   }, [addToast]);
 
-  // Handle push
   const handlePush = useCallback(async () => {
     setRemoteLoading("push");
     try {
       const result = await pushBranch();
       setLastRemoteResult(result);
       addToast(result.message || "Push completed", "success");
-      // Refresh status
       const statusData = await fetchGitStatus();
       setStatus(statusData);
     } catch (err: any) {
@@ -271,333 +591,961 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
     }
   }, [addToast]);
 
-  // Load more commits
-  const handleLoadMoreCommits = useCallback(() => {
-    setCommitsLimit((prev) => Math.min(prev + 20, 100));
-  }, []);
+  // ── Derived state ───────────────────────────────────────────────
+
+  const stagedFiles = useMemo(() => fileChanges.filter((f) => f.staged), [fileChanges]);
+  const unstagedFiles = useMemo(() => fileChanges.filter((f) => !f.staged), [fileChanges]);
+
+  // ── Render ──────────────────────────────────────────────────────
 
   if (!isOpen) return null;
 
   return (
     <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal modal-lg" ref={modalRef}>
+      <div className="modal gm-modal" ref={modalRef}>
         <div className="modal-header">
           <h3>
-            <GitBranchIcon size={18} style={{ marginRight: 8, verticalAlign: "middle" }} />
+            <FolderGit2 size={18} style={{ marginRight: 8, verticalAlign: "middle" }} />
             Git Manager
           </h3>
-          <button className="modal-close" onClick={onClose}>
-            <X size={18} />
-          </button>
+          <div className="gm-header-actions">
+            <button
+              className="btn btn-sm"
+              onClick={fetchSectionData}
+              disabled={loading}
+              title="Refresh"
+            >
+              <RefreshCw size={14} className={loading ? "spin" : ""} />
+            </button>
+            <button className="modal-close" onClick={onClose}>
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
-        <div className="git-manager-layout">
-          {/* Sidebar */}
-          <nav className="git-manager-sidebar">
+        <div className="gm-layout">
+          {/* Sidebar Navigation */}
+          <nav className="gm-sidebar" role="tablist" aria-label="Git Manager Sections">
             {SECTIONS.map((section) => {
               const Icon = section.icon;
               return (
                 <button
                   key={section.id}
-                  className={`git-manager-nav-item${activeSection === section.id ? " active" : ""}`}
+                  role="tab"
+                  aria-selected={activeSection === section.id}
+                  className={`gm-nav-item${activeSection === section.id ? " active" : ""}`}
                   onClick={() => setActiveSection(section.id)}
                 >
                   <Icon size={16} />
-                  {section.label}
+                  <span className="gm-nav-label">{section.label}</span>
                 </button>
               );
             })}
           </nav>
 
-          {/* Content */}
-          <div className="git-manager-content">
+          {/* Content Area */}
+          <div className="gm-content" role="tabpanel">
+            {/* Loading overlay */}
             {loading && (
-              <div className="git-manager-loading">
+              <div className="gm-loading">
                 <Loader2 size={24} className="spin" />
                 <span>Loading...</span>
               </div>
             )}
 
-            {/* Status Tab */}
-            {activeSection === "status" && status && (
-              <div className="git-status-panel">
-                <h4>Repository Status</h4>
-                <div className="git-status-grid">
-                  <div className="git-status-item">
-                    <span className="git-status-label">Branch</span>
-                    <span className="git-status-value">
-                      <GitBranchIcon size={14} />
-                      {status.branch}
-                    </span>
-                  </div>
-                  <div className="git-status-item">
-                    <span className="git-status-label">Commit</span>
-                    <code className="git-status-commit">{status.commit}</code>
-                  </div>
-                  <div className="git-status-item">
-                    <span className="git-status-label">Status</span>
-                    <span className={`git-status-badge ${status.isDirty ? "dirty" : "clean"}`}>
-                      {status.isDirty ? "Modified" : "Clean"}
-                    </span>
-                  </div>
-                  <div className="git-status-item">
-                    <span className="git-status-label">Remote</span>
-                    <span className="git-status-value">
-                      {status.ahead > 0 && (
-                        <span className="git-ahead" title={`${status.ahead} commit(s) ahead`}>
-                          <ArrowUp size={12} />
-                          {status.ahead}
-                        </span>
-                      )}
-                      {status.behind > 0 && (
-                        <span className="git-behind" title={`${status.behind} commit(s) behind`}>
-                          <ArrowDown size={12} />
-                          {status.behind}
-                        </span>
-                      )}
-                      {status.ahead === 0 && status.behind === 0 && (
-                        <span className="git-in-sync">Up to date</span>
-                      )}
-                    </span>
-                  </div>
-                </div>
+            {/* Error state */}
+            {sectionError && !loading && (
+              <div className="gm-error">
+                <AlertCircle size={18} />
+                <span>{sectionError}</span>
+                <button className="btn btn-sm" onClick={fetchSectionData}>
+                  Retry
+                </button>
               </div>
             )}
 
-            {/* Commits Tab */}
-            {activeSection === "commits" && (
-              <div className="git-commits-panel">
-                <h4>Recent Commits</h4>
-                <div className="git-commits-list">
-                  {commits.map((commit) => (
-                    <div key={commit.hash} className="git-commit-item">
-                      <button
-                        className="git-commit-header"
-                        onClick={() => handleCommitClick(commit.hash)}
-                      >
-                        {selectedCommit === commit.hash ? (
-                          <ChevronDown size={14} />
-                        ) : (
-                          <ChevronRight size={14} />
-                        )}
-                        <code className="git-commit-hash">{commit.shortHash}</code>
-                        <span className="git-commit-message" title={commit.message}>
-                          {commit.message}
-                        </span>
-                        <span className="git-commit-meta">
-                          {commit.author} • {new Date(commit.date).toLocaleDateString()}
-                        </span>
-                      </button>
-                      {selectedCommit === commit.hash && (
-                        <div className="git-commit-diff">
-                          {loadingDiff ? (
-                            <div className="git-diff-loading">
-                              <Loader2 size={16} className="spin" />
-                              Loading diff...
-                            </div>
-                          ) : commitDiff ? (
-                            <>
-                              <pre className="git-diff-stat">{commitDiff.stat}</pre>
-                              <pre className="git-diff-patch">{commitDiff.patch}</pre>
-                            </>
-                          ) : (
-                            <div className="git-diff-error">Failed to load diff</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                {commits.length >= commitsLimit && commitsLimit < 100 && (
-                  <button className="git-load-more" onClick={handleLoadMoreCommits}>
-                    Load more commits
-                  </button>
-                )}
-              </div>
+            {/* ── Status Panel ── */}
+            {activeSection === "status" && !loading && status && (
+              <StatusPanel status={status} copyToClipboard={copyToClipboard} />
             )}
 
-            {/* Branches Tab */}
-            {activeSection === "branches" && (
-              <div className="git-branches-panel">
-                <h4>Branches</h4>
-                
-                {/* Create branch form */}
-                <form className="git-create-branch-form" onSubmit={handleCreateBranch}>
-                  <input
-                    type="text"
-                    placeholder="New branch name"
-                    value={newBranchName}
-                    onChange={(e) => setNewBranchName(e.target.value)}
-                    disabled={loading}
-                  />
-                  <input
-                    type="text"
-                    placeholder="Base branch (optional)"
-                    value={branchBase}
-                    onChange={(e) => setBranchBase(e.target.value)}
-                    disabled={loading}
-                  />
-                  <button type="submit" className="btn btn-primary btn-sm" disabled={loading || !newBranchName.trim()}>
-                    <Plus size={14} />
-                    Create
-                  </button>
-                </form>
-
-                {/* Branches list */}
-                <div className="git-branches-list">
-                  {branches.map((branch) => (
-                    <div
-                      key={branch.name}
-                      className={`git-branch-item ${branch.isCurrent ? "current" : ""}`}
-                    >
-                      <span className="git-branch-name">
-                        {branch.isCurrent && <Check size={14} className="git-branch-current-icon" />}
-                        {branch.name}
-                        {branch.remote && (
-                          <span className="git-branch-remote">→ {branch.remote}</span>
-                        )}
-                      </span>
-                      <div className="git-branch-actions">
-                        {!branch.isCurrent && (
-                          <>
-                            <button
-                              className="btn btn-sm"
-                              onClick={() => handleCheckoutBranch(branch.name)}
-                              disabled={loading}
-                              title="Checkout"
-                            >
-                              <GitBranchIcon size={14} />
-                            </button>
-                            <button
-                              className="btn btn-sm btn-danger"
-                              onClick={() => handleDeleteBranch(branch.name)}
-                              disabled={loading}
-                              title="Delete"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {/* ── Changes Panel ── */}
+            {activeSection === "changes" && !loading && (
+              <ChangesPanel
+                status={status}
+                stagedFiles={stagedFiles}
+                unstagedFiles={unstagedFiles}
+                selectedFiles={selectedFiles}
+                toggleFileSelection={toggleFileSelection}
+                onStageFiles={handleStageFiles}
+                onUnstageFiles={handleUnstageFiles}
+                onDiscardChanges={handleDiscardChanges}
+                onViewDiff={handleViewDiff}
+                changeDiff={changeDiff}
+                loadingChangeDiff={loadingChangeDiff}
+                commitMessage={commitMessage}
+                setCommitMessage={setCommitMessage}
+                onCommit={handleCommit}
+                onStageAllAndCommit={handleStageAllAndCommit}
+                committing={committing}
+              />
             )}
 
-            {/* Worktrees Tab */}
-            {activeSection === "worktrees" && (
-              <div className="git-worktrees-panel">
-                <h4>Worktrees</h4>
-                <div className="git-worktrees-stats">
-                  <span>{worktrees.length} total</span>
-                  <span>{worktrees.filter((w) => w.taskId).length} in use by tasks</span>
-                </div>
-                <div className="git-worktrees-list">
-                  {worktrees.map((worktree) => (
-                    <div
-                      key={worktree.path}
-                      className={`git-worktree-item ${worktree.isMain ? "main" : ""}`}
-                    >
-                      <div className="git-worktree-info">
-                        <span className="git-worktree-path" title={worktree.path}>
-                          {worktree.isMain && <span className="git-worktree-badge main">main</span>}
-                          {worktree.isBare && <span className="git-worktree-badge bare">bare</span>}
-                          {worktree.path}
-                        </span>
-                        {worktree.branch && (
-                          <span className="git-worktree-branch">
-                            <GitBranchIcon size={12} />
-                            {worktree.branch}
-                          </span>
-                        )}
-                      </div>
-                      {worktree.taskId && (
-                        <span className="git-worktree-task">{worktree.taskId}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {/* ── Commits Panel ── */}
+            {activeSection === "commits" && !loading && (
+              <CommitsPanel
+                commits={filteredCommits}
+                commitSearch={commitSearch}
+                setCommitSearch={setCommitSearch}
+                selectedCommit={selectedCommit}
+                commitDiff={commitDiff}
+                loadingDiff={loadingDiff}
+                onCommitClick={handleCommitClick}
+                onLoadMore={handleLoadMoreCommits}
+                canLoadMore={commits.length >= commitsLimit && commitsLimit < 100}
+                copyToClipboard={copyToClipboard}
+              />
             )}
 
-            {/* Remotes Tab */}
-            {activeSection === "remotes" && (
-              <div className="git-remotes-panel">
-                <h4>Remote Operations</h4>
-                
-                {status && (status.ahead > 0 || status.behind > 0) && (
-                  <div className="git-remote-status">
-                    {status.ahead > 0 && (
-                      <div className="git-remote-ahead">
-                        <AlertCircle size={16} />
-                        {status.ahead} commit(s) to push
-                      </div>
-                    )}
-                    {status.behind > 0 && (
-                      <div className="git-remote-behind">
-                        <AlertCircle size={16} />
-                        {status.behind} commit(s) to pull
-                      </div>
-                    )}
-                  </div>
-                )}
+            {/* ── Branches Panel ── */}
+            {activeSection === "branches" && !loading && (
+              <BranchesPanel
+                branches={filteredBranches}
+                branchSearch={branchSearch}
+                setBranchSearch={setBranchSearch}
+                newBranchName={newBranchName}
+                setNewBranchName={setNewBranchName}
+                branchBase={branchBase}
+                setBranchBase={setBranchBase}
+                onCreateBranch={handleCreateBranch}
+                onCheckoutBranch={handleCheckoutBranch}
+                onDeleteBranch={handleDeleteBranch}
+                loading={loading}
+                allBranches={branches}
+              />
+            )}
 
-                <div className="git-remote-actions">
-                  <button
-                    className="btn btn-primary"
-                    onClick={handleFetch}
-                    disabled={remoteLoading !== null}
-                  >
-                    {remoteLoading === "fetch" ? (
-                      <Loader2 size={14} className="spin" />
-                    ) : (
-                      <RefreshCw size={14} />
-                    )}
-                    Fetch
-                  </button>
-                  <button
-                    className="btn btn-primary"
-                    onClick={handlePull}
-                    disabled={remoteLoading !== null}
-                  >
-                    {remoteLoading === "pull" ? (
-                      <Loader2 size={14} className="spin" />
-                    ) : (
-                      <GitPullRequest size={14} />
-                    )}
-                    Pull
-                  </button>
-                  <button
-                    className="btn btn-primary"
-                    onClick={handlePush}
-                    disabled={remoteLoading !== null || (status?.ahead === 0 && false)}
-                  >
-                    {remoteLoading === "push" ? (
-                      <Loader2 size={14} className="spin" />
-                    ) : (
-                      <ArrowUp size={14} />
-                    )}
-                    Push
-                  </button>
-                </div>
+            {/* ── Worktrees Panel ── */}
+            {activeSection === "worktrees" && !loading && (
+              <WorktreesPanel worktrees={worktrees} />
+            )}
 
-                {lastRemoteResult && (
-                  <div className={`git-remote-result ${"fetched" in lastRemoteResult ? "fetch" : "success" in lastRemoteResult ? (lastRemoteResult as GitPullResult).conflict ? "conflict" : (lastRemoteResult as GitPullResult).success ? "success" : "error" : "success" in lastRemoteResult ? (lastRemoteResult as GitPushResult).success ? "success" : "error" : ""}`}>
-                    {lastRemoteResult.message}
-                  </div>
-                )}
-              </div>
+            {/* ── Stashes Panel ── */}
+            {activeSection === "stashes" && !loading && (
+              <StashesPanel
+                stashes={stashes}
+                stashMessage={stashMessage}
+                setStashMessage={setStashMessage}
+                onCreateStash={handleCreateStash}
+                onApplyStash={handleApplyStash}
+                onDropStash={handleDropStash}
+                stashLoading={stashLoading}
+              />
+            )}
+
+            {/* ── Remotes Panel ── */}
+            {activeSection === "remotes" && !loading && (
+              <RemotesPanel
+                status={status}
+                remoteLoading={remoteLoading}
+                lastRemoteResult={lastRemoteResult}
+                onFetch={handleFetch}
+                onPull={handlePull}
+                onPush={handlePush}
+              />
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
 
-        <div className="modal-actions">
-          <button className="btn btn-sm" onClick={onClose}>
-            Close
-          </button>
+// ── Sub-Components ────────────────────────────────────────────────
+
+/** Status overview panel */
+function StatusPanel({
+  status,
+  copyToClipboard,
+}: {
+  status: GitStatus;
+  copyToClipboard: (text: string, label?: string) => void;
+}) {
+  return (
+    <div className="gm-panel" data-testid="status-panel">
+      <div className="gm-panel-header">
+        <h4>Repository Status</h4>
+      </div>
+      <div className="gm-status-grid">
+        <div className="gm-status-card">
+          <span className="gm-status-label">Branch</span>
+          <span className="gm-status-value">
+            <GitBranchIcon size={14} />
+            <span>{status.branch}</span>
+          </span>
+        </div>
+        <div className="gm-status-card">
+          <span className="gm-status-label">Commit</span>
+          <span className="gm-status-value">
+            <code className="gm-hash">{status.commit}</code>
+            <button
+              className="gm-icon-btn"
+              onClick={() => copyToClipboard(status.commit, "commit hash")}
+              title="Copy commit hash"
+            >
+              <Copy size={12} />
+            </button>
+          </span>
+        </div>
+        <div className="gm-status-card">
+          <span className="gm-status-label">Working Tree</span>
+          <span className={`gm-status-badge ${status.isDirty ? "dirty" : "clean"}`}>
+            {status.isDirty ? (
+              <>
+                <AlertCircle size={12} />
+                Modified
+              </>
+            ) : (
+              <>
+                <CheckCircle size={12} />
+                Clean
+              </>
+            )}
+          </span>
+        </div>
+        <div className="gm-status-card">
+          <span className="gm-status-label">Remote Sync</span>
+          <span className="gm-status-value">
+            {status.ahead > 0 && (
+              <span className="gm-ahead" title={`${status.ahead} commit(s) ahead`}>
+                <ArrowUp size={12} />
+                {status.ahead}
+              </span>
+            )}
+            {status.behind > 0 && (
+              <span className="gm-behind" title={`${status.behind} commit(s) behind`}>
+                <ArrowDown size={12} />
+                {status.behind}
+              </span>
+            )}
+            {status.ahead === 0 && status.behind === 0 && (
+              <span className="gm-in-sync">
+                <CheckCircle size={12} />
+                Up to date
+              </span>
+            )}
+          </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Changes panel with staging, unstaging, committing */
+function ChangesPanel({
+  status,
+  stagedFiles,
+  unstagedFiles,
+  selectedFiles,
+  toggleFileSelection,
+  onStageFiles,
+  onUnstageFiles,
+  onDiscardChanges,
+  onViewDiff,
+  changeDiff,
+  loadingChangeDiff,
+  commitMessage,
+  setCommitMessage,
+  onCommit,
+  onStageAllAndCommit,
+  committing,
+}: {
+  status: GitStatus | null;
+  stagedFiles: GitFileChange[];
+  unstagedFiles: GitFileChange[];
+  selectedFiles: Set<string>;
+  toggleFileSelection: (file: string) => void;
+  onStageFiles: (files: string[]) => void;
+  onUnstageFiles: (files: string[]) => void;
+  onDiscardChanges: (files: string[]) => void;
+  onViewDiff: () => void;
+  changeDiff: { stat: string; patch: string } | null;
+  loadingChangeDiff: boolean;
+  commitMessage: string;
+  setCommitMessage: (msg: string) => void;
+  onCommit: (e: React.FormEvent) => void;
+  onStageAllAndCommit: () => void;
+  committing: boolean;
+}) {
+  const selectedUnstaged = unstagedFiles.filter((f) => selectedFiles.has(`unstaged:${f.file}`));
+  const selectedStaged = stagedFiles.filter((f) => selectedFiles.has(`staged:${f.file}`));
+
+  return (
+    <div className="gm-panel" data-testid="changes-panel">
+      {/* Current branch indicator */}
+      {status && (
+        <div className="gm-changes-header">
+          <span className="gm-branch-indicator">
+            <GitBranchIcon size={14} />
+            {status.branch}
+          </span>
+          {status.isDirty && (
+            <span className="gm-dirty-badge">Modified</span>
+          )}
+        </div>
+      )}
+
+      {/* Unstaged Changes */}
+      <div className="gm-file-section">
+        <div className="gm-file-section-header">
+          <h5>Unstaged Changes ({unstagedFiles.length})</h5>
+          <div className="gm-file-section-actions">
+            {selectedUnstaged.length > 0 && (
+              <>
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => onStageFiles(selectedUnstaged.map((f) => f.file))}
+                  title="Stage selected"
+                >
+                  <Plus size={12} /> Stage ({selectedUnstaged.length})
+                </button>
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => onDiscardChanges(selectedUnstaged.map((f) => f.file))}
+                  title="Discard selected"
+                >
+                  <XCircle size={12} />
+                </button>
+              </>
+            )}
+            {unstagedFiles.length > 0 && (
+              <button
+                className="btn btn-sm"
+                onClick={() => onStageFiles(unstagedFiles.map((f) => f.file))}
+                title="Stage all"
+              >
+                Stage All
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="gm-file-list">
+          {unstagedFiles.length === 0 ? (
+            <div className="gm-empty">No unstaged changes</div>
+          ) : (
+            unstagedFiles.map((f) => (
+              <div key={`unstaged:${f.file}`} className="gm-file-item">
+                <label className="gm-file-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={selectedFiles.has(`unstaged:${f.file}`)}
+                    onChange={() => toggleFileSelection(`unstaged:${f.file}`)}
+                  />
+                </label>
+                <FileStatusIcon status={f.status} />
+                <span className="gm-file-name" title={f.file}>{f.file}</span>
+                <FileStatusBadge status={f.status} />
+                <button
+                  className="gm-icon-btn"
+                  onClick={() => onStageFiles([f.file])}
+                  title="Stage file"
+                >
+                  <Plus size={12} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Staged Changes */}
+      <div className="gm-file-section">
+        <div className="gm-file-section-header">
+          <h5>Staged Changes ({stagedFiles.length})</h5>
+          <div className="gm-file-section-actions">
+            {selectedStaged.length > 0 && (
+              <button
+                className="btn btn-sm"
+                onClick={() => onUnstageFiles(selectedStaged.map((f) => f.file))}
+                title="Unstage selected"
+              >
+                Unstage ({selectedStaged.length})
+              </button>
+            )}
+            {stagedFiles.length > 0 && (
+              <button
+                className="btn btn-sm"
+                onClick={() => onUnstageFiles(stagedFiles.map((f) => f.file))}
+                title="Unstage all"
+              >
+                Unstage All
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="gm-file-list">
+          {stagedFiles.length === 0 ? (
+            <div className="gm-empty">No staged changes</div>
+          ) : (
+            stagedFiles.map((f) => (
+              <div key={`staged:${f.file}`} className="gm-file-item staged">
+                <label className="gm-file-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={selectedFiles.has(`staged:${f.file}`)}
+                    onChange={() => toggleFileSelection(`staged:${f.file}`)}
+                  />
+                </label>
+                <FileStatusIcon status={f.status} />
+                <span className="gm-file-name" title={f.file}>{f.file}</span>
+                <FileStatusBadge status={f.status} />
+                <button
+                  className="gm-icon-btn"
+                  onClick={() => onUnstageFiles([f.file])}
+                  title="Unstage file"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Diff Viewer */}
+      {unstagedFiles.length > 0 && (
+        <div className="gm-diff-section">
+          <button
+            className="btn btn-sm"
+            onClick={onViewDiff}
+            disabled={loadingChangeDiff}
+          >
+            {loadingChangeDiff ? <Loader2 size={14} className="spin" /> : <FileDiff size={14} />}
+            View Diff
+          </button>
+          {changeDiff && (
+            <div className="gm-diff-viewer">
+              {changeDiff.stat && <pre className="gm-diff-stat">{changeDiff.stat}</pre>}
+              <pre className="gm-diff-patch">{changeDiff.patch}</pre>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Commit Form */}
+      <form className="gm-commit-form" onSubmit={onCommit}>
+        <textarea
+          className="gm-commit-input"
+          placeholder="Commit message..."
+          value={commitMessage}
+          onChange={(e) => setCommitMessage(e.target.value)}
+          rows={3}
+          disabled={committing}
+        />
+        <div className="gm-commit-actions">
+          <button
+            type="submit"
+            className="btn btn-sm btn-primary"
+            disabled={committing || !commitMessage.trim() || stagedFiles.length === 0}
+            title={stagedFiles.length === 0 ? "No staged changes to commit" : "Commit staged changes"}
+          >
+            {committing ? <Loader2 size={14} className="spin" /> : <Send size={14} />}
+            Commit
+          </button>
+          {unstagedFiles.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={onStageAllAndCommit}
+              disabled={committing || !commitMessage.trim()}
+              title="Stage all and commit"
+            >
+              Stage All & Commit
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/** Commits panel with search, diff viewer */
+function CommitsPanel({
+  commits,
+  commitSearch,
+  setCommitSearch,
+  selectedCommit,
+  commitDiff,
+  loadingDiff,
+  onCommitClick,
+  onLoadMore,
+  canLoadMore,
+  copyToClipboard,
+}: {
+  commits: GitCommit[];
+  commitSearch: string;
+  setCommitSearch: (q: string) => void;
+  selectedCommit: string | null;
+  commitDiff: { stat: string; patch: string } | null;
+  loadingDiff: boolean;
+  onCommitClick: (hash: string) => void;
+  onLoadMore: () => void;
+  canLoadMore: boolean;
+  copyToClipboard: (text: string, label?: string) => void;
+}) {
+  return (
+    <div className="gm-panel" data-testid="commits-panel">
+      <div className="gm-panel-header">
+        <h4>Commits</h4>
+        <div className="gm-search-box">
+          <Search size={14} />
+          <input
+            type="text"
+            placeholder="Search commits..."
+            value={commitSearch}
+            onChange={(e) => setCommitSearch(e.target.value)}
+          />
+        </div>
+      </div>
+      <div className="gm-commits-list">
+        {commits.length === 0 ? (
+          <div className="gm-empty">
+            {commitSearch ? "No matching commits" : "No commits found"}
+          </div>
+        ) : (
+          commits.map((commit, idx) => (
+            <div key={commit.hash} className="gm-commit-item">
+              {/* Simple commit graph line */}
+              <div className="gm-commit-graph">
+                <div className="gm-commit-dot" />
+                {idx < commits.length - 1 && <div className="gm-commit-line" />}
+              </div>
+              <div className="gm-commit-body">
+                <button
+                  className="gm-commit-header"
+                  onClick={() => onCommitClick(commit.hash)}
+                >
+                  <div className="gm-commit-top-row">
+                    <code className="gm-hash">{commit.shortHash}</code>
+                    <span className="gm-commit-message" title={commit.message}>
+                      {commit.message}
+                    </span>
+                  </div>
+                  <div className="gm-commit-meta">
+                    <span>{commit.author}</span>
+                    <span>•</span>
+                    <span>{relativeDate(commit.date)}</span>
+                    {commit.parents.length > 1 && (
+                      <span className="gm-merge-badge">merge</span>
+                    )}
+                  </div>
+                </button>
+                <div className="gm-commit-actions-row">
+                  <button
+                    className="gm-icon-btn"
+                    onClick={() => copyToClipboard(commit.hash, "commit hash")}
+                    title="Copy full hash"
+                  >
+                    <Copy size={12} />
+                  </button>
+                </div>
+                {selectedCommit === commit.hash && (
+                  <div className="gm-commit-diff">
+                    {loadingDiff ? (
+                      <div className="gm-diff-loading">
+                        <Loader2 size={16} className="spin" />
+                        Loading diff...
+                      </div>
+                    ) : commitDiff ? (
+                      <>
+                        {commitDiff.stat && <pre className="gm-diff-stat">{commitDiff.stat}</pre>}
+                        <pre className="gm-diff-patch">{commitDiff.patch}</pre>
+                      </>
+                    ) : (
+                      <div className="gm-diff-error">Failed to load diff</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      {canLoadMore && (
+        <button className="gm-load-more" onClick={onLoadMore}>
+          Load more commits
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Branches panel with creation, search, checkout, delete */
+function BranchesPanel({
+  branches,
+  branchSearch,
+  setBranchSearch,
+  newBranchName,
+  setNewBranchName,
+  branchBase,
+  setBranchBase,
+  onCreateBranch,
+  onCheckoutBranch,
+  onDeleteBranch,
+  loading,
+  allBranches,
+}: {
+  branches: GitBranch[];
+  branchSearch: string;
+  setBranchSearch: (q: string) => void;
+  newBranchName: string;
+  setNewBranchName: (name: string) => void;
+  branchBase: string;
+  setBranchBase: (base: string) => void;
+  onCreateBranch: (e: React.FormEvent) => void;
+  onCheckoutBranch: (name: string) => void;
+  onDeleteBranch: (name: string) => void;
+  loading: boolean;
+  allBranches: GitBranch[];
+}) {
+  return (
+    <div className="gm-panel" data-testid="branches-panel">
+      <div className="gm-panel-header">
+        <h4>Branches</h4>
+        <div className="gm-search-box">
+          <Search size={14} />
+          <input
+            type="text"
+            placeholder="Filter branches..."
+            value={branchSearch}
+            onChange={(e) => setBranchSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Create branch form */}
+      <form className="gm-create-form" onSubmit={onCreateBranch}>
+        <input
+          type="text"
+          placeholder="New branch name"
+          value={newBranchName}
+          onChange={(e) => setNewBranchName(e.target.value)}
+          disabled={loading}
+        />
+        <select
+          value={branchBase}
+          onChange={(e) => setBranchBase(e.target.value)}
+          disabled={loading}
+          className="gm-branch-select"
+        >
+          <option value="">Base: HEAD</option>
+          {allBranches.map((b) => (
+            <option key={b.name} value={b.name}>
+              {b.name}
+            </option>
+          ))}
+        </select>
+        <button
+          type="submit"
+          className="btn btn-primary btn-sm"
+          disabled={loading || !newBranchName.trim()}
+        >
+          <Plus size={14} />
+          Create
+        </button>
+      </form>
+
+      {/* Branches list */}
+      <div className="gm-branches-list">
+        {branches.length === 0 ? (
+          <div className="gm-empty">
+            {branchSearch ? "No matching branches" : "No branches found"}
+          </div>
+        ) : (
+          branches.map((branch) => (
+            <div
+              key={branch.name}
+              className={`gm-branch-item${branch.isCurrent ? " current" : ""}`}
+            >
+              <div className="gm-branch-info">
+                <span className="gm-branch-name">
+                  {branch.isCurrent && <Check size={14} className="gm-current-icon" />}
+                  {branch.name}
+                </span>
+                {branch.remote && (
+                  <span className="gm-branch-remote">→ {branch.remote}</span>
+                )}
+                {branch.lastCommitDate && (
+                  <span className="gm-branch-date">{relativeDate(branch.lastCommitDate)}</span>
+                )}
+              </div>
+              <div className="gm-branch-actions">
+                {!branch.isCurrent && (
+                  <>
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => onCheckoutBranch(branch.name)}
+                      disabled={loading}
+                      title="Checkout"
+                    >
+                      <GitBranchIcon size={14} />
+                    </button>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => onDeleteBranch(branch.name)}
+                      disabled={loading}
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Worktrees panel */
+function WorktreesPanel({ worktrees }: { worktrees: GitWorktree[] }) {
+  return (
+    <div className="gm-panel" data-testid="worktrees-panel">
+      <div className="gm-panel-header">
+        <h4>Worktrees</h4>
+        <div className="gm-worktree-stats">
+          <span>{worktrees.length} total</span>
+          <span className="gm-stat-separator">•</span>
+          <span>{worktrees.filter((w) => w.taskId).length} in use</span>
+        </div>
+      </div>
+      <div className="gm-worktrees-list">
+        {worktrees.map((worktree) => (
+          <div
+            key={worktree.path}
+            className={`gm-worktree-item${worktree.isMain ? " main" : ""}`}
+          >
+            <div className="gm-worktree-info">
+              <div className="gm-worktree-path-row">
+                {worktree.isMain && <span className="gm-badge main">main</span>}
+                {worktree.isBare && <span className="gm-badge bare">bare</span>}
+                <span className="gm-worktree-path" title={worktree.path}>
+                  {worktree.path.split("/").pop() || worktree.path}
+                </span>
+              </div>
+              <div className="gm-worktree-detail">
+                {worktree.branch && (
+                  <span className="gm-worktree-branch">
+                    <GitBranchIcon size={12} />
+                    {worktree.branch}
+                  </span>
+                )}
+                {worktree.taskId && (
+                  <span className="gm-worktree-task">{worktree.taskId}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Stashes panel */
+function StashesPanel({
+  stashes,
+  stashMessage,
+  setStashMessage,
+  onCreateStash,
+  onApplyStash,
+  onDropStash,
+  stashLoading,
+}: {
+  stashes: GitStash[];
+  stashMessage: string;
+  setStashMessage: (msg: string) => void;
+  onCreateStash: (e: React.FormEvent) => void;
+  onApplyStash: (index: number, drop?: boolean) => void;
+  onDropStash: (index: number) => void;
+  stashLoading: string | null;
+}) {
+  return (
+    <div className="gm-panel" data-testid="stashes-panel">
+      <div className="gm-panel-header">
+        <h4>Stashes</h4>
+      </div>
+
+      {/* Create stash form */}
+      <form className="gm-create-form" onSubmit={onCreateStash}>
+        <input
+          type="text"
+          placeholder="Stash message (optional)"
+          value={stashMessage}
+          onChange={(e) => setStashMessage(e.target.value)}
+          disabled={stashLoading !== null}
+        />
+        <button
+          type="submit"
+          className="btn btn-primary btn-sm"
+          disabled={stashLoading !== null}
+        >
+          {stashLoading === "create" ? (
+            <Loader2 size={14} className="spin" />
+          ) : (
+            <Archive size={14} />
+          )}
+          Stash
+        </button>
+      </form>
+
+      {/* Stash list */}
+      <div className="gm-stash-list">
+        {stashes.length === 0 ? (
+          <div className="gm-empty">No stashes</div>
+        ) : (
+          stashes.map((stash) => (
+            <div key={stash.index} className="gm-stash-item">
+              <div className="gm-stash-info">
+                <span className="gm-stash-ref">stash@{`{${stash.index}}`}</span>
+                <span className="gm-stash-message">{stash.message}</span>
+                <div className="gm-stash-meta">
+                  {stash.branch && (
+                    <span className="gm-stash-branch">
+                      <GitBranchIcon size={12} />
+                      {stash.branch}
+                    </span>
+                  )}
+                  <span>{relativeDate(stash.date)}</span>
+                </div>
+              </div>
+              <div className="gm-stash-actions">
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => onApplyStash(stash.index, false)}
+                  disabled={stashLoading !== null}
+                  title="Apply stash (keep)"
+                >
+                  {stashLoading === `apply-${stash.index}` ? (
+                    <Loader2 size={14} className="spin" />
+                  ) : (
+                    "Apply"
+                  )}
+                </button>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => onApplyStash(stash.index, true)}
+                  disabled={stashLoading !== null}
+                  title="Pop stash (apply and drop)"
+                >
+                  Pop
+                </button>
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => onDropStash(stash.index)}
+                  disabled={stashLoading !== null}
+                  title="Drop stash"
+                >
+                  {stashLoading === `drop-${stash.index}` ? (
+                    <Loader2 size={14} className="spin" />
+                  ) : (
+                    <Trash2 size={14} />
+                  )}
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Remotes panel with fetch/pull/push */
+function RemotesPanel({
+  status,
+  remoteLoading,
+  lastRemoteResult,
+  onFetch,
+  onPull,
+  onPush,
+}: {
+  status: GitStatus | null;
+  remoteLoading: string | null;
+  lastRemoteResult: GitFetchResult | GitPullResult | GitPushResult | null;
+  onFetch: () => void;
+  onPull: () => void;
+  onPush: () => void;
+}) {
+  return (
+    <div className="gm-panel" data-testid="remotes-panel">
+      <div className="gm-panel-header">
+        <h4>Remote Operations</h4>
+      </div>
+
+      {status && (status.ahead > 0 || status.behind > 0) && (
+        <div className="gm-remote-status">
+          {status.ahead > 0 && (
+            <div className="gm-remote-indicator ahead">
+              <ArrowUp size={16} />
+              {status.ahead} commit(s) to push
+            </div>
+          )}
+          {status.behind > 0 && (
+            <div className="gm-remote-indicator behind">
+              <ArrowDown size={16} />
+              {status.behind} commit(s) to pull
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="gm-remote-actions">
+        <button
+          className="btn btn-primary"
+          onClick={onFetch}
+          disabled={remoteLoading !== null}
+        >
+          {remoteLoading === "fetch" ? (
+            <Loader2 size={14} className="spin" />
+          ) : (
+            <RefreshCw size={14} />
+          )}
+          Fetch
+        </button>
+        <button
+          className="btn btn-primary"
+          onClick={onPull}
+          disabled={remoteLoading !== null}
+        >
+          {remoteLoading === "pull" ? (
+            <Loader2 size={14} className="spin" />
+          ) : (
+            <GitPullRequest size={14} />
+          )}
+          Pull
+        </button>
+        <button
+          className="btn btn-primary"
+          onClick={onPush}
+          disabled={remoteLoading !== null}
+        >
+          {remoteLoading === "push" ? (
+            <Loader2 size={14} className="spin" />
+          ) : (
+            <ArrowUp size={14} />
+          )}
+          Push
+        </button>
+      </div>
+
+      {lastRemoteResult && (
+        <div className="gm-remote-result">
+          {lastRemoteResult.message}
+        </div>
+      )}
     </div>
   );
 }

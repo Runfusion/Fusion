@@ -709,6 +709,92 @@ export function pushBranch(): Promise<GitPushResult> {
   });
 }
 
+/** Git stash entry */
+export interface GitStash {
+  index: number;
+  message: string;
+  date: string;
+  branch: string;
+}
+
+/** Individual file change with staging status */
+export interface GitFileChange {
+  file: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked";
+  staged: boolean;
+  oldFile?: string;
+}
+
+/** Fetch stash list */
+export function fetchGitStashList(): Promise<GitStash[]> {
+  return api<GitStash[]>("/git/stashes");
+}
+
+/** Create a new stash */
+export function createStash(message?: string): Promise<{ message: string }> {
+  return api<{ message: string }>("/git/stashes", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+/** Apply a stash entry */
+export function applyStash(index: number, drop?: boolean): Promise<{ message: string }> {
+  return api<{ message: string }>(`/git/stashes/${index}/apply`, {
+    method: "POST",
+    body: JSON.stringify({ drop }),
+  });
+}
+
+/** Drop a stash entry */
+export function dropStash(index: number): Promise<{ message: string }> {
+  return api<{ message: string }>(`/git/stashes/${index}`, {
+    method: "DELETE",
+  });
+}
+
+/** Fetch unstaged diff (working directory changes) */
+export function fetchUnstagedDiff(): Promise<{ stat: string; patch: string }> {
+  return api<{ stat: string; patch: string }>("/git/diff");
+}
+
+/** Fetch file changes (staged and unstaged) */
+export function fetchFileChanges(): Promise<GitFileChange[]> {
+  return api<GitFileChange[]>("/git/changes");
+}
+
+/** Stage specific files */
+export function stageFiles(files: string[]): Promise<{ staged: string[] }> {
+  return api<{ staged: string[] }>("/git/stage", {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+}
+
+/** Unstage specific files */
+export function unstageFiles(files: string[]): Promise<{ unstaged: string[] }> {
+  return api<{ unstaged: string[] }>("/git/unstage", {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+}
+
+/** Create a commit */
+export function createCommit(message: string): Promise<{ hash: string; message: string }> {
+  return api<{ hash: string; message: string }>("/git/commit", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+/** Discard changes in working directory for specific files */
+export function discardChanges(files: string[]): Promise<{ discarded: string[] }> {
+  return api<{ discarded: string[] }>("/git/discard", {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+}
+
 // --- File Browser API ---
 
 /** File node in directory listing */
