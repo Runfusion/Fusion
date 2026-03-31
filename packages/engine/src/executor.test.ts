@@ -83,6 +83,9 @@ function createMockStore() {
       worktreeInitCommand: undefined,
     }),
     updateStep: vi.fn().mockResolvedValue({}),
+    getWorkflowStep: vi.fn().mockResolvedValue(undefined),
+    listWorkflowSteps: vi.fn().mockResolvedValue([]),
+    appendAgentLog: vi.fn().mockResolvedValue(undefined),
   };
   return store as any;
 }
@@ -3451,6 +3454,232 @@ describe("TaskExecutor task_done with summary", () => {
     
     // Verify standard success message
     expect(result.content[0].text).toBe("Task marked complete. All steps done. Moving to in-review.");
+  });
+});
+
+describe("Workflow Steps Execution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Create a mock agent that auto-triggers the task_done tool when prompt is called.
+   * This simulates a successful task execution where the agent calls task_done().
+   */
+  function createAgentWithTaskDone() {
+    let capturedCustomTools: any[] = [];
+
+    mockedCreateHaiAgent.mockImplementation((async (opts: any) => {
+      capturedCustomTools = opts.customTools || [];
+      const session = {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Find and execute task_done tool to set taskDone = true
+          const taskDoneTool = capturedCustomTools.find((t: any) => t.name === "task_done");
+          if (taskDoneTool) {
+            await taskDoneTool.execute("tool-1", {});
+          }
+        }),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        on: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        state: {},
+      };
+      return { session };
+    }) as any);
+  }
+
+  it("runs workflow steps after main task execution", async () => {
+    const store = createMockStore();
+
+    // Task has workflow steps enabled
+    store.getTask.mockResolvedValue({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Docs Review",
+      description: "Check documentation",
+      prompt: "Review all docs and verify they are complete.",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // First call: main agent with task_done, subsequent calls: simple mocks for workflow step agents
+    let callIdx = 0;
+    mockedCreateHaiAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        // Main execution — find and trigger task_done
+        const customTools = opts.customTools || [];
+        const session = {
+          prompt: vi.fn().mockImplementation(async () => {
+            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        };
+        return { session };
+      } else {
+        // Workflow step agent (no custom tools, uses readonly tools)
+        return {
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            state: {},
+          },
+        };
+      }
+    }) as any);
+
+    const onComplete = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // createKbAgent called twice: main agent + workflow step agent
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(2);
+
+    // Second call should be the workflow step with readonly tools
+    const secondCall = mockedCreateHaiAgent.mock.calls[1];
+    expect(secondCall[0].tools).toBe("readonly");
+    expect(secondCall[0].systemPrompt).toContain("Docs Review");
+    expect(secondCall[0].systemPrompt).toContain("Review all docs and verify they are complete.");
+
+    // Task should move to in-review
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
+  });
+
+  it("skips workflow steps with no prompt", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Empty Step",
+      description: "No prompt",
+      prompt: "",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    createAgentWithTaskDone();
+
+    const onComplete = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Should only call createKbAgent once (main execution), skip workflow step
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+
+    // Should log that it was skipped
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "KB-001",
+      expect.stringContaining("has no prompt"),
+    );
+
+    // Task should still move to in-review
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
+  });
+
+  it("handles tasks with no workflow steps", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    createAgentWithTaskDone();
+
+    const onComplete = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Only main agent call
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    // Task should still move to in-review
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
   });
 });
 

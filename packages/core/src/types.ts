@@ -38,6 +38,34 @@ export interface ModelPreset {
   validatorModelId?: string;
 }
 
+/** A reusable workflow step definition that can run after task implementation. */
+export interface WorkflowStep {
+  /** Unique identifier (e.g., "WS-001") */
+  id: string;
+  /** Display name (e.g., "Documentation Review") */
+  name: string;
+  /** Short description for UI display */
+  description: string;
+  /** Full agent prompt to execute when this step runs */
+  prompt: string;
+  /** Whether this step is available for selection on new tasks */
+  enabled: boolean;
+  /** ISO-8601 timestamp of creation */
+  createdAt: string;
+  /** ISO-8601 timestamp of last update */
+  updatedAt: string;
+}
+
+/** Input for creating a new workflow step. */
+export interface WorkflowStepInput {
+  name: string;
+  description: string;
+  /** Optional — can be AI-generated later via refinement */
+  prompt?: string;
+  /** Defaults to true if not specified */
+  enabled?: boolean;
+}
+
 export interface PrInfo {
   url: string;
   number: number;
@@ -193,6 +221,8 @@ export interface Task {
    *  Must be set together with `validatorModelProvider`. When both validator model
    *  fields are undefined, the reviewer uses global settings defaults. */
   validatorModelId?: string;
+  /** IDs of workflow steps enabled for this task, run after implementation completes */
+  enabledWorkflowSteps?: string[];
   /** Number of merge retry attempts made for this task (auto-merge conflict recovery) */
   mergeRetries?: number;
   /** Error message from the last failure, if the task failed during execution */
@@ -216,6 +246,8 @@ export interface TaskCreateInput {
   column?: Column;
   dependencies?: string[];
   breakIntoSubtasks?: boolean;
+  /** IDs of workflow steps to enable for this task */
+  enabledWorkflowSteps?: string[];
   /** Model preset selected during task creation. Presets resolve to concrete model overrides at creation time. */
   modelPresetId?: string;
   /** AI model provider override for the executor agent (e.g., "anthropic").
@@ -505,6 +537,10 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
 export interface BoardConfig {
   nextId: number;
   settings?: Settings;
+  /** Global workflow step definitions */
+  workflowSteps?: WorkflowStep[];
+  /** Auto-incrementing counter for workflow step IDs */
+  nextWorkflowStepId?: number;
 }
 
 export interface MergeResult {

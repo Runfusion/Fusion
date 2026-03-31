@@ -427,3 +427,59 @@ When `unarchiveTask()` is called:
 - Skips tasks already cleaned up (directory gone)
 - Writes archive entry atomically before directory removal
 - Can be called idempotently
+
+## Workflow Steps
+
+Workflow steps are reusable quality gates that run after task implementation but before the task moves to in-review. They enable post-implementation review, documentation checks, QA validation, and other automated checks.
+
+### How It Works
+
+1. **Define globally** — Workflow steps are defined once in the dashboard (Workflow Steps button in header) with a name, description, and agent prompt
+2. **AI-assisted prompts** — Use the "Refine with AI" button to convert a rough description into a detailed agent prompt
+3. **Enable per-task** — When creating a new task, check the workflow steps you want to run
+4. **Automatic execution** — After the main task executor calls `task_done()`, enabled workflow steps run sequentially
+5. **Review gate** — The task only moves to in-review after all workflow steps complete successfully
+
+### Storage
+
+Workflow step definitions are stored in `.kb/config.json`:
+```json
+{
+  "workflowSteps": [
+    {
+      "id": "WS-001",
+      "name": "Documentation Review",
+      "description": "Verify all public APIs have documentation",
+      "prompt": "Review the task changes and verify that all new public functions...",
+      "enabled": true,
+      "createdAt": "2026-03-31T00:00:00.000Z",
+      "updatedAt": "2026-03-31T00:00:00.000Z"
+    }
+  ],
+  "nextWorkflowStepId": 2
+}
+```
+
+Tasks store their enabled workflow step IDs in `task.json`:
+```json
+{
+  "enabledWorkflowSteps": ["WS-001", "WS-002"]
+}
+```
+
+### API
+
+- `GET /api/workflow-steps` — List all workflow step definitions
+- `POST /api/workflow-steps` — Create a new workflow step
+- `PATCH /api/workflow-steps/:id` — Update a workflow step
+- `DELETE /api/workflow-steps/:id` — Delete (also removes from tasks)
+- `POST /api/workflow-steps/:id/refine` — AI-refine the prompt from description
+
+### Engine Behavior
+
+- Workflow step agents use **readonly tools** (file reading only, no modifications)
+- Each step runs as a separate agent session in the task's worktree
+- Steps execute sequentially (not in parallel)
+- If a workflow step fails, the task is marked as failed (not moved to in-review)
+- Steps with empty prompts are skipped with a log entry
+- All workflow step activity is logged to the task's agent log

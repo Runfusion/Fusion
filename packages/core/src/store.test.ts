@@ -3087,4 +3087,159 @@ describe("TaskStore", () => {
       expect(taskFailedLogs).toHaveLength(0);
     });
   });
+
+  // ── Workflow Steps ─────────────────────────────────────────────────
+
+  describe("Workflow Steps", () => {
+    it("should create a workflow step with all fields", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Documentation Review",
+        description: "Verify all public APIs have documentation",
+        prompt: "Review the task changes and verify that all new public functions have docs.",
+        enabled: true,
+      });
+
+      expect(ws.id).toBe("WS-001");
+      expect(ws.name).toBe("Documentation Review");
+      expect(ws.description).toBe("Verify all public APIs have documentation");
+      expect(ws.prompt).toBe("Review the task changes and verify that all new public functions have docs.");
+      expect(ws.enabled).toBe(true);
+      expect(ws.createdAt).toBeDefined();
+      expect(ws.updatedAt).toBeDefined();
+    });
+
+    it("should create a workflow step with minimal fields", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "QA Check",
+        description: "Run tests and verify they pass",
+      });
+
+      expect(ws.id).toBe("WS-001");
+      expect(ws.name).toBe("QA Check");
+      expect(ws.description).toBe("Run tests and verify they pass");
+      expect(ws.prompt).toBe(""); // Empty when not provided
+      expect(ws.enabled).toBe(true); // Default enabled
+    });
+
+    it("should auto-increment workflow step IDs", async () => {
+      const ws1 = await store.createWorkflowStep({ name: "Step 1", description: "First" });
+      const ws2 = await store.createWorkflowStep({ name: "Step 2", description: "Second" });
+      const ws3 = await store.createWorkflowStep({ name: "Step 3", description: "Third" });
+
+      expect(ws1.id).toBe("WS-001");
+      expect(ws2.id).toBe("WS-002");
+      expect(ws3.id).toBe("WS-003");
+    });
+
+    it("should list workflow steps", async () => {
+      await store.createWorkflowStep({ name: "Step 1", description: "First" });
+      await store.createWorkflowStep({ name: "Step 2", description: "Second" });
+
+      const steps = await store.listWorkflowSteps();
+      expect(steps).toHaveLength(2);
+      expect(steps[0].name).toBe("Step 1");
+      expect(steps[1].name).toBe("Step 2");
+    });
+
+    it("should return empty array when no workflow steps exist", async () => {
+      const steps = await store.listWorkflowSteps();
+      expect(steps).toHaveLength(0);
+    });
+
+    it("should get a single workflow step by ID", async () => {
+      const ws = await store.createWorkflowStep({ name: "Docs", description: "Check docs" });
+      const found = await store.getWorkflowStep(ws.id);
+
+      expect(found).toBeDefined();
+      expect(found!.id).toBe(ws.id);
+      expect(found!.name).toBe("Docs");
+    });
+
+    it("should return undefined for non-existent workflow step", async () => {
+      const found = await store.getWorkflowStep("WS-999");
+      expect(found).toBeUndefined();
+    });
+
+    it("should update a workflow step", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Original",
+        description: "Original desc",
+        prompt: "Original prompt",
+      });
+
+      const updated = await store.updateWorkflowStep(ws.id, {
+        name: "Updated",
+        description: "Updated desc",
+        prompt: "Updated prompt",
+        enabled: false,
+      });
+
+      expect(updated.name).toBe("Updated");
+      expect(updated.description).toBe("Updated desc");
+      expect(updated.prompt).toBe("Updated prompt");
+      expect(updated.enabled).toBe(false);
+      expect(new Date(updated.updatedAt).getTime()).toBeGreaterThanOrEqual(
+        new Date(ws.updatedAt).getTime()
+      );
+    });
+
+    it("should throw when updating non-existent workflow step", async () => {
+      await expect(
+        store.updateWorkflowStep("WS-999", { name: "Nope" })
+      ).rejects.toThrow("Workflow step 'WS-999' not found");
+    });
+
+    it("should delete a workflow step", async () => {
+      const ws = await store.createWorkflowStep({ name: "ToDelete", description: "Gone" });
+      await store.deleteWorkflowStep(ws.id);
+
+      const steps = await store.listWorkflowSteps();
+      expect(steps).toHaveLength(0);
+    });
+
+    it("should throw when deleting non-existent workflow step", async () => {
+      await expect(store.deleteWorkflowStep("WS-999")).rejects.toThrow(
+        "Workflow step 'WS-999' not found"
+      );
+    });
+
+    it("should remove references from tasks when deleting a workflow step", async () => {
+      const ws = await store.createWorkflowStep({ name: "Docs", description: "Check docs" });
+      const task = await store.createTask({
+        description: "Test task with workflow steps",
+        enabledWorkflowSteps: [ws.id],
+      });
+
+      expect(task.enabledWorkflowSteps).toEqual([ws.id]);
+
+      await store.deleteWorkflowStep(ws.id);
+
+      // Wait for async cleanup
+      await new Promise((r) => setTimeout(r, 50));
+
+      const updatedTask = await store.getTask(task.id);
+      expect(updatedTask.enabledWorkflowSteps).toBeUndefined();
+    });
+
+    it("should create a task with enabledWorkflowSteps", async () => {
+      const ws1 = await store.createWorkflowStep({ name: "Docs", description: "Check docs" });
+      const ws2 = await store.createWorkflowStep({ name: "QA", description: "Run tests" });
+
+      const task = await store.createTask({
+        description: "Task with workflow steps",
+        enabledWorkflowSteps: [ws1.id, ws2.id],
+      });
+
+      expect(task.enabledWorkflowSteps).toEqual([ws1.id, ws2.id]);
+    });
+
+    it("should not set enabledWorkflowSteps when empty array provided", async () => {
+      const task = await store.createTask({
+        description: "Task without workflow steps",
+        enabledWorkflowSteps: [],
+      });
+
+      expect(task.enabledWorkflowSteps).toBeUndefined();
+    });
+  });
 });

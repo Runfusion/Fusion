@@ -54,6 +54,11 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
     updateIssueInfo: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    listWorkflowSteps: vi.fn().mockResolvedValue([]),
+    createWorkflowStep: vi.fn(),
+    getWorkflowStep: vi.fn(),
+    updateWorkflowStep: vi.fn(),
+    deleteWorkflowStep: vi.fn(),
     ...overrides,
   } as unknown as TaskStore;
 }
@@ -4681,5 +4686,233 @@ describe("GET /settings/scopes", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toContain("Failed");
+  });
+});
+
+// ── Workflow Step Routes ─────────────────────────────────────────────
+
+describe("GET /workflow-steps", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns empty array when no workflow steps exist", async () => {
+    const res = await GET(buildApp(), "/api/workflow-steps");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns workflow steps", async () => {
+    const steps = [
+      { id: "WS-001", name: "Docs", description: "Check docs", prompt: "Review docs", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+    ];
+    (store.listWorkflowSteps as ReturnType<typeof vi.fn>).mockResolvedValueOnce(steps);
+
+    const res = await GET(buildApp(), "/api/workflow-steps");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(steps);
+  });
+});
+
+describe("POST /workflow-steps", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("creates a workflow step", async () => {
+    const created = { id: "WS-001", name: "Docs", description: "Check docs", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Docs",
+      description: "Check docs",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("WS-001");
+    expect(store.createWorkflowStep).toHaveBeenCalledWith({
+      name: "Docs",
+      description: "Check docs",
+      prompt: undefined,
+      enabled: undefined,
+    });
+  });
+
+  it("returns 400 when name is missing", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      description: "Check docs",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("name");
+  });
+
+  it("returns 400 when description is missing", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Docs",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("description");
+  });
+
+  it("returns 409 when name already exists", async () => {
+    (store.listWorkflowSteps as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: "WS-001", name: "Docs", description: "Check docs", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+    ]);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Docs",
+      description: "Another docs step",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("already exists");
+  });
+});
+
+describe("PATCH /workflow-steps/:id", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("updates a workflow step", async () => {
+    const updated = { id: "WS-001", name: "Updated", description: "Updated desc", prompt: "Updated prompt", enabled: false, createdAt: "2026-01-01", updatedAt: "2026-01-02" };
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated);
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-001", JSON.stringify({
+      name: "Updated",
+      enabled: false,
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe("Updated");
+  });
+
+  it("returns 404 for non-existent step", async () => {
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Workflow step 'WS-999' not found"));
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-999", JSON.stringify({
+      name: "Nope",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("not found");
+  });
+});
+
+describe("DELETE /workflow-steps/:id", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("deletes a workflow step", async () => {
+    (store.deleteWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+
+    const res = await REQUEST(buildApp(), "DELETE", "/api/workflow-steps/WS-001", undefined, {});
+
+    expect(res.status).toBe(204);
+  });
+
+  it("returns 404 for non-existent step", async () => {
+    (store.deleteWorkflowStep as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Workflow step 'WS-999' not found"));
+
+    const res = await REQUEST(buildApp(), "DELETE", "/api/workflow-steps/WS-999", undefined, {});
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("not found");
+  });
+});
+
+describe("POST /workflow-steps/:id/refine", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns 404 when workflow step not found", async () => {
+    (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps/WS-999/refine", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("not found");
+  });
+
+  it("returns 400 when workflow step has no description", async () => {
+    (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "WS-001", name: "Empty", description: "  ", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps/WS-001/refine", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("no description");
+  });
+
+  it("falls back to description when AI is unavailable", async () => {
+    const ws = { id: "WS-001", name: "Docs", description: "Check docs", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ws);
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+    const updatedWs = { ...ws, prompt: "Check docs" };
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedWs);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps/WS-001/refine", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    // AI import will fail in test env, falling back to description
+    expect(res.status).toBe(200);
+    expect(res.body.prompt).toBeDefined();
+    expect(res.body.workflowStep).toBeDefined();
+    expect(store.updateWorkflowStep).toHaveBeenCalled();
   });
 });

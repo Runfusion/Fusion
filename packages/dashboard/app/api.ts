@@ -14,6 +14,8 @@ import type {
   BatchStatusEntry,
   ActivityLogEntry,
   ActivityEventType,
+  WorkflowStep,
+  WorkflowStepInput,
 } from "@kb/core";
 import type { PlanningQuestion, PlanningSummary, PlanningResponse } from "@kb/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult } from "@kb/core";
@@ -101,6 +103,7 @@ export function createTask(input: TaskCreateInput): Promise<Task> {
     column,
     dependencies,
     breakIntoSubtasks,
+    enabledWorkflowSteps,
     modelPresetId,
     modelProvider,
     modelId,
@@ -116,6 +119,7 @@ export function createTask(input: TaskCreateInput): Promise<Task> {
       column,
       dependencies,
       breakIntoSubtasks,
+      enabledWorkflowSteps,
       modelPresetId,
       modelProvider,
       modelId,
@@ -1140,4 +1144,39 @@ export function fetchActivityLog(options?: { limit?: number; since?: string; typ
 /** Clear all activity log entries */
 export function clearActivityLog(): Promise<{ success: boolean }> {
   return api<{ success: boolean }>("/activity", { method: "DELETE" });
+}
+
+// ── Workflow Steps ─────────────────────────────────────────────────────
+
+/** Fetch all workflow step definitions */
+export function fetchWorkflowSteps(): Promise<WorkflowStep[]> {
+  return api<WorkflowStep[]>("/workflow-steps");
+}
+
+/** Create a new workflow step */
+export function createWorkflowStep(input: WorkflowStepInput): Promise<WorkflowStep> {
+  return api<WorkflowStep>("/workflow-steps", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Update a workflow step */
+export function updateWorkflowStep(id: string, updates: Partial<WorkflowStepInput>): Promise<WorkflowStep> {
+  return api<WorkflowStep>(`/workflow-steps/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+/** Delete a workflow step */
+export function deleteWorkflowStep(id: string): Promise<void> {
+  return api<void>(`/workflow-steps/${id}`, { method: "DELETE" });
+}
+
+/** Refine a workflow step's prompt using AI */
+export function refineWorkflowStepPrompt(id: string): Promise<{ prompt: string; workflowStep: WorkflowStep }> {
+  return api<{ prompt: string; workflowStep: WorkflowStep }>(`/workflow-steps/${id}/refine`, {
+    method: "POST",
+  });
 }

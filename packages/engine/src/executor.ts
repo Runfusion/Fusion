@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import type { TaskStore, Task, TaskDetail, StepStatus, Settings } from "@kb/core";
+import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep } from "@kb/core";
 import { findWorktreeUser } from "./merger.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -507,6 +507,14 @@ export class TaskExecutor {
           }
 
           if (taskDone) {
+            // Run workflow steps before moving to in-review
+            const workflowSuccess = await this.runWorkflowSteps(task, worktreePath, settings);
+            if (!workflowSuccess) {
+              await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed" });
+              this.options.onError?.(task, new Error("Workflow step failed"));
+              return;
+            }
+
             await this.store.moveTask(task.id, "in-review");
             executorLog.log(`✓ ${task.id} completed → in-review`);
             this.options.onComplete?.(task);
@@ -1001,6 +1009,146 @@ export class TaskExecutor {
    * @param startPoint — Optional git ref to branch from (e.g., `kb/kb-041`).
    *   When provided, the worktree starts from that ref instead of HEAD.
    */
+  /**
+   * Run workflow step agents sequentially after main task execution completes.
+   * Each workflow step spawns a separate agent with the step's prompt.
+   * Returns true if all steps pass, false if any fails.
+   */
+  private async runWorkflowSteps(
+    task: Task,
+    worktreePath: string,
+    settings: Settings,
+  ): Promise<boolean> {
+    // Check if task has enabled workflow steps
+    const currentTask = await this.store.getTask(task.id);
+    if (!currentTask.enabledWorkflowSteps?.length) return true;
+
+    const workflowStepIds = currentTask.enabledWorkflowSteps;
+
+    for (const wsId of workflowStepIds) {
+      const ws = await this.store.getWorkflowStep(wsId);
+      if (!ws) {
+        await this.store.logEntry(task.id, `Workflow step ${wsId} not found — skipping`);
+        continue;
+      }
+
+      if (!ws.prompt?.trim()) {
+        await this.store.logEntry(task.id, `Workflow step '${ws.name}' has no prompt — skipping`);
+        continue;
+      }
+
+      await this.store.logEntry(task.id, `Starting workflow step: ${ws.name}`);
+      executorLog.log(`${task.id} — running workflow step: ${ws.name}`);
+
+      try {
+        const result = await this.executeWorkflowStep(task, ws, worktreePath, settings);
+
+        if (result.success) {
+          await this.store.logEntry(task.id, `Workflow step completed: ${ws.name}`);
+          executorLog.log(`${task.id} — workflow step passed: ${ws.name}`);
+        } else {
+          await this.store.logEntry(
+            task.id,
+            `Workflow step failed: ${ws.name}`,
+            result.error || "Unknown error",
+          );
+          executorLog.error(`${task.id} — workflow step failed: ${ws.name} — ${result.error}`);
+          return false;
+        }
+      } catch (err: any) {
+        await this.store.logEntry(
+          task.id,
+          `Workflow step failed: ${ws.name}`,
+          err.message || "Unknown error",
+        );
+        executorLog.error(`${task.id} — workflow step error: ${ws.name} — ${err.message}`);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Execute a single workflow step by spawning an agent with the step's prompt.
+   */
+  private async executeWorkflowStep(
+    task: Task,
+    workflowStep: WorkflowStep,
+    worktreePath: string,
+    settings: Settings,
+  ): Promise<{ success: boolean; output?: string; error?: string }> {
+    const systemPrompt = `You are a workflow step agent executing: ${workflowStep.name}
+
+Task Context:
+- Task ID: ${task.id}
+- Task Description: ${task.description}
+- Worktree: ${worktreePath}
+
+Your Instructions:
+${workflowStep.prompt}
+
+You have access to the file system to review changes.
+When your review is complete and everything looks good, simply state your findings.
+If issues are found that need attention, describe them clearly.`;
+
+    const agentLogger = new AgentLogger({
+      store: this.store,
+      taskId: task.id,
+      agent: "reviewer",
+      onAgentText: (taskId, delta) => {
+        this.options.onAgentText?.(taskId, delta);
+      },
+      onAgentTool: (taskId, toolName) => {
+        this.options.onAgentTool?.(taskId, toolName);
+      },
+    });
+
+    try {
+      const { session } = await createKbAgent({
+        cwd: worktreePath,
+        systemPrompt,
+        tools: "readonly",
+        defaultProvider: settings.defaultProvider,
+        defaultModelId: settings.defaultModelId,
+        defaultThinkingLevel: settings.defaultThinkingLevel,
+      });
+
+      let output = "";
+      session.subscribe((event) => {
+        if (event.type === "message_update") {
+          const msgEvent = event.assistantMessageEvent;
+          if (msgEvent.type === "text_delta") {
+            output += msgEvent.delta;
+            agentLogger.onText(msgEvent.delta);
+          } else if (msgEvent.type === "thinking_delta") {
+            agentLogger.onThinking(msgEvent.delta);
+          }
+        }
+        if (event.type === "tool_execution_start") {
+          agentLogger.onToolStart(event.toolName, event.args as Record<string, unknown> | undefined);
+        }
+        if (event.type === "tool_execution_end") {
+          agentLogger.onToolEnd(event.toolName, event.isError, event.result);
+        }
+      });
+
+      await session.prompt(
+        `Execute the workflow step "${workflowStep.name}" for task ${task.id}.\n\n` +
+        `Review the work done in this worktree and evaluate it against the criteria in your instructions.`,
+      );
+
+      checkSessionError(session);
+      session.dispose();
+      await agentLogger.flush();
+
+      return { success: true, output };
+    } catch (err: any) {
+      await agentLogger.flush();
+      return { success: false, error: err.message };
+    }
+  }
+
   private createWorktree(branch: string, path: string, startPoint?: string): void {
     if (existsSync(path)) {
       executorLog.log(`Worktree already exists: ${path}`);

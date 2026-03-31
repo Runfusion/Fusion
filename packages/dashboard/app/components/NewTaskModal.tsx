@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import type { Task, TaskCreateInput, ModelPreset, Settings } from "@kb/core";
+import type { Task, TaskCreateInput, ModelPreset, Settings, WorkflowStep } from "@kb/core";
 import type { ToastType } from "../hooks/useToast";
-import { uploadAttachment, fetchModels, fetchSettings } from "../api";
+import { uploadAttachment, fetchModels, fetchSettings, fetchWorkflowSteps } from "../api";
 import type { ModelInfo } from "../api";
 import { filterModels } from "../utils/modelFilter";
 import { applyPresetToSelection, getRecommendedPresetForSize } from "../utils/modelPresets";
@@ -317,6 +317,8 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
   const [presetMode, setPresetMode] = useState<"default" | "preset" | "custom">("default");
   const [enablePlanningMode, setEnablePlanningMode] = useState(false);
   const [hasDirtyState, setHasDirtyState] = useState(false);
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
+  const [selectedWorkflowSteps, setSelectedWorkflowSteps] = useState<string[]>([]);
 
   const depDropdownRef = useRef<HTMLDivElement>(null);
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -333,6 +335,9 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
       fetchSettings()
         .then((nextSettings) => setSettings(nextSettings))
         .catch(() => setSettings(null));
+      fetchWorkflowSteps()
+        .then((steps) => setWorkflowSteps(steps.filter((s) => s.enabled)))
+        .catch(() => setWorkflowSteps([]));
     }
   }, [isOpen]);
 
@@ -344,9 +349,10 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
       pendingImages.length > 0 ||
       executorModel !== "" ||
       validatorModel !== "" ||
-      enablePlanningMode;
+      enablePlanningMode ||
+      selectedWorkflowSteps.length > 0;
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, executorModel, validatorModel, enablePlanningMode]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, enablePlanningMode, selectedWorkflowSteps]);
 
   const availablePresets = settings?.modelPresets || [];
   const selectedPreset = availablePresets.find((preset) => preset.id === selectedPresetId);
@@ -455,6 +461,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
     setSelectedPresetId("");
     setPresetMode("default");
     setEnablePlanningMode(false);
+    setSelectedWorkflowSteps([]);
     setHasDirtyState(false);
     onClose();
   }, [hasDirtyState, onClose, pendingImages]);
@@ -479,6 +486,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
         setSelectedPresetId("");
         setPresetMode("default");
         setEnablePlanningMode(false);
+        setSelectedWorkflowSteps([]);
         
         // Close modal and trigger planning mode
         onClose();
@@ -500,6 +508,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
         description: trimmedDesc,
         column: "triage",
         dependencies: dependencies.length ? dependencies : undefined,
+        enabledWorkflowSteps: selectedWorkflowSteps.length > 0 ? selectedWorkflowSteps : undefined,
         modelPresetId: presetMode === "preset" ? selectedPresetId || undefined : undefined,
         modelProvider: executorModel && executorSlashIdx !== -1 ? executorModel.slice(0, executorSlashIdx) : undefined,
         modelId: executorModel && executorSlashIdx !== -1 ? executorModel.slice(executorSlashIdx + 1) : undefined,
@@ -532,6 +541,7 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
       setSelectedPresetId("");
       setPresetMode("default");
       setEnablePlanningMode(false);
+      setSelectedWorkflowSteps([]);
 
       addToast(`Created ${task.id}`, "success");
       onClose();
@@ -759,6 +769,46 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
               </>
             )}
           </div>
+
+          {/* Workflow Steps */}
+          {workflowSteps.length > 0 && (
+            <div className="form-group" data-testid="workflow-steps-section">
+              <label>Workflow Steps</label>
+              <small style={{ marginBottom: "8px", display: "block" }}>
+                Select steps to run after task implementation completes
+              </small>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {workflowSteps.map((step) => (
+                  <label
+                    key={step.id}
+                    className="checkbox-label"
+                    style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}
+                    data-testid={`workflow-step-checkbox-${step.id}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedWorkflowSteps.includes(step.id)}
+                      onChange={(e) => {
+                        setSelectedWorkflowSteps((prev) =>
+                          e.target.checked
+                            ? [...prev, step.id]
+                            : prev.filter((id) => id !== step.id)
+                        );
+                      }}
+                      disabled={isSubmitting}
+                      style={{ marginTop: "2px" }}
+                    />
+                    <div>
+                      <span style={{ fontWeight: 500, fontSize: "13px" }}>{step.name}</span>
+                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                        {step.description}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Planning Mode Toggle */}
           <div className="form-group">

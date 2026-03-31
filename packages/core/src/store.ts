@@ -389,6 +389,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       column: input.column || "triage",
       dependencies: input.dependencies || [],
       breakIntoSubtasks: input.breakIntoSubtasks === true ? true : undefined,
+      enabledWorkflowSteps: input.enabledWorkflowSteps?.length ? input.enabledWorkflowSteps : undefined,
       modelPresetId: input.modelPresetId,
       modelProvider: input.modelProvider,
       modelId: input.modelId,
@@ -1946,6 +1947,125 @@ ${entry.description}
 ${deps}
 
 ${stepsSection}`;
+  }
+
+  // ── Workflow Step CRUD Methods ─────────────────────────────────────
+
+  /**
+   * Create a new workflow step definition.
+   * Generates a unique ID (WS-001, WS-002, etc.) and stores in config.json.
+   */
+  async createWorkflowStep(input: import("./types.js").WorkflowStepInput): Promise<import("./types.js").WorkflowStep> {
+    return this.withConfigLock(async () => {
+      const config = await this.readConfig();
+      const nextWsId = config.nextWorkflowStepId || 1;
+      const id = `WS-${String(nextWsId).padStart(3, "0")}`;
+
+      const now = new Date().toISOString();
+      const step: import("./types.js").WorkflowStep = {
+        id,
+        name: input.name,
+        description: input.description,
+        prompt: input.prompt || "",
+        enabled: input.enabled !== undefined ? input.enabled : true,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      if (!config.workflowSteps) {
+        config.workflowSteps = [];
+      }
+      config.workflowSteps.push(step);
+      config.nextWorkflowStepId = nextWsId + 1;
+      await this.writeConfig(config);
+
+      return step;
+    });
+  }
+
+  /**
+   * List all workflow step definitions from config.json.
+   */
+  async listWorkflowSteps(): Promise<import("./types.js").WorkflowStep[]> {
+    const config = await this.readConfig();
+    return config.workflowSteps || [];
+  }
+
+  /**
+   * Get a single workflow step by ID.
+   */
+  async getWorkflowStep(id: string): Promise<import("./types.js").WorkflowStep | undefined> {
+    const config = await this.readConfig();
+    return (config.workflowSteps || []).find((ws) => ws.id === id);
+  }
+
+  /**
+   * Update a workflow step definition.
+   * @throws Error if the workflow step is not found
+   */
+  async updateWorkflowStep(id: string, updates: Partial<import("./types.js").WorkflowStepInput>): Promise<import("./types.js").WorkflowStep> {
+    return this.withConfigLock(async () => {
+      const config = await this.readConfig();
+      const steps = config.workflowSteps || [];
+      const index = steps.findIndex((ws) => ws.id === id);
+
+      if (index === -1) {
+        throw new Error(`Workflow step '${id}' not found`);
+      }
+
+      const step = steps[index];
+      if (updates.name !== undefined) step.name = updates.name;
+      if (updates.description !== undefined) step.description = updates.description;
+      if (updates.prompt !== undefined) step.prompt = updates.prompt;
+      if (updates.enabled !== undefined) step.enabled = updates.enabled;
+      step.updatedAt = new Date().toISOString();
+
+      config.workflowSteps = steps;
+      await this.writeConfig(config);
+
+      return step;
+    });
+  }
+
+  /**
+   * Delete a workflow step definition.
+   * Also removes the ID from any tasks that reference it in enabledWorkflowSteps.
+   * @throws Error if the workflow step is not found
+   */
+  async deleteWorkflowStep(id: string): Promise<void> {
+    await this.withConfigLock(async () => {
+      const config = await this.readConfig();
+      const steps = config.workflowSteps || [];
+      const index = steps.findIndex((ws) => ws.id === id);
+
+      if (index === -1) {
+        throw new Error(`Workflow step '${id}' not found`);
+      }
+
+      steps.splice(index, 1);
+      config.workflowSteps = steps;
+      await this.writeConfig(config);
+    });
+
+    // Clean up references from existing tasks (best-effort, outside config lock)
+    try {
+      const tasks = await this.listTasks();
+      for (const task of tasks) {
+        if (task.enabledWorkflowSteps?.includes(id)) {
+          const updated = task.enabledWorkflowSteps.filter((wsId) => wsId !== id);
+          // Direct task.json mutation for enabledWorkflowSteps cleanup
+          await this.withTaskLock(task.id, async () => {
+            const dir = this.taskDir(task.id);
+            const t = await this.readTaskJson(dir);
+            t.enabledWorkflowSteps = updated.length > 0 ? updated : undefined;
+            t.updatedAt = new Date().toISOString();
+            await this.atomicWriteTaskJson(dir, t);
+          });
+        }
+      }
+    } catch {
+      // Best-effort: task cleanup is non-critical
+    }
   }
 
   getRootDir(): string {

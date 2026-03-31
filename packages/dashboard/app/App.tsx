@@ -18,6 +18,7 @@ import { UsageIndicator } from "./components/UsageIndicator";
 import { NewTaskModal } from "./components/NewTaskModal";
 import { ScheduledTasksModal } from "./components/ScheduledTasksModal";
 import { ActivityLogModal } from "./components/ActivityLogModal";
+import { WorkflowStepManager } from "./components/WorkflowStepManager";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
@@ -36,6 +37,7 @@ function AppInner() {
   const [fileBrowserWorkspace, setFileBrowserWorkspace] = useState("project");
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
+  const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [rootDir, setRootDir] = useState<string>(".");
@@ -240,6 +242,7 @@ function AppInner() {
         onOpenActivityLog={handleOpenActivityLog}
         onOpenSchedules={handleOpenSchedules}
         onOpenGitManager={handleOpenGitManager}
+        onOpenWorkflowSteps={() => setWorkflowStepsOpen(true)}
         onToggleTerminal={handleToggleTerminal}
         onOpenFiles={handleOpenFiles}
         filesOpen={filesOpen}
@@ -376,6 +379,11 @@ function AppInner() {
         isOpen={gitManagerOpen}
         onClose={handleCloseGitManager}
         tasks={tasks}
+        addToast={addToast}
+      />
+      <WorkflowStepManager
+        isOpen={workflowStepsOpen}
+        onClose={() => setWorkflowStepsOpen(false)}
         addToast={addToast}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow } from "lucide-react";
 
 // GitHub logo icon (Octocat mark) - uses currentColor for theme compatibility
 function GitHubLogo({ size = 16 }: { size?: number }) {
@@ -24,6 +24,7 @@ interface HeaderProps {
   onOpenActivityLog?: () => void;
   onOpenSchedules?: () => void;
   onOpenGitManager?: () => void;
+  onOpenWorkflowSteps?: () => void;
   onToggleTerminal?: () => void;
   /** Opens the top-level workspace-aware file browser modal. */
   onOpenFiles?: () => void;
@@ -63,6 +64,7 @@ export function Header({
   onOpenActivityLog,
   onOpenSchedules,
   onOpenGitManager,
+  onOpenWorkflowSteps,
   onToggleTerminal,
   onOpenFiles,
   filesOpen,
@@ -351,6 +353,18 @@ export function Header({
           </button>
         )}
 
+        {/* Workflow Steps - desktop only */}
+        {!isMobile && onOpenWorkflowSteps && (
+          <button
+            className="btn-icon"
+            onClick={onOpenWorkflowSteps}
+            title="Workflow Steps"
+            data-testid="workflow-steps-btn"
+          >
+            <Workflow size={16} />
+          </button>
+        )}
+
         {/* Settings - always inline on desktop */}
         {!isMobile && (
           <button className="btn-icon" onClick={onOpenSettings} title="Settings">
@@ -426,6 +440,17 @@ export function Header({
               <Clock size={16} />
               <span>Scheduled Tasks</span>
             </button>
+            {onOpenWorkflowSteps && (
+              <button
+                className="mobile-overflow-item"
+                onClick={() => handleOverflowAction(onOpenWorkflowSteps)}
+                role="menuitem"
+                data-testid="overflow-workflow-steps-btn"
+              >
+                <Workflow size={16} />
+                <span>Workflow Steps</span>
+              </button>
+            )}
             <button
               className="mobile-overflow-item"
               onClick={() => handleOverflowAction(onOpenSettings)}

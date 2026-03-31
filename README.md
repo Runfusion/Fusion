@@ -148,7 +148,7 @@ The AI engine starts automatically with the dashboard. Three components run:
 
 - **Scheduler** — Watches todo column. Resolves dependency graphs. Moves tasks to in-progress when deps are satisfied and concurrency allows (default: 2 concurrent). When `groupOverlappingFiles` is enabled in settings, tasks whose `## File Scope` sections share files are serialized to prevent merge conflicts.
 
-- **TaskExecutor** — Listens for tasks entering in-progress. Creates a git worktree, spawns a pi agent session with full coding tools scoped to the worktree, and executes the specification. Moves to in-review on completion.
+- **TaskExecutor** — Listens for tasks entering in-progress. Creates a git worktree, spawns a pi agent session with full coding tools scoped to the worktree, and executes the specification. If the task has enabled workflow steps, runs them sequentially before moving to in-review.
 
 Each pi agent session gets:
 
@@ -297,6 +297,28 @@ When a task has a linked PR, Fusion automatically monitors it for new review com
 - **Follow-up tasks**: When a PR is closed with unaddressed feedback, a follow-up task is created
 
 Uses `gh` CLI authentication when available, falls back to `GITHUB_TOKEN` if set.
+
+### Workflow Steps
+
+Workflow steps are reusable quality gates that run after task implementation but before the task moves to in-review.
+
+**Defining workflow steps:**
+1. Click the **Workflow Steps** button (⚡) in the dashboard header
+2. Click **Add Workflow Step** and provide a name and description
+3. Use **Refine with AI** to generate a detailed agent prompt from your description
+4. Save and enable the step
+
+**Using workflow steps:**
+1. When creating a new task, check the workflow steps you want to run
+2. After the main task executor completes, each selected workflow step runs automatically
+3. The task only moves to in-review after all workflow steps pass
+
+**Examples:**
+- **Documentation Review** — Verify all public APIs have JSDoc comments
+- **QA Check** — Run the test suite and verify all tests pass
+- **Security Audit** — Check for common security issues in the changes
+
+Workflow step agents run with readonly tools in the task's worktree. If a workflow step fails, the task is marked as failed and won't move to in-review.
 
 ## Releases
 

@@ -16,6 +16,7 @@ vi.mock("../../api", () => ({
     autoSelectModelPreset: false,
     defaultPresetBySize: {},
   }),
+  fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
 }));
 
 function makeTask(id: string): Task {
@@ -456,5 +457,84 @@ describe("NewTaskModal", () => {
     // Verify the modal body element exists within the new-task-modal
     // The overflow-y: auto is applied via CSS in styles.css
     expect(modal?.contains(modalBody)).toBe(true);
+  });
+
+  it("shows workflow step checkboxes when steps are available", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { id: "WS-001", name: "Docs Review", description: "Check documentation", prompt: "Review docs", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+      { id: "WS-002", name: "QA Check", description: "Run tests", prompt: "Run tests", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+    ]);
+
+    renderNewTaskModal();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-steps-section")).toBeInTheDocument();
+      expect(screen.getByText("Docs Review")).toBeInTheDocument();
+      expect(screen.getByText("QA Check")).toBeInTheDocument();
+    });
+  });
+
+  it("does not show workflow steps section when no steps are available", async () => {
+    renderNewTaskModal();
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("workflow-steps-section")).toBeNull();
+    });
+  });
+
+  it("toggles workflow step selection", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { id: "WS-001", name: "Docs Review", description: "Check documentation", prompt: "Review docs", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+    ]);
+
+    renderNewTaskModal();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeInTheDocument();
+    });
+
+    const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector("input[type='checkbox']") as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+  });
+
+  it("passes selected workflow steps to onCreateTask", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { id: "WS-001", name: "Docs Review", description: "Check documentation", prompt: "Review docs", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+    ]);
+
+    const { props } = renderNewTaskModal();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeInTheDocument();
+    });
+
+    // Check the workflow step
+    const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector("input[type='checkbox']") as HTMLInputElement;
+    fireEvent.click(checkbox);
+
+    // Fill in description
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+    fireEvent.change(textarea, { target: { value: "Test task" } });
+
+    // Submit
+    const submitBtn = screen.getByText("Create Task");
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(props.onCreateTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enabledWorkflowSteps: ["WS-001"],
+        })
+      );
+    });
   });
 });

@@ -1083,6 +1083,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         column,
         dependencies,
         breakIntoSubtasks,
+        enabledWorkflowSteps,
         modelPresetId,
         modelProvider,
         modelId,
@@ -1106,12 +1107,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const executorModel = normalizeModelSelectionPair(validatedModelProvider, validatedModelId);
       const validatorModel = normalizeModelSelectionPair(validatedValidatorModelProvider, validatedValidatorModelId);
 
+      // Validate enabledWorkflowSteps if provided
+      if (enabledWorkflowSteps !== undefined) {
+        if (!Array.isArray(enabledWorkflowSteps) || !enabledWorkflowSteps.every((id: unknown) => typeof id === "string")) {
+          res.status(400).json({ error: "enabledWorkflowSteps must be an array of strings" });
+          return;
+        }
+      }
+
       const task = await store.createTask({
         title,
         description,
         column,
         dependencies,
         breakIntoSubtasks,
+        enabledWorkflowSteps,
         modelPresetId: validateOptionalModelField(modelPresetId, "modelPresetId"),
         modelProvider: executorModel.provider,
         modelId: executorModel.modelId,
@@ -4087,6 +4097,211 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       await store.clearActivityLog();
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Workflow Step Routes ──────────────────────────────────────────────
+
+  /**
+   * GET /api/workflow-steps
+   * List all workflow step definitions.
+   * Returns: WorkflowStep[]
+   */
+  router.get("/workflow-steps", async (_req, res) => {
+    try {
+      const steps = await store.listWorkflowSteps();
+      res.json(steps);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/workflow-steps
+   * Create a new workflow step.
+   * Body: { name: string, description: string, prompt?: string, enabled?: boolean }
+   * Returns: WorkflowStep
+   */
+  router.post("/workflow-steps", async (req, res) => {
+    try {
+      const { name, description, prompt, enabled } = req.body;
+
+      if (!name || typeof name !== "string" || !name.trim()) {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      if (!description || typeof description !== "string" || !description.trim()) {
+        res.status(400).json({ error: "description is required" });
+        return;
+      }
+      if (prompt !== undefined && typeof prompt !== "string") {
+        res.status(400).json({ error: "prompt must be a string" });
+        return;
+      }
+      if (enabled !== undefined && typeof enabled !== "boolean") {
+        res.status(400).json({ error: "enabled must be a boolean" });
+        return;
+      }
+
+      // Check for name conflicts
+      const existing = await store.listWorkflowSteps();
+      if (existing.some((ws) => ws.name.toLowerCase() === name.trim().toLowerCase())) {
+        res.status(409).json({ error: `A workflow step named '${name.trim()}' already exists` });
+        return;
+      }
+
+      const step = await store.createWorkflowStep({
+        name: name.trim(),
+        description: description.trim(),
+        prompt: prompt?.trim(),
+        enabled,
+      });
+      res.status(201).json(step);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * PATCH /api/workflow-steps/:id
+   * Update a workflow step.
+   * Body: Partial<{ name, description, prompt, enabled }>
+   * Returns: WorkflowStep
+   */
+  router.patch("/workflow-steps/:id", async (req, res) => {
+    try {
+      const { name, description, prompt, enabled } = req.body;
+
+      const updates: Record<string, unknown> = {};
+      if (name !== undefined) {
+        if (typeof name !== "string" || !name.trim()) {
+          res.status(400).json({ error: "name must be a non-empty string" });
+          return;
+        }
+        updates.name = name.trim();
+      }
+      if (description !== undefined) {
+        if (typeof description !== "string" || !description.trim()) {
+          res.status(400).json({ error: "description must be a non-empty string" });
+          return;
+        }
+        updates.description = description.trim();
+      }
+      if (prompt !== undefined) {
+        if (typeof prompt !== "string") {
+          res.status(400).json({ error: "prompt must be a string" });
+          return;
+        }
+        updates.prompt = prompt;
+      }
+      if (enabled !== undefined) {
+        if (typeof enabled !== "boolean") {
+          res.status(400).json({ error: "enabled must be a boolean" });
+          return;
+        }
+        updates.enabled = enabled;
+      }
+
+      const step = await store.updateWorkflowStep(req.params.id, updates);
+      res.json(step);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * DELETE /api/workflow-steps/:id
+   * Delete a workflow step.
+   * Returns: 204 No Content
+   */
+  router.delete("/workflow-steps/:id", async (req, res) => {
+    try {
+      await store.deleteWorkflowStep(req.params.id);
+      res.status(204).send();
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/workflow-steps/:id/refine
+   * Use AI to refine the workflow step's description into a detailed agent prompt.
+   * Returns: { prompt: string, workflowStep: WorkflowStep }
+   */
+  router.post("/workflow-steps/:id/refine", async (req, res) => {
+    try {
+      const step = await store.getWorkflowStep(req.params.id);
+      if (!step) {
+        res.status(404).json({ error: `Workflow step '${req.params.id}' not found` });
+        return;
+      }
+
+      if (!step.description?.trim()) {
+        res.status(400).json({ error: "Workflow step has no description to refine" });
+        return;
+      }
+
+      // Use AI to refine the description into a detailed agent prompt
+      let refinedPrompt: string;
+      try {
+        // Dynamic import to avoid resolution issues in tests
+        const engineModule = "@kb/engine";
+        const { createKbAgent } = await import(/* @vite-ignore */ engineModule);
+        const settings = await store.getSettings();
+
+        const systemPrompt = `You are an expert at creating detailed agent prompts for workflow steps.
+
+A workflow step is a quality gate that runs after a task is implemented but before it's marked complete.
+
+Given a rough description, create a detailed prompt that an AI agent can follow to execute this workflow step.
+
+The prompt should:
+1. Define the purpose clearly
+2. Specify what files/context to examine
+3. List specific criteria to check
+4. Describe what "success" looks like
+5. Include guidance on handling common edge cases
+
+Output ONLY the prompt text (no markdown, no explanations).`;
+
+        const { session } = await createKbAgent({
+          cwd: store.getRootDir(),
+          systemPrompt,
+          tools: "none",
+          defaultProvider: settings.planningProvider || settings.defaultProvider,
+          defaultModelId: settings.planningModelId || settings.defaultModelId,
+          defaultThinkingLevel: settings.defaultThinkingLevel,
+        });
+
+        let output = "";
+        session.on("text", (delta: string) => {
+          output += delta;
+        });
+
+        await session.prompt(
+          `Refine this workflow step description into a detailed agent prompt:\n\nName: ${step.name}\nDescription: ${step.description}`
+        );
+        session.dispose();
+
+        refinedPrompt = output.trim();
+      } catch (agentErr: any) {
+        // Fallback: return the description as-is if AI is unavailable
+        refinedPrompt = step.description;
+      }
+
+      // Update the workflow step with the refined prompt
+      const updated = await store.updateWorkflowStep(step.id, { prompt: refinedPrompt });
+      res.json({ prompt: refinedPrompt, workflowStep: updated });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
