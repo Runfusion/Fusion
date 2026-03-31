@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow, Bot } from "lucide-react";
 
 // GitHub logo icon (Octocat mark) - uses currentColor for theme compatibility
 function GitHubLogo({ size = 16 }: { size?: number }) {
@@ -25,6 +25,7 @@ interface HeaderProps {
   onOpenSchedules?: () => void;
   onOpenGitManager?: () => void;
   onOpenWorkflowSteps?: () => void;
+  onOpenAgents?: () => void;
   onToggleTerminal?: () => void;
   /** Opens the top-level workspace-aware file browser modal. */
   onOpenFiles?: () => void;
@@ -65,6 +66,7 @@ export function Header({
   onOpenSchedules,
   onOpenGitManager,
   onOpenWorkflowSteps,
+  onOpenAgents,
   onToggleTerminal,
   onOpenFiles,
   filesOpen,
@@ -365,6 +367,18 @@ export function Header({
           </button>
         )}
 
+        {/* Agents - desktop only */}
+        {!isMobile && onOpenAgents && (
+          <button
+            className="btn-icon"
+            onClick={onOpenAgents}
+            title="Manage Agents"
+            data-testid="agents-btn"
+          >
+            <Bot size={16} />
+          </button>
+        )}
+
         {/* Settings - always inline on desktop */}
         {!isMobile && (
           <button className="btn-icon" onClick={onOpenSettings} title="Settings">
@@ -449,6 +463,17 @@ export function Header({
               >
                 <Workflow size={16} />
                 <span>Workflow Steps</span>
+              </button>
+            )}
+            {onOpenAgents && (
+              <button
+                className="mobile-overflow-item"
+                onClick={() => handleOverflowAction(onOpenAgents)}
+                role="menuitem"
+                data-testid="overflow-agents-btn"
+              >
+                <Bot size={16} />
+                <span>Manage Agents</span>
               </button>
             )}
             <button

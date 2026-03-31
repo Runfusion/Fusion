@@ -1,0 +1,50 @@
+import { EventEmitter } from "node:events";
+import { execSync } from "node:child_process";
+import { appendFile, mkdir, readFile, writeFile, readdir, rename, unlink } from "node:fs/promises";
+import { join, sep } from "node:path";
+import { existsSync, watch, type FSWatcher, readFileSync } from "node:fs";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType } from "./types.js";
+import { VALID_TRANSITIONS, DEFAULT_SETTINGS, DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS } from "./types.js";
+import { GlobalSettingsStore } from "./global-settings.js";
+
+export interface TaskStoreEvents {
+  "task:created": [task: Task];
+  "task:moved": [data: { task: Task; from: Column; to: Column }];
+  "task:updated": [task: Task];
+  "task:deleted": [task: Task];
+  "task:merged": [result: MergeResult];
+  "settings:updated": [data: { settings: Settings; previous: Settings }];
+  "agent:log": [entry: AgentLogEntry];
+}
+
+export class TaskStore extends EventEmitter<TaskStoreEvents> {
+  private kbDir: string;
+  private tasksDir: string;
+  private configPath: string;
+  private archiveLogPath: string;
+  private activityLogPath: string;
+
+  /** File-system watcher instance */
+  private watcher: FSWatcher | null = null;
+  /** In-memory cache of tasks for diffing watcher events */
+  private taskCache: Map<string, Task> = new Map();
+  /** Paths recently written by in-process mutations (suppresses duplicate events) */
+  private recentlyWritten: Set<string> = new Set();
+  /** Pending debounce timers keyed by task ID */
+  private debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  /** Debounce interval in ms */
+  private debounceMs = 150;
+  /** Per-task promise chain for serializing writes */
+  private taskLocks: Map<string, Promise<void>> = new Map();
+  /** Promise chain for serializing config.json read-modify-write cycles */
+  private configLock: Promise<void> = Promise.resolve();
+  /** Global settings store (`~/.pi/kb/settings.json`) */
+  private globalSettingsStore: GlobalSettingsStore;
+
+  constructor(private rootDir: string, globalSettingsDir?: string) {
+    super();
+    this.setMaxListeners(100);
+    this.kbDir = join(rootDir, ".kb");
+    this.tasksDir = join(this.kbDir, "tasks");
+    this.configPath = join(this.kbDir, "config.json");
+    this.archiveLogPath = join(this.kbDir, "archive.jsonl");

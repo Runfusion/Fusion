@@ -11,6 +11,7 @@ import type {
   GitPushResult,
   GitStash,
   GitFileChange,
+  GitRemoteDetailed,
 } from "../api";
 import {
   fetchGitStatus,
@@ -34,6 +35,11 @@ import {
   createCommit,
   discardChanges,
   fetchUnstagedDiff,
+  fetchGitRemotesDetailed,
+  addGitRemote,
+  removeGitRemote,
+  renameGitRemote,
+  updateGitRemoteUrl,
 } from "../api";
 import {
   GitBranch as GitBranchIcon,
@@ -752,6 +758,7 @@ export function GitManagerModal({ isOpen, onClose, tasks, addToast }: GitManager
                 onFetch={handleFetch}
                 onPull={handlePull}
                 onPush={handlePush}
+                addToast={addToast}
               />
             )}
           </div>
@@ -1463,7 +1470,7 @@ function StashesPanel({
   );
 }
 
-/** Remotes panel with fetch/pull/push */
+/** Enhanced Remotes panel with full remote management capabilities */
 function RemotesPanel({
   status,
   remoteLoading,
@@ -1471,6 +1478,7 @@ function RemotesPanel({
   onFetch,
   onPull,
   onPush,
+  addToast,
 }: {
   status: GitStatus | null;
   remoteLoading: string | null;
@@ -1478,67 +1486,352 @@ function RemotesPanel({
   onFetch: () => void;
   onPull: () => void;
   onPush: () => void;
+  addToast: (message: string, type?: ToastType) => void;
 }) {
+  const [remotes, setRemotes] = useState<GitRemoteDetailed[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [remoteActionLoading, setRemoteActionLoading] = useState<string | null>(null);
+  const [newRemoteName, setNewRemoteName] = useState("");
+  const [newRemoteUrl, setNewRemoteUrl] = useState("");
+  const [editingRemote, setEditingRemote] = useState<string | null>(null);
+  const [editUrlValue, setEditUrlValue] = useState("");
+  const [editNameValue, setEditNameValue] = useState("");
+  const [showAddForm, setShowAddForm] = useState(false);
+
+  // Fetch remotes when panel mounts
+  useEffect(() => {
+    loadRemotes();
+  }, []);
+
+  const loadRemotes = async () => {
+    setLoading(true);
+    try {
+      const data = await fetchGitRemotesDetailed();
+      setRemotes(data);
+    } catch (err: any) {
+      addToast(err.message || "Failed to load remotes", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddRemote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRemoteName.trim() || !newRemoteUrl.trim()) return;
+
+    setRemoteActionLoading("add");
+    try {
+      await addGitRemote(newRemoteName.trim(), newRemoteUrl.trim());
+      addToast(`Remote '${newRemoteName}' added successfully`, "success");
+      setNewRemoteName("");
+      setNewRemoteUrl("");
+      setShowAddForm(false);
+      await loadRemotes();
+    } catch (err: any) {
+      addToast(err.message || "Failed to add remote", "error");
+    } finally {
+      setRemoteActionLoading(null);
+    }
+  };
+
+  const handleRemoveRemote = async (name: string) => {
+    if (!confirm(`Are you sure you want to remove remote '${name}'?`)) return;
+
+    setRemoteActionLoading(`remove-${name}`);
+    try {
+      await removeGitRemote(name);
+      addToast(`Remote '${name}' removed`, "success");
+      await loadRemotes();
+    } catch (err: any) {
+      addToast(err.message || "Failed to remove remote", "error");
+    } finally {
+      setRemoteActionLoading(null);
+    }
+  };
+
+  const handleRenameRemote = async (oldName: string) => {
+    if (!editNameValue.trim()) return;
+
+    setRemoteActionLoading(`rename-${oldName}`);
+    try {
+      await renameGitRemote(oldName, editNameValue.trim());
+      addToast(`Remote renamed to '${editNameValue.trim()}'`, "success");
+      setEditingRemote(null);
+      setEditNameValue("");
+      await loadRemotes();
+    } catch (err: any) {
+      addToast(err.message || "Failed to rename remote", "error");
+    } finally {
+      setRemoteActionLoading(null);
+    }
+  };
+
+  const handleUpdateUrl = async (name: string) => {
+    if (!editUrlValue.trim()) return;
+
+    setRemoteActionLoading(`url-${name}`);
+    try {
+      await updateGitRemoteUrl(name, editUrlValue.trim());
+      addToast(`Remote URL updated`, "success");
+      setEditingRemote(null);
+      setEditUrlValue("");
+      await loadRemotes();
+    } catch (err: any) {
+      addToast(err.message || "Failed to update remote URL", "error");
+    } finally {
+      setRemoteActionLoading(null);
+    }
+  };
+
+  const startEditingUrl = (remote: GitRemoteDetailed) => {
+    setEditingRemote(`url-${remote.name}`);
+    setEditUrlValue(remote.pushUrl || remote.fetchUrl);
+  };
+
+  const startEditingName = (remote: GitRemoteDetailed) => {
+    setEditingRemote(`name-${remote.name}`);
+    setEditNameValue(remote.name);
+  };
+
   return (
-    <div className="gm-panel" data-testid="remotes-panel">
+    <div className="gm-panel gm-remotes-panel" data-testid="remotes-panel">
       <div className="gm-panel-header">
-        <h4>Remote Operations</h4>
+        <h4>Remote Management</h4>
+        <button
+          className="btn btn-sm btn-primary"
+          onClick={() => setShowAddForm(!showAddForm)}
+          disabled={remoteActionLoading !== null}
+        >
+          {showAddForm ? <X size={14} /> : <Plus size={14} />}
+          {showAddForm ? "Cancel" : "Add Remote"}
+        </button>
       </div>
 
-      {status && (status.ahead > 0 || status.behind > 0) && (
-        <div className="gm-remote-status">
-          {status.ahead > 0 && (
-            <div className="gm-remote-indicator ahead">
-              <ArrowUp size={16} />
-              {status.ahead} commit(s) to push
-            </div>
-          )}
-          {status.behind > 0 && (
-            <div className="gm-remote-indicator behind">
-              <ArrowDown size={16} />
-              {status.behind} commit(s) to pull
-            </div>
-          )}
-        </div>
+      {/* Add Remote Form */}
+      {showAddForm && (
+        <form className="gm-remote-form" onSubmit={handleAddRemote}>
+          <div className="gm-form-row">
+            <input
+              type="text"
+              placeholder="Remote name (e.g., origin)"
+              value={newRemoteName}
+              onChange={(e) => setNewRemoteName(e.target.value)}
+              disabled={remoteActionLoading === "add"}
+              className="gm-input"
+            />
+            <input
+              type="text"
+              placeholder="Repository URL"
+              value={newRemoteUrl}
+              onChange={(e) => setNewRemoteUrl(e.target.value)}
+              disabled={remoteActionLoading === "add"}
+              className="gm-input gm-input-url"
+            />
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={!newRemoteName.trim() || !newRemoteUrl.trim() || remoteActionLoading === "add"}
+            >
+              {remoteActionLoading === "add" ? (
+                <Loader2 size={14} className="spin" />
+              ) : (
+                <Plus size={14} />
+              )}
+              Add
+            </button>
+          </div>
+        </form>
       )}
 
-      <div className="gm-remote-actions">
-        <button
-          className="btn btn-primary"
-          onClick={onFetch}
-          disabled={remoteLoading !== null}
-        >
-          {remoteLoading === "fetch" ? (
-            <Loader2 size={14} className="spin" />
-          ) : (
-            <RefreshCw size={14} />
-          )}
-          Fetch
-        </button>
-        <button
-          className="btn btn-primary"
-          onClick={onPull}
-          disabled={remoteLoading !== null}
-        >
-          {remoteLoading === "pull" ? (
-            <Loader2 size={14} className="spin" />
-          ) : (
-            <GitPullRequest size={14} />
-          )}
-          Pull
-        </button>
-        <button
-          className="btn btn-primary"
-          onClick={onPush}
-          disabled={remoteLoading !== null}
-        >
-          {remoteLoading === "push" ? (
-            <Loader2 size={14} className="spin" />
-          ) : (
-            <ArrowUp size={14} />
-          )}
-          Push
-        </button>
+      {/* Remote Operations (Fetch/Pull/Push) */}
+      <div className="gm-remote-operations">
+        {status && (status.ahead > 0 || status.behind > 0) && (
+          <div className="gm-remote-status">
+            {status.ahead > 0 && (
+              <div className="gm-remote-indicator ahead">
+                <ArrowUp size={16} />
+                {status.ahead} commit(s) to push
+              </div>
+            )}
+            {status.behind > 0 && (
+              <div className="gm-remote-indicator behind">
+                <ArrowDown size={16} />
+                {status.behind} commit(s) to pull
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="gm-remote-actions">
+          <button
+            className="btn btn-primary"
+            onClick={onFetch}
+            disabled={remoteLoading !== null || loading}
+          >
+            {remoteLoading === "fetch" ? (
+              <Loader2 size={14} className="spin" />
+            ) : (
+              <RefreshCw size={14} />
+            )}
+            Fetch
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={onPull}
+            disabled={remoteLoading !== null || loading}
+          >
+            {remoteLoading === "pull" ? (
+              <Loader2 size={14} className="spin" />
+            ) : (
+              <GitPullRequest size={14} />
+            )}
+            Pull
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={onPush}
+            disabled={remoteLoading !== null || loading}
+          >
+            {remoteLoading === "push" ? (
+              <Loader2 size={14} className="spin" />
+            ) : (
+              <ArrowUp size={14} />
+            )}
+            Push
+          </button>
+        </div>
+      </div>
+
+      {/* Remotes List */}
+      <div className="gm-remote-list">
+        {loading ? (
+          <div className="gm-loading">
+            <Loader2 size={20} className="spin" />
+            Loading remotes...
+          </div>
+        ) : remotes.length === 0 ? (
+          <div className="gm-empty">No remotes configured</div>
+        ) : (
+          remotes.map((remote) => (
+            <div key={remote.name} className="gm-remote-item">
+              <div className="gm-remote-info">
+                {editingRemote === `name-${remote.name}` ? (
+                  <div className="gm-remote-edit">
+                    <input
+                      type="text"
+                      value={editNameValue}
+                      onChange={(e) => setEditNameValue(e.target.value)}
+                      className="gm-input"
+                      autoFocus
+                    />
+                    <button
+                      className="btn btn-sm btn-primary"
+                      onClick={() => handleRenameRemote(remote.name)}
+                      disabled={remoteActionLoading === `rename-${remote.name}`}
+                    >
+                      {remoteActionLoading === `rename-${remote.name}` ? (
+                        <Loader2 size={12} className="spin" />
+                      ) : (
+                        <Check size={12} />
+                      )}
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => {
+                        setEditingRemote(null);
+                        setEditNameValue("");
+                      }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="gm-remote-name-row">
+                    <span className="gm-remote-name">{remote.name}</span>
+                    <button
+                      className="btn btn-icon"
+                      onClick={() => startEditingName(remote)}
+                      disabled={remoteActionLoading !== null}
+                      title="Rename remote"
+                    >
+                      <GitBranchIcon size={12} />
+                    </button>
+                  </div>
+                )}
+
+                <div className="gm-remote-urls">
+                  <div className="gm-remote-url">
+                    <span className="gm-url-label">Fetch:</span>
+                    <span className="gm-url-value" title={remote.fetchUrl}>
+                      {remote.fetchUrl}
+                    </span>
+                  </div>
+                  {editingRemote === `url-${remote.name}` ? (
+                    <div className="gm-remote-edit gm-url-edit">
+                      <input
+                        type="text"
+                        value={editUrlValue}
+                        onChange={(e) => setEditUrlValue(e.target.value)}
+                        className="gm-input"
+                        autoFocus
+                      />
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => handleUpdateUrl(remote.name)}
+                        disabled={remoteActionLoading === `url-${remote.name}`}
+                      >
+                        {remoteActionLoading === `url-${remote.name}` ? (
+                          <Loader2 size={12} className="spin" />
+                        ) : (
+                          <Check size={12} />
+                        )}
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => {
+                          setEditingRemote(null);
+                          setEditUrlValue("");
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="gm-remote-url gm-push-url">
+                      <span className="gm-url-label">Push:</span>
+                      <span className="gm-url-value" title={remote.pushUrl}>
+                        {remote.pushUrl || remote.fetchUrl}
+                      </span>
+                      <button
+                        className="btn btn-icon"
+                        onClick={() => startEditingUrl(remote)}
+                        disabled={remoteActionLoading !== null}
+                        title="Edit URL"
+                      >
+                        <FileEdit size={12} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="gm-remote-actions-inline">
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => handleRemoveRemote(remote.name)}
+                  disabled={remoteActionLoading !== null}
+                  title="Remove remote"
+                >
+                  {remoteActionLoading === `remove-${remote.name}` ? (
+                    <Loader2 size={14} className="spin" />
+                  ) : (
+                    <Trash2 size={14} />
+                  )}
+                </button>
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
       {lastRemoteResult && (

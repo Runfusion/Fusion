@@ -20,6 +20,7 @@ import { NewTaskModal } from "./components/NewTaskModal";
 import { ScheduledTasksModal } from "./components/ScheduledTasksModal";
 import { ActivityLogModal } from "./components/ActivityLogModal";
 import { WorkflowStepManager } from "./components/WorkflowStepManager";
+import { AgentListModal } from "./components/AgentListModal";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
@@ -41,6 +42,7 @@ function AppInner() {
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [rootDir, setRootDir] = useState<string>(".");
@@ -246,6 +248,10 @@ function AppInner() {
   const handleOpenGitManager = useCallback(() => setGitManagerOpen(true), []);
   const handleCloseGitManager = useCallback(() => setGitManagerOpen(false), []);
 
+  // Agent handlers
+  const handleOpenAgents = useCallback(() => setAgentsOpen(true), []);
+  const handleCloseAgents = useCallback(() => setAgentsOpen(false), []);
+
   return (
     <>
       <Header
@@ -257,6 +263,7 @@ function AppInner() {
         onOpenSchedules={handleOpenSchedules}
         onOpenGitManager={handleOpenGitManager}
         onOpenWorkflowSteps={() => setWorkflowStepsOpen(true)}
+        onOpenAgents={handleOpenAgents}
         onToggleTerminal={handleToggleTerminal}
         onOpenFiles={handleOpenFiles}
         filesOpen={filesOpen}
@@ -405,6 +412,11 @@ function AppInner() {
       <WorkflowStepManager
         isOpen={workflowStepsOpen}
         onClose={() => setWorkflowStepsOpen(false)}
+        addToast={addToast}
+      />
+      <AgentListModal
+        isOpen={agentsOpen}
+        onClose={handleCloseAgents}
         addToast={addToast}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />

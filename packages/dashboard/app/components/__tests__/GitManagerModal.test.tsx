@@ -28,6 +28,11 @@ vi.mock("../../api", async () => {
     unstageFiles: vi.fn(),
     createCommit: vi.fn(),
     discardChanges: vi.fn(),
+    fetchGitRemotesDetailed: vi.fn(),
+    addGitRemote: vi.fn(),
+    removeGitRemote: vi.fn(),
+    renameGitRemote: vi.fn(),
+    updateGitRemoteUrl: vi.fn(),
   };
 });
 
@@ -53,6 +58,11 @@ import {
   unstageFiles,
   createCommit,
   discardChanges,
+  fetchGitRemotesDetailed,
+  addGitRemote,
+  removeGitRemote,
+  renameGitRemote,
+  updateGitRemoteUrl,
 } from "../../api";
 
 const mockAddToast = vi.fn();
@@ -152,6 +162,13 @@ describe("GitManagerModal", () => {
     (fetchRemote as any).mockResolvedValue({ fetched: true, message: "Fetched" });
     (pullBranch as any).mockResolvedValue({ success: true, message: "Already up to date." });
     (pushBranch as any).mockResolvedValue({ success: true, message: "Push completed" });
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/dustinbyrne/kb.git", pushUrl: "https://github.com/dustinbyrne/kb.git" },
+    ]);
+    (addGitRemote as any).mockResolvedValue(undefined);
+    (removeGitRemote as any).mockResolvedValue(undefined);
+    (renameGitRemote as any).mockResolvedValue(undefined);
+    (updateGitRemoteUrl as any).mockResolvedValue(undefined);
   });
 
   // ── Basic Rendering ─────────────────────────────────────────
@@ -829,6 +846,202 @@ describe("GitManagerModal", () => {
     await waitFor(() => {
       expect(screen.getByText("2 commit(s) to push")).toBeInTheDocument();
       expect(screen.getByText("3 commit(s) to pull")).toBeInTheDocument();
+    });
+  });
+
+  // ── Remote Management Tests ───────────────────────────────────
+
+  it("shows list of remotes with URLs", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/dustinbyrne/kb.git", pushUrl: "https://github.com/dustinbyrne/kb.git" },
+      { name: "upstream", fetchUrl: "https://github.com/upstream/kb.git", pushUrl: "git@github.com:upstream/kb.git" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+      expect(screen.getByText("upstream")).toBeInTheDocument();
+    });
+  });
+
+  it("shows loading state while fetching remotes", async () => {
+    (fetchGitRemotesDetailed as any).mockReturnValue(new Promise(() => {}));
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Loading remotes...")).toBeInTheDocument();
+    });
+  });
+
+  it("adds a new remote successfully", async () => {
+    const user = userEvent.setup();
+    (fetchGitRemotesDetailed as any).mockResolvedValue([]);
+    (addGitRemote as any).mockResolvedValue(undefined);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Add Remote")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Add Remote"));
+
+    const nameInput = screen.getByPlaceholderText("Remote name (e.g., origin)");
+    const urlInput = screen.getByPlaceholderText("Repository URL");
+
+    await user.type(nameInput, "origin");
+    await user.type(urlInput, "https://github.com/test/repo.git");
+
+    await user.click(screen.getByRole("button", { name: /^add$/i }));
+
+    await waitFor(() => {
+      expect(addGitRemote).toHaveBeenCalledWith("origin", "https://github.com/test/repo.git");
+      expect(mockAddToast).toHaveBeenCalledWith("Remote 'origin' added successfully", "success");
+    });
+  });
+
+  it("shows error when adding remote fails", async () => {
+    const user = userEvent.setup();
+    (fetchGitRemotesDetailed as any).mockResolvedValue([]);
+    (addGitRemote as any).mockRejectedValue(new Error("Remote 'origin' already exists"));
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Add Remote")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Add Remote"));
+
+    const nameInput = screen.getByPlaceholderText("Remote name (e.g., origin)");
+    const urlInput = screen.getByPlaceholderText("Repository URL");
+
+    await user.type(nameInput, "origin");
+    await user.type(urlInput, "https://github.com/test/repo.git");
+
+    await user.click(screen.getByRole("button", { name: /^add$/i }));
+
+    await waitFor(() => {
+      expect(mockAddToast).toHaveBeenCalledWith("Remote 'origin' already exists", "error");
+    });
+  });
+
+  it("removes a remote with confirmation", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/dustinbyrne/kb.git", pushUrl: "https://github.com/dustinbyrne/kb.git" },
+    ]);
+    (removeGitRemote as any).mockResolvedValue(undefined);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    const removeButton = screen.getByTitle("Remove remote");
+    await user.click(removeButton);
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalledWith("Are you sure you want to remove remote 'origin'?");
+      expect(removeGitRemote).toHaveBeenCalledWith("origin");
+      expect(mockAddToast).toHaveBeenCalledWith("Remote 'origin' removed", "success");
+    });
+  });
+
+  it("renames a remote", async () => {
+    const user = userEvent.setup();
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/dustinbyrne/kb.git", pushUrl: "https://github.com/dustinbyrne/kb.git" },
+    ]);
+    (renameGitRemote as any).mockResolvedValue(undefined);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    const renameButton = screen.getByTitle("Rename remote");
+    await user.click(renameButton);
+
+    // The input should appear - find it by its autoFocus or by looking for an input
+    const nameInput = screen.getByDisplayValue("origin");
+    await user.clear(nameInput);
+    await user.type(nameInput, "upstream");
+
+    const saveButton = screen.getByRole("button", { name: "" }); // Check button
+    await user.click(saveButton);
+
+    await waitFor(() => {
+      expect(renameGitRemote).toHaveBeenCalledWith("origin", "upstream");
+      expect(mockAddToast).toHaveBeenCalledWith("Remote renamed to 'upstream'", "success");
+    });
+  });
+
+  it("updates remote URL", async () => {
+    const user = userEvent.setup();
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://old-url.com/repo.git", pushUrl: "https://old-url.com/repo.git" },
+    ]);
+    (updateGitRemoteUrl as any).mockResolvedValue(undefined);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    const editButton = screen.getByTitle("Edit URL");
+    await user.click(editButton);
+
+    const urlInput = screen.getByDisplayValue("https://old-url.com/repo.git");
+    await user.clear(urlInput);
+    await user.type(urlInput, "https://new-url.com/repo.git");
+
+    const saveButton = screen.getByRole("button", { name: "" }); // Check button
+    await user.click(saveButton);
+
+    await waitFor(() => {
+      expect(updateGitRemoteUrl).toHaveBeenCalledWith("origin", "https://new-url.com/repo.git");
+      expect(mockAddToast).toHaveBeenCalledWith("Remote URL updated", "success");
+    });
+  });
+
+  it("handles API errors gracefully", async () => {
+    (fetchGitRemotesDetailed as any).mockRejectedValue(new Error("Failed to load remotes"));
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(mockAddToast).toHaveBeenCalledWith("Failed to load remotes", "error");
     });
   });
 

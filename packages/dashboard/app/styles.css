@@ -10548,6 +10548,152 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
+/* ── Remote Management (enhanced) ── */
+
+.gm-remotes-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.gm-remote-form {
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.gm-form-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.gm-form-row .gm-input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.gm-form-row .gm-input-url {
+  flex: 2;
+  min-width: 200px;
+}
+
+.gm-remote-operations {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.gm-remote-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.gm-remote-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease;
+}
+
+.gm-remote-item:hover {
+  border-color: var(--border-hover);
+}
+
+.gm-remote-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.gm-remote-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.gm-remote-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.gm-remote-urls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.gm-remote-url {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.gm-url-label {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 40px;
+}
+
+.gm-url-value {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.gm-remote-url.gm-push-url {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.gm-remote-url.gm-push-url .gm-url-value {
+  flex: 1;
+}
+
+.gm-remote-edit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+}
+
+.gm-remote-edit.gm-url-edit {
+  margin-left: 44px;
+}
+
+.gm-remote-edit .gm-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.gm-remote-actions-inline {
+  display: flex;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.gm-remote-actions-inline .btn {
+  padding: var(--space-xs);
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 640px) {
@@ -10620,6 +10766,34 @@ html .column.drag-over * {
 
   .gm-remote-actions {
     flex-wrap: wrap;
+  }
+
+  .gm-remote-form .gm-form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .gm-remote-form .gm-form-row .gm-input,
+  .gm-remote-form .gm-form-row .gm-input-url {
+    flex: 1 1 100%;
+    min-width: unset;
+  }
+
+  .gm-remote-item {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .gm-remote-actions-inline {
+    align-self: flex-end;
+  }
+
+  .gm-remote-edit {
+    flex-wrap: wrap;
+  }
+
+  .gm-remote-edit.gm-url-edit {
+    margin-left: 0;
   }
 
   .gm-commit-form .gm-commit-actions {

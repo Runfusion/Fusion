@@ -833,3 +833,90 @@ export interface PlanningSession {
   createdAt: Date;
   updatedAt: Date;
 }
+
+// ── Agent Types ────────────────────────────────────────────────────────────
+
+/** Agent lifecycle states */
+export const AGENT_STATES = ["idle", "active", "paused", "terminated"] as const;
+export type AgentState = (typeof AGENT_STATES)[number];
+
+/** Valid state transitions for agents */
+export const AGENT_VALID_TRANSITIONS: Record<AgentState, AgentState[]> = {
+  idle: ["active"],
+  active: ["paused", "terminated"],
+  paused: ["active", "terminated"],
+  terminated: [], // Terminal state - no exits
+};
+
+/** Single heartbeat event recorded for an agent */
+export interface AgentHeartbeatEvent {
+  /** ISO-8601 timestamp of when the heartbeat was recorded */
+  timestamp: string;
+  /** Status of the heartbeat */
+  status: "ok" | "missed" | "recovered";
+  /** ID of the heartbeat run this event belongs to */
+  runId: string;
+}
+
+/** A continuous heartbeat session/run for an agent */
+export interface AgentHeartbeatRun {
+  /** Unique identifier for this run */
+  id: string;
+  /** ID of the agent this run belongs to */
+  agentId: string;
+  /** ISO-8601 timestamp when the run started */
+  startedAt: string;
+  /** ISO-8601 timestamp when the run ended (null if active) */
+  endedAt: string | null;
+  /** Status of the run */
+  status: "active" | "completed" | "terminated";
+}
+
+/** Capabilities/roles an agent can have */
+export type AgentCapability = "triage" | "executor" | "reviewer" | "merger" | "scheduler" | "custom";
+
+/** Agent record stored in the system */
+export interface Agent {
+  /** Unique identifier (e.g., "agent-001") */
+  id: string;
+  /** Display name */
+  name: string;
+  /** Role/capability of the agent */
+  role: AgentCapability;
+  /** Current lifecycle state */
+  state: AgentState;
+  /** ID of the task this agent is currently working on (if any) */
+  taskId?: string;
+  /** ISO-8601 timestamp when the agent was created */
+  createdAt: string;
+  /** ISO-8601 timestamp of last update */
+  updatedAt: string;
+  /** ISO-8601 timestamp of last successful heartbeat */
+  lastHeartbeatAt?: string;
+  /** Optional metadata */
+  metadata: Record<string, unknown>;
+}
+
+/** Extended agent information including heartbeat history */
+export interface AgentDetail extends Agent {
+  /** Recent heartbeat events (last N events) */
+  heartbeatHistory: AgentHeartbeatEvent[];
+  /** Current active heartbeat run (if any) */
+  activeRun?: AgentHeartbeatRun;
+  /** All completed runs for this agent */
+  completedRuns: AgentHeartbeatRun[];
+}
+
+/** Input for creating a new agent */
+export interface AgentCreateInput {
+  name: string;
+  role: AgentCapability;
+  metadata?: Record<string, unknown>;
+}
+
+/** Input for updating an existing agent */
+export interface AgentUpdateInput {
+  name?: string;
+  role?: AgentCapability;
+  metadata?: Record<string, unknown>;
+}

@@ -16,6 +16,7 @@ import type {
   ActivityEventType,
   WorkflowStep,
   WorkflowStepInput,
+  WorkflowStepResult,
 } from "@kb/core";
 import type { PlanningQuestion, PlanningSummary, PlanningResponse } from "@kb/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, AutomationStep } from "@kb/core";
@@ -456,6 +457,49 @@ export interface GitRemote {
 /** Fetch GitHub remotes from the current git repository */
 export function fetchGitRemotes(): Promise<GitRemote[]> {
   return api<GitRemote[]>("/git/remotes");
+}
+
+/** Detailed git remote info with fetch and push URLs */
+export interface GitRemoteDetailed {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
+/** Fetch all git remotes with their fetch and push URLs */
+export function fetchGitRemotesDetailed(): Promise<GitRemoteDetailed[]> {
+  return api<GitRemoteDetailed[]>("/git/remotes/detailed");
+}
+
+/** Add a new git remote */
+export function addGitRemote(name: string, url: string): Promise<void> {
+  return api<void>("/git/remotes", {
+    method: "POST",
+    body: JSON.stringify({ name, url }),
+  });
+}
+
+/** Remove a git remote */
+export function removeGitRemote(name: string): Promise<void> {
+  return api<void>(`/git/remotes/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
+/** Rename a git remote */
+export function renameGitRemote(name: string, newName: string): Promise<void> {
+  return api<void>(`/git/remotes/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ newName }),
+  });
+}
+
+/** Update the URL for a git remote */
+export function updateGitRemoteUrl(name: string, url: string): Promise<void> {
+  return api<void>(`/git/remotes/${encodeURIComponent(name)}/url`, {
+    method: "PUT",
+    body: JSON.stringify({ url }),
+  });
 }
 
 // --- PR Management API ---
@@ -1229,6 +1273,11 @@ export function refineWorkflowStepPrompt(id: string): Promise<{ prompt: string; 
   });
 }
 
+/** Fetch workflow step results for a task */
+export function fetchWorkflowResults(taskId: string): Promise<WorkflowStepResult[]> {
+  return api<WorkflowStepResult[]>(`/tasks/${encodeURIComponent(taskId)}/workflow-results`);
+}
+
 // ── Workflow Step Templates ──────────────────────────────────────────────
 
 /** Re-export WorkflowStepTemplate type from core */
@@ -1424,4 +1473,68 @@ export function cancelSubtaskBreakdown(sessionId: string): Promise<void> {
     method: "POST",
     body: JSON.stringify({ sessionId }),
   });
+}
+
+// ── Agent API ────────────────────────────────────────────────────────────
+
+import type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentCreateInput, AgentUpdateInput } from "@kb/core";
+export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentCreateInput, AgentUpdateInput };
+
+/** Fetch all agents, optionally filtered by state or role */
+export function fetchAgents(filter?: { state?: AgentState; role?: AgentCapability }): Promise<Agent[]> {
+  const params = new URLSearchParams();
+  if (filter?.state) params.set("state", filter.state);
+  if (filter?.role) params.set("role", filter.role);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<Agent[]>(`/agents${query}`);
+}
+
+/** Fetch a single agent with heartbeat history */
+export function fetchAgent(agentId: string): Promise<AgentDetail> {
+  return api<AgentDetail>(`/agents/${encodeURIComponent(agentId)}`);
+}
+
+/** Create a new agent */
+export function createAgent(input: AgentCreateInput): Promise<Agent> {
+  return api<Agent>("/agents", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Update an agent */
+export function updateAgent(agentId: string, updates: AgentUpdateInput): Promise<Agent> {
+  return api<Agent>(`/agents/${encodeURIComponent(agentId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+/** Update an agent's state */
+export function updateAgentState(agentId: string, state: AgentState): Promise<Agent> {
+  return api<Agent>(`/agents/${encodeURIComponent(agentId)}/state`, {
+    method: "POST",
+    body: JSON.stringify({ state }),
+  });
+}
+
+/** Delete an agent */
+export function deleteAgent(agentId: string): Promise<void> {
+  return api<void>(`/agents/${encodeURIComponent(agentId)}`, {
+    method: "DELETE",
+  });
+}
+
+/** Record a heartbeat for an agent */
+export function recordAgentHeartbeat(agentId: string, status: "ok" | "missed" | "recovered" = "ok"): Promise<AgentHeartbeatEvent> {
+  return api<AgentHeartbeatEvent>(`/agents/${encodeURIComponent(agentId)}/heartbeat`, {
+    method: "POST",
+    body: JSON.stringify({ status }),
+  });
+}
+
+/** Fetch heartbeat history for an agent */
+export function fetchAgentHeartbeats(agentId: string, limit?: number): Promise<AgentHeartbeatEvent[]> {
+  const query = limit !== undefined ? `?limit=${limit}` : "";
+  return api<AgentHeartbeatEvent[]>(`/agents/${encodeURIComponent(agentId)}/heartbeats${query}`);
 }

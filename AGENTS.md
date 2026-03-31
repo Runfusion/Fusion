@@ -500,6 +500,17 @@ Tasks store their enabled workflow step IDs in `task.json`:
 - Steps with empty prompts are skipped with a log entry
 - All workflow step activity is logged to the task's agent log
 
+### Viewing Results
+
+When workflow steps run on a task, their results appear in the dashboard's task detail modal:
+
+- **Workflow tab** — Click the "Workflow" tab in the task detail modal to see workflow step results
+- **Pass/fail status** — Each step shows its status (Passed, Failed, Skipped, or Running)
+- **Execution output** — The output from each workflow step agent is displayed for review
+- **Timestamps** — See when each step started and how long it took to complete
+
+The Workflow tab only appears for tasks that have workflow steps enabled or have workflow results from a previous run.
+
 ## Workflow Step Templates
 
 Workflow step templates are pre-defined quality gates that can be added with one click instead of creating from scratch. The dashboard includes 5 built-in templates covering common quality, security, and compliance checks.

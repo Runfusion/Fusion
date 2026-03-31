@@ -631,6 +631,160 @@ function pushGitBranch(): GitPushResult {
   }
 }
 
+// ── Git Remote Management Helper Functions ───────────────────────────────
+
+/** Detailed git remote info with fetch and push URLs */
+export interface GitRemoteDetailed {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
+/**
+ * Validates a git URL format.
+ * Accepts: https://, git@, file://, or ssh:// formats
+ * Rejects URLs containing shell metacharacters to prevent command injection.
+ */
+function isValidGitUrl(url: string): boolean {
+  if (!url || typeof url !== "string") return false;
+  // Reject URLs with shell metacharacters to prevent injection
+  if (/[;<>&|`$(){}[\]\r\n]/.test(url)) return false;
+  // Reject URLs starting with dash (could be interpreted as option)
+  if (url.startsWith("-")) return false;
+  // HTTPS URL: https://host.com/path.git or https://host.com/path
+  if (/^https?:\/\/.+/.test(url)) return true;
+  // SSH URL: git@host.com:path.git or git@host.com:path
+  if (/^git@[^:]+:.+/.test(url)) return true;
+  // File URL: file:///path/to/repo
+  if (/^file:\/\/.+/.test(url)) return true;
+  // SSH URL with protocol: ssh://git@host.com/path.git
+  if (/^ssh:\/\/.+/.test(url)) return true;
+  return false;
+}
+
+/**
+ * Get all git remotes with their fetch and push URLs.
+ * Executes `git remote -v` and parses the output.
+ */
+function listGitRemotes(): GitRemoteDetailed[] {
+  try {
+    const output = execSync("git remote -v", { encoding: "utf-8", timeout: 5000 });
+
+    const remotes = new Map<string, { fetchUrl: string; pushUrl: string }>();
+
+    for (const line of output.split("\n")) {
+      // Parse lines like: "origin  https://github.com/owner/repo.git (fetch)"
+      const match = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+      if (!match) continue;
+
+      const [, name, url, type] = match;
+
+      if (!remotes.has(name)) {
+        remotes.set(name, { fetchUrl: "", pushUrl: "" });
+      }
+
+      const remote = remotes.get(name)!;
+      if (type === "fetch") {
+        remote.fetchUrl = url;
+      } else {
+        remote.pushUrl = url;
+      }
+    }
+
+    return Array.from(remotes.entries()).map(([name, urls]) => ({
+      name,
+      fetchUrl: urls.fetchUrl,
+      pushUrl: urls.pushUrl,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Add a new git remote.
+ */
+function addGitRemote(name: string, url: string): void {
+  if (!isValidBranchName(name)) {
+    throw new Error("Invalid remote name");
+  }
+  if (!isValidGitUrl(url)) {
+    throw new Error("Invalid git URL format");
+  }
+  try {
+    execSync(`git remote add ${name} ${url}`, { encoding: "utf-8", timeout: 10000 });
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("already exists")) {
+      throw new Error(`Remote '${name}' already exists`);
+    }
+    throw new Error(message || "Failed to add remote");
+  }
+}
+
+/**
+ * Remove a git remote.
+ */
+function removeGitRemote(name: string): void {
+  if (!isValidBranchName(name)) {
+    throw new Error("Invalid remote name");
+  }
+  try {
+    execSync(`git remote remove ${name}`, { encoding: "utf-8", timeout: 10000 });
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("No such remote")) {
+      throw new Error(`Remote '${name}' does not exist`);
+    }
+    throw new Error(message || "Failed to remove remote");
+  }
+}
+
+/**
+ * Rename a git remote.
+ */
+function renameGitRemote(oldName: string, newName: string): void {
+  if (!isValidBranchName(oldName)) {
+    throw new Error("Invalid remote name");
+  }
+  if (!isValidBranchName(newName)) {
+    throw new Error("Invalid new remote name");
+  }
+  try {
+    execSync(`git remote rename ${oldName} ${newName}`, { encoding: "utf-8", timeout: 10000 });
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("No such remote")) {
+      throw new Error(`Remote '${oldName}' does not exist`);
+    }
+    if (message.includes("already exists")) {
+      throw new Error(`Remote '${newName}' already exists`);
+    }
+    throw new Error(message || "Failed to rename remote");
+  }
+}
+
+/**
+ * Set the URL for a git remote.
+ */
+function setGitRemoteUrl(name: string, url: string): void {
+  if (!isValidBranchName(name)) {
+    throw new Error("Invalid remote name");
+  }
+  if (!isValidGitUrl(url)) {
+    throw new Error("Invalid git URL format");
+  }
+  try {
+    execSync(`git remote set-url ${name} ${url}`, { encoding: "utf-8", timeout: 10000 });
+  } catch (err: any) {
+    const message = err.message || String(err);
+    if (message.includes("No such remote")) {
+      throw new Error(`Remote '${name}' does not exist`);
+    }
+    throw new Error(message || "Failed to update remote URL");
+  }
+}
+
 // ── Git Stash, Stage, Commit Helper Functions ────────────────────────────
 
 /** Git stash entry */
@@ -1367,6 +1521,24 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * GET /api/tasks/:id/workflow-results
+   * Get workflow step execution results for a task.
+   * Returns: WorkflowStepResult[]
+   */
+  router.get("/tasks/:id/workflow-results", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+      res.json(task.workflowStepResults || []);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
   // Get single task with prompt content
   router.get("/tasks/:id", async (req, res) => {
     try {
@@ -1589,6 +1761,145 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.json(remotes);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/remotes/detailed
+   * Returns all git remotes with their fetch and push URLs.
+   * Response: Array of GitRemoteDetailed objects [{ name: string, fetchUrl: string, pushUrl: string }]
+   */
+  router.get("/git/remotes/detailed", (_req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const remotes = listGitRemotes();
+      res.json(remotes);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/git/remotes
+   * Add a new git remote.
+   * Body: { name: string, url: string }
+   */
+  router.post("/git/remotes", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name, url } = req.body;
+      if (!name || typeof name !== "string") {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      if (!url || typeof url !== "string") {
+        res.status(400).json({ error: "url is required" });
+        return;
+      }
+      addGitRemote(name, url);
+      res.status(201).json({ name, added: true });
+    } catch (err: any) {
+      if (err.message?.includes("Invalid remote name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message?.includes("Invalid git URL")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message?.includes("already exists")) {
+        res.status(409).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * DELETE /api/git/remotes/:name
+   * Remove a git remote.
+   */
+  router.delete("/git/remotes/:name", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name } = req.params;
+      removeGitRemote(name);
+      res.json({ name, removed: true });
+    } catch (err: any) {
+      if (err.message?.includes("Invalid remote name")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message?.includes("does not exist")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * PATCH /api/git/remotes/:name
+   * Rename a git remote.
+   * Body: { newName: string }
+   */
+  router.patch("/git/remotes/:name", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name } = req.params;
+      const { newName } = req.body;
+      if (!newName || typeof newName !== "string") {
+        res.status(400).json({ error: "newName is required" });
+        return;
+      }
+      renameGitRemote(name, newName);
+      res.json({ oldName: name, newName, renamed: true });
+    } catch (err: any) {
+      if (err.message?.includes("Invalid")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message?.includes("does not exist")) {
+        res.status(404).json({ error: err.message });
+      } else if (err.message?.includes("already exists")) {
+        res.status(409).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * PUT /api/git/remotes/:name/url
+   * Update the URL for a git remote.
+   * Body: { url: string }
+   */
+  router.put("/git/remotes/:name/url", async (req, res) => {
+    try {
+      if (!isGitRepo()) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const { name } = req.params;
+      const { url } = req.body;
+      if (!url || typeof url !== "string") {
+        res.status(400).json({ error: "url is required" });
+        return;
+      }
+      setGitRemoteUrl(name, url);
+      res.json({ name, url, updated: true });
+    } catch (err: any) {
+      if (err.message?.includes("Invalid")) {
+        res.status(400).json({ error: err.message });
+      } else if (err.message?.includes("does not exist")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
     }
   });
 
@@ -4761,6 +5072,200 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       });
 
       res.status(201).json(step);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Agent Routes ───────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/agents
+   * List all agents with optional filtering.
+   * Query params: state, role
+   */
+  router.get("/agents", async (req, res) => {
+    try {
+      const filter: { state?: string; role?: string } = {};
+      if (req.query.state && typeof req.query.state === "string") {
+        filter.state = req.query.state;
+      }
+      if (req.query.role && typeof req.query.role === "string") {
+        filter.role = req.query.role;
+      }
+
+      const { AgentStore } = await import("@kb/core");
+      const agentStore = new AgentStore({ rootDir: store.getRootDir() });
+      await agentStore.init();
+
+      const agents = await agentStore.listAgents(filter as { state?: "idle" | "active" | "paused" | "terminated"; role?: import("@kb/core").AgentCapability });
+      res.json(agents);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/agents
+   * Create a new agent.
+   * Body: { name: string, role: string, metadata?: object }
+   */
+  router.post("/agents", async (req, res) => {
+    try {
+      const { name, role, metadata } = req.body;
+      if (!name || typeof name !== "string") {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      if (!role || typeof role !== "string") {
+        res.status(400).json({ error: "role is required" });
+        return;
+      }
+
+      const { AgentStore } = await import("@kb/core");
+      const agentStore = new AgentStore({ rootDir: store.getRootDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.createAgent({ name, role: role as import("@kb/core").AgentCapability, metadata });
+      res.status(201).json(agent);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/agents/:id
+   * Get agent by ID with heartbeat history.
+   */
+  router.get("/agents/:id", async (req, res) => {
+    try {
+      const { AgentStore } = await import("@kb/core");
+      const agentStore = new AgentStore({ rootDir: store.getRootDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgentDetail(req.params.id, 50);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      res.json(agent);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * PATCH /api/agents/:id
+   * Update agent fields.
+   */
+  router.patch("/agents/:id", async (req, res) => {
+    try {
+      const { name, role, metadata } = req.body;
+
+      const { AgentStore } = await import("@kb/core");
+      const agentStore = new AgentStore({ rootDir: store.getRootDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.updateAgent(req.params.id, { name, role, metadata });
+      res.json(agent);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/agents/:id/state
+   * Update agent state.
+   * Body: { state: AgentState }
+   */
+  router.post("/agents/:id/state", async (req, res) => {
+    try {
+      const { state } = req.body;
+      if (!state || typeof state !== "string") {
+        res.status(400).json({ error: "state is required" });
+        return;
+      }
+
+      const { AgentStore } = await import("@kb/core");
+      const agentStore = new AgentStore({ rootDir: store.getRootDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.updateAgentState(req.params.id, state as import("@kb/core").AgentState);
+      res.json(agent);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else if (err.message?.includes("Invalid state transition") || err.message?.includes("Cannot transition from terminated")) {
+        res.status(400).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * DELETE /api/agents/:id
+   * Delete an agent.
+   */
+  router.delete("/agents/:id", async (req, res) => {
+    try {
+      const { AgentStore } = await import("@kb/core");
+      const agentStore = new AgentStore({ rootDir: store.getRootDir() });
+      await agentStore.init();
+
+      await agentStore.deleteAgent(req.params.id);
+      res.status(204).send();
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * POST /api/agents/:id/heartbeat
+   * Record a heartbeat for an agent.
+   */
+  router.post("/agents/:id/heartbeat", async (req, res) => {
+    try {
+      const { status = "ok" } = req.body;
+
+      const { AgentStore } = await import("@kb/core");
+      const agentStore = new AgentStore({ rootDir: store.getRootDir() });
+      await agentStore.init();
+
+      const event = await agentStore.recordHeartbeat(req.params.id, status as "ok" | "missed" | "recovered");
+      res.json(event);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/heartbeats
+   * Get heartbeat history for an agent.
+   * Query: limit (default: 50)
+   */
+  router.get("/agents/:id/heartbeats", async (req, res) => {
+    try {
+      const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+
+      const { AgentStore } = await import("@kb/core");
+      const agentStore = new AgentStore({ rootDir: store.getRootDir() });
+      await agentStore.init();
+
+      const history = await agentStore.getHeartbeatHistory(req.params.id, limit);
+      res.json(history);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

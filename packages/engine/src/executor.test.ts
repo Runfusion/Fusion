@@ -1304,6 +1304,62 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("> Comment 4");
   });
 
+  it("end-to-end: steering comments are fully injected into execution prompt with correct format", () => {
+    const now = new Date();
+    const task = createMockTaskDetail({
+      id: "KB-123",
+      title: "Verify Steering Feature",
+      steeringComments: [
+        {
+          id: "sc-001",
+          text: "Please ensure all edge cases are handled in the validation logic",
+          createdAt: new Date(now.getTime() - 120000).toISOString(),
+          author: "user" as const,
+        },
+        {
+          id: "sc-002",
+          text: "Consider adding unit tests for the new utility function",
+          createdAt: new Date(now.getTime() - 60000).toISOString(),
+          author: "agent" as const,
+        },
+        {
+          id: "sc-003",
+          text: "Don't forget to update the documentation before completing",
+          createdAt: now.toISOString(),
+          author: "user" as const,
+        },
+      ],
+    });
+
+    const result = buildExecutionPrompt(task, "/project", { testCommand: "pnpm test" } as any);
+
+    // Verify section header exists
+    expect(result).toContain("## Steering Comments");
+
+    // Verify explanatory header text
+    expect(result).toContain("The following steering comments were added by the user during execution");
+    expect(result).toContain("Consider adjusting your approach or replanning remaining steps based on this feedback");
+
+    // Verify all three comments appear with correct author badges
+    expect(result).toContain("**user**");
+    expect(result).toContain("**agent**");
+
+    // Verify quoted text format
+    expect(result).toContain("> Please ensure all edge cases are handled in the validation logic");
+    expect(result).toContain("> Consider adding unit tests for the new utility function");
+    expect(result).toContain("> Don't forget to update the documentation before completing");
+
+    // Verify timestamp formatting appears (either relative like "2m ago" or absolute)
+    // The formatTimestamp function returns relative times for recent comments
+    expect(result).toMatch(/\*\*user\*\* — \d+m? ago/);
+
+    // Verify the section appears in the expected location (after progress section, before review level)
+    const steeringSectionIndex = result.indexOf("## Steering Comments");
+    const reviewLevelIndex = result.indexOf("## Review level");
+    expect(steeringSectionIndex).toBeGreaterThan(0);
+    expect(reviewLevelIndex).toBeGreaterThan(steeringSectionIndex);
+  });
+
   it("passes settings to buildExecutionPrompt in TaskExecutor.execute()", async () => {
     const store = createMockStore();
     store.getSettings.mockResolvedValue({

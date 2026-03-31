@@ -1,0 +1,442 @@
+import { useState, useEffect, useCallback } from "react";
+import { X, Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot } from "lucide-react";
+import type { Agent, AgentCapability, AgentState } from "../api";
+import { fetchAgents, createAgent, updateAgentState, deleteAgent } from "../api";
+
+interface AgentListModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  addToast: (message: string, type?: "success" | "error") => void;
+}
+
+const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
+  { value: "triage", label: "Triage", icon: "🔍" },
+  { value: "executor", label: "Executor", icon: "⚡" },
+  { value: "reviewer", label: "Reviewer", icon: "👁" },
+  { value: "merger", label: "Merger", icon: "🔀" },
+  { value: "scheduler", label: "Scheduler", icon: "⏰" },
+  { value: "custom", label: "Custom", icon: "🔧" },
+];
+
+const STATE_COLORS: Record<AgentState, { bg: string; text: string; border: string }> = {
+  idle: { bg: "var(--state-idle-bg)", text: "var(--state-idle-text)", border: "var(--state-idle-border)" },
+  active: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
+  paused: { bg: "var(--state-paused-bg)", text: "var(--state-paused-text)", border: "var(--state-paused-border)" },
+  terminated: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
+};
+
+export function AgentListModal({ isOpen, onClose, addToast }: AgentListModalProps) {
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newAgentName, setNewAgentName] = useState("");
+  const [newAgentRole, setNewAgentRole] = useState<AgentCapability>("custom");
+  const [filterState, setFilterState] = useState<AgentState | "all">("all");
+
+  const loadAgents = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const filter = filterState !== "all" ? { state: filterState } : undefined;
+      const data = await fetchAgents(filter);
+      setAgents(data);
+    } catch (err: any) {
+      addToast(`Failed to load agents: ${err.message}`, "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [filterState, addToast]);
+
+  useEffect(() => {
+    if (isOpen) {
+      void loadAgents();
+    }
+  }, [isOpen, loadAgents]);
+
+  const handleCreate = async () => {
+    if (!newAgentName.trim()) return;
+    try {
+      await createAgent({ name: newAgentName.trim(), role: newAgentRole });
+      addToast(`Agent "${newAgentName}" created`, "success");
+      setNewAgentName("");
+      setIsCreating(false);
+      void loadAgents();
+    } catch (err: any) {
+      addToast(`Failed to create agent: ${err.message}`, "error");
+    }
+  };
+
+  const handleStateChange = async (agentId: string, newState: AgentState) => {
+    try {
+      await updateAgentState(agentId, newState);
+      addToast(`Agent state updated to ${newState}`, "success");
+      void loadAgents();
+    } catch (err: any) {
+      addToast(`Failed to update state: ${err.message}`, "error");
+    }
+  };
+
+  const handleDelete = async (agentId: string, agentName: string) => {
+    if (!confirm(`Delete agent "${agentName}"? This cannot be undone.`)) return;
+    try {
+      await deleteAgent(agentId);
+      addToast(`Agent "${agentName}" deleted`, "success");
+      void loadAgents();
+    } catch (err: any) {
+      addToast(`Failed to delete agent: ${err.message}`, "error");
+    }
+  };
+
+  const getRoleLabel = (role: AgentCapability) => AGENT_ROLES.find(r => r.value === role)?.label ?? role;
+  const getRoleIcon = (role: AgentCapability) => AGENT_ROLES.find(r => r.value === role)?.icon ?? "🤖";
+
+  const getHealthStatus = (agent: Agent): { label: string; icon: JSX.Element; color: string } => {
+    if (agent.state === "terminated") {
+      return { label: "Terminated", icon: <Square size={14} />, color: "var(--state-error-text)" };
+    }
+    if (agent.state === "paused") {
+      return { label: "Paused", icon: <Pause size={14} />, color: "var(--state-paused-text)" };
+    }
+    if (!agent.lastHeartbeatAt) {
+      return { label: agent.state === "active" ? "Starting..." : "Idle", icon: <Bot size={14} />, color: "var(--text-secondary)" };
+    }
+    const lastHeartbeat = new Date(agent.lastHeartbeatAt).getTime();
+    const elapsed = Date.now() - lastHeartbeat;
+    const timeoutMs = 60000; // 60 second timeout
+    if (elapsed > timeoutMs) {
+      return { label: "Unresponsive", icon: <Activity size={14} />, color: "var(--state-error-text)" };
+    }
+    return { label: "Healthy", icon: <Heart size={14} />, color: "var(--state-active-text)" };
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal modal--wide">
+        <div className="modal-header">
+          <h2 className="modal-title">
+            <Bot size={20} />
+            Agents
+          </h2>
+          <div className="modal-actions">
+            <button
+              className="btn-icon"
+              onClick={() => void loadAgents()}
+              title="Refresh"
+              disabled={isLoading}
+            >
+              <RefreshCw size={16} className={isLoading ? "spin" : ""} />
+            </button>
+            <button className="btn-icon" onClick={onClose} title="Close">
+              <X size={20} />
+            </button>
+          </div>
+        </div>
+
+        <div className="modal-content">
+          {/* Filter and Create Bar */}
+          <div className="agent-controls">
+            <select
+              className="select"
+              value={filterState}
+              onChange={(e) => setFilterState(e.target.value as AgentState | "all")}
+            >
+              <option value="all">All States</option>
+              <option value="idle">Idle</option>
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+              <option value="terminated">Terminated</option>
+            </select>
+
+            <button
+              className="btn btn--primary"
+              onClick={() => setIsCreating(!isCreating)}
+            >
+              <Plus size={16} />
+              {isCreating ? "Cancel" : "New Agent"}
+            </button>
+          </div>
+
+          {/* Create Form */}
+          {isCreating && (
+            <div className="agent-create-form">
+              <input
+                type="text"
+                placeholder="Agent name..."
+                value={newAgentName}
+                onChange={(e) => setNewAgentName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                className="input"
+                autoFocus
+              />
+              <select
+                className="select"
+                value={newAgentRole}
+                onChange={(e) => setNewAgentRole(e.target.value as AgentCapability)}
+              >
+                {AGENT_ROLES.map(role => (
+                  <option key={role.value} value={role.value}>
+                    {role.icon} {role.label}
+                  </option>
+                ))}
+              </select>
+              <button className="btn btn--primary" onClick={() => void handleCreate()}>
+                Create
+              </button>
+            </div>
+          )}
+
+          {/* Agent List */}
+          <div className="agent-list">
+            {agents.length === 0 ? (
+              <div className="agent-empty">
+                <Bot size={48} opacity={0.3} />
+                <p>No agents found</p>
+                <p className="text-secondary">Create an agent to get started</p>
+              </div>
+            ) : (
+              agents.map(agent => {
+                const health = getHealthStatus(agent);
+                const stateStyle = STATE_COLORS[agent.state];
+                return (
+                  <div key={agent.id} className="agent-card" style={{ borderLeftColor: stateStyle.border }}>
+                    <div className="agent-card-header">
+                      <div className="agent-info">
+                        <span className="agent-icon">{getRoleIcon(agent.role)}</span>
+                        <div className="agent-meta">
+                          <span className="agent-name">{agent.name}</span>
+                          <span className="agent-id text-secondary">{agent.id}</span>
+                        </div>
+                      </div>
+                      <div className="agent-badges">
+                        <span
+                          className="badge"
+                          style={{
+                            background: stateStyle.bg,
+                            color: stateStyle.text,
+                            border: `1px solid ${stateStyle.border}`,
+                          }}
+                        >
+                          {agent.state}
+                        </span>
+                        <span className="badge" style={{ color: health.color }}>
+                          {health.icon} {health.label}
+                        </span>
+                        <span className="badge text-secondary">
+                          {getRoleLabel(agent.role)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="agent-card-body">
+                      {agent.taskId && (
+                        <div className="agent-task">
+                          <span className="text-secondary">Working on:</span>
+                          <span className="badge">{agent.taskId}</span>
+                        </div>
+                      )}
+                      {agent.lastHeartbeatAt && (
+                        <div className="agent-heartbeat">
+                          <span className="text-secondary">Last heartbeat:</span>
+                          <span>{new Date(agent.lastHeartbeatAt).toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="agent-card-actions">
+                      {agent.state === "idle" && (
+                        <button
+                          className="btn btn--sm"
+                          onClick={() => void handleStateChange(agent.id, "active")}
+                          title="Activate"
+                        >
+                          <Play size={14} /> Start
+                        </button>
+                      )}
+                      {agent.state === "active" && (
+                        <>
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleStateChange(agent.id, "paused")}
+                            title="Pause"
+                          >
+                            <Pause size={14} /> Pause
+                          </button>
+                          <button
+                            className="btn btn--sm btn--danger"
+                            onClick={() => void handleStateChange(agent.id, "terminated")}
+                            title="Stop"
+                          >
+                            <Square size={14} /> Stop
+                          </button>
+                        </>
+                      )}
+                      {agent.state === "paused" && (
+                        <>
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleStateChange(agent.id, "active")}
+                            title="Resume"
+                          >
+                            <Play size={14} /> Resume
+                          </button>
+                          <button
+                            className="btn btn--sm btn--danger"
+                            onClick={() => void handleStateChange(agent.id, "terminated")}
+                            title="Stop"
+                          >
+                            <Square size={14} /> Stop
+                          </button>
+                        </>
+                      )}
+                      {agent.state === "terminated" && (
+                        <button
+                          className="btn btn--sm btn--danger"
+                          onClick={() => void handleDelete(agent.id, agent.name)}
+                          title="Delete"
+                        >
+                          <Trash2 size={14} /> Delete
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        .modal--wide {
+          width: 90vw;
+          max-width: 900px;
+          max-height: 80vh;
+        }
+
+        .modal-content {
+          padding: 20px;
+          overflow-y: auto;
+        }
+
+        .agent-controls {
+          display: flex;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+
+        .agent-controls .select {
+          width: auto;
+        }
+
+        .agent-create-form {
+          display: flex;
+          gap: 12px;
+          margin-bottom: 16px;
+          padding: 16px;
+          background: var(--bg-secondary);
+          border-radius: 8px;
+        }
+
+        .agent-create-form .input {
+          flex: 1;
+        }
+
+        .agent-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .agent-empty {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 48px;
+          color: var(--text-secondary);
+        }
+
+        .agent-card {
+          border: 1px solid var(--border);
+          border-left-width: 4px;
+          border-radius: 8px;
+          padding: 16px;
+          background: var(--bg-primary);
+        }
+
+        .agent-card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 12px;
+        }
+
+        .agent-info {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .agent-icon {
+          font-size: 24px;
+        }
+
+        .agent-meta {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .agent-name {
+          font-weight: 600;
+          font-size: 16px;
+        }
+
+        .agent-id {
+          font-size: 12px;
+          font-family: var(--font-mono);
+        }
+
+        .agent-badges {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .agent-card-body {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          margin-bottom: 12px;
+          padding: 8px;
+          background: var(--bg-secondary);
+          border-radius: 4px;
+          font-size: 13px;
+        }
+
+        .agent-task,
+        .agent-heartbeat {
+          display: flex;
+          gap: 8px;
+        }
+
+        .agent-card-actions {
+          display: flex;
+          gap: 8px;
+        }
+
+        .spin {
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+
+        .text-secondary {
+          color: var(--text-secondary);
+        }
+      `}</style>
+    </div>
+  );
+}
