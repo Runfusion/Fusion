@@ -2314,7 +2314,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  z-index: 50;
+  z-index: 500;
   box-shadow: var(--shadow);
 }
 
