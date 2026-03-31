@@ -891,6 +891,49 @@ export async function runTaskImportFromGitHub(
   console.log();
 }
 
+export async function runTaskSteer(id: string, message?: string) {
+  const store = await getStore();
+
+  // Get message interactively if not provided as argument
+  let text = message;
+  if (text === undefined) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    text = await rl.question("Message: ");
+    rl.close();
+  }
+
+  // Validate message
+  if (!text || text.trim().length === 0) {
+    console.error("Error: Message is required");
+    process.exit(1);
+  }
+
+  const trimmed = text.trim();
+  if (trimmed.length > 2000) {
+    console.error("Error: Message must be between 1 and 2000 characters");
+    process.exit(1);
+  }
+
+  // Add steering comment
+  let task;
+  try {
+    task = await store.addSteeringComment(id, trimmed, "user");
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      console.error(`Error: Task not found: ${id}`);
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  // Show success with preview
+  const preview = trimmed.length > 60 ? trimmed.slice(0, 60) + "…" : trimmed;
+  console.log();
+  console.log(`  ✓ Steering comment added to ${task.id}`);
+  console.log(`    "${preview}"`);
+  console.log();
+}
+
 // ── Planning Mode ───────────────────────────────────────────────────────────
 
 /** Helper to display thinking indicator */

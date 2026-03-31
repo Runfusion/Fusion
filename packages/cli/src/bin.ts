@@ -39,7 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry, runTaskSteer } = await import("./commands/task.js");
 const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
 const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
 
@@ -69,6 +69,7 @@ Usage:
   kb task attach <id> <file>          Attach a file to a task
   kb task pause <id>                  Pause a task (stops all automation)
   kb task unpause <id>                Unpause a task (resumes automation)
+  kb task steer <id> [message]        Add steering comment (prompts if message omitted)
   kb task retry <id>                  Retry a failed task (clears error, moves to todo)
   kb task import <owner/repo> [opts]  Import GitHub issues as tasks
   kb settings                          Show current kb configuration
@@ -284,6 +285,13 @@ async function main() {
             const id = args[2];
             if (!id) { console.error("Usage: kb task unpause <id>"); process.exit(1); }
             await runTaskUnpause(id);
+            break;
+          }
+          case "steer": {
+            const id = args[2];
+            const message = args.slice(3).join(" ");
+            if (!id) { console.error("Usage: kb task steer <id> [message]"); process.exit(1); }
+            await runTaskSteer(id, message || undefined);
             break;
           }
           case "retry": {
