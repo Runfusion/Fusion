@@ -803,6 +803,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.blockedBy = undefined;
       }
 
+      // Clear workflow step results when moving from in-review back to todo or in-progress
+      // This ensures fresh workflow step runs on retry
+      if (fromColumn === "in-review" && (toColumn === "todo" || toColumn === "in-progress")) {
+        task.workflowStepResults = undefined;
+      }
+
       await this.atomicWriteTaskJson(dir, task);
 
       // Update cache if watcher is active
