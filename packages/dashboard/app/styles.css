@@ -7548,6 +7548,108 @@ html .column.drag-over * {
   color: var(--text);
 }
 
+/* Subtask Drag-and-Drop Styles */
+.subtask-item {
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.subtask-item-dragging {
+  opacity: 0.5;
+  transform: scale(0.98);
+}
+
+.subtask-item-drop-target {
+  background: rgba(88, 166, 255, 0.08);
+  border-color: var(--todo);
+}
+
+.subtask-item-drop-before {
+  position: relative;
+}
+
+.subtask-item-drop-before::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--todo);
+  z-index: 1;
+}
+
+.subtask-item-drop-after {
+  position: relative;
+}
+
+.subtask-item-drop-after::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--todo);
+  z-index: 1;
+}
+
+.subtask-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subtask-drag-handle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: grab;
+  color: var(--text-dim);
+  transition: color var(--transition-fast);
+  user-select: none;
+}
+
+.subtask-drag-handle:hover {
+  color: var(--text-muted);
+}
+
+.subtask-item-dragging .subtask-drag-handle {
+  cursor: grabbing;
+  color: var(--todo);
+}
+
+.subtask-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.subtask-item-actions .btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.subtask-item-actions .btn-icon:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.subtask-item-actions .btn-icon:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .planning-modal {

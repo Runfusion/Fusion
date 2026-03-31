@@ -7,7 +7,7 @@ import {
   cancelSubtaskBreakdown,
   type SubtaskItem,
 } from "../api";
-import { CheckCircle, Loader2, ListTree, Plus, Trash2, X } from "lucide-react";
+import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown } from "lucide-react";
 
 interface SubtaskBreakdownModalProps {
   isOpen: boolean;
@@ -60,6 +60,12 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   const [showThinking, setShowThinking] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  
+  // Drag-and-drop state
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [dragOverPosition, setDragOverPosition] = useState<'before' | 'after' | null>(null);
+  
   const streamRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const titleRefs = useRef<Array<HTMLInputElement | null>>([]);
   const autoStartedRef = useRef(false);
@@ -175,6 +181,90 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     setDirty(true);
   }, []);
 
+  // Drag-and-drop handlers
+  const handleDragStart = useCallback((subtaskId: string) => (e: React.DragEvent) => {
+    setDraggingId(subtaskId);
+    e.dataTransfer.setData('text/plain', subtaskId);
+    e.dataTransfer.effectAllowed = 'move';
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDraggingId(null);
+    setDragOverId(null);
+    setDragOverPosition(null);
+  }, []);
+
+  const handleDragOver = useCallback((targetId: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (targetId === draggingId) return;
+    
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const position: 'before' | 'after' = e.clientY < midY ? 'before' : 'after';
+    
+    setDragOverId(targetId);
+    setDragOverPosition(position);
+  }, [draggingId]);
+
+  const handleDrop = useCallback((targetId: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    const draggedId = e.dataTransfer.getData('text/plain');
+    
+    if (!draggedId || draggedId === targetId) {
+      setDraggingId(null);
+      setDragOverId(null);
+      setDragOverPosition(null);
+      return;
+    }
+
+    setSubtasks((current) => {
+      const fromIndex = current.findIndex((s) => s.id === draggedId);
+      const toIndex = current.findIndex((s) => s.id === targetId);
+      
+      if (fromIndex === -1 || toIndex === -1) return current;
+      
+      const newSubtasks = [...current];
+      const [moved] = newSubtasks.splice(fromIndex, 1);
+      
+      let insertIndex = toIndex;
+      if (dragOverPosition === 'after' && fromIndex < toIndex) insertIndex--;
+      if (dragOverPosition === 'after') insertIndex++;
+      
+      newSubtasks.splice(insertIndex, 0, moved);
+      return newSubtasks;
+    });
+    
+    setDirty(true);
+    setDraggingId(null);
+    setDragOverId(null);
+    setDragOverPosition(null);
+  }, [dragOverPosition]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = e.clientX;
+    const y = e.clientY;
+    
+    // Only clear if leaving the element entirely, not just moving between children
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+      setDragOverId(null);
+      setDragOverPosition(null);
+    }
+  }, []);
+
+  // Keyboard reordering handlers
+  const moveSubtask = useCallback((fromIndex: number, toIndex: number) => {
+    if (toIndex < 0 || toIndex >= subtasks.length) return;
+    
+    setSubtasks((current) => {
+      const newSubtasks = [...current];
+      const [moved] = newSubtasks.splice(fromIndex, 1);
+      newSubtasks.splice(toIndex, 0, moved);
+      return newSubtasks;
+    });
+    setDirty(true);
+  }, [subtasks.length]);
+
   const moveFocusToNext = useCallback((index: number) => {
     titleRefs.current[index + 1]?.focus();
   }, []);
@@ -248,14 +338,61 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                 </div>
 
                 <div className="planning-summary-form">
-                  {subtasks.map((subtask, index) => (
-                    <div key={subtask.id} className="task-detail-section" data-testid={`subtask-item-${index}`}>
-                      <div className="detail-title-row" style={{ justifyContent: "space-between" }}>
-                        <strong>{subtask.id}</strong>
-                        <button type="button" className="btn btn-sm" onClick={() => removeSubtask(subtask.id)} disabled={view.type === "creating"}>
-                          <Trash2 size={14} /> Remove
-                        </button>
-                      </div>
+                  {subtasks.map((subtask, index) => {
+                    const isDragging = draggingId === subtask.id;
+                    const isDragOver = dragOverId === subtask.id;
+                    const dragClasses = [
+                      'task-detail-section',
+                      'subtask-item',
+                      isDragging ? 'subtask-item-dragging' : '',
+                      isDragOver ? 'subtask-item-drop-target' : '',
+                      isDragOver && dragOverPosition === 'before' ? 'subtask-item-drop-before' : '',
+                      isDragOver && dragOverPosition === 'after' ? 'subtask-item-drop-after' : '',
+                    ].filter(Boolean).join(' ');
+
+                    return (
+                      <div
+                        key={subtask.id}
+                        className={dragClasses}
+                        data-testid={`subtask-item-${index}`}
+                        draggable={view.type !== "creating"}
+                        onDragStart={handleDragStart(subtask.id)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={handleDragOver(subtask.id)}
+                        onDrop={handleDrop(subtask.id)}
+                        onDragLeave={handleDragLeave}
+                      >
+                        <div className="detail-title-row subtask-item-header" style={{ justifyContent: "space-between" }}>
+                          <div className="subtask-drag-handle" title="Drag to reorder">
+                            <GripVertical size={16} />
+                            <strong>{subtask.id}</strong>
+                          </div>
+                          <div className="subtask-item-actions">
+                            <button
+                              type="button"
+                              className="btn btn-icon btn-sm"
+                              onClick={() => moveSubtask(index, index - 1)}
+                              disabled={view.type === "creating" || index === 0}
+                              title="Move up"
+                              aria-label="Move subtask up"
+                            >
+                              <ArrowUp size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-icon btn-sm"
+                              onClick={() => moveSubtask(index, index + 1)}
+                              disabled={view.type === "creating" || index === subtasks.length - 1}
+                              title="Move down"
+                              aria-label="Move subtask down"
+                            >
+                              <ArrowDown size={14} />
+                            </button>
+                            <button type="button" className="btn btn-sm" onClick={() => removeSubtask(subtask.id)} disabled={view.type === "creating"}>
+                              <Trash2 size={14} /> Remove
+                            </button>
+                          </div>
+                        </div>
 
                       <div className="form-group">
                         <label>Title</label>
@@ -303,7 +440,8 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                       <div className="form-group">
                         <label>Dependencies</label>
                         <div className="planning-deps-list">
-                          {subtasks.filter((item) => item.id !== subtask.id).map((candidate) => {
+                          {/* Only show subtasks that come BEFORE this one in the list (prevents cycles) */}
+                          {subtasks.slice(0, index).filter((item) => item.id !== subtask.id).map((candidate) => {
                             const selected = subtask.dependsOn.includes(candidate.id);
                             return (
                               <label key={candidate.id} className={`planning-dep-chip ${selected ? "selected" : ""}`}>
@@ -323,13 +461,17 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                               </label>
                             );
                           })}
-                          {subtasks.filter((item) => item.id !== subtask.id).length === 0 && (
-                            <div className="text-muted">No other subtasks available yet.</div>
+                          {index === 0 && (
+                            <div className="text-muted">First subtask cannot have dependencies.</div>
+                          )}
+                          {index > 0 && subtasks.slice(0, index).filter((item) => item.id !== subtask.id).length === 0 && (
+                            <div className="text-muted">No previous subtasks available.</div>
                           )}
                         </div>
                       </div>
                     </div>
-                  ))}
+                  );
+                  })}
 
                   <button type="button" className="btn" onClick={addSubtask} disabled={view.type === "creating"}>
                     <Plus size={16} style={{ marginRight: 6 }} /> Add subtask

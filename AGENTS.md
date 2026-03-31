@@ -75,6 +75,22 @@ Both components provide the same task creation experience with the following opt
 - Clicking either button clears the input after triggering the action.
 - Regular task creation (Enter key) works as before without AI assistance.
 
+### Subtask Breakdown Dialog
+
+The subtask breakdown dialog (accessed via the Subtask button) allows users to break down a task into smaller, manageable subtasks with the following features:
+
+- **AI-generated subtasks** — The AI suggests 2–5 subtasks based on the task description. Users can edit titles, descriptions, sizes, and dependencies before creating.
+- **Drag-and-drop reordering** — Each subtask row has a drag handle (grip icon) on the left. Users can drag subtasks up or down to reorder them, which affects the execution order.
+- **Keyboard reordering** — Up and down arrow buttons next to each subtask provide an accessible alternative to drag-and-drop for keyboard users.
+- **Dependency validation** — The dependency selector only shows subtasks that come before the current one in the list, preventing circular dependencies. First subtasks cannot have dependencies.
+- **Visual feedback during drag** — Dragging a subtask shows reduced opacity on the dragged item and a highlight border on potential drop targets with a line indicator showing insertion position (before/after).
+
+**CSS classes for drag states:**
+- `.subtask-item-dragging` — Applied to the subtask being dragged (opacity: 0.5)
+- `.subtask-item-drop-target` — Applied to the subtask being hovered over as a drop target
+- `.subtask-item-drop-before` / `.subtask-item-drop-after` — Shows insertion line indicator
+- `.subtask-drag-handle` — The grip icon container with grab/grabbing cursor states
+
 ## Dashboard badge WebSockets
 
 GitHub PR and issue badges in the dashboard now have a dedicated real-time WebSocket channel at `/api/ws`.
