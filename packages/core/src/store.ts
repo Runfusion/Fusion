@@ -815,7 +815,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Validate that task doesn't depend on itself
@@ -897,6 +897,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.summary = undefined;
       } else if (updates.summary !== undefined) {
         task.summary = updates.summary;
+      }
+      if (updates.workflowStepResults === null) {
+        task.workflowStepResults = undefined;
+      } else if (updates.workflowStepResults !== undefined) {
+        task.workflowStepResults = updates.workflowStepResults;
       }
       task.updatedAt = new Date().toISOString();
 
