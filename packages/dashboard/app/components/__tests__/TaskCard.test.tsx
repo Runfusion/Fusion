@@ -2554,3 +2554,75 @@ describe("TaskCard touch gesture handling", () => {
     });
   });
 });
+
+/**
+ * Tests for TaskCard title/description display without truncation.
+ */
+describe("TaskCard title display", () => {
+  const noopToast = vi.fn();
+
+  const makeTask = (overrides: Partial<Task> = {}): Task => ({
+    id: "KB-001",
+    description: "Test task",
+    column: "todo",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    columnMovedAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  } as Task);
+
+  it("displays full description when no title exists (no truncation)", () => {
+    const longDescription = "A".repeat(100);
+    const task = makeTask({ title: undefined, description: longDescription });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // The full 100-character description should be visible
+    const cardTitle = screen.getByText(longDescription);
+    expect(cardTitle).toBeDefined();
+    expect(cardTitle.textContent).toBe(longDescription);
+    expect(cardTitle.textContent?.length).toBe(100);
+  });
+
+  it("displays title when title exists", () => {
+    const task = makeTask({ title: "My Task Title", description: "Some description" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByText("My Task Title")).toBeDefined();
+    // Description should not be shown as title when title exists
+    expect(screen.queryByText("Some description")).toBeNull();
+  });
+
+  it("falls back to task id when no title and no description", () => {
+    const task = makeTask({ title: undefined, description: "" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Look for the task ID within the card-title element specifically
+    const cardTitle = screen.getByText("KB-001", { selector: ".card-title" });
+    expect(cardTitle).toBeDefined();
+  });
+});

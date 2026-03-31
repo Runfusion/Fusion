@@ -616,7 +616,7 @@ export function ListView({
                                 )}
                                 {visibleColumns.has("title") && (
                                   <td className="list-cell list-cell-title">
-                                    {task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "")}
+                                    {task.title || task.description}
                                   </td>
                                 )}
                                 {visibleColumns.has("status") && (

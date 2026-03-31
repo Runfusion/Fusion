@@ -538,15 +538,16 @@ describe("ListView", () => {
     });
   });
 
-  it("truncates long descriptions in title cell", () => {
+  it("displays full description in title cell when no title exists", () => {
     const longDescription = "A".repeat(100);
     const tasks = [createMockTask({ id: "KB-001", title: undefined, description: longDescription })];
 
     renderListView({ tasks });
 
-    const titleCell = screen.getByText(/A{60}/).closest("td")!;
-    expect(titleCell.textContent).toContain("…");
-    expect(titleCell.textContent?.length).toBeLessThan(longDescription.length);
+    // The full 100-character description should be visible
+    const titleCell = screen.getByText(longDescription).closest("td")!;
+    expect(titleCell.textContent).toBe(longDescription);
+    expect(titleCell.textContent?.length).toBe(100);
   });
 
   // Grouped view tests
