@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task } from "@kb/core";
 import { apiFetchGitHubIssues, apiImportGitHubIssue, fetchGitRemotes, type GitHubIssue, type GitRemote } from "../api";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw, ArrowLeft } from "lucide-react";
 
 interface GitHubImportModalProps {
   isOpen: boolean;
@@ -9,6 +9,9 @@ interface GitHubImportModalProps {
   onImport: (task: Task) => void;
   tasks: Task[];
 }
+
+// Mobile breakpoint in pixels
+const MOBILE_BREAKPOINT = 640;
 
 export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubImportModalProps) {
   const [owner, setOwner] = useState("");
@@ -25,6 +28,10 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
   const [loadingRemotes, setLoadingRemotes] = useState(false);
   const [selectedRemoteName, setSelectedRemoteName] = useState<string>("");
   const mountedRef = useRef(false);
+  
+  // Mobile view state
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileView, setMobileView] = useState<'list' | 'preview'>('list');
   
   // Track which owner/repo we've already auto-loaded to prevent duplicate loads
   const autoLoadedRef = useRef<{ owner: string; repo: string; labels: string } | null>(null);
@@ -164,6 +171,37 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
     return () => document.removeEventListener("keydown", handleKey);
   }, [isOpen, onClose]);
 
+  // Detect mobile viewport
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    };
+    
+    // Check initially
+    checkMobile();
+    
+    // Listen for resize
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, [isOpen]);
+
+  // Handle issue selection - switch to preview view on mobile
+  const handleIssueSelect = useCallback((issueNumber: number) => {
+    setSelectedIssueNumber(issueNumber);
+    if (isMobile) {
+      setMobileView('preview');
+    }
+  }, [isMobile]);
+
+  // Handle back button - return to list view on mobile
+  const handleBackToList = useCallback(() => {
+    setMobileView('list');
+    // Optionally clear selection when going back
+    // setSelectedIssueNumber(null);
+  }, []);
+
   const handleImport = useCallback(async () => {
     if (selectedIssueNumber === null) return;
 
@@ -189,11 +227,10 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
 
   if (!isOpen) return null;
 
-  // Determine the repository selection UI state
+  // Determine state flags
   const hasRemotes = remotes.length > 0;
   const singleRemote = remotes.length === 1;
   const multipleRemotes = remotes.length > 1;
-  const repositoryName = owner.trim() && repo.trim() ? `${owner.trim()}/${repo.trim()}` : "No repository selected";
   const importedIssueCount = issues.filter((issue) => importedUrls.has(issue.html_url)).length;
   const isEmptyState = error === "No open issues found";
   const isResultsError = Boolean(error) && !isEmptyState && issues.length === 0 && !loading;
@@ -216,116 +253,86 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
         </div>
 
         <div className="modal-body github-import-modal__body">
-          <section className="github-import-section" aria-labelledby="github-import-source-heading">
-            <div className="github-import-section__header">
-              <div>
-                <h4 id="github-import-source-heading">Repository source</h4>
-                <p className="github-import-section__helper">
-                  kb reads Git remotes from your current repository so you can load issues without typing owner/repo by hand.
-                </p>
-              </div>
-              <div className="github-import-repository-pill" aria-live="polite">
-                <span className="github-import-repository-pill__label">Repository</span>
-                <span className="github-import-repository-pill__value">{repositoryName}</span>
-              </div>
-            </div>
-
-            {loadingRemotes && (
-              <div className="github-import-state github-import-state--loading" role="status" aria-live="polite">
-                <Loader2 size={16} className="spin" />
-                <div>
-                  <strong>Detecting Git remotes…</strong>
-                  <span>Scanning this worktree for GitHub remotes.</span>
+          {/* Compact Toolbar */}
+          <div className="github-import-toolbar" data-testid="github-import-toolbar" role="toolbar" aria-label="GitHub import controls">
+            {/* Left: Remote selector */}
+            <div className="github-import-toolbar__zone github-import-toolbar__zone--remote">
+              {loadingRemotes ? (
+                <div className="github-import-toolbar__loading" role="status" aria-live="polite">
+                  <Loader2 size={16} className="spin" />
+                  <span>Detecting…</span>
                 </div>
-              </div>
-            )}
-
-            {!loadingRemotes && !hasRemotes && (
-              <div className="github-import-state github-import-state--warning" role="alert">
-                <div>
-                  <strong>No GitHub remotes detected</strong>
-                  <span>Add a GitHub remote to this repository, then reopen the modal.</span>
+              ) : !hasRemotes ? (
+                <span className="github-import-toolbar__no-remote">No remotes</span>
+              ) : singleRemote ? (
+                <div className="github-import-remote-pill" data-testid="github-import-single-remote">
+                  <span className="github-import-remote-pill__name">{remotes[0].name}</span>
+                  <span className="github-import-remote-pill__repo">{remotes[0].owner}/{remotes[0].repo}</span>
                 </div>
-                <code className="github-import-command">
-                  git remote add origin https://github.com/owner/repo.git
-                </code>
-              </div>
-            )}
-
-            {!loadingRemotes && singleRemote && (
-              <div className="github-import-remote-card" data-testid="github-import-single-remote">
-                <div>
-                  <div className="github-import-remote-card__eyebrow">Auto-detected remote</div>
-                  <div className="github-import-remote-card__title">
-                    {remotes[0].name} <span>{remotes[0].owner}/{remotes[0].repo}</span>
-                  </div>
-                </div>
-                <span className="github-import-badge">Ready</span>
-              </div>
-            )}
-
-            {!loadingRemotes && multipleRemotes && (
-              <div className="github-import-controls-grid">
-                <div className="form-group github-import-form-group github-import-form-group--remote">
-                  <label htmlFor="gh-remote">Repository</label>
+              ) : (
+                <div className="github-import-remote-select">
+                  <label htmlFor="gh-remote" className="visually-hidden">Repository</label>
                   <select
                     id="gh-remote"
                     value={selectedRemoteName}
                     onChange={(e) => handleRemoteChange(e.target.value)}
                     disabled={loading || importing}
+                    aria-label="Select Git remote"
                   >
-                    <option value="">Select a remote...</option>
+                    <option value="">Select remote…</option>
                     {remotes.map((remote) => (
                       <option key={remote.name} value={remote.name}>
                         {remote.name} ({remote.owner}/{remote.repo})
                       </option>
                     ))}
                   </select>
-                  <small>Pick which remote to query when more than one GitHub origin is available.</small>
                 </div>
-              </div>
-            )}
-          </section>
+              )}
+            </div>
 
-          <section className="github-import-section" aria-labelledby="github-import-filters-heading">
-            <div className="github-import-section__header">
+            {/* Center: Labels filter */}
+            <div className="github-import-toolbar__zone github-import-toolbar__zone--filter">
+              <label htmlFor="gh-labels" className="visually-hidden">Filter by labels</label>
+              <input
+                id="gh-labels"
+                type="text"
+                placeholder="Filter: bug,enhancement…"
+                value={labels}
+                onChange={(e) => setLabels(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleLoad()}
+                disabled={loading || importing || !hasRemotes}
+                aria-label="Filter issues by labels"
+              />
+            </div>
+
+            {/* Right: Load button */}
+            <div className="github-import-toolbar__zone github-import-toolbar__zone--action">
+              <button
+                id="gh-load"
+                className="btn btn-primary github-import-load-button"
+                onClick={handleLoad}
+                disabled={loading || importing || !owner.trim() || !repo.trim()}
+                aria-label={loading ? "Loading issues" : "Load issues from repository"}
+                title={loading ? "Loading…" : "Load issues"}
+              >
+                {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                <span>{loading ? "Loading…" : "Load"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Warning/Error states below toolbar */}
+          {!loadingRemotes && !hasRemotes && (
+            <div className="github-import-state github-import-state--warning" role="alert">
               <div>
-                <h4 id="github-import-filters-heading">Filters &amp; sync</h4>
-                <p className="github-import-section__helper">
-                  Narrow the issue list with labels, then fetch up to 30 open issues from the selected repository.
-                </p>
+                <strong>No GitHub remotes detected</strong>
+                <span>Add a GitHub remote to this repository, then reopen the modal.</span>
               </div>
+              <code className="github-import-command">
+                git remote add origin https://github.com/owner/repo.git
+              </code>
             </div>
-
-            <div className="github-import-controls-grid">
-              <div className="form-group github-import-form-group">
-                <label htmlFor="gh-labels">Labels (optional)</label>
-                <input
-                  id="gh-labels"
-                  type="text"
-                  placeholder="bug,enhancement"
-                  value={labels}
-                  onChange={(e) => setLabels(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleLoad()}
-                  disabled={loading || importing}
-                />
-                <small>Use comma-separated labels to filter the GitHub issue query.</small>
-              </div>
-
-              <div className="form-group github-import-form-group github-import-form-group--action">
-                <label htmlFor="gh-load">Load issues</label>
-                <button
-                  id="gh-load"
-                  className="btn btn-primary github-import-load-button"
-                  onClick={handleLoad}
-                  disabled={loading || importing || !owner.trim() || !repo.trim()}
-                >
-                  {loading ? <Loader2 size={14} className="spin" /> : "Refresh"}
-                </button>
-                <small>Load issues from the selected repository without changing any board data.</small>
-              </div>
-            </div>
-          </section>
+          )}
 
           {showInlineErrorBanner && (
             <div className="form-error github-import-banner" role="alert">
@@ -333,18 +340,16 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
             </div>
           )}
 
+          {/* Two-pane workspace */}
           <div className="github-import-workspace">
+            {/* Left pane: Issue list */}
             <section
-              className="github-import-section github-import-section--results"
+              className={`github-import-list-pane ${isMobile ? 'mobile' : ''} ${mobileView === 'list' ? 'active' : ''}`}
+              data-testid="github-import-list-pane"
               aria-labelledby="github-import-results-heading"
             >
-              <div className="github-import-section__header">
-                <div>
-                  <h4 id="github-import-results-heading">Results</h4>
-                  <p className="github-import-section__helper">
-                    Imported issues stay visible but cannot be selected again.
-                  </p>
-                </div>
+              <div className="github-import-pane-header">
+                <h4 id="github-import-results-heading">Issues</h4>
                 {issues.length > 0 && (
                   <div className="github-import-results-meta" aria-live="polite">
                     <span>{issues.length} issue{issues.length === 1 ? "" : "s"}</span>
@@ -353,115 +358,127 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
                 )}
               </div>
 
-              {!hasResultsContent && (
-                <div className="github-import-state github-import-state--idle" data-testid="github-import-results-idle">
-                  <div>
-                    <strong>Nothing loaded yet</strong>
-                    <span>Select a repository and load issues to start reviewing import candidates.</span>
+              <div className="github-import-pane-content">
+                {!hasResultsContent && (
+                  <div className="github-import-state github-import-state--idle" data-testid="github-import-results-idle">
+                    <div>
+                      <strong>Nothing loaded yet</strong>
+                      <span>Select a repository and load issues to start reviewing import candidates.</span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {loading && (
-                <div className="github-import-state github-import-state--loading" role="status" aria-live="polite">
-                  <Loader2 size={16} className="spin" />
-                  <div>
-                    <strong>Loading open issues…</strong>
-                    <span>Fetching the latest issue list from GitHub.</span>
+                {loading && (
+                  <div className="github-import-state github-import-state--loading" role="status" aria-live="polite">
+                    <Loader2 size={16} className="spin" />
+                    <div>
+                      <strong>Loading open issues…</strong>
+                      <span>Fetching the latest issue list from GitHub.</span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {isResultsError && (
-                <div className="github-import-state github-import-state--error" role="alert">
-                  <div>
-                    <strong>Could not load issues</strong>
-                    <span>{error}</span>
+                {isResultsError && (
+                  <div className="github-import-state github-import-state--error" role="alert">
+                    <div>
+                      <strong>Could not load issues</strong>
+                      <span>{error}</span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {isEmptyState && (
-                <div className="github-import-state github-import-state--empty" role="status">
-                  <div>
-                    <strong>No open issues found</strong>
-                    <span>Try a different label filter or choose another repository.</span>
+                {isEmptyState && (
+                  <div className="github-import-state github-import-state--empty" role="status">
+                    <div>
+                      <strong>No open issues found</strong>
+                      <span>Try a different label filter or choose another repository.</span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {issues.length > 0 && (
-                <div className="issues-list" aria-live="polite">
-                  {issues.map((issue) => {
-                    const isImported = importedUrls.has(issue.html_url);
-                    return (
-                      <div
-                        key={issue.number}
-                        className={`issue-item ${selectedIssueNumber === issue.number ? "selected" : ""} ${isImported ? "imported" : ""}`}
-                        onClick={() => !isImported && setSelectedIssueNumber(issue.number)}
-                      >
-                        <input
-                          type="radio"
-                          name="issue"
-                          checked={selectedIssueNumber === issue.number}
-                          onChange={() => setSelectedIssueNumber(issue.number)}
-                          disabled={isImported}
-                          aria-label={`Select issue #${issue.number}`}
-                        />
-                        <div className="issue-main">
-                          <div className="issue-heading-row">
-                            <span className="issue-number">#{issue.number}</span>
-                            <span className="issue-title">{issue.title}</span>
+                {issues.length > 0 && (
+                  <div className="issues-list" aria-live="polite">
+                    {issues.map((issue) => {
+                      const isImported = importedUrls.has(issue.html_url);
+                      return (
+                        <div
+                          key={issue.number}
+                          className={`issue-item ${selectedIssueNumber === issue.number ? "selected" : ""} ${isImported ? "imported" : ""}`}
+                          onClick={() => !isImported && handleIssueSelect(issue.number)}
+                        >
+                          <input
+                            type="radio"
+                            name="issue"
+                            checked={selectedIssueNumber === issue.number}
+                            onChange={() => handleIssueSelect(issue.number)}
+                            disabled={isImported}
+                            aria-label={`Select issue #${issue.number}`}
+                          />
+                          <div className="issue-main">
+                            <div className="issue-heading-row">
+                              <span className="issue-number">#{issue.number}</span>
+                              <span className="issue-title">{issue.title}</span>
+                            </div>
+                            {issue.labels.length > 0 && (
+                              <span className="issue-labels">
+                                {issue.labels.map((l) => (
+                                  <span key={l.name} className="label-chip">
+                                    {l.name}
+                                  </span>
+                                ))}
+                              </span>
+                            )}
                           </div>
-                          {issue.labels.length > 0 && (
-                            <span className="issue-labels">
-                              {issue.labels.map((l) => (
-                                <span key={l.name} className="label-chip">
-                                  {l.name}
-                                </span>
-                              ))}
-                            </span>
-                          )}
+                          {isImported && <span className="imported-badge">Imported</span>}
                         </div>
-                        {isImported && <span className="imported-badge">Imported</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </section>
 
+            {/* Right pane: Preview */}
             <section
-              className="github-import-section github-import-section--preview"
+              className={`github-import-preview-pane ${isMobile ? 'mobile' : ''} ${mobileView === 'preview' ? 'active' : ''}`}
+              data-testid="github-import-preview-pane"
               aria-labelledby="github-import-preview-heading"
             >
-              <div className="github-import-section__header">
-                <div>
-                  <h4 id="github-import-preview-heading">Preview</h4>
-                  <p className="github-import-section__helper">
-                    Review the selected issue before importing it as a task.
-                  </p>
-                </div>
+              <div className="github-import-pane-header">
+                {isMobile && (
+                  <button
+                    className="github-import-back-button"
+                    onClick={handleBackToList}
+                    data-testid="github-import-back-button"
+                    aria-label="Back to issues list"
+                  >
+                    <ArrowLeft size={16} />
+                    <span>Back</span>
+                  </button>
+                )}
+                <h4 id="github-import-preview-heading">Preview</h4>
               </div>
 
-              {selectedIssue ? (
-                <div className="issue-preview" data-testid="github-import-preview-card">
-                  <div className="preview-meta">Issue #{selectedIssue.number}</div>
-                  <div className="preview-title">{selectedIssue.title}</div>
-                  <div className="preview-body">
-                    {selectedIssue.body
-                      ? selectedIssue.body.slice(0, 200) + (selectedIssue.body.length > 200 ? "…" : "")
-                      : "(no description)"}
+              <div className="github-import-pane-content">
+                {selectedIssue ? (
+                  <div className="issue-preview" data-testid="github-import-preview-card">
+                    <div className="preview-meta">Issue #{selectedIssue.number}</div>
+                    <div className="preview-title">{selectedIssue.title}</div>
+                    <div className="preview-body">
+                      {selectedIssue.body
+                        ? selectedIssue.body.slice(0, 200) + (selectedIssue.body.length > 200 ? "…" : "")
+                        : "(no description)"}
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="github-import-state github-import-state--idle" data-testid="github-import-preview-empty">
-                  <div>
-                    <strong>No issue selected</strong>
-                    <span>Choose an issue from the results list to inspect its title and description.</span>
+                ) : (
+                  <div className="github-import-state github-import-state--idle" data-testid="github-import-preview-empty">
+                    <div>
+                      <strong>No issue selected</strong>
+                      <span>Choose an issue from the list to inspect its title and description.</span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </section>
           </div>
         </div>

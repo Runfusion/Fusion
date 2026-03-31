@@ -67,14 +67,18 @@ describe("GitHubImportModal", () => {
     expect(screen.queryByText("Import from GitHub")).toBeNull();
   });
 
-  it("renders semantic sections and idle states before issues are loaded", async () => {
+  it("renders compact toolbar and two-pane layout", async () => {
     vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
     render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Repository source" })).toBeTruthy();
-      expect(screen.getByRole("heading", { name: /Filters & sync/i })).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "Results" })).toBeTruthy();
+      // Toolbar should be present
+      expect(screen.getByTestId("github-import-toolbar")).toBeTruthy();
+      // Two panes should be present
+      expect(screen.getByTestId("github-import-list-pane")).toBeTruthy();
+      expect(screen.getByTestId("github-import-preview-pane")).toBeTruthy();
+      // Pane headings
+      expect(screen.getByRole("heading", { name: "Issues" })).toBeTruthy();
       expect(screen.getByRole("heading", { name: "Preview" })).toBeTruthy();
     });
 
@@ -82,12 +86,65 @@ describe("GitHubImportModal", () => {
     expect(screen.getByTestId("github-import-preview-empty")).toBeTruthy();
   });
 
-  it("has optional labels input", async () => {
+  it("shows compact toolbar with remote, filter, and load button", async () => {
     vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
     render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/Labels/)).toBeTruthy();
+      const toolbar = screen.getByTestId("github-import-toolbar");
+      expect(toolbar).toBeTruthy();
+      // Remote pill should be in toolbar
+      expect(within(toolbar).getByTestId("github-import-single-remote")).toBeTruthy();
+      // Filter input
+      expect(within(toolbar).getByPlaceholderText(/Filter:/)).toBeTruthy();
+      // Load button
+      expect(within(toolbar).getByRole("button", { name: /Load/i })).toBeTruthy();
+    });
+  });
+
+  it("displays two-pane layout on desktop after loading issues", async () => {
+    const issues = [
+      { number: 1, title: "First Issue", body: "Body 1", html_url: "https://github.com/owner/repo/issues/1", labels: [] },
+    ];
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("github-import-list-pane")).toBeTruthy();
+      expect(screen.getByTestId("github-import-preview-pane")).toBeTruthy();
+      expect(screen.getByText("First Issue")).toBeTruthy();
+    });
+  });
+
+  it("preview pane shows selected issue details", async () => {
+    const issues = [
+      { number: 1, title: "First Issue", body: "Body 1", html_url: "https://github.com/owner/repo/issues/1", labels: [] },
+    ];
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("First Issue")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+
+    const previewCard = await screen.findByTestId("github-import-preview-card");
+    expect(within(previewCard).getByText("First Issue")).toBeTruthy();
+    expect(within(previewCard).getByText("Body 1")).toBeTruthy();
+    expect(screen.queryByTestId("github-import-preview-empty")).toBeNull();
+  });
+
+  it("has optional labels input with filter placeholder", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Filter:/)).toBeTruthy();
     });
   });
 
@@ -101,7 +158,7 @@ describe("GitHubImportModal", () => {
       });
     });
 
-    it("disables Refresh button when no remotes available", async () => {
+    it("disables Load button when no remotes available", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
@@ -109,23 +166,20 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText(/No GitHub remotes detected/)).toBeTruthy();
       });
 
-      // Use id to find the button since text changes during loading
-      const refreshButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
-      expect(refreshButton.disabled).toBe(true);
+      const loadButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
+      expect(loadButton.disabled).toBe(true);
     });
   });
 
   describe("with single remote", () => {
-    it("auto-selects the remote and shows it as a ready card", async () => {
+    it("auto-selects the remote and shows compact pill", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
       await waitFor(() => {
         const remoteCard = screen.getByTestId("github-import-single-remote");
-        expect(within(remoteCard).getByText("Auto-detected remote")).toBeTruthy();
         expect(within(remoteCard).getByText(/origin/i)).toBeTruthy();
         expect(within(remoteCard).getByText("dustinbyrne/kb")).toBeTruthy();
-        expect(within(remoteCard).getByText("Ready")).toBeTruthy();
       });
     });
 
@@ -138,7 +192,7 @@ describe("GitHubImportModal", () => {
       });
     });
 
-    it("enables Refresh button when remote is auto-selected", async () => {
+    it("enables Load button when remote is auto-selected", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
       // Mock empty response so loading finishes quickly
       vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([]);
@@ -147,14 +201,12 @@ describe("GitHubImportModal", () => {
 
       // Wait for auto-load to complete (issues appear or empty state shows)
       await waitFor(() => {
-        // Either no issues found message or the results section updates
         const resultsSection = screen.queryByText(/No open issues found/) || screen.queryByTestId("github-import-results-idle");
         expect(resultsSection).toBeTruthy();
       });
 
-      // Use id to find the button since text changes during loading
-      const refreshButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
-      expect(refreshButton.disabled).toBe(false);
+      const loadButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
+      expect(loadButton.disabled).toBe(false);
     });
 
     it("auto-loads issues when single remote is detected", async () => {
@@ -190,13 +242,13 @@ describe("GitHubImportModal", () => {
       await waitFor(() => {
         const select = screen.getByRole("combobox") as HTMLSelectElement;
         const options = Array.from(select.options).map((option) => option.text);
-        expect(options).toContain("Select a remote...");
+        expect(options).toContain("Select remote…");
         expect(options).toContain("origin (dustinbyrne/kb)");
         expect(options).toContain("upstream (upstream/kb)");
       });
     });
 
-    it("disables Refresh button when no remote is selected", async () => {
+    it("disables Load button when no remote is selected", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce(multipleRemotes);
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
@@ -204,12 +256,11 @@ describe("GitHubImportModal", () => {
         expect(screen.getByRole("combobox")).toBeTruthy();
       });
 
-      // Use id to find the button since text changes during loading
-      const refreshButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
-      expect(refreshButton.disabled).toBe(true);
+      const loadButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
+      expect(loadButton.disabled).toBe(true);
     });
 
-    it("enables Refresh button and auto-loads after selecting a remote", async () => {
+    it("enables Load button and auto-loads after selecting a remote", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce(multipleRemotes);
       vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
         { number: 1, title: "Auto-loaded from origin", body: "", html_url: "https://github.com/dustinbyrne/kb/issues/1", labels: [] },
@@ -229,8 +280,8 @@ describe("GitHubImportModal", () => {
       });
 
       // After loading completes, button should be enabled
-      const refreshButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
-      expect(refreshButton.disabled).toBe(false);
+      const loadButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
+      expect(loadButton.disabled).toBe(false);
     });
 
     it("switches owner/repo and auto-loads when changing remote selection", async () => {
@@ -277,28 +328,6 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("First Issue")).toBeTruthy();
         expect(screen.getByText("Second Issue")).toBeTruthy();
       });
-    });
-
-    it("shows the preview empty state before selection and fills it after selecting an issue", async () => {
-      const issues = [
-        { number: 1, title: "First Issue", body: "Body 1", html_url: "https://github.com/owner/repo/issues/1", labels: [] },
-      ];
-      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
-      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
-
-      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
-
-      // Issues auto-load, so we wait for them to appear first
-      await waitFor(() => {
-        expect(screen.getByText("First Issue")).toBeTruthy();
-      });
-
-      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
-
-      const previewCard = await screen.findByTestId("github-import-preview-card");
-      expect(within(previewCard).getByText("First Issue")).toBeTruthy();
-      expect(within(previewCard).getByText("Body 1")).toBeTruthy();
-      expect(screen.queryByTestId("github-import-preview-empty")).toBeNull();
     });
 
     it("disables Import button when no issue is selected", async () => {
@@ -417,7 +446,7 @@ describe("GitHubImportModal", () => {
       });
     });
 
-    it("re-fetches issues when Refresh is clicked with different labels", async () => {
+    it("re-fetches issues when Load is clicked with different labels", async () => {
       // Set up mocks - first for auto-load, second for manual refresh
       vi.mocked(apiFetchGitHubIssues)
         .mockResolvedValueOnce([{ number: 1, title: "Issue without labels", body: "", html_url: "https://github.com/dustinbyrne/kb/issues/1", labels: [] }])
@@ -434,18 +463,98 @@ describe("GitHubImportModal", () => {
       });
 
       // Enter label filter
-      const labelsInput = screen.getByLabelText(/Labels/);
+      const labelsInput = screen.getByPlaceholderText(/Filter:/);
       fireEvent.change(labelsInput, { target: { value: "bug" } });
 
-      // Find and click the Refresh button (use aria-label since text changes)
-      const refreshButton = screen.getByRole("button", { name: /Load issues/i });
-      fireEvent.click(refreshButton);
+      // Find and click the Load button by id (more reliable)
+      const loadButton = screen.getByTestId("github-import-toolbar").querySelector("#gh-load") as HTMLButtonElement;
+      fireEvent.click(loadButton);
 
       // Verify re-fetch with labels
       await waitFor(() => {
         expect(apiFetchGitHubIssues).toHaveBeenLastCalledWith("dustinbyrne", "kb", 30, ["bug"]);
         expect(screen.getByText("Bug issue")).toBeTruthy();
       });
+    });
+  });
+
+  describe("mobile responsive view", () => {
+    const originalInnerWidth = window.innerWidth;
+
+    afterEach(() => {
+      // Restore window width
+      Object.defineProperty(window, "innerWidth", {
+        writable: true,
+        configurable: true,
+        value: originalInnerWidth,
+      });
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    it("shows back button in preview header when on mobile", async () => {
+      // Set mobile viewport
+      Object.defineProperty(window, "innerWidth", {
+        writable: true,
+        configurable: true,
+        value: 480,
+      });
+
+      const issues = [
+        { number: 1, title: "First Issue", body: "Body 1", html_url: "https://github.com/owner/repo/issues/1", labels: [] },
+      ];
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("First Issue")).toBeTruthy();
+      });
+
+      // Select an issue
+      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+
+      // Back button should be visible
+      await waitFor(() => {
+        expect(screen.getByTestId("github-import-back-button")).toBeTruthy();
+      });
+    });
+
+    it("mobile back button returns to list view", async () => {
+      // Set mobile viewport
+      Object.defineProperty(window, "innerWidth", {
+        writable: true,
+        configurable: true,
+        value: 480,
+      });
+
+      const issues = [
+        { number: 1, title: "First Issue", body: "Body 1", html_url: "https://github.com/owner/repo/issues/1", labels: [] },
+      ];
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("First Issue")).toBeTruthy();
+      });
+
+      // Select an issue to show preview
+      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+
+      // Wait for preview to show
+      await waitFor(() => {
+        expect(screen.getByTestId("github-import-back-button")).toBeTruthy();
+      });
+
+      // Click back button
+      fireEvent.click(screen.getByTestId("github-import-back-button"));
+
+      // Preview pane should be hidden (back button won't be visible in list view)
+      // The back button is still in DOM but hidden via CSS - check that preview pane doesn't have 'active' class
+      const previewPane = screen.getByTestId("github-import-preview-pane");
+      expect(previewPane.classList.contains("active")).toBe(false);
     });
   });
 

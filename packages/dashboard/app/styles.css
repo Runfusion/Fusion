@@ -7,6 +7,19 @@
   padding: 0;
 }
 
+/* === Utility Classes === */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* === Design Tokens (Theme-Agnostic Defaults) === */
 :root {
   /* Typography */
@@ -2667,8 +2680,160 @@ body {
 }
 
 /* === GitHub Import Modal === */
+/* Compact Toolbar Layout */
+.github-import-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.github-import-toolbar__zone {
+  display: flex;
+  align-items: center;
+}
+
+.github-import-toolbar__zone--remote {
+  flex: 0 0 auto;
+  min-width: 140px;
+}
+
+.github-import-toolbar__zone--filter {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.github-import-toolbar__zone--filter input {
+  width: 100%;
+  min-width: 0;
+}
+
+.github-import-toolbar__zone--action {
+  flex: 0 0 auto;
+}
+
+.github-import-toolbar__loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.github-import-toolbar__no-remote {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* Remote pill for single remote */
+.github-import-remote-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.github-import-remote-pill__name {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.github-import-remote-pill__repo {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Remote select dropdown */
+.github-import-remote-select select {
+  min-width: 180px;
+  padding: var(--space-sm) var(--space-md);
+  font-size: 13px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+}
+
+.github-import-remote-select select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.2);
+}
+
+/* Load button */
+.github-import-load-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  min-height: 36px;
+  padding: var(--space-sm) var(--space-md);
+}
+
+.github-import-load-button span {
+  font-size: 13px;
+}
+
+/* Two-pane layout */
+.github-import-workspace {
+  display: flex;
+  gap: var(--space-lg);
+  min-height: 0;
+  flex: 1;
+}
+
+.github-import-list-pane,
+.github-import-preview-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.github-import-list-pane {
+  flex: 0 0 clamp(280px, 40%, 400px);
+  border-right: 1px solid var(--border);
+  padding-right: var(--space-lg);
+}
+
+.github-import-preview-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.github-import-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.github-import-pane-header h4 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.github-import-pane-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Wider modal for two-pane layout */
 .github-import-modal {
-  width: min(760px, calc(100vw - (var(--space-xl) * 2)));
+  width: min(900px, calc(100vw - 32px));
+  max-height: min(800px, calc(100vh - 64px));
 }
 
 .github-import-modal__header {
@@ -2685,15 +2850,17 @@ body {
 .github-import-modal__body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-lg);
-  padding: var(--space-lg) var(--space-xl) var(--space-xl);
+  gap: var(--space-md);
+  padding: var(--space-lg) var(--space-xl);
   overflow-y: auto;
+  min-height: 0;
 }
 
 .github-import-modal__actions {
   align-items: center;
 }
 
+/* Legacy section styles - kept for compatibility */
 .github-import-section {
   display: flex;
   flex-direction: column;
@@ -2775,14 +2942,6 @@ body {
   flex-direction: column;
 }
 
-.github-import-load-button {
-  min-height: 38px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
-}
-
 .github-import-remote-card {
   display: flex;
   align-items: center;
@@ -2852,14 +3011,7 @@ body {
 }
 
 .github-import-banner {
-  margin: calc(var(--space-md) * -0.25) 0 0;
-}
-
-.github-import-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.95fr);
-  gap: var(--space-lg);
-  align-items: start;
+  margin: 0;
 }
 
 .github-import-section--results,
@@ -2932,7 +3084,7 @@ body {
 .issues-list {
   display: flex;
   flex-direction: column;
-  max-height: 320px;
+  max-height: none;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -3066,20 +3218,72 @@ body {
   word-break: break-word;
 }
 
+/* Back button - hidden on desktop by default */
+.github-import-back-button {
+  display: none;
+}
+
+/* Responsive breakpoints */
 @media (max-width: 860px) {
   .github-import-modal {
     width: calc(100vw - (var(--space-lg) * 2));
   }
 
   .github-import-workspace {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .github-import-list-pane {
+    flex: none;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding-right: 0;
+    padding-bottom: var(--space-md);
+    max-height: 50%;
+  }
+
+  .github-import-preview-pane {
+    flex: none;
+    max-height: 50%;
   }
 }
 
 @media (max-width: 640px) {
+  .github-import-modal {
+    width: calc(100vw - 16px);
+    max-height: 90vh;
+  }
+
   .github-import-modal__body {
     padding: var(--space-md);
     gap: var(--space-md);
+  }
+
+  .github-import-toolbar {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+  }
+
+  .github-import-toolbar__zone--remote {
+    flex: 1 1 100%;
+    order: 1;
+  }
+
+  .github-import-toolbar__zone--filter {
+    flex: 1 1 auto;
+    order: 2;
+    min-width: 140px;
+  }
+
+  .github-import-toolbar__zone--action {
+    flex: 0 0 auto;
+    order: 3;
+  }
+
+  .github-import-remote-select select {
+    width: 100%;
+    min-width: 0;
   }
 
   .github-import-section {
@@ -3106,11 +3310,68 @@ body {
 
   .issue-item {
     flex-wrap: wrap;
+    min-height: 44px;
   }
 
   .imported-badge {
     align-self: flex-start;
     margin-left: 28px;
+  }
+
+  .issues-list {
+    max-height: 50vh;
+  }
+
+  /* Mobile pane visibility - show one at a time */
+  .github-import-list-pane.mobile {
+    display: none;
+  }
+
+  .github-import-list-pane.mobile.active {
+    display: flex;
+    flex: 1;
+    border-right: none;
+    padding-right: 0;
+    max-height: none;
+  }
+
+  .github-import-preview-pane.mobile {
+    display: none;
+  }
+
+  .github-import-preview-pane.mobile.active {
+    display: flex;
+    flex: 1;
+    max-height: none;
+  }
+
+  /* Back button styles */
+  .github-import-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+  }
+
+  .github-import-back-button:hover {
+    background: var(--card-hover);
+  }
+
+  .github-import-back-button:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .github-import-pane-header:has(.github-import-back-button) {
+    justify-content: flex-start;
+    gap: var(--space-md);
   }
 }
 
