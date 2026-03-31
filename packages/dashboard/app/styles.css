@@ -1301,6 +1301,32 @@ body {
   margin-top: 16px;
 }
 
+/* Summary section - styled for done tasks with success accent */
+.detail-summary {
+  background: rgba(63, 185, 80, 0.08);
+  border: 1px solid rgba(63, 185, 80, 0.25);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.detail-summary h4 {
+  color: var(--color-success, #3fb950);
+  margin-bottom: 12px;
+}
+
+.detail-summary .markdown-body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.detail-summary .markdown-body p:first-child {
+  margin-top: 0;
+}
+
+.detail-summary .markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
 /* Spec tab layout - allows SpecEditor to fill available vertical space */
 .detail-section--spec {
   display: flex;
