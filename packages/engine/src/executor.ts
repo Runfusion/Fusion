@@ -510,7 +510,10 @@ export class TaskExecutor {
             // Run workflow steps before moving to in-review
             const workflowSuccess = await this.runWorkflowSteps(task, worktreePath, settings);
             if (!workflowSuccess) {
+              // Move to in-review even when workflow steps fail so users can see the failure
               await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed" });
+              await this.store.moveTask(task.id, "in-review");
+              executorLog.log(`✗ ${task.id} workflow step failed → in-review`);
               this.options.onError?.(task, new Error("Workflow step failed"));
               return;
             }
