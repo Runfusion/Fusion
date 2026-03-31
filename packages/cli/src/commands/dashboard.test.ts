@@ -164,6 +164,28 @@ vi.mock("@kb/engine", async (importOriginal) => {
   };
 });
 
+// ── Mock @mariozechner/pi-coding-agent ──────────────────────────────
+
+const mockAuthStorage = { getAuth: vi.fn(), setAuth: vi.fn() };
+const mockModelRegistry = {
+  registerProvider: vi.fn(),
+  refresh: vi.fn(),
+};
+const mockDiscoverAndLoadExtensions = vi.fn().mockResolvedValue({
+  runtime: { pendingProviderRegistrations: [] },
+  errors: [],
+});
+const mockCreateExtensionRuntime = vi.fn();
+
+vi.mock("@mariozechner/pi-coding-agent", () => ({
+  AuthStorage: {
+    create: vi.fn(() => mockAuthStorage),
+  },
+  ModelRegistry: vi.fn().mockImplementation(() => mockModelRegistry),
+  discoverAndLoadExtensions: mockDiscoverAndLoadExtensions,
+  createExtensionRuntime: mockCreateExtensionRuntime,
+}));
+
 // ── Import module under test (after mocks) ──────────────────────────
 
 const { runDashboard, processPullRequestMergeTask, getMergeStrategy, getTaskBranchName } = await import("./dashboard.js");

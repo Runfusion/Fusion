@@ -101,13 +101,24 @@ vi.mock("@kb/engine", async (importOriginal) => {
 // ── Mock @mariozechner/pi-coding-agent ──────────────────────────────
 
 const mockAuthStorage = { getAuth: vi.fn(), setAuth: vi.fn() };
-const mockModelRegistry = { getModels: vi.fn().mockResolvedValue([]) };
+const mockModelRegistry = {
+  getModels: vi.fn().mockResolvedValue([]),
+  registerProvider: vi.fn(),
+  refresh: vi.fn(),
+};
+const mockDiscoverAndLoadExtensions = vi.fn().mockResolvedValue({
+  runtime: { pendingProviderRegistrations: [] },
+  errors: [],
+});
+const mockCreateExtensionRuntime = vi.fn();
 
 vi.mock("@mariozechner/pi-coding-agent", () => ({
   AuthStorage: {
     create: vi.fn(() => mockAuthStorage),
   },
   ModelRegistry: vi.fn().mockImplementation(() => mockModelRegistry),
+  discoverAndLoadExtensions: mockDiscoverAndLoadExtensions,
+  createExtensionRuntime: mockCreateExtensionRuntime,
 }));
 
 // ── Import module under test (after mocks) ──────────────────────────
@@ -119,6 +130,10 @@ const { runDashboard } = await import("../dashboard.js");
 describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockDiscoverAndLoadExtensions.mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    });
     const { TaskStore } = await import("@kb/core");
     (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
   });
@@ -149,5 +164,82 @@ describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
 
     expect(ModelRegistry).toHaveBeenCalledTimes(1);
     expect(ModelRegistry).toHaveBeenCalledWith(mockAuthStorage);
+  });
+
+  it("discovers extensions and registers extension providers", async () => {
+    mockDiscoverAndLoadExtensions.mockResolvedValueOnce({
+      runtime: {
+        pendingProviderRegistrations: [
+          {
+            name: "custom-anthropic",
+            config: { models: [{ id: "claude-sonnet-4-5" }] },
+            extensionPath: "/extensions/custom-anthropic",
+          },
+        ],
+      },
+      errors: [],
+    });
+
+    await runDashboard(0, {});
+
+    expect(mockDiscoverAndLoadExtensions).toHaveBeenCalledWith([], expect.any(String), undefined);
+    expect(mockModelRegistry.registerProvider).toHaveBeenCalledWith(
+      "custom-anthropic",
+      expect.objectContaining({ models: [{ id: "claude-sonnet-4-5" }] }),
+    );
+    expect(mockModelRegistry.refresh).toHaveBeenCalled();
+  });
+
+  it("logs extension load errors without aborting startup", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockDiscoverAndLoadExtensions.mockResolvedValueOnce({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [{ path: "/extensions/bad", error: "Invalid manifest" }],
+    });
+
+    await runDashboard(0, {});
+
+    expect(consoleSpy).toHaveBeenCalledWith("[extensions] Failed to load /extensions/bad: Invalid manifest");
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("kb board"));
+    consoleSpy.mockRestore();
+  });
+
+  it("falls back gracefully when extension discovery throws", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockDiscoverAndLoadExtensions.mockRejectedValueOnce(new Error("boom"));
+
+    await runDashboard(0, {});
+
+    expect(mockCreateExtensionRuntime).toHaveBeenCalledTimes(1);
+    expect(mockModelRegistry.refresh).toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith("[extensions] Failed to discover extensions: boom");
+    consoleSpy.mockRestore();
+  });
+
+  it("logs provider registration errors without aborting startup", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockDiscoverAndLoadExtensions.mockResolvedValueOnce({
+      runtime: {
+        pendingProviderRegistrations: [
+          {
+            name: "duplicate-provider",
+            config: { models: [{ id: "model-a" }] },
+            extensionPath: "/extensions/duplicate-provider",
+          },
+        ],
+      },
+      errors: [],
+    });
+    mockModelRegistry.registerProvider.mockImplementationOnce(() => {
+      throw new Error("duplicate provider");
+    });
+
+    await runDashboard(0, {});
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "[extensions] Failed to register provider from /extensions/duplicate-provider: duplicate provider",
+    );
+    expect(mockModelRegistry.refresh).toHaveBeenCalled();
+    consoleSpy.mockRestore();
   });
 });

@@ -4225,13 +4225,14 @@ async function refreshIssueInBackground(
  */
 function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike): void {
   router.get("/models", (_req, res) => {
+    // Always return 200 with empty array instead of 404 when no models available.
+    // This ensures the frontend can handle empty states gracefully.
+    if (!modelRegistry) {
+      res.json([]);
+      return;
+    }
+
     try {
-      // Always return 200 with empty array instead of 404 when no models available.
-      // This ensures the frontend can handle empty states gracefully.
-      if (!modelRegistry) {
-        res.json([]);
-        return;
-      }
       modelRegistry.refresh();
       const models = modelRegistry.getAvailable().map((m) => ({
         provider: m.provider,
@@ -4242,7 +4243,9 @@ function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike):
       }));
       res.json(models);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const message = err instanceof Error ? err.message : String(err);
+      console.log(`[models] Failed to load models: ${message}`);
+      res.json([]);
     }
   });
 }

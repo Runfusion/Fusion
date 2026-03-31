@@ -1093,7 +1093,7 @@ describe("GET /models", () => {
     expect(res.body).toEqual([]);
   });
 
-  it("returns 500 when registry throws", async () => {
+  it("returns empty array when registry throws", async () => {
     const modelRegistry = createMockModelRegistry({
       getAvailable: vi.fn().mockImplementation(() => {
         throw new Error("registry error");
@@ -1101,8 +1101,8 @@ describe("GET /models", () => {
     });
     const res = await GET(buildApp(modelRegistry), "/api/models");
 
-    expect(res.status).toBe(500);
-    expect(res.body.error).toBe("registry error");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
   });
 });
 

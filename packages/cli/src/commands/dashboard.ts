@@ -5,7 +5,7 @@ import { TaskStore, AutomationStore } from "@kb/core";
 import type { Settings, TaskDetail, PrInfo } from "@kb/core";
 import { createServer, GitHubClient } from "@kb/dashboard";
 import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner, StuckTaskDetector } from "@kb/engine";
-import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, ModelRegistry, discoverAndLoadExtensions, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
 
 /**
  * Prompt the user for a port number interactively.
@@ -452,6 +452,31 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // tab (login/logout) and Model selector.
   const authStorage = AuthStorage.create();
   const modelRegistry = new ModelRegistry(authStorage);
+
+  try {
+    const extensionsResult = await discoverAndLoadExtensions([], cwd, undefined);
+
+    for (const { path, error } of extensionsResult.errors) {
+      console.log(`[extensions] Failed to load ${path}: ${error}`);
+    }
+
+    for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
+      try {
+        modelRegistry.registerProvider(name, config);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`[extensions] Failed to register provider from ${extensionPath}: ${message}`);
+      }
+    }
+
+    extensionsResult.runtime.pendingProviderRegistrations = [];
+    modelRegistry.refresh();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`[extensions] Failed to discover extensions: ${message}`);
+    createExtensionRuntime();
+    modelRegistry.refresh();
+  }
 
   // Start the web server with AI merge, auth, and model registry wired in
   const app = createServer(store, { onMerge, authStorage, modelRegistry, automationStore });
