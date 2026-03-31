@@ -56,6 +56,7 @@ export class StuckTaskDetector {
   start(): void {
     if (this.interval) return;
     this.interval = setInterval(() => {
+      stuckLog.log("Running periodic stuck task check (polling)");
       this.checkStuckTasks().catch((err) => {
         stuckLog.error("Error checking stuck tasks:", err);
       });
@@ -171,6 +172,16 @@ export class StuckTaskDetector {
 
     // Notify listeners
     this.onStuck?.(taskId);
+  }
+
+  /**
+   * Check for stuck tasks immediately, outside the normal polling cycle.
+   * Safe to call at any time — will no-op if no tasks are tracked or timeout is disabled.
+   * Logs at debug level to distinguish manual checks from polling.
+   */
+  async checkNow(): Promise<void> {
+    stuckLog.log("Running immediate stuck task check (triggered manually)");
+    await this.checkStuckTasks();
   }
 
   /**

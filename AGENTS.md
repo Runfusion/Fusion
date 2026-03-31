@@ -220,6 +220,7 @@ Timeout in milliseconds for detecting stuck tasks. When a task's agent session s
 - When the timeout value is changed (e.g., reduced from 30 to 10 minutes), the system immediately checks for stuck tasks under the new timer rather than waiting for the next 30-second poll cycle
 - Paused tasks are automatically untracked from monitoring
 - The timeout is read from settings on every poll cycle, so changes take effect immediately
+- When the timeout value is changed (e.g., reduced from 30 to 10 minutes), the system immediately checks for stuck tasks under the new timer rather than waiting for the next poll cycle
 
 ### `worktreeNaming` (default: `"random"`)
 

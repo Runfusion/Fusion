@@ -340,6 +340,103 @@ describe("StuckTaskDetector", () => {
     });
   });
 
+  describe("checkNow (immediate check)", () => {
+    it("detects and kills stuck tasks immediately", async () => {
+      const store = createMockStore({ taskStuckTimeoutMs: 60_000 });
+      const onStuck = vi.fn();
+      detector = new StuckTaskDetector(store, { onStuck });
+
+      const session = createMockSession();
+      detector.trackTask("KB-001", session);
+
+      // Backdate to be stuck (2 minutes > 1 minute timeout)
+      const entry = (detector as any).tracked.get("KB-001");
+      entry.lastActivity = Date.now() - 120_000;
+
+      // Call checkNow instead of polling
+      await detector.checkNow();
+
+      // Should kill the stuck task
+      expect(session.dispose).toHaveBeenCalledOnce();
+      expect(onStuck).toHaveBeenCalledWith("KB-001");
+      expect(detector.trackedCount).toBe(0);
+    });
+
+    it("is safe to call when no tasks are tracked", async () => {
+      const store = createMockStore({ taskStuckTimeoutMs: 60_000 });
+      detector = new StuckTaskDetector(store);
+
+      // Should not throw or call settings when no tasks tracked
+      await detector.checkNow();
+
+      expect(store.getSettings).not.toHaveBeenCalled();
+    });
+
+    it("is safe to call when timeout is disabled (undefined)", async () => {
+      const store = createMockStore({ taskStuckTimeoutMs: undefined });
+      detector = new StuckTaskDetector(store);
+
+      const session = createMockSession();
+      detector.trackTask("KB-001", session);
+
+      // Backdate to be "stuck"
+      const entry = (detector as any).tracked.get("KB-001");
+      entry.lastActivity = Date.now() - 9999_000;
+
+      // Should not throw or kill anything
+      await detector.checkNow();
+
+      expect(session.dispose).not.toHaveBeenCalled();
+      expect(detector.trackedCount).toBe(1); // Still tracked
+    });
+
+    it("respects current timeout value from settings", async () => {
+      const store = createMockStore({ taskStuckTimeoutMs: 300_000 }); // 5 minutes
+      const onStuck = vi.fn();
+      detector = new StuckTaskDetector(store, { onStuck });
+
+      const session = createMockSession();
+      detector.trackTask("KB-001", session);
+
+      // Backdate to 2 minutes ago
+      const entry = (detector as any).tracked.get("KB-001");
+      entry.lastActivity = Date.now() - 120_000;
+
+      // With 5-minute timeout, should not be stuck
+      await detector.checkNow();
+      expect(onStuck).not.toHaveBeenCalled();
+      expect(session.dispose).not.toHaveBeenCalled();
+
+      // Change settings to 1-minute timeout
+      store._settings.taskStuckTimeoutMs = 60_000;
+
+      // Now checkNow should detect it as stuck
+      await detector.checkNow();
+      expect(onStuck).toHaveBeenCalledWith("KB-001");
+      expect(session.dispose).toHaveBeenCalledOnce();
+    });
+
+    it("is safe to call when detector is stopped", async () => {
+      const store = createMockStore({ taskStuckTimeoutMs: 60_000 });
+      const onStuck = vi.fn();
+      detector = new StuckTaskDetector(store, { onStuck });
+
+      const session = createMockSession();
+      detector.trackTask("KB-001", session);
+
+      // Backdate to be stuck
+      const entry = (detector as any).tracked.get("KB-001");
+      entry.lastActivity = Date.now() - 120_000;
+
+      // Don't start the detector - just call checkNow
+      await detector.checkNow();
+
+      // Should still work even though detector was never started
+      expect(session.dispose).toHaveBeenCalledOnce();
+      expect(onStuck).toHaveBeenCalledWith("KB-001");
+    });
+  });
+
   describe("start / stop", () => {
     it("starts polling and can be stopped", async () => {
       const store = createMockStore({ taskStuckTimeoutMs: 100 });

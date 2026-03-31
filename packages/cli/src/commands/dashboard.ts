@@ -582,6 +582,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
     });
 
+    // ── Stuck task timeout change: immediate check ────────────────────
+    // When taskStuckTimeoutMs is changed (e.g., user reduces timeout),
+    // immediately check for stuck tasks under the new timer value.
+    store.on("settings:updated", async ({ settings: s, previous: prev }) => {
+      if (s.taskStuckTimeoutMs !== prev.taskStuckTimeoutMs) {
+        console.log(`[stuck-detector] Timeout changed to ${s.taskStuckTimeoutMs}ms — running immediate check`);
+        await stuckTaskDetector.checkNow();
+      }
+    });
+
     // ── Periodic retry: catch failed merges on each poll cycle ────────
     // Uses a setTimeout chain so the interval dynamically follows
     // settings.pollIntervalMs without requiring an engine restart.
