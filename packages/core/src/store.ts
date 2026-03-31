@@ -541,19 +541,20 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   private async allocateId(): Promise<string> {
-    const id = this.db.transaction(() => {
-      const row = this.db.prepare("SELECT nextId, settings FROM config WHERE id = 1").get() as any;
-      const settings = fromJson<Settings>(row.settings);
-      const prefix = settings?.taskPrefix || "KB";
-      const nextId = row.nextId || 1;
-      const taskId = `${prefix}-${String(nextId).padStart(3, "0")}`;
-      this.db.prepare("UPDATE config SET nextId = ? WHERE id = 1").run(nextId + 1);
-      this.db.bumpLastModified();
-      return taskId;
-    });
-    // Sync config.json to disk for backward compatibility
-    // Use withConfigLock to prevent race conditions when creating tasks in parallel
-    await this.withConfigLock(async () => {
+    // Use withConfigLock to ensure the entire ID allocation + config sync is serialized
+    return this.withConfigLock(async () => {
+      const id = this.db.transaction(() => {
+        const row = this.db.prepare("SELECT nextId, settings FROM config WHERE id = 1").get() as any;
+        const settings = fromJson<Settings>(row.settings);
+        const prefix = settings?.taskPrefix || "KB";
+        const nextId = row.nextId || 1;
+        const taskId = `${prefix}-${String(nextId).padStart(3, "0")}`;
+        this.db.prepare("UPDATE config SET nextId = ? WHERE id = 1").run(nextId + 1);
+        this.db.bumpLastModified();
+        return taskId;
+      }); // Database.transaction() directly executes and returns the result
+      
+      // Sync config.json to disk for backward compatibility
       try {
         const config = await this.readConfig();
         const tmpPath = this.configPath + ".tmp";
@@ -562,8 +563,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       } catch {
         // Non-fatal: SQLite is the primary store
       }
+      
+      return id;
     });
-    return id;
   }
 
   private taskDir(id: string): string {
