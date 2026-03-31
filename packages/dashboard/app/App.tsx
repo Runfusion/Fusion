@@ -336,7 +336,12 @@ function AppInner() {
         isOpen={activityLogOpen}
         onClose={handleCloseActivityLog}
         tasks={tasks}
-        onOpenTaskDetail={handleDetailOpen}
+        onOpenTaskDetail={(taskId) => {
+          const task = tasks.find((t) => t.id === taskId);
+          if (task) {
+            handleDetailOpen(task as TaskDetail);
+          }
+        }}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>

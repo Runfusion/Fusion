@@ -266,12 +266,12 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
                   </div>
                   {entry.metadata && Object.keys(entry.metadata).length > 0 && (
                     <div className="activity-log-entry-metadata">
-                      {entry.metadata.from && entry.metadata.to && (
+                      {typeof entry.metadata.from === "string" && typeof entry.metadata.to === "string" && (
                         <span className="activity-log-metadata-item">
                           {entry.metadata.from} → {entry.metadata.to}
                         </span>
                       )}
-                      {entry.metadata.merged !== undefined && (
+                      {typeof entry.metadata.merged === "boolean" && (
                         <span className={`activity-log-metadata-item ${entry.metadata.merged ? "success" : "error"}`}>
                           {entry.metadata.merged ? "Merged" : "Not merged"}
                         </span>

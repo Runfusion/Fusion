@@ -43,6 +43,7 @@ export function Header({
   onOpenGitHubImport,
   onOpenPlanning,
   onOpenUsage,
+  onOpenActivityLog,
   onOpenSchedules,
   onToggleTerminal,
   onToggleFiles,
