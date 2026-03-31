@@ -6918,6 +6918,56 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
+/* AI Thinking Output Display */
+.planning-thinking-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 600px;
+}
+
+.planning-thinking-toggle {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.planning-thinking-toggle:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.planning-thinking-output {
+  width: 100%;
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  text-align: left;
+}
+
+.planning-thinking-output pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .planning-modal {
@@ -6994,6 +7044,20 @@ html .column.drag-over * {
 
   .planning-dep-title {
     max-width: none;
+  }
+
+  /* Planning thinking output mobile adjustments */
+  .planning-thinking-container {
+    max-width: 100%;
+  }
+
+  .planning-thinking-output {
+    max-height: 200px;
+    padding: 12px;
+  }
+
+  .planning-thinking-output pre {
+    font-size: 12px;
   }
 
   /* Prevent mobile zoom on focus for planning text inputs (16px minimum) */

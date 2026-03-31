@@ -302,6 +302,78 @@ describe("PlanningModeModal", () => {
       expect(container.querySelector(".planning-question-form > .planning-view-scroll")).not.toBeNull();
       expect(container.querySelector(".planning-question-form > .planning-actions")).not.toBeNull();
     });
+
+    it("receives second question after answering first without hanging (race condition fix)", async () => {
+      const secondQuestion: PlanningQuestion = {
+        id: "q-requirements",
+        type: "text",
+        question: "What are the key requirements?",
+        description: "Describe the requirements",
+      };
+
+      // Track how many times connectPlanningStream is called
+      let streamConnectionCount = 0;
+      let streamHandlers: any = null;
+
+      mockConnectPlanningStream.mockImplementation((sessionId: string, handlers: any) => {
+        streamConnectionCount++;
+        streamHandlers = handlers;
+        
+        // Only send first question on initial connection
+        if (streamConnectionCount === 1) {
+          setTimeout(() => {
+            handlers.onQuestion?.(mockQuestion);
+          }, 10);
+        }
+        
+        return {
+          close: vi.fn(),
+          isConnected: vi.fn().mockReturnValue(true),
+        };
+      });
+
+      mockRespondToPlanning.mockImplementation(async () => {
+        // Simulate server broadcasting second question via the existing SSE connection
+        // This should use the same handlers from the initial connection
+        setTimeout(() => {
+          if (streamHandlers) {
+            streamHandlers.onQuestion?.(secondQuestion);
+          }
+        }, 5);
+        return { sessionId: "session-123", currentQuestion: null, summary: null };
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />
+      );
+
+      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+      fireEvent.change(textarea, { target: { value: "Build auth system" } });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      // Wait for first question
+      await waitFor(() => {
+        expect(screen.getByText("What is the scope?")).toBeDefined();
+      });
+
+      // Answer the first question
+      fireEvent.click(screen.getByText("Medium"));
+      fireEvent.click(screen.getByText("Continue"));
+
+      // Wait for second question to appear (should NOT hang)
+      await waitFor(() => {
+        expect(screen.getByText("What are the key requirements?")).toBeDefined();
+      }, { timeout: 3000 });
+
+      // Verify SSE connection was established only ONCE (not reconnected)
+      // This confirms the race condition fix - the same connection is reused
+      expect(streamConnectionCount).toBe(1);
+    });
   });
 
   describe("Summary view", () => {

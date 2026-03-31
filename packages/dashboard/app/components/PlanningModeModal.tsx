@@ -237,57 +237,21 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
       const { session } = view;
       const sessionId = session.sessionId;
       setError(null);
-      setStreamingOutput("");
+
+      // Keep the existing SSE connection alive - do NOT close it!
+      // The connection established in handleStartPlanning will continue
+      // to receive events (thinking, question, summary) throughout the session.
+      // This prevents the race condition where events are missed because
+      // the frontend disconnects and reconnects after the API call.
+
       setView({ type: "loading" });
+      setStreamingOutput(""); // Clear old thinking output when entering loading state
 
       try {
-        // Close previous connection if any
-        streamConnectionRef.current?.close();
-
-        // Submit response - this will trigger the AI to process and stream
-        const updatedSession = await respondToPlanning(sessionId, responses);
+        // Submit response - AI will broadcast events via the already-connected stream
+        await respondToPlanning(sessionId, responses);
         setResponseHistory((prev) => [...prev, responses]);
-
-        // If we got an immediate response (non-streaming mode), use it
-        if (updatedSession.summary) {
-          setView({ type: "summary", session: updatedSession, summary: updatedSession.summary });
-          setEditedSummary(updatedSession.summary);
-          return;
-        }
-        if (updatedSession.currentQuestion) {
-          setView({ type: "question", session: updatedSession });
-          return;
-        }
-
-        // Otherwise, set up streaming for the next question
-        const connection = connectPlanningStream(sessionId, {
-          onThinking: (data) => {
-            setStreamingOutput((prev) => prev + data);
-          },
-          onQuestion: (question) => {
-            setView({
-              type: "question",
-              session: { sessionId, currentQuestion: question, summary: null },
-            });
-            setStreamingOutput("");
-          },
-          onSummary: (summary) => {
-            setView({
-              type: "summary",
-              session: { sessionId, currentQuestion: null, summary },
-              summary,
-            });
-            setEditedSummary(summary);
-            setStreamingOutput("");
-          },
-          onError: (message) => {
-            setError(message);
-            setView({ type: "question", session });
-            setStreamingOutput("");
-          },
-        });
-
-        streamConnectionRef.current = connection;
+        // Events (question/summary) will arrive via the existing SSE stream
       } catch (err: any) {
         setError(err.message || "Failed to submit response");
         setView({ type: "question", session });
