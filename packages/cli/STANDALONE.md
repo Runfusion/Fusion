@@ -93,6 +93,8 @@ fn task list                        # List all tasks
 fn task show KB-001                 # Show task details, steps, and log
 fn task move KB-001 todo            # Move a task to a column
 fn task merge KB-001                # Merge an in-review task and close it
+fn task pr-create KB-001            # Create a GitHub PR for an in-review task
+fn task pr-create KB-001 --title "Custom PR title" --base develop --body "PR description"
 fn task log KB-001 "Added context"  # Add a log entry
 fn task pause KB-001                # Pause a task (stops automation)
 fn task unpause KB-001              # Resume a paused task

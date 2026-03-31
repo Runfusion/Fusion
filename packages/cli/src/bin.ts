@@ -39,7 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry, runTaskSteer } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry, runTaskSteer, runTaskPrCreate } = await import("./commands/task.js");
 const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
 const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
 
@@ -71,6 +71,8 @@ Usage:
   fn task unpause <id>                Unpause a task (resumes automation)
   fn task steer <id> [message]        Add steering comment (prompts if message omitted)
   fn task retry <id>                  Retry a failed task (clears error, moves to todo)
+  fn task pr-create <id> [--title <title>] [--base <branch>] [--body <body>]
+                         Create a GitHub PR for an in-review task
   fn task import <owner/repo> [opts]  Import GitHub issues as tasks
   fn settings                          Show current Fusion configuration
   fn settings set <key> <value>        Update a configuration setting
@@ -308,6 +310,36 @@ async function main() {
               process.exit(1);
             }
             await runTaskRetry(id);
+            break;
+          }
+          case "pr-create": {
+            const id = args[2];
+            if (!id) {
+              console.error("Usage: fn task pr-create <id> [--title <title>] [--base <branch>] [--body <body>]");
+              process.exit(1);
+            }
+
+            // Parse optional flags
+            let title: string | undefined;
+            let base: string | undefined;
+            let body: string | undefined;
+
+            const titleIdx = args.indexOf("--title");
+            if (titleIdx !== -1 && titleIdx + 1 < args.length) {
+              title = args[titleIdx + 1];
+            }
+
+            const baseIdx = args.indexOf("--base");
+            if (baseIdx !== -1 && baseIdx + 1 < args.length) {
+              base = args[baseIdx + 1];
+            }
+
+            const bodyIdx = args.indexOf("--body");
+            if (bodyIdx !== -1 && bodyIdx + 1 < args.length) {
+              body = args[bodyIdx + 1];
+            }
+
+            await runTaskPrCreate(id, { title, base, body });
             break;
           }
           case "import": {

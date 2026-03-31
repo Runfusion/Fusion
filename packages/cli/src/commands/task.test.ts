@@ -35,10 +35,26 @@ vi.mock("@kb/core", () => {
 // Mock @kb/engine
 vi.mock("@kb/engine", () => ({ aiMergeTask: vi.fn() }));
 
+// Mock @kb/dashboard
+vi.mock("@kb/dashboard", () => ({
+  GitHubClient: vi.fn().mockImplementation(() => ({
+    createPr: vi.fn(),
+  })),
+}));
+
+// Mock @kb/core/gh-cli
+vi.mock("@kb/core/gh-cli", () => ({
+  isGhAvailable: vi.fn(),
+  isGhAuthenticated: vi.fn(),
+  getCurrentRepo: vi.fn(),
+}));
+
 import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@kb/core";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
-import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskLogs, type LogsOptions } from "./task.js";
+import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskLogs, runTaskPrCreate, type LogsOptions } from "./task.js";
+import { isGhAvailable, isGhAuthenticated, getCurrentRepo } from "@kb/core/gh-cli";
+import { GitHubClient } from "@kb/dashboard";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -1578,5 +1594,337 @@ describe("runTaskLogs", () => {
 
     // Clean up
     sigintHandlers.forEach((handler) => handler());
+  });
+});
+
+// ── PR Create Tests ───────────────────────────────────────────────────────────
+
+import type { PrInfo } from "@kb/core";
+
+describe("runTaskPrCreate", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let mockGetTask: ReturnType<typeof vi.fn>;
+  let mockUpdatePrInfo: ReturnType<typeof vi.fn>;
+  let mockLogEntry: ReturnType<typeof vi.fn>;
+  let mockCreatePr: ReturnType<typeof vi.fn>;
+  const originalEnv = { ...process.env };
+
+  function makeInReviewTask(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "KB-001",
+      title: "Test Task Title",
+      description: "Test task description for PR creation",
+      column: "in-review",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prInfo: undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  function makePrInfo(overrides: Partial<PrInfo> = {}): PrInfo {
+    return {
+      url: "https://github.com/owner/repo/pull/42",
+      number: 42,
+      status: "open" as const,
+      title: "Test Task Title",
+      headBranch: "kb/kb-001",
+      baseBranch: "main",
+      commentCount: 0,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    
+    // Reset process.env
+    process.env = { ...originalEnv };
+    delete process.env.GITHUB_REPOSITORY;
+    delete process.env.GITHUB_TOKEN;
+
+    // Setup GitHubClient mock
+    mockCreatePr = vi.fn();
+    vi.mocked(GitHubClient).mockImplementation(() => ({
+      createPr: mockCreatePr,
+    } as unknown as GitHubClient));
+
+    // Setup gh-cli mocks
+    vi.mocked(isGhAvailable).mockReturnValue(true);
+    vi.mocked(isGhAuthenticated).mockReturnValue(true);
+    vi.mocked(getCurrentRepo).mockReturnValue({ owner: "owner", repo: "repo" });
+
+    // Setup TaskStore mocks
+    mockGetTask = vi.fn();
+    mockUpdatePrInfo = vi.fn();
+    mockLogEntry = vi.fn();
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      getTask: mockGetTask,
+      updatePrInfo: mockUpdatePrInfo,
+      logEntry: mockLogEntry,
+    }));
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.restoreAllMocks();
+  });
+
+  it("creates PR successfully with all options", async () => {
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    mockCreatePr.mockResolvedValueOnce(makePrInfo({
+      title: "Custom PR Title",
+      number: 42,
+      url: "https://github.com/owner/repo/pull/42",
+    }));
+
+    await runTaskPrCreate("KB-001", { 
+      title: "Custom PR Title", 
+      base: "develop", 
+      body: "PR description body" 
+    });
+
+    expect(mockGetTask).toHaveBeenCalledWith("KB-001");
+    expect(mockCreatePr).toHaveBeenCalledWith({
+      owner: "owner",
+      repo: "repo",
+      title: "Custom PR Title",
+      body: "PR description body",
+      head: "kb/kb-001",
+      base: "develop",
+    });
+    expect(mockUpdatePrInfo).toHaveBeenCalledWith("KB-001", expect.objectContaining({
+      number: 42,
+      url: "https://github.com/owner/repo/pull/42",
+    }));
+    expect(mockLogEntry).toHaveBeenCalledWith("KB-001", "Created PR", "PR #42: https://github.com/owner/repo/pull/42");
+    
+    const successLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("✓ Created PR")
+    );
+    expect(successLine).toBeDefined();
+  });
+
+  it("creates PR with minimal options using task title", async () => {
+    const task = makeInReviewTask({ title: "My Task Title" });
+    mockGetTask.mockResolvedValueOnce(task);
+    mockCreatePr.mockResolvedValueOnce(makePrInfo({ title: "My Task Title" }));
+
+    await runTaskPrCreate("KB-001", {});
+
+    expect(mockCreatePr).toHaveBeenCalledWith(expect.objectContaining({
+      title: "My Task Title",
+      head: "kb/kb-001",
+    }));
+  });
+
+  it("generates title from description when task has no title", async () => {
+    const task = makeInReviewTask({ title: undefined, description: "this is a very long description that will be truncated for the pr title" });
+    mockGetTask.mockResolvedValueOnce(task);
+    mockCreatePr.mockResolvedValueOnce(makePrInfo());
+
+    await runTaskPrCreate("KB-001", {});
+
+    // Title should be first 50 chars of description, sentence-cased, with ellipsis if truncated
+    expect(mockCreatePr).toHaveBeenCalledWith(expect.objectContaining({
+      title: "This is a very long description that will be trunc…",
+    }));
+  });
+
+  it("exits with error when task not found", async () => {
+    const err = new Error("Task not found") as Error & { code: string };
+    err.code = "ENOENT";
+    mockGetTask.mockRejectedValueOnce(err);
+    
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
+
+    await expect(runTaskPrCreate("KB-999", {})).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith("Error: Task KB-999 not found");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+  });
+
+  it("exits with error when task not in in-review column", async () => {
+    const task = makeInReviewTask({ column: "todo" });
+    mockGetTask.mockResolvedValueOnce(task);
+    
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
+
+    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("must be in 'in-review' column"));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+  });
+
+  it("exits with error when task already has PR", async () => {
+    const task = makeInReviewTask({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/10",
+        number: 10,
+        status: "open",
+        title: "Existing PR",
+        headBranch: "kb/kb-001",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+    });
+    mockGetTask.mockResolvedValueOnce(task);
+    
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
+
+    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("already has PR #10"));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+  });
+
+  it("exits with error when no GitHub auth available", async () => {
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    
+    vi.mocked(isGhAvailable).mockReturnValue(false);
+    vi.mocked(isGhAuthenticated).mockReturnValue(false);
+    
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
+
+    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Not authenticated with GitHub"));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+  });
+
+  it("uses GITHUB_TOKEN when gh CLI not available", async () => {
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    
+    vi.mocked(isGhAvailable).mockReturnValue(false);
+    vi.mocked(isGhAuthenticated).mockReturnValue(false);
+    process.env.GITHUB_TOKEN = "test-token";
+    
+    mockCreatePr.mockResolvedValueOnce(makePrInfo());
+
+    await runTaskPrCreate("KB-001", {});
+
+    expect(GitHubClient).toHaveBeenCalledWith("test-token");
+    expect(mockUpdatePrInfo).toHaveBeenCalled();
+  });
+
+  it("exits with error when no repository detected", async () => {
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    
+    vi.mocked(getCurrentRepo).mockReturnValue(null);
+    delete process.env.GITHUB_REPOSITORY;
+    
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
+
+    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Could not determine GitHub repository"));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+  });
+
+  it("uses GITHUB_REPOSITORY env var when available", async () => {
+    process.env.GITHUB_REPOSITORY = "custom-owner/custom-repo";
+    
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    mockCreatePr.mockResolvedValueOnce(makePrInfo());
+
+    await runTaskPrCreate("KB-001", {});
+
+    expect(mockCreatePr).toHaveBeenCalledWith(expect.objectContaining({
+      owner: "custom-owner",
+      repo: "custom-repo",
+    }));
+  });
+
+  it("exits with error for invalid GITHUB_REPOSITORY format", async () => {
+    process.env.GITHUB_REPOSITORY = "invalid-format";
+    
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
+
+    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("GITHUB_REPOSITORY format is invalid"));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+  });
+
+  it("exits with error when PR already exists for branch", async () => {
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    mockCreatePr.mockRejectedValueOnce(new Error("A pull request already exists for owner/repo:kb/kb-001"));
+    
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
+
+    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("already exists for owner/repo:kb/kb-001"));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+  });
+
+  it("exits with error when branch has no commits", async () => {
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    mockCreatePr.mockRejectedValueOnce(new Error("No commits between main and kb/kb-001"));
+    
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
+
+    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No commits between"));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+  });
+
+  it("exits with generic error for unexpected failures", async () => {
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    mockCreatePr.mockRejectedValueOnce(new Error("Network error"));
+    
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit");
+    }) as (code?: number) => never);
+
+    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Network error"));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
   });
 });

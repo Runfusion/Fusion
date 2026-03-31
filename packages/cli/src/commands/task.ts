@@ -5,6 +5,8 @@ import type { PlanningQuestion, PlanningSummary } from "@kb/core";
 import { createSession, submitResponse, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@kb/dashboard/planning";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { GitHubClient } from "@kb/dashboard";
+import { isGhAvailable, isGhAuthenticated, getCurrentRepo } from "@kb/core/gh-cli";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -934,6 +936,128 @@ export async function runTaskSteer(id: string, message?: string) {
   console.log(`  ✓ Steering comment added to ${task.id}`);
   console.log(`    "${preview}"`);
   console.log();
+}
+
+// ── PR Creation ─────────────────────────────────────────────────────────────
+
+export interface PrCreateOptions {
+  title?: string;
+  base?: string;
+  body?: string;
+}
+
+export async function runTaskPrCreate(id: string, options: PrCreateOptions = {}) {
+  const store = await getStore();
+
+  // Fetch task and validate it exists
+  let task;
+  try {
+    task = await store.getTask(id);
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      console.error(`Error: Task ${id} not found`);
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  // Validate task is in 'in-review' column
+  if (task.column !== "in-review") {
+    console.error(`Error: Task must be in 'in-review' column to create a PR (current: ${task.column})`);
+    process.exit(1);
+  }
+
+  // Check if task already has PR info
+  if (task.prInfo) {
+    console.error(`Error: Task already has PR #${task.prInfo.number}: ${task.prInfo.url}`);
+    process.exit(1);
+  }
+
+  // Determine owner/repo from GITHUB_REPOSITORY env or git remote
+  let owner: string;
+  let repo: string;
+
+  const envRepo = process.env.GITHUB_REPOSITORY;
+  if (envRepo) {
+    const [o, r] = envRepo.split("/");
+    if (!o || !r) {
+      console.error("Error: GITHUB_REPOSITORY format is invalid (expected: owner/repo)");
+      process.exit(1);
+    }
+    owner = o;
+    repo = r;
+  } else {
+    const gitRepo = getCurrentRepo(process.cwd());
+    if (!gitRepo) {
+      console.error("Error: Could not determine GitHub repository. Set GITHUB_REPOSITORY env var or configure git remote.");
+      process.exit(1);
+    }
+    owner = gitRepo.owner;
+    repo = gitRepo.repo;
+  }
+
+  // Validate GitHub auth
+  const hasGhAuth = isGhAvailable() && isGhAuthenticated();
+  const hasToken = !!process.env.GITHUB_TOKEN;
+  if (!hasGhAuth && !hasToken) {
+    console.error("Error: Not authenticated with GitHub. Run 'gh auth login' or set GITHUB_TOKEN.");
+    process.exit(1);
+  }
+
+  // Build branch name
+  const branchName = `kb/${id.toLowerCase()}`;
+
+  // Build PR title
+  let title: string;
+  if (options.title) {
+    title = options.title;
+  } else if (task.title) {
+    title = task.title;
+  } else {
+    // Generate from description (first 50 chars, sentence case)
+    const desc = task.description.trim();
+    title = desc.charAt(0).toUpperCase() + desc.slice(1, 50);
+    if (desc.length > 50) {
+      title += "…";
+    }
+  }
+
+  // Create PR via GitHubClient
+  const githubToken = process.env.GITHUB_TOKEN;
+  const client = new GitHubClient(githubToken);
+
+  try {
+    const prInfo = await client.createPr({
+      owner,
+      repo,
+      title,
+      body: options.body,
+      head: branchName,
+      base: options.base,
+    });
+
+    // Store PR info
+    await store.updatePrInfo(task.id, prInfo);
+    await store.logEntry(task.id, "Created PR", `PR #${prInfo.number}: ${prInfo.url}`);
+
+    console.log();
+    console.log(`  ✓ Created PR for ${task.id}`);
+    console.log(`    PR #${prInfo.number}: ${prInfo.url}`);
+    console.log(`    Branch: ${branchName} → ${prInfo.baseBranch}`);
+    console.log();
+  } catch (err: any) {
+    // Handle specific error cases
+    if (err.message?.includes("already exists")) {
+      console.error(`Error: A pull request already exists for ${owner}/${repo}:${branchName}`);
+      process.exit(1);
+    } else if (err.message?.includes("No commits between")) {
+      console.error(`Error: No commits between ${options.base || "default base"} and ${branchName}. Push changes before creating PR.`);
+      process.exit(1);
+    } else {
+      console.error(`Error: ${err.message || "Failed to create PR"}`);
+      process.exit(1);
+    }
+  }
 }
 
 // ── Planning Mode ───────────────────────────────────────────────────────────
