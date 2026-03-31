@@ -41,6 +41,8 @@ import { generateWorktreeName, slugify } from "./worktree-names.js";
 import type { Column, Task, TaskDetail } from "@fusion/core";
 
 const mockedCreateHaiAgent = vi.mocked(createKbAgent);
+const mockedGenerateWorktreeName = vi.mocked(generateWorktreeName);
+const mockedFindWorktreeUser = vi.mocked(findWorktreeUser);
 
 function createMockStore() {
   const listeners = new Map<string, Function[]>();
