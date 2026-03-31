@@ -92,7 +92,7 @@ Access a fully functional PTY (pseudo-terminal) shell directly from the dashboar
 - Graceful shutdown with SIGTERM, then SIGKILL fallback
 
 ### Git Manager
-The Git Manager provides comprehensive repository visualization and management directly from the web UI. Access it via the Git Branch icon in the header.
+The Git Manager provides comprehensive repository visualization and management directly from the web UI. Access it via the Git Branch icon button in the header (desktop: inline with other utility buttons, mobile: in the overflow menu).
 - **Safety Validation**: Dangerous commands (rm -rf /, etc.) are automatically blocked
 - **Keyboard Shortcuts**:
   - `Enter` - Execute command
