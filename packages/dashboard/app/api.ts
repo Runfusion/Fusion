@@ -411,6 +411,38 @@ export function apiBatchImportGitHubIssues(
   });
 }
 
+// --- GitHub Pull Request Import API ---
+
+/** GitHub pull request returned by the fetch endpoint */
+export interface GitHubPull {
+  number: number;
+  title: string;
+  body: string | null;
+  html_url: string;
+  headBranch: string;
+  baseBranch: string;
+}
+
+/** Fetch open GitHub pull requests from a repository */
+export function apiFetchGitHubPulls(
+  owner: string,
+  repo: string,
+  limit?: number
+): Promise<GitHubPull[]> {
+  return api<GitHubPull[]>("/github/pulls/fetch", {
+    method: "POST",
+    body: JSON.stringify({ owner, repo, limit }),
+  });
+}
+
+/** Import a specific GitHub pull request as a kb review task */
+export function apiImportGitHubPull(owner: string, repo: string, prNumber: number): Promise<Task> {
+  return api<Task>("/github/pulls/import", {
+    method: "POST",
+    body: JSON.stringify({ owner, repo, prNumber }),
+  });
+}
+
 // --- Git Remote Detection API ---
 
 /** Git remote info returned by the remotes endpoint */

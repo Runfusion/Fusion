@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task } from "@kb/core";
-import { apiFetchGitHubIssues, apiImportGitHubIssue, fetchGitRemotes, type GitHubIssue, type GitRemote } from "../api";
-import { Loader2, RefreshCw, ArrowLeft } from "lucide-react";
+import {
+  apiFetchGitHubIssues,
+  apiImportGitHubIssue,
+  apiFetchGitHubPulls,
+  apiImportGitHubPull,
+  fetchGitRemotes,
+  type GitHubIssue,
+  type GitHubPull,
+  type GitRemote,
+} from "../api";
+import { Loader2, RefreshCw, ArrowLeft, GitPullRequest, CircleDot } from "lucide-react";
 
 interface GitHubImportModalProps {
   isOpen: boolean;
@@ -13,13 +22,25 @@ interface GitHubImportModalProps {
 // Mobile breakpoint in pixels
 const MOBILE_BREAKPOINT = 640;
 
+type TabType = "issues" | "pulls";
+
 export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubImportModalProps) {
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [labels, setLabels] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<TabType>("issues");
+
+  // Issues state
   const [issues, setIssues] = useState<GitHubIssue[]>([]);
   const [selectedIssueNumber, setSelectedIssueNumber] = useState<number | null>(null);
+
+  // Pulls state
+  const [pulls, setPulls] = useState<GitHubPull[]>([]);
+  const [selectedPullNumber, setSelectedPullNumber] = useState<number | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
@@ -28,20 +49,26 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
   const [loadingRemotes, setLoadingRemotes] = useState(false);
   const [selectedRemoteName, setSelectedRemoteName] = useState<string>("");
   const mountedRef = useRef(false);
-  
+
   // Mobile view state
   const [isMobile, setIsMobile] = useState(false);
-  const [mobileView, setMobileView] = useState<'list' | 'preview'>('list');
-  
+  const [mobileView, setMobileView] = useState<"list" | "preview">("list");
+
   // Track which owner/repo we've already auto-loaded to prevent duplicate loads
-  const autoLoadedRef = useRef<{ owner: string; repo: string; labels: string } | null>(null);
+  const autoLoadedRef = useRef<{ owner: string; repo: string; labels: string; tab: TabType } | null>(null);
 
   // Build set of already imported URLs from existing tasks
   const importedUrls = new Set<string>();
   for (const task of tasks) {
-    const match = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
-    if (match) {
-      importedUrls.add(match[1]);
+    // Check for issue URLs
+    const issueMatch = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
+    if (issueMatch) {
+      importedUrls.add(issueMatch[1]);
+    }
+    // Check for PR URLs
+    const prMatch = task.description.match(/PR: (https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+)/);
+    if (prMatch) {
+      importedUrls.add(prMatch[1]);
     }
   }
 
@@ -53,6 +80,9 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
       setLabels("");
       setIssues([]);
       setSelectedIssueNumber(null);
+      setPulls([]);
+      setSelectedPullNumber(null);
+      setActiveTab("issues");
       setError(null);
       setImporting(false);
       setRemotes([]);
@@ -140,26 +170,56 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
     }
   }, [owner, repo, labels]);
 
-  // Auto-load issues when owner and repo are set and valid
+  // Handle load pull requests
+  const handleLoadPulls = useCallback(async () => {
+    if (!owner.trim() || !repo.trim()) {
+      setError("Repository must be selected");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setPulls([]);
+    setSelectedPullNumber(null);
+
+    try {
+      const fetchedPulls = await apiFetchGitHubPulls(owner.trim(), repo.trim(), 30);
+      setPulls(fetchedPulls);
+      if (fetchedPulls.length === 0) {
+        setError("No open pull requests found");
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to fetch pull requests");
+    } finally {
+      setLoading(false);
+    }
+  }, [owner, repo]);
+
+  // Auto-load data when owner and repo are set and valid
   useEffect(() => {
     if (!isOpen) return;
     if (!owner.trim() || !repo.trim()) return;
     if (loading || importing) return;
-    
+
     // Check if we've already auto-loaded for this exact combination
-    const currentKey = { owner: owner.trim(), repo: repo.trim(), labels: labels.trim() };
+    const currentKey = { owner: owner.trim(), repo: repo.trim(), labels: labels.trim(), tab: activeTab };
     if (
       autoLoadedRef.current?.owner === currentKey.owner &&
       autoLoadedRef.current?.repo === currentKey.repo &&
-      autoLoadedRef.current?.labels === currentKey.labels
+      autoLoadedRef.current?.labels === currentKey.labels &&
+      autoLoadedRef.current?.tab === currentKey.tab
     ) {
       return;
     }
-    
+
     // Mark as auto-loaded and trigger the load
     autoLoadedRef.current = currentKey;
-    handleLoad();
-  }, [owner, repo, labels, isOpen, loading, importing, handleLoad]);
+    if (activeTab === "issues") {
+      handleLoad();
+    } else {
+      handleLoadPulls();
+    }
+  }, [owner, repo, labels, activeTab, isOpen, loading, importing, handleLoad, handleLoadPulls]);
 
   // Handle escape key
   useEffect(() => {
@@ -195,35 +255,63 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
     }
   }, [isMobile]);
 
+  // Handle pull request selection - switch to preview view on mobile
+  const handlePullSelect = useCallback((pullNumber: number) => {
+    setSelectedPullNumber(pullNumber);
+    if (isMobile) {
+      setMobileView('preview');
+    }
+  }, [isMobile]);
+
   // Handle back button - return to list view on mobile
   const handleBackToList = useCallback(() => {
     setMobileView('list');
-    // Optionally clear selection when going back
-    // setSelectedIssueNumber(null);
   }, []);
 
   const handleImport = useCallback(async () => {
-    if (selectedIssueNumber === null) return;
+    if (activeTab === "issues") {
+      if (selectedIssueNumber === null) return;
 
-    setImporting(true);
-    setError(null);
+      setImporting(true);
+      setError(null);
 
-    try {
-      const task = await apiImportGitHubIssue(owner.trim(), repo.trim(), selectedIssueNumber);
-      onImport(task);
-      onClose();
-    } catch (err: any) {
-      if (err.message?.includes("already imported")) {
-        setError(err.message);
-      } else {
-        setError(err.message || "Failed to import issue");
+      try {
+        const task = await apiImportGitHubIssue(owner.trim(), repo.trim(), selectedIssueNumber);
+        onImport(task);
+        onClose();
+      } catch (err: any) {
+        if (err.message?.includes("already imported")) {
+          setError(err.message);
+        } else {
+          setError(err.message || "Failed to import issue");
+        }
+      } finally {
+        setImporting(false);
       }
-    } finally {
-      setImporting(false);
+    } else {
+      if (selectedPullNumber === null) return;
+
+      setImporting(true);
+      setError(null);
+
+      try {
+        const task = await apiImportGitHubPull(owner.trim(), repo.trim(), selectedPullNumber);
+        onImport(task);
+        onClose();
+      } catch (err: any) {
+        if (err.message?.includes("already imported")) {
+          setError(err.message);
+        } else {
+          setError(err.message || "Failed to import pull request");
+        }
+      } finally {
+        setImporting(false);
+      }
     }
-  }, [selectedIssueNumber, owner, repo, onImport, onClose]);
+  }, [activeTab, selectedIssueNumber, selectedPullNumber, owner, repo, onImport, onClose]);
 
   const selectedIssue = issues.find((i) => i.number === selectedIssueNumber);
+  const selectedPull = pulls.find((p) => p.number === selectedPullNumber);
 
   if (!isOpen) return null;
 
@@ -231,11 +319,30 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
   const hasRemotes = remotes.length > 0;
   const singleRemote = remotes.length === 1;
   const multipleRemotes = remotes.length > 1;
+
+  // Tab-specific counts
   const importedIssueCount = issues.filter((issue) => importedUrls.has(issue.html_url)).length;
-  const isEmptyState = error === "No open issues found";
-  const isResultsError = Boolean(error) && !isEmptyState && issues.length === 0 && !loading;
-  const hasResultsContent = loading || issues.length > 0 || isEmptyState || isResultsError;
-  const showInlineErrorBanner = Boolean(error) && issues.length > 0 && !isEmptyState;
+  const importedPullCount = pulls.filter((pull) => importedUrls.has(pull.html_url)).length;
+
+  // Empty states
+  const isIssuesEmpty = error === "No open issues found";
+  const isPullsEmpty = error === "No open pull requests found";
+  const isEmptyState = activeTab === "issues" ? isIssuesEmpty : isPullsEmpty;
+
+  // Results error state
+  const isIssuesError = Boolean(error) && !isIssuesEmpty && issues.length === 0 && !loading;
+  const isPullsError = Boolean(error) && !isPullsEmpty && pulls.length === 0 && !loading;
+  const isResultsError = activeTab === "issues" ? isIssuesError : isPullsError;
+
+  // Results content
+  const hasIssuesContent = loading || issues.length > 0 || isIssuesEmpty || isIssuesError;
+  const hasPullsContent = loading || pulls.length > 0 || isPullsEmpty || isPullsError;
+  const hasResultsContent = activeTab === "issues" ? hasIssuesContent : hasPullsContent;
+
+  // Inline error
+  const showIssuesError = Boolean(error) && issues.length > 0 && !isIssuesEmpty;
+  const showPullsError = Boolean(error) && pulls.length > 0 && !isPullsEmpty;
+  const showInlineErrorBanner = activeTab === "issues" ? showIssuesError : showPullsError;
 
   return (
     <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -244,7 +351,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
           <div>
             <h3>Import from GitHub</h3>
             <p className="github-import-modal__subtitle">
-              Choose a detected remote, load open issues, and import one into the board.
+              Choose a detected remote, load open issues or pull requests, and import one into the board.
             </p>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close import modal">
@@ -253,6 +360,38 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
         </div>
 
         <div className="modal-body github-import-modal__body">
+          {/* Tab Navigation */}
+          <div className="github-import-tabs" role="tablist" aria-label="Import type">
+            <button
+              role="tab"
+              aria-selected={activeTab === "issues"}
+              aria-controls="github-import-list-pane"
+              className={`github-import-tab ${activeTab === "issues" ? "active" : ""}`}
+              onClick={() => {
+                setActiveTab("issues");
+                setSelectedPullNumber(null);
+              }}
+              disabled={loading || importing}
+            >
+              <CircleDot size={16} />
+              <span>Issues</span>
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === "pulls"}
+              aria-controls="github-import-list-pane"
+              className={`github-import-tab ${activeTab === "pulls" ? "active" : ""}`}
+              onClick={() => {
+                setActiveTab("pulls");
+                setSelectedIssueNumber(null);
+              }}
+              disabled={loading || importing}
+            >
+              <GitPullRequest size={16} />
+              <span>Pull Requests</span>
+            </button>
+          </div>
+
           {/* Compact Toolbar */}
           <div className="github-import-toolbar" data-testid="github-import-toolbar" role="toolbar" aria-label="GitHub import controls">
             {/* Left: Remote selector */}
@@ -290,19 +429,27 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
               )}
             </div>
 
-            {/* Center: Labels filter */}
+            {/* Center: Labels filter (only for issues) */}
             <div className="github-import-toolbar__zone github-import-toolbar__zone--filter">
-              <label htmlFor="gh-labels" className="visually-hidden">Filter by labels</label>
-              <input
-                id="gh-labels"
-                type="text"
-                placeholder="Filter: bug,enhancement…"
-                value={labels}
-                onChange={(e) => setLabels(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleLoad()}
-                disabled={loading || importing || !hasRemotes}
-                aria-label="Filter issues by labels"
-              />
+              {activeTab === "issues" ? (
+                <>
+                  <label htmlFor="gh-labels" className="visually-hidden">Filter by labels</label>
+                  <input
+                    id="gh-labels"
+                    type="text"
+                    placeholder="Filter: bug,enhancement…"
+                    value={labels}
+                    onChange={(e) => setLabels(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleLoad()}
+                    disabled={loading || importing || !hasRemotes}
+                    aria-label="Filter issues by labels"
+                  />
+                </>
+              ) : (
+                <span className="github-import-filter-hint">
+                  Open pull requests from {owner || "selected remote"}
+                </span>
+              )}
             </div>
 
             {/* Right: Load button */}
@@ -310,10 +457,10 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
               <button
                 id="gh-load"
                 className="btn btn-primary github-import-load-button"
-                onClick={handleLoad}
+                onClick={activeTab === "issues" ? handleLoad : handleLoadPulls}
                 disabled={loading || importing || !owner.trim() || !repo.trim()}
-                aria-label={loading ? "Loading issues" : "Load issues from repository"}
-                title={loading ? "Loading…" : "Load issues"}
+                aria-label={loading ? `Loading ${activeTab}` : `Load ${activeTab} from repository`}
+                title={loading ? "Loading…" : `Load ${activeTab}`}
               >
                 {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
                 <span>{loading ? "Loading…" : "Load"}</span>
@@ -342,18 +489,26 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
 
           {/* Two-pane workspace */}
           <div className="github-import-workspace">
-            {/* Left pane: Issue list */}
+            {/* Left pane: Issue/PR list */}
             <section
               className={`github-import-list-pane ${isMobile ? 'mobile' : ''} ${mobileView === 'list' ? 'active' : ''}`}
               data-testid="github-import-list-pane"
               aria-labelledby="github-import-results-heading"
             >
               <div className="github-import-pane-header">
-                <h4 id="github-import-results-heading">Issues</h4>
-                {issues.length > 0 && (
+                <h4 id="github-import-results-heading">
+                  {activeTab === "issues" ? "Issues" : "Pull Requests"}
+                </h4>
+                {activeTab === "issues" && issues.length > 0 && (
                   <div className="github-import-results-meta" aria-live="polite">
                     <span>{issues.length} issue{issues.length === 1 ? "" : "s"}</span>
                     <span>{importedIssueCount} imported</span>
+                  </div>
+                )}
+                {activeTab === "pulls" && pulls.length > 0 && (
+                  <div className="github-import-results-meta" aria-live="polite">
+                    <span>{pulls.length} pull request{pulls.length === 1 ? "" : "s"}</span>
+                    <span>{importedPullCount} imported</span>
                   </div>
                 )}
               </div>
@@ -363,7 +518,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
                   <div className="github-import-state github-import-state--idle" data-testid="github-import-results-idle">
                     <div>
                       <strong>Nothing loaded yet</strong>
-                      <span>Select a repository and load issues to start reviewing import candidates.</span>
+                      <span>Select a repository and click Load to start reviewing import candidates.</span>
                     </div>
                   </div>
                 )}
@@ -372,8 +527,8 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
                   <div className="github-import-state github-import-state--loading" role="status" aria-live="polite">
                     <Loader2 size={16} className="spin" />
                     <div>
-                      <strong>Loading open issues…</strong>
-                      <span>Fetching the latest issue list from GitHub.</span>
+                      <strong>Loading open {activeTab === "issues" ? "issues" : "pull requests"}…</strong>
+                      <span>Fetching the latest list from GitHub.</span>
                     </div>
                   </div>
                 )}
@@ -381,7 +536,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
                 {isResultsError && (
                   <div className="github-import-state github-import-state--error" role="alert">
                     <div>
-                      <strong>Could not load issues</strong>
+                      <strong>Could not load {activeTab === "issues" ? "issues" : "pull requests"}</strong>
                       <span>{error}</span>
                     </div>
                   </div>
@@ -390,13 +545,14 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
                 {isEmptyState && (
                   <div className="github-import-state github-import-state--empty" role="status">
                     <div>
-                      <strong>No open issues found</strong>
-                      <span>Try a different label filter or choose another repository.</span>
+                      <strong>No open {activeTab === "issues" ? "issues" : "pull requests"} found</strong>
+                      <span>{activeTab === "issues" ? "Try a different label filter or choose another repository." : "Choose another repository."}</span>
                     </div>
                   </div>
                 )}
 
-                {issues.length > 0 && (
+                {/* Issues list */}
+                {activeTab === "issues" && issues.length > 0 && (
                   <div className="issues-list" aria-live="polite">
                     {issues.map((issue) => {
                       const isImported = importedUrls.has(issue.html_url);
@@ -435,6 +591,41 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
                     })}
                   </div>
                 )}
+
+                {/* Pulls list */}
+                {activeTab === "pulls" && pulls.length > 0 && (
+                  <div className="issues-list" aria-live="polite">
+                    {pulls.map((pull) => {
+                      const isImported = importedUrls.has(pull.html_url);
+                      return (
+                        <div
+                          key={pull.number}
+                          className={`issue-item ${selectedPullNumber === pull.number ? "selected" : ""} ${isImported ? "imported" : ""}`}
+                          onClick={() => !isImported && handlePullSelect(pull.number)}
+                        >
+                          <input
+                            type="radio"
+                            name="pull"
+                            checked={selectedPullNumber === pull.number}
+                            onChange={() => handlePullSelect(pull.number)}
+                            disabled={isImported}
+                            aria-label={`Select pull request #${pull.number}`}
+                          />
+                          <div className="issue-main">
+                            <div className="issue-heading-row">
+                              <span className="issue-number">#{pull.number}</span>
+                              <span className="issue-title">{pull.title}</span>
+                            </div>
+                            <span className="pull-branch-info">
+                              {pull.headBranch} → {pull.baseBranch}
+                            </span>
+                          </div>
+                          {isImported && <span className="imported-badge">Imported</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </section>
 
@@ -450,7 +641,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
                     className="github-import-back-button"
                     onClick={handleBackToList}
                     data-testid="github-import-back-button"
-                    aria-label="Back to issues list"
+                    aria-label={`Back to ${activeTab === "issues" ? "issues" : "pull requests"} list`}
                   >
                     <ArrowLeft size={16} />
                     <span>Back</span>
@@ -460,7 +651,8 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
               </div>
 
               <div className="github-import-pane-content">
-                {selectedIssue ? (
+                {/* Issue preview */}
+                {activeTab === "issues" && selectedIssue ? (
                   <div className="issue-preview" data-testid="github-import-preview-card">
                     <div className="preview-meta">Issue #{selectedIssue.number}</div>
                     <div className="preview-title">{selectedIssue.title}</div>
@@ -470,14 +662,37 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
                         : "(no description)"}
                     </div>
                   </div>
-                ) : (
+                ) : activeTab === "issues" ? (
                   <div className="github-import-state github-import-state--idle" data-testid="github-import-preview-empty">
                     <div>
                       <strong>No issue selected</strong>
                       <span>Choose an issue from the list to inspect its title and description.</span>
                     </div>
                   </div>
-                )}
+                ) : null}
+
+                {/* Pull request preview */}
+                {activeTab === "pulls" && selectedPull ? (
+                  <div className="issue-preview" data-testid="github-import-preview-card">
+                    <div className="preview-meta">Pull Request #{selectedPull.number}</div>
+                    <div className="preview-title">{selectedPull.title}</div>
+                    <div className="preview-branch">
+                      <strong>Branch:</strong> {selectedPull.headBranch} → {selectedPull.baseBranch}
+                    </div>
+                    <div className="preview-body">
+                      {selectedPull.body
+                        ? selectedPull.body.slice(0, 200) + (selectedPull.body.length > 200 ? "…" : "")
+                        : "(no description)"}
+                    </div>
+                  </div>
+                ) : activeTab === "pulls" ? (
+                  <div className="github-import-state github-import-state--idle" data-testid="github-import-preview-empty">
+                    <div>
+                      <strong>No pull request selected</strong>
+                      <span>Choose a pull request from the list to inspect its details.</span>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </section>
           </div>
@@ -490,7 +705,9 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
           <button
             className="btn btn-primary"
             onClick={handleImport}
-            disabled={selectedIssueNumber === null || importing}
+            disabled={
+              (activeTab === "issues" ? selectedIssueNumber === null : selectedPullNumber === null) || importing
+            }
           >
             {importing ? <Loader2 size={14} className="spin" /> : "Import"}
           </button>

@@ -3023,6 +3023,74 @@ body {
   align-items: center;
 }
 
+/* Tab styles for GitHub Import Modal */
+.github-import-tabs {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.github-import-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.github-import-tab:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.github-import-tab.active {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.github-import-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.github-import-filter-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.pull-branch-info {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+}
+
+.preview-branch {
+  margin-bottom: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+}
+
+.preview-branch strong {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 /* Legacy section styles - kept for compatibility */
 .github-import-section {
   display: flex;

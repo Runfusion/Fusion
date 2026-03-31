@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { GitHubImportModal } from "../GitHubImportModal";
-import { apiFetchGitHubIssues, apiImportGitHubIssue, fetchGitRemotes } from "../../api";
+import {
+  apiFetchGitHubIssues,
+  apiImportGitHubIssue,
+  apiFetchGitHubPulls,
+  apiImportGitHubPull,
+  fetchGitRemotes,
+} from "../../api";
 import type { Task } from "@kb/core";
 import type { GitRemote } from "../../api";
 
@@ -12,6 +18,8 @@ vi.mock("../../api", async (importOriginal) => {
     ...actual,
     apiFetchGitHubIssues: vi.fn(),
     apiImportGitHubIssue: vi.fn(),
+    apiFetchGitHubPulls: vi.fn(),
+    apiImportGitHubPull: vi.fn(),
     fetchGitRemotes: vi.fn(),
   };
 });
@@ -20,6 +28,19 @@ const mockTask: Task = {
   id: "KB-001",
   title: "Test Issue",
   description: "Test body\n\nSource: https://github.com/owner/repo/issues/1",
+  column: "triage",
+  dependencies: [],
+  steps: [],
+  currentStep: 0,
+  log: [],
+  createdAt: "2024-01-01T00:00:00Z",
+  updatedAt: "2024-01-01T00:00:00Z",
+};
+
+const mockPRTask: Task = {
+  id: "KB-002",
+  title: "Review PR #1: Test PR",
+  description: "Review and address any issues in this pull request.\n\nPR: https://github.com/owner/repo/pull/1\nBranch: feature → main\n\nPR body",
   column: "triage",
   dependencies: [],
   steps: [],
@@ -38,6 +59,11 @@ const multipleRemotes: GitRemote[] = [
   { name: "upstream", owner: "upstream", repo: "kb", url: "https://github.com/upstream/kb.git" },
 ];
 
+const mockPulls = [
+  { number: 1, title: "Test PR", body: "PR body", html_url: "https://github.com/owner/repo/pull/1", headBranch: "feature", baseBranch: "main" },
+  { number: 2, title: "Another PR", body: "Another PR body", html_url: "https://github.com/owner/repo/pull/2", headBranch: "bugfix", baseBranch: "main" },
+];
+
 describe("GitHubImportModal", () => {
   const onClose = vi.fn();
   const onImport = vi.fn();
@@ -47,8 +73,11 @@ describe("GitHubImportModal", () => {
     vi.mocked(fetchGitRemotes).mockReset();
     vi.mocked(apiFetchGitHubIssues).mockReset();
     vi.mocked(apiImportGitHubIssue).mockReset();
+    vi.mocked(apiFetchGitHubPulls).mockReset();
+    vi.mocked(apiImportGitHubPull).mockReset();
     // Set default mock for apiFetchGitHubIssues to return empty array (prevents undefined issues state)
     vi.mocked(apiFetchGitHubIssues).mockResolvedValue([]);
+    vi.mocked(apiFetchGitHubPulls).mockResolvedValue([]);
     onClose.mockReset();
     onImport.mockReset();
   });
@@ -581,6 +610,276 @@ describe("GitHubImportModal", () => {
 
       fireEvent.click(screen.getByLabelText("Close import modal"));
       expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================================
+  // PULL REQUEST TAB TESTS
+  // ============================================================================
+
+  describe("PR tab", () => {
+    it("renders Issues and Pull Requests tabs", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: /Issues/i })).toBeTruthy();
+        expect(screen.getByRole("tab", { name: /Pull Requests/i })).toBeTruthy();
+      });
+    });
+
+    it("switches to Pull Requests tab when clicked", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: /Pull Requests/i })).toBeTruthy();
+      });
+
+      // Click on Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      // Should show Pull Requests heading
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "Pull Requests" })).toBeTruthy();
+      });
+    });
+
+    it("shows filter input for Issues tab, hint text for Pulls tab", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        // Default is Issues tab, should show filter input
+        expect(screen.getByPlaceholderText(/Filter:/)).toBeTruthy();
+      });
+
+      // Click on Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        // Should show hint text instead of filter input
+        expect(screen.queryByPlaceholderText(/Filter:/)).toBeNull();
+        expect(screen.getByText(/Open pull requests from/i)).toBeTruthy();
+      });
+    });
+
+    it("auto-loads pull requests when switching to Pulls tab with remote selected", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: /Pull Requests/i })).toBeTruthy();
+      });
+
+      // Click on Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      // Should auto-load PRs
+      await waitFor(() => {
+        expect(apiFetchGitHubPulls).toHaveBeenCalledWith("dustinbyrne", "kb", 30);
+        expect(screen.getByText("Test PR")).toBeTruthy();
+      });
+    });
+
+    it("displays PR list with branch info", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      // Switch to Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Test PR")).toBeTruthy();
+        // Check for branch info
+        expect(screen.getByText(/feature → main/)).toBeTruthy();
+      });
+    });
+
+    it("selects PR and shows preview with branch info", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      // Switch to Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Test PR")).toBeTruthy();
+      });
+
+      // Select the PR
+      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #1/i }));
+
+      // Preview should show with branch info
+      const previewCard = await screen.findByTestId("github-import-preview-card");
+      expect(within(previewCard).getByText("Test PR")).toBeTruthy();
+      expect(within(previewCard).getByText(/feature → main/)).toBeTruthy();
+    });
+
+    it("disables Import button when no PR is selected", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      // Switch to Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Test PR")).toBeTruthy();
+      });
+
+      // Import button should be disabled
+      const importButton = screen.getByRole("button", { name: /Import$/i }) as HTMLButtonElement;
+      expect(importButton.disabled).toBe(true);
+    });
+
+    it("calls apiImportGitHubPull when Import is clicked on PRs tab", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+      vi.mocked(apiImportGitHubPull).mockResolvedValueOnce(mockPRTask);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      // Switch to Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Test PR")).toBeTruthy();
+      });
+
+      // Select the PR
+      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #1/i }));
+
+      // Click Import
+      fireEvent.click(screen.getByRole("button", { name: /Import$/i }));
+
+      await waitFor(() => {
+        expect(apiImportGitHubPull).toHaveBeenCalledWith("dustinbyrne", "kb", 1);
+        expect(onImport).toHaveBeenCalledWith(mockPRTask);
+        expect(onClose).toHaveBeenCalled();
+      });
+    });
+
+    it("shows 'Imported' badge for already imported PRs", async () => {
+      const existingTask: Task = {
+        ...mockPRTask,
+        description: "Review and address any issues in this pull request.\n\nPR: https://github.com/owner/repo/pull/1",
+      };
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([{ name: "origin", owner: "owner", repo: "repo", url: "" }]);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[existingTask]} />);
+
+      // Switch to Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Imported")).toBeTruthy();
+      });
+    });
+
+    it("disables radio buttons for already imported PRs", async () => {
+      const existingTask: Task = {
+        ...mockPRTask,
+        description: "Review and address any issues in this pull request.\n\nPR: https://github.com/owner/repo/pull/1",
+      };
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([{ name: "origin", owner: "owner", repo: "repo", url: "" }]);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[existingTask]} />);
+
+      // Switch to Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        const radio = screen.getByRole("radio", { name: /Select pull request #1/i }) as HTMLInputElement;
+        expect(radio.disabled).toBe(true);
+      });
+    });
+
+    it("shows empty state when no open pull requests found", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([]);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      // Switch to Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("No open pull requests found")).toBeTruthy();
+      });
+    });
+
+    it("clears selection when switching tabs", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+        { number: 1, title: "Issue 1", body: "Body", html_url: "https://github.com/dustinbyrne/kb/issues/1", labels: [] },
+      ]);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      // Wait for issues to load
+      await waitFor(() => {
+        expect(screen.getByText("Issue 1")).toBeTruthy();
+      });
+
+      // Select an issue
+      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+
+      // Verify selection
+      let previewCard = await screen.findByTestId("github-import-preview-card");
+      expect(within(previewCard).getByText("Issue 1")).toBeTruthy();
+
+      // Switch to PR tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Test PR")).toBeTruthy();
+      });
+
+      // Should show empty preview (issue selection cleared)
+      previewCard = screen.getByTestId("github-import-preview-empty");
+      expect(previewCard).toBeTruthy();
+    });
+
+    it("displays error state on PR fetch failure", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockRejectedValueOnce(new Error("Repository not found"));
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      // Switch to Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Could not load pull requests")).toBeTruthy();
+        expect(screen.getByText("Repository not found")).toBeTruthy();
+      });
+    });
+
+    it("shows PR count and imported count in header", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      // Switch to Pull Requests tab
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        // Should show 2 pull requests, 0 imported
+        expect(screen.getByText("2 pull requests")).toBeTruthy();
+        expect(screen.getByText("0 imported")).toBeTruthy();
+      });
     });
   });
 });

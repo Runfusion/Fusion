@@ -2403,6 +2403,162 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * POST /api/github/pulls/fetch
+   * Fetch open pull requests from a GitHub repository.
+   * Body: { owner: string, repo: string, limit?: number }
+   * Returns: Array of GitHubPull objects
+   */
+  router.post("/github/pulls/fetch", async (req, res) => {
+    try {
+      const { owner, repo, limit = 30 } = req.body;
+
+      if (!owner || typeof owner !== "string") {
+        res.status(400).json({ error: "owner is required" });
+        return;
+      }
+      if (!repo || typeof repo !== "string") {
+        res.status(400).json({ error: "repo is required" });
+        return;
+      }
+
+      // Check gh authentication
+      if (!isGhAuthenticated()) {
+        res.status(401).json({
+          error: "Not authenticated with GitHub. Run `gh auth login`.",
+        });
+        return;
+      }
+
+      const client = new GitHubClient();
+
+      try {
+        const pulls = await client.listPullRequests(owner, repo, { limit });
+        res.json(pulls);
+      } catch (err: any) {
+        // Handle specific error cases from gh CLI
+        const errorMessage = err instanceof Error ? err.message : String(err);
+
+        if (errorMessage.includes("not found") || errorMessage.includes("404")) {
+          res.status(404).json({ error: `Repository not found: ${owner}/${repo}` });
+          return;
+        }
+        if (errorMessage.includes("authentication") || errorMessage.includes("401") || errorMessage.includes("403")) {
+          res.status(401).json({
+            error: "Not authenticated with GitHub. Run `gh auth login`.",
+          });
+          return;
+        }
+
+        res.status(502).json({ error: `GitHub CLI error: ${errorMessage}` });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/github/pulls/import
+   * Import a specific GitHub pull request as a kb review task.
+   * Body: { owner: string, repo: string, prNumber: number }
+   * Returns: Created Task object
+   */
+  router.post("/github/pulls/import", async (req, res) => {
+    try {
+      const { owner, repo, prNumber } = req.body;
+
+      if (!owner || typeof owner !== "string") {
+        res.status(400).json({ error: "owner is required" });
+        return;
+      }
+      if (!repo || typeof repo !== "string") {
+        res.status(400).json({ error: "repo is required" });
+        return;
+      }
+      if (!prNumber || typeof prNumber !== "number" || prNumber < 1) {
+        res.status(400).json({ error: "prNumber is required and must be a positive number" });
+        return;
+      }
+
+      // Check gh authentication
+      if (!isGhAuthenticated()) {
+        res.status(401).json({
+          error: "Not authenticated with GitHub. Run `gh auth login`.",
+        });
+        return;
+      }
+
+      const client = new GitHubClient();
+
+      let pr: {
+        number: number;
+        title: string;
+        body: string | null;
+        html_url: string;
+        headBranch: string;
+        baseBranch: string;
+        state: "open" | "closed" | "merged";
+      } | null;
+
+      try {
+        pr = await client.getPullRequest(owner, repo, prNumber);
+
+        if (pr === null) {
+          res.status(404).json({ error: `PR #${prNumber} not found in ${owner}/${repo}` });
+          return;
+        }
+      } catch (err: any) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+
+        if (errorMessage.includes("not found") || errorMessage.includes("404")) {
+          res.status(404).json({ error: `PR #${prNumber} not found in ${owner}/${repo}` });
+          return;
+        }
+        if (errorMessage.includes("authentication") || errorMessage.includes("401") || errorMessage.includes("403")) {
+          res.status(401).json({
+            error: "Not authenticated with GitHub. Run `gh auth login`.",
+          });
+          return;
+        }
+
+        res.status(502).json({ error: `GitHub CLI error: ${errorMessage}` });
+        return;
+      }
+
+      // Check if already imported
+      const existingTasks = await store.listTasks();
+      const sourceUrl = pr.html_url;
+      for (const existingTask of existingTasks) {
+        if (existingTask.description.includes(sourceUrl)) {
+          res.status(409).json({
+            error: `PR #${prNumber} already imported as ${existingTask.id}`,
+            existingTaskId: existingTask.id,
+          });
+          return;
+        }
+      }
+
+      // Create the task with "Review PR:" prefix
+      const title = `Review PR #${pr.number}: ${pr.title.slice(0, 180)}`;
+      const body = pr.body?.trim() || "(no description)";
+      const description = `Review and address any issues in this pull request.\n\nPR: ${sourceUrl}\nBranch: ${pr.headBranch} → ${pr.baseBranch}\n\n${body}`;
+
+      const task = await store.createTask({
+        title: title || undefined,
+        description,
+        column: "triage",
+        dependencies: [],
+      });
+
+      // Log the import action
+      await store.logEntry(task.id, "Imported PR from GitHub", sourceUrl);
+
+      res.status(201).json(task);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ---------- Auth routes ----------
   registerAuthRoutes(router, options?.authStorage);
 

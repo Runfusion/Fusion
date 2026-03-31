@@ -1705,6 +1705,256 @@ export class GitHubClient {
     };
   }
 
+  /**
+   * List open pull requests from a repository.
+   * Uses gh CLI if available, otherwise falls back to REST API.
+   */
+  async listPullRequests(
+    owner: string,
+    repo: string,
+    options?: { limit?: number }
+  ): Promise<Array<{
+    number: number;
+    title: string;
+    body: string | null;
+    html_url: string;
+    headBranch: string;
+    baseBranch: string;
+  }>> {
+    if (this.hasGhAuth()) {
+      try {
+        return await this.listPullRequestsWithGh(owner, repo, options);
+      } catch (err) {
+        if (this.token) {
+          return this.listPullRequestsWithApi(owner, repo, options);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.listPullRequestsWithApi(owner, repo, options);
+    }
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided. Run 'gh auth login' to authenticate.");
+  }
+
+  private async listPullRequestsWithGh(
+    owner: string,
+    repo: string,
+    options?: { limit?: number }
+  ): Promise<Array<{
+    number: number;
+    title: string;
+    body: string | null;
+    html_url: string;
+    headBranch: string;
+    baseBranch: string;
+  }>> {
+    const limit = options?.limit ?? 30;
+
+    const pulls = await runGhJsonAsync<Array<{
+      number: number;
+      title: string;
+      body: string;
+      url: string;
+      headRefName: string;
+      baseRefName: string;
+    }>>([
+      "pr", "list",
+      "--repo", `${owner}/${repo}`,
+      "--state", "open",
+      "--limit", String(Math.min(limit, 100)),
+      "--json", "number,title,body,url,headRefName,baseRefName",
+    ]);
+
+    return pulls.map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      body: pr.body,
+      html_url: pr.url,
+      headBranch: pr.headRefName,
+      baseBranch: pr.baseRefName,
+    }));
+  }
+
+  private async listPullRequestsWithApi(
+    owner: string,
+    repo: string,
+    options?: { limit?: number }
+  ): Promise<Array<{
+    number: number;
+    title: string;
+    body: string | null;
+    html_url: string;
+    headBranch: string;
+    baseBranch: string;
+  }>> {
+    const limit = options?.limit ?? 30;
+
+    const params = new URLSearchParams();
+    params.append("state", "open");
+    params.append("per_page", String(Math.min(limit, 100)));
+
+    const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?${params}`;
+    const headers = this.buildHeaders();
+
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(`Repository not found: ${owner}/${repo}`);
+      }
+      throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as Array<{
+      number: number;
+      title: string;
+      body: string | null;
+      html_url: string;
+      head: { ref: string };
+      base: { ref: string };
+    }>;
+
+    return data.slice(0, limit).map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      body: pr.body,
+      html_url: pr.html_url,
+      headBranch: pr.head.ref,
+      baseBranch: pr.base.ref,
+    }));
+  }
+
+  /**
+   * Fetch a single pull request by number.
+   * Uses gh CLI if available, otherwise falls back to REST API.
+   * Returns null if the pull request is not found.
+   */
+  async getPullRequest(
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<{
+    number: number;
+    title: string;
+    body: string | null;
+    html_url: string;
+    headBranch: string;
+    baseBranch: string;
+    state: "open" | "closed" | "merged";
+  } | null> {
+    if (this.hasGhAuth()) {
+      try {
+        return await this.getPullRequestWithGh(owner, repo, number);
+      } catch (err) {
+        if (this.token) {
+          return this.getPullRequestWithApi(owner, repo, number);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.getPullRequestWithApi(owner, repo, number);
+    }
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided. Run 'gh auth login' to authenticate.");
+  }
+
+  private async getPullRequestWithGh(
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<{
+    number: number;
+    title: string;
+    body: string | null;
+    html_url: string;
+    headBranch: string;
+    baseBranch: string;
+    state: "open" | "closed" | "merged";
+  } | null> {
+    try {
+      const pr = await runGhJsonAsync<{
+        number: number;
+        title: string;
+        body: string;
+        url: string;
+        headRefName: string;
+        baseRefName: string;
+        state: "OPEN" | "CLOSED" | "MERGED";
+        mergedAt?: string | null;
+      }>([
+        "pr", "view", String(number),
+        "--repo", `${owner}/${repo}`,
+        "--json", "number,title,body,url,headRefName,baseRefName,state,mergedAt",
+      ]);
+
+      return {
+        number: pr.number,
+        title: pr.title,
+        body: pr.body,
+        html_url: pr.url,
+        headBranch: pr.headRefName,
+        baseBranch: pr.baseRefName,
+        state: pr.mergedAt ? "merged" : this.mapGhPrState(pr.state),
+      };
+    } catch (err) {
+      // gh pr view returns error if the PR doesn't exist
+      if (err instanceof Error && err.message.includes("not found")) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  private async getPullRequestWithApi(
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<{
+    number: number;
+    title: string;
+    body: string | null;
+    html_url: string;
+    headBranch: string;
+    baseBranch: string;
+    state: "open" | "closed" | "merged";
+  } | null> {
+    const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`;
+    const headers = this.buildHeaders();
+
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null;
+      }
+      throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as {
+      number: number;
+      title: string;
+      body: string | null;
+      html_url: string;
+      state: string;
+      merged: boolean;
+      head: { ref: string };
+      base: { ref: string };
+    };
+
+    return {
+      number: data.number,
+      title: data.title,
+      body: data.body,
+      html_url: data.html_url,
+      headBranch: data.head.ref,
+      baseBranch: data.base.ref,
+      state: data.merged ? "merged" : this.mapPrState(data.state) === "open" ? "open" : "closed",
+    };
+  }
+
   // ==========================================
   // GitHub App Installation Auth Methods
   // ==========================================
