@@ -761,6 +761,49 @@ describe("TaskCard size badge", () => {
     expect(sizeBadge).toBeDefined();
     expect(sizeBadge?.textContent).toBe("M");
   });
+
+  it("size badge appears at far right (after Archive button) in done column cards", () => {
+    const onArchiveTask = vi.fn().mockResolvedValue(makeTask({ column: "done" }));
+    const task = makeTask({ 
+      column: "done", 
+      size: "M",
+      status: undefined 
+    });
+
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onArchiveTask={onArchiveTask}
+      />
+    );
+
+    const headerActions = container.querySelector(".card-header-actions");
+    expect(headerActions).toBeDefined();
+    
+    // Get all children of header actions
+    const children = headerActions?.children;
+    expect(children).toBeDefined();
+    expect(children!.length).toBeGreaterThanOrEqual(2);
+    
+    // The last element should be the size badge (after Archive button)
+    const lastElement = children![children!.length - 1];
+    expect(lastElement.classList.contains("card-size-badge")).toBe(true);
+    expect(lastElement.textContent).toBe("M");
+    
+    // Archive button should be before the size badge
+    const archiveButton = headerActions?.querySelector(".card-archive-btn");
+    expect(archiveButton).toBeDefined();
+    
+    // Find the index of archive button and size badge
+    const archiveIndex = Array.from(children!).findIndex(el => el.classList.contains("card-archive-btn"));
+    const sizeIndex = Array.from(children!).findIndex(el => el.classList.contains("card-size-badge"));
+    
+    expect(archiveIndex).toBeGreaterThanOrEqual(0);
+    expect(sizeIndex).toBeGreaterThanOrEqual(0);
+    expect(sizeIndex).toBeGreaterThan(archiveIndex); // Size badge comes after Archive button
+  });
 });
 
 /**

@@ -589,11 +589,6 @@ function TaskCardComponent({
           />
         )}
         <div className="card-header-actions">
-          {task.size && (
-            <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
-              {task.size}
-            </span>
-          )}
           {canEdit && (
             <button
               className="card-edit-btn"
@@ -623,6 +618,11 @@ function TaskCardComponent({
             >
               Unarchive
             </button>
+          )}
+          {task.size && (
+            <span className={`card-size-badge size-${task.size.toLowerCase()}`}>
+              {task.size}
+            </span>
           )}
         </div>
       </div>
