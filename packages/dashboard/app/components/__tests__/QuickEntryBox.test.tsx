@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
 import type { Task } from "@kb/core";
 
@@ -121,14 +121,16 @@ describe("QuickEntryBox", () => {
     expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
 
     fireEvent.blur(textarea);
-    vi.advanceTimersByTime(250);
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
 
     await waitFor(() => {
       expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
     });
   });
 
-  it("stays expanded on blur when has content", async () => {
+  it("collapses on blur even when has content", async () => {
     renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
@@ -136,10 +138,14 @@ describe("QuickEntryBox", () => {
     fireEvent.change(textarea, { target: { value: "Some task" } });
 
     fireEvent.blur(textarea);
-    await vi.advanceTimersByTimeAsync(250);
-
-    // Should stay expanded because there's content
-    expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+    
+    // Wait for React to re-render after state change
+    await waitFor(() => {
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
+    });
   });
 
   it("creates task on Enter key with TaskCreateInput", async () => {
@@ -346,35 +352,37 @@ describe("QuickEntryBox", () => {
   });
 
   describe("Rich creation features", () => {
-    it("shows dependency button when typing", () => {
+    it("shows dependency button when focused", () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
       // Initially, no controls are visible before focus
       expect(screen.queryByTestId("quick-entry-deps-button")).toBeNull();
 
-      // Type something
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with deps" } });
 
       // Now the dependency button should be visible
       expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
     });
 
-    it("shows model selector button when typing", () => {
+    it("shows model selector button when focused", () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
       // Initially, no controls are visible
       expect(screen.queryByTestId("quick-entry-models-button")).toBeNull();
 
-      // Type something
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with models" } });
 
       // Now the model selector button should be visible
       expect(screen.getByTestId("quick-entry-models-button")).toBeTruthy();
     });
 
-    it("shows Plan and Subtask buttons when typing", () => {
+    it("shows Plan and Subtask buttons when focused", () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -382,7 +390,8 @@ describe("QuickEntryBox", () => {
       expect(screen.queryByTestId("plan-button")).toBeNull();
       expect(screen.queryByTestId("subtask-button")).toBeNull();
 
-      // Type something
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to plan" } });
 
       // Now the Plan and Subtask buttons should be visible
@@ -394,6 +403,7 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with deps" } });
       fireEvent.click(screen.getByTestId("quick-entry-deps-button"));
 
@@ -406,6 +416,7 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with models" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
@@ -417,6 +428,7 @@ describe("QuickEntryBox", () => {
       const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with deps" } });
       fireEvent.click(screen.getByTestId("quick-entry-deps-button"));
 
@@ -443,6 +455,7 @@ describe("QuickEntryBox", () => {
       const { props } = renderQuickEntryBox({ onPlanningMode });
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Plan this task" } });
       fireEvent.click(screen.getByTestId("plan-button"));
 
@@ -459,6 +472,7 @@ describe("QuickEntryBox", () => {
       const { props } = renderQuickEntryBox({ onSubtaskBreakdown });
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Break this down" } });
       fireEvent.click(screen.getByTestId("subtask-button"));
 
@@ -474,7 +488,8 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Type something first to make buttons appear
+      // Focus and type something first to make buttons appear
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Some task" } });
 
       const planButton = screen.getByTestId("plan-button") as HTMLButtonElement;
@@ -500,7 +515,8 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox({ addToast });
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Type something first to make buttons appear
+      // Focus and type something first to make buttons appear
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Some task" } });
 
       // Clear input
@@ -518,6 +534,7 @@ describe("QuickEntryBox", () => {
       const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with model" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
@@ -547,6 +564,7 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with dropdown" } });
       fireEvent.click(screen.getByTestId("quick-entry-deps-button"));
 
@@ -567,6 +585,7 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to clear" } });
 
       // First Escape closes any dropdowns
@@ -584,6 +603,7 @@ describe("QuickEntryBox", () => {
       const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to reset" } });
 
       fireEvent.keyDown(textarea, { key: "Enter" });

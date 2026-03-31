@@ -269,11 +269,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       clearTimeout(blurTimeoutRef.current);
     }
 
-    // Collapse if empty and no dropdowns are open (after a short delay to allow click events)
+    // Collapse after a short delay to allow click events on dropdowns
+    // Collapse regardless of content - only check if dropdowns are open
     blurTimeoutRef.current = setTimeout(() => {
-      // Check current textarea value directly for most accurate state
-      const currentValue = textareaRef.current?.value || "";
-      if (!currentValue.trim() && !showDeps && !showModels) {
+      if (!showDeps && !showModels) {
         setIsExpanded(false);
         // Reset height when collapsing
         if (textareaRef.current) {
@@ -373,8 +372,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     }
   }, [availableModels]);
 
-  // Show expanded controls when there's content or user has interacted
-  const showExpandedControls = isExpanded || description.trim().length > 0;
+  // Show expanded controls only when focused/interacted (isExpanded)
+  const showExpandedControls = isExpanded;
 
   return (
     <div className="quick-entry-box" data-testid="quick-entry-box">
