@@ -66,6 +66,22 @@ export interface WorkflowStepInput {
   enabled?: boolean;
 }
 
+/** Result of a workflow step execution on a task. */
+export interface WorkflowStepResult {
+  /** ID of the workflow step that ran (e.g., "WS-001") */
+  workflowStepId: string;
+  /** Name of the workflow step at execution time */
+  workflowStepName: string;
+  /** Execution status */
+  status: "passed" | "failed" | "skipped" | "pending";
+  /** Output from the workflow step agent (findings, errors, etc.) */
+  output?: string;
+  /** ISO-8601 timestamp when the step started */
+  startedAt?: string;
+  /** ISO-8601 timestamp when the step completed */
+  completedAt?: string;
+}
+
 /** A built-in workflow step template for one-click creation. */
 export interface WorkflowStepTemplate {
   /** Unique template identifier (e.g., "documentation-review") */
@@ -371,8 +387,12 @@ export interface Task {
   validatorModelId?: string;
   /** IDs of workflow steps enabled for this task, run after implementation completes */
   enabledWorkflowSteps?: string[];
+  /** Results from workflow step executions (populated after task implementation) */
+  workflowStepResults?: WorkflowStepResult[];
   /** Number of merge retry attempts made for this task (auto-merge conflict recovery) */
   mergeRetries?: number;
+  /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
+  thinkingLevel?: ThinkingLevel;
   /** Error message from the last failure, if the task failed during execution */
   error?: string;
   /** Optional summary of what was changed/fixed when task is completed */
@@ -414,6 +434,8 @@ export interface TaskCreateInput {
    *  Must be set together with `validatorModelProvider`. When both validator model
    *  fields are undefined, the reviewer uses global settings defaults. */
   validatorModelId?: string;
+  /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
+  thinkingLevel?: ThinkingLevel;
 }
 
 // ── Settings Scope Types ────────────────────────────────────────────────
