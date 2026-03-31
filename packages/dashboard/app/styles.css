@@ -3693,6 +3693,11 @@ body {
   white-space: nowrap;
 }
 
+/* Reduce padding on ID column header to match data cells */
+.list-table th:first-child.list-header-cell {
+  padding-right: 8px;
+}
+
 .list-header-cell:hover {
   color: var(--text);
 }
@@ -3759,6 +3764,7 @@ body {
   font-weight: 600;
   color: var(--text-muted);
   white-space: nowrap;
+  padding: 12px 8px 12px 16px; /* Reduced right padding to tighten space with title */
 }
 
 .list-cell-title {
@@ -4018,7 +4024,7 @@ body {
   }
 
   .list-table {
-    min-width: 800px;
+    min-width: auto;
   }
 
   .list-cell-title {
