@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch } from "lucide-react";
 
 // GitHub logo icon (Octocat mark) - uses currentColor for theme compatibility
 function GitHubLogo({ size = 16 }: { size?: number }) {
@@ -23,6 +23,7 @@ interface HeaderProps {
   onOpenUsage?: () => void;
   onOpenActivityLog?: () => void;
   onOpenSchedules?: () => void;
+  onOpenGitManager?: () => void;
   onToggleTerminal?: () => void;
   onToggleFiles?: () => void;
   filesOpen?: boolean;
@@ -60,6 +61,7 @@ export function Header({
   onOpenUsage,
   onOpenActivityLog,
   onOpenSchedules,
+  onOpenGitManager,
   onToggleTerminal,
   onToggleFiles,
   filesOpen,
@@ -302,6 +304,18 @@ export function Header({
           </button>
         )}
 
+        {/* Git Manager button - desktop only */}
+        {!isMobile && onOpenGitManager && (
+          <button
+            className="btn-icon"
+            onClick={onOpenGitManager}
+            title="Git Manager"
+            data-testid="git-manager-btn"
+          >
+            <GitBranch size={16} />
+          </button>
+        )}
+
         {/* Pause button (soft pause) - always inline */}
         <button
           className={`btn-icon${enginePaused ? " btn-icon--paused" : ""}`}
@@ -371,6 +385,18 @@ export function Header({
               >
                 <Folder size={16} />
                 <span>Browse Files</span>
+              </button>
+            )}
+            {/* Git Manager - in overflow on mobile */}
+            {onOpenGitManager && (
+              <button
+                className="mobile-overflow-item"
+                onClick={() => handleOverflowAction(onOpenGitManager)}
+                role="menuitem"
+                data-testid="overflow-git-btn"
+              >
+                <GitBranch size={16} />
+                <span>Git Manager</span>
               </button>
             )}
             <button
