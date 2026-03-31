@@ -1,8 +1,10 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, type Column, type MergeResult, type StepStatus } from "@kb/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, type Column, type MergeResult, type StepStatus, type AgentLogType, type AgentLogEntry } from "@kb/core";
 import { aiMergeTask } from "@kb/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@kb/core";
 import { createSession, submitResponse, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@kb/dashboard/planning";
+import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -134,6 +136,184 @@ export async function runTaskLog(id: string, message: string, outcome?: string) 
   console.log();
   console.log(`  ✓ ${id}: logged "${message}"`);
   console.log();
+}
+
+export interface LogsOptions {
+  follow?: boolean;
+  limit?: number;
+  type?: AgentLogType;
+}
+
+// ANSI color codes for terminal output
+const ANSI = {
+  reset: "\x1b[0m",
+  dim: "\x1b[2m",
+  red: "\x1b[31m",
+  gray: "\x1b[90m",
+};
+
+/**
+ * Format a timestamp for display (locale time string)
+ */
+function formatTimestamp(timestamp: string): string {
+  return new Date(timestamp).toLocaleTimeString();
+}
+
+/**
+ * Format a single agent log entry for display
+ */
+function formatLogEntry(entry: AgentLogEntry): string {
+  const ts = formatTimestamp(entry.timestamp);
+  const agent = entry.agent ? `[${entry.agent.toUpperCase()}] ` : "";
+
+  switch (entry.type) {
+    case "text":
+      return `  ${ts} ${agent}${entry.text}`;
+    case "thinking":
+      return `${ANSI.dim}${ANSI.gray}  ${ts} ${agent}[THINK] ${entry.text}${ANSI.reset}`;
+    case "tool":
+      return `  ${ts} ${agent}[TOOL] ${entry.text}${entry.detail ? ` (${entry.detail})` : ""}`;
+    case "tool_result":
+      return `  ${ts} ${agent}[RESULT] ${entry.text}${entry.detail ? ` (${entry.detail})` : ""}`;
+    case "tool_error":
+      return `${ANSI.red}  ${ts} ${agent}[ERROR] ${entry.text}${entry.detail ? ` (${entry.detail})` : ""}${ANSI.reset}`;
+    default:
+      return `  ${ts} ${agent}${entry.text}`;
+  }
+}
+
+/**
+ * Print log entries to console
+ */
+function printEntries(entries: AgentLogEntry[]): void {
+  for (const entry of entries) {
+    console.log(formatLogEntry(entry));
+  }
+}
+
+/**
+ * Filter and limit entries based on options
+ */
+function filterEntries(entries: AgentLogEntry[], options: LogsOptions): AgentLogEntry[] {
+  let result = entries;
+
+  // Filter by type if specified
+  if (options.type) {
+    result = result.filter((e) => e.type === options.type);
+  }
+
+  // Apply limit (default 100, max 1000)
+  const limit = Math.min(options.limit ?? 100, 1000);
+  if (result.length > limit) {
+    result = result.slice(-limit);
+  }
+
+  return result;
+}
+
+export async function runTaskLogs(id: string, options: LogsOptions = {}) {
+  const store = await getStore();
+
+  // Verify task exists
+  try {
+    await store.getTask(id);
+  } catch {
+    console.error(`Task ${id} not found`);
+    process.exit(1);
+  }
+
+  // Get agent logs
+  const entries = await store.getAgentLogs(id);
+
+  if (entries.length === 0 && !options.follow) {
+    console.log(`No agent logs found for ${id}`);
+    return;
+  }
+
+  // Print existing entries (filtered)
+  const filteredEntries = filterEntries(entries, options);
+  printEntries(filteredEntries);
+
+  // Follow mode: watch for new entries
+  if (options.follow) {
+    const cwd = process.cwd();
+    const logPath = join(cwd, ".kb", "tasks", id, "agent.log");
+
+    if (!existsSync(logPath)) {
+      console.log(`\n  Waiting for log file to be created...`);
+    }
+
+    let lastPosition = 0;
+    let lastSize = 0;
+
+    // Try to get initial file size
+    try {
+      const stats = statSync(logPath);
+      lastSize = stats.size;
+      lastPosition = lastSize;
+    } catch {
+      // File doesn't exist yet, will watch for creation
+    }
+
+    // Track if we're shutting down
+    let isShuttingDown = false;
+
+    // Set up SIGINT handler for clean exit
+    const sigintHandler = () => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+
+      unwatchFile(logPath);
+      console.log("\n  (stopped following logs)");
+      process.exit(0);
+    };
+
+    process.on("SIGINT", sigintHandler);
+
+    // Start watching the file
+    watchFile(logPath, { interval: 1000 }, () => {
+      if (isShuttingDown) return;
+
+      try {
+        const stats = statSync(logPath);
+
+        // File was truncated or recreated
+        if (stats.size < lastPosition) {
+          lastPosition = 0;
+        }
+
+        // New content available
+        if (stats.size > lastPosition) {
+          const content = readFileSync(logPath, "utf-8");
+          const lines = content.slice(lastPosition).split("\n");
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const entry = JSON.parse(line) as AgentLogEntry;
+              // Apply type filter if specified
+              if (!options.type || entry.type === options.type) {
+                console.log(formatLogEntry(entry));
+              }
+            } catch {
+              // Skip malformed lines
+            }
+          }
+
+          lastPosition = stats.size;
+        }
+
+        lastSize = stats.size;
+      } catch {
+        // File may have been deleted, ignore
+      }
+    });
+
+    // Keep process alive
+    await new Promise(() => {
+      // Infinite wait - SIGINT handler will exit
+    });
+  }
 }
 
 export async function runTaskShow(id: string) {
@@ -336,6 +516,15 @@ export async function runTaskArchive(id: string) {
 
   console.log();
   console.log(`  ✓ Archived ${task.id} → ${COLUMN_LABELS[task.column]}`);
+  console.log();
+}
+
+export async function runTaskUnarchive(id: string) {
+  const store = await getStore();
+  const task = await store.unarchiveTask(id);
+
+  console.log();
+  console.log(`  ✓ Unarchived ${task.id} → ${COLUMN_LABELS[task.column]}`);
   console.log();
 }
 

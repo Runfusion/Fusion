@@ -39,7 +39,7 @@ if (isBunBinary) {
 
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
-const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry } = await import("./commands/task.js");
+const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry } = await import("./commands/task.js");
 const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
 
 const HELP = `
@@ -54,6 +54,8 @@ Usage:
   kb task plan [description] [opts]    Create task via AI-guided planning
   kb task list                        List all tasks
   kb task show <id>                   Show task details, steps, log
+  kb task logs <id> [--follow] [--limit <n>] [--type <type>]
+                                      Show task agent execution logs
   kb task move <id> <col>             Move a task to a column
   kb task update <id> <step> <status> Update step status (pending|in-progress|done|skipped)
   kb task log <id> <message>          Add a log entry
@@ -188,6 +190,31 @@ async function main() {
             const id = args[2], message = args.slice(3).join(" ");
             if (!id || !message) { console.error("Usage: kb task log <id> <message>"); process.exit(1); }
             await runTaskLog(id, message);
+            break;
+          }
+          case "logs": {
+            const id = args[2];
+            if (!id) { console.error("Usage: kb task logs <id> [--follow] [--limit <n>] [--type <type>]"); process.exit(1); }
+            
+            // Parse flags
+            const follow = args.includes("--follow");
+            
+            let limit: number | undefined;
+            const limitIdx = args.indexOf("--limit");
+            if (limitIdx !== -1 && limitIdx + 1 < args.length) {
+              const parsed = parseInt(args[limitIdx + 1], 10);
+              if (!isNaN(parsed)) {
+                limit = parsed;
+              }
+            }
+            
+            let type: string | undefined;
+            const typeIdx = args.indexOf("--type");
+            if (typeIdx !== -1 && typeIdx + 1 < args.length) {
+              type = args[typeIdx + 1];
+            }
+            
+            await runTaskLogs(id, { follow, limit, type: type as "text" | "thinking" | "tool" | "tool_result" | "tool_error" | undefined });
             break;
           }
           case "merge": {

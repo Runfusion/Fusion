@@ -5,6 +5,15 @@ vi.mock("node:readline/promises", () => ({
   createInterface: vi.fn(),
 }));
 
+// Mock node:fs for runTaskLogs tests
+vi.mock("node:fs", () => ({
+  watchFile: vi.fn(),
+  unwatchFile: vi.fn(),
+  statSync: vi.fn(),
+  existsSync: vi.fn(),
+  readFileSync: vi.fn(),
+}));
+
 // Mock @kb/core before importing the module under test
 vi.mock("@kb/core", () => {
   const COLUMNS = ["triage", "specified", "in-progress", "review", "done"];
@@ -28,7 +37,8 @@ vi.mock("@kb/engine", () => ({ aiMergeTask: vi.fn() }));
 
 import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@kb/core";
-import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry } from "./task.js";
+import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
+import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskLogs, type LogsOptions } from "./task.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -1256,5 +1266,317 @@ describe("runTaskRetry", () => {
     }));
 
     await expect(runTaskRetry("KB-001")).rejects.toThrow("Task KB-001 is not failed (status: paused)");
+  });
+});
+
+// --- Logs Tests ---
+
+describe("runTaskLogs", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let mockGetTask: ReturnType<typeof vi.fn>;
+  let mockGetAgentLogs: ReturnType<typeof vi.fn>;
+  let mockWatchFile: ReturnType<typeof vi.fn>;
+  let mockUnwatchFile: ReturnType<typeof vi.fn>;
+  let mockStatSync: ReturnType<typeof vi.fn>;
+  let mockExistsSync: ReturnType<typeof vi.fn>;
+  let mockReadFileSync: ReturnType<typeof vi.fn>;
+  let sigintHandlers: Array<() => void> = [];
+
+  function makeAgentLogEntry(overrides: Record<string, unknown> = {}): import("@kb/core").AgentLogEntry {
+    return {
+      timestamp: new Date().toISOString(),
+      taskId: "KB-001",
+      text: "Test message",
+      type: "text" as const,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    sigintHandlers = [];
+
+    mockGetTask = vi.fn();
+    mockGetAgentLogs = vi.fn().mockResolvedValue([]);
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      getTask: mockGetTask,
+      getAgentLogs: mockGetAgentLogs,
+    }));
+
+    // Mock fs functions
+    mockWatchFile = vi.mocked(watchFile);
+    mockUnwatchFile = vi.mocked(unwatchFile);
+    mockStatSync = vi.mocked(statSync);
+    mockExistsSync = vi.mocked(existsSync);
+    mockReadFileSync = vi.mocked(readFileSync);
+
+    mockWatchFile.mockReturnValue(undefined);
+    mockExistsSync.mockReturnValue(true);
+    mockStatSync.mockReturnValue({ size: 0 });
+
+    // Mock process.on for SIGINT
+    vi.spyOn(process, "on").mockImplementation((event: string, handler: () => void) => {
+      if (event === "SIGINT") {
+        sigintHandlers.push(handler);
+      }
+      return process;
+    });
+
+    // Mock process.exit
+    vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("displays logs with various entry types", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([
+      makeAgentLogEntry({ type: "text", text: "Analyzing code" }),
+      makeAgentLogEntry({ type: "thinking", text: "Let me think" }),
+      makeAgentLogEntry({ type: "tool", text: "read", detail: "path/to/file.ts" }),
+      makeAgentLogEntry({ type: "tool_result", text: "read", detail: "success" }),
+      makeAgentLogEntry({ type: "tool_error", text: "read", detail: "File not found" }),
+    ]);
+
+    await runTaskLogs("KB-001");
+
+    expect(mockGetTask).toHaveBeenCalledWith("KB-001");
+    expect(mockGetAgentLogs).toHaveBeenCalledWith("KB-001");
+    expect(logSpy).toHaveBeenCalledTimes(5);
+
+    // Check that each type is formatted
+    const calls = logSpy.mock.calls.map((call) => call[0] as string);
+    expect(calls[0]).toContain("Analyzing code");
+    expect(calls[1]).toContain("[THINK]");
+    expect(calls[2]).toContain("[TOOL]");
+    expect(calls[2]).toContain("path/to/file.ts");
+    expect(calls[3]).toContain("[RESULT]");
+    expect(calls[4]).toContain("[ERROR]");
+  });
+
+  it("displays agent role when present", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([
+      makeAgentLogEntry({ type: "text", text: "Starting execution", agent: "executor" }),
+      makeAgentLogEntry({ type: "text", text: "Reviewing code", agent: "reviewer" }),
+    ]);
+
+    await runTaskLogs("KB-001");
+
+    const calls = logSpy.mock.calls.map((call) => call[0] as string);
+    expect(calls[0]).toContain("[EXECUTOR]");
+    expect(calls[1]).toContain("[REVIEWER]");
+  });
+
+  it("shows 'no logs found' message when logs are empty", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([]);
+
+    await runTaskLogs("KB-001");
+
+    expect(logSpy).toHaveBeenCalledWith("No agent logs found for KB-001");
+  });
+
+  it("exits with error when task not found", async () => {
+    mockGetTask.mockRejectedValueOnce(new Error("Task not found"));
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
+
+    await runTaskLogs("KB-999");
+
+    expect(errorSpy).toHaveBeenCalledWith("Task KB-999 not found");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    exitSpy.mockRestore();
+  });
+
+  it("respects --limit flag", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce(
+      Array.from({ length: 200 }, (_, i) => makeAgentLogEntry({ text: `Line ${i + 1}` }))
+    );
+
+    await runTaskLogs("KB-001", { limit: 50 });
+
+    // Should only show 50 entries (default is 100, we specified 50)
+    expect(logSpy).toHaveBeenCalledTimes(50);
+    
+    // Check that we got the last 50 entries
+    const calls = logSpy.mock.calls.map((call) => call[0] as string);
+    expect(calls[0]).toContain("Line 151");
+    expect(calls[49]).toContain("Line 200");
+  });
+
+  it("enforces max limit of 1000", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce(
+      Array.from({ length: 1500 }, (_, i) => makeAgentLogEntry({ text: `Line ${i + 1}` }))
+    );
+
+    await runTaskLogs("KB-001", { limit: 2000 });  // Request 2000, should be capped at 1000
+
+    expect(logSpy).toHaveBeenCalledTimes(1000);
+  });
+
+  it("filters by --type flag", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([
+      makeAgentLogEntry({ type: "text", text: "Text 1" }),
+      makeAgentLogEntry({ type: "tool", text: "tool1" }),
+      makeAgentLogEntry({ type: "text", text: "Text 2" }),
+      makeAgentLogEntry({ type: "tool", text: "tool2" }),
+      makeAgentLogEntry({ type: "thinking", text: "Think 1" }),
+    ]);
+
+    await runTaskLogs("KB-001", { type: "text" });
+
+    // Should only show 2 text entries
+    expect(logSpy).toHaveBeenCalledTimes(2);
+    const calls = logSpy.mock.calls.map((call) => call[0] as string);
+    expect(calls[0]).toContain("Text 1");
+    expect(calls[1]).toContain("Text 2");
+  });
+
+  it("filters by type with --limit combined", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    // Create 50 tool entries interspersed with text entries
+    const entries: import("@kb/core").AgentLogEntry[] = [];
+    for (let i = 0; i < 100; i++) {
+      entries.push(makeAgentLogEntry({ 
+        type: i % 2 === 0 ? "tool" : "text", 
+        text: `Entry ${i + 1}` 
+      }));
+    }
+    mockGetAgentLogs.mockResolvedValueOnce(entries);
+
+    await runTaskLogs("KB-001", { type: "tool", limit: 10 });
+
+    // Should show 10 tool entries (the last 10 tool entries: #50, #52, #54, #56, #58, #60, #62, #64, #66, #68... wait, that's not right)
+    // Actually it's #50, #52, #54, #56, #58, #60, #62, #64, #66, #68... no wait, tool entries are at indices 0, 2, 4...
+    // So last 10 tool entries would be indices 80, 82, 84, 86, 88, 90, 92, 94, 96, 98
+    // Which correspond to Entry 81, 83, 85, 87, 89, 91, 93, 95, 97, 99
+    expect(logSpy).toHaveBeenCalledTimes(10);
+  });
+
+  it("calls watchFile when --follow is set", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([
+      makeAgentLogEntry({ type: "text", text: "Existing log" }),
+    ]);
+
+    // Don't await - follow mode keeps the promise pending
+    const logsPromise = runTaskLogs("KB-001", { follow: true });
+
+    // Give a tick for the async operations to start
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(mockWatchFile).toHaveBeenCalled();
+    expect(process.on).toHaveBeenCalledWith("SIGINT", expect.any(Function));
+
+    // Trigger SIGINT to clean up
+    sigintHandlers.forEach((handler) => handler());
+  });
+
+  it("calls unwatchFile in SIGINT handler", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([]);
+
+    // Start follow mode
+    runTaskLogs("KB-001", { follow: true });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Trigger SIGINT
+    sigintHandlers.forEach((handler) => handler());
+
+    expect(mockUnwatchFile).toHaveBeenCalled();
+  });
+
+  it("prints waiting message in follow mode when no log file exists", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([]);
+    mockExistsSync.mockReturnValue(false);
+
+    runTaskLogs("KB-001", { follow: true });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const waitingMessage = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("Waiting for log file")
+    );
+    expect(waitingMessage).toBeDefined();
+
+    // Clean up
+    sigintHandlers.forEach((handler) => handler());
+  });
+
+  it("reads and prints new entries in follow mode", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([
+      makeAgentLogEntry({ type: "text", text: "Initial" }),
+    ]);
+
+    // Mock file to exist with size 0 initially (no content read yet)
+    mockStatSync.mockReturnValue({ size: 0 });
+    
+    runTaskLogs("KB-001", { follow: true });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Get the watchFile callback
+    const watchCallback = mockWatchFile.mock.calls[0][2] as () => void;
+    
+    // Simulate file growing with new content
+    mockStatSync.mockReturnValueOnce({ size: 100 });
+    mockReadFileSync.mockReturnValueOnce(JSON.stringify(makeAgentLogEntry({ type: "text", text: "New entry" })) + "\n");
+    
+    // Trigger the watch callback
+    watchCallback();
+
+    // Check that new entry was printed
+    const newEntry = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("New entry")
+    );
+    expect(newEntry).toBeDefined();
+
+    // Clean up
+    sigintHandlers.forEach((handler) => handler());
+  });
+
+  it("applies type filter in follow mode", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetAgentLogs.mockResolvedValueOnce([]);
+
+    mockStatSync.mockReturnValue({ size: 0 });
+    
+    runTaskLogs("KB-001", { follow: true, type: "tool" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const watchCallback = mockWatchFile.mock.calls[0][2] as () => void;
+    
+    // Simulate new content
+    mockStatSync.mockReturnValueOnce({ size: 200 });
+    mockReadFileSync.mockReturnValueOnce(
+      JSON.stringify(makeAgentLogEntry({ type: "text", text: "Text entry" })) + "\n" +
+      JSON.stringify(makeAgentLogEntry({ type: "tool", text: "Tool entry" })) + "\n"
+    );
+    
+    watchCallback();
+
+    // Should only print the tool entry
+    const toolEntry = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("Tool entry")
+    );
+    expect(toolEntry).toBeDefined();
+
+    const textEntry = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("Text entry")
+    );
+    expect(textEntry).toBeUndefined();
+
+    // Clean up
+    sigintHandlers.forEach((handler) => handler());
   });
 });
