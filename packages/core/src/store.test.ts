@@ -2770,4 +2770,96 @@ describe("TaskStore", () => {
       expect(entries[0].description).toBe("Survival test");
     });
   });
+
+  // ── Activity Log Tests ───────────────────────────────────────────
+
+  describe("activity log", () => {
+    it("recordActivity appends to log file", async () => {
+      await store.recordActivity({ type: "task:created", taskId: "KB-001", taskTitle: "Test", details: "Created" });
+      const logs = await store.getActivityLog();
+      expect(logs).toHaveLength(1);
+      expect(logs[0].type).toBe("task:created");
+      expect(logs[0].id).toBeDefined();
+      expect(logs[0].timestamp).toBeDefined();
+    });
+
+    it("getActivityLog returns entries newest first", async () => {
+      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "First" });
+      await new Promise((r) => setTimeout(r, 10));
+      await store.recordActivity({ type: "task:created", taskId: "KB-002", details: "Second" });
+      const logs = await store.getActivityLog();
+      expect(logs[0].taskId).toBe("KB-002");
+      expect(logs[1].taskId).toBe("KB-001");
+    });
+
+    it("getActivityLog respects limit", async () => {
+      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "First" });
+      await new Promise((r) => setTimeout(r, 10));
+      await store.recordActivity({ type: "task:created", taskId: "KB-002", details: "Second" });
+      const logs = await store.getActivityLog({ limit: 1 });
+      expect(logs).toHaveLength(1);
+      expect(logs[0].taskId).toBe("KB-002");
+    });
+
+    it("getActivityLog filters by type", async () => {
+      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "Created" });
+      await store.recordActivity({ type: "task:moved", taskId: "KB-001", details: "Moved" });
+      const logs = await store.getActivityLog({ type: "task:created" });
+      expect(logs).toHaveLength(1);
+      expect(logs[0].type).toBe("task:created");
+    });
+
+    it("getActivityLog filters by since timestamp", async () => {
+      const first = await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "Created" });
+      await new Promise((r) => setTimeout(r, 50));
+      const second = await store.recordActivity({ type: "task:created", taskId: "KB-002", details: "Created later" });
+
+      // Filter for entries strictly after the first one (should return only second)
+      const logs = await store.getActivityLog({ since: first.timestamp });
+      expect(logs).toHaveLength(1);
+      expect(logs[0].taskId).toBe("KB-002");
+
+      // Filter for entries strictly after a time before the first one (should return both)
+      const beforeFirst = new Date(new Date(first.timestamp).getTime() - 100).toISOString();
+      const allLogs = await store.getActivityLog({ since: beforeFirst });
+      expect(allLogs).toHaveLength(2);
+    });
+
+    it("clearActivityLog removes all entries", async () => {
+      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "Test" });
+      await store.clearActivityLog();
+      const logs = await store.getActivityLog();
+      expect(logs).toHaveLength(0);
+    });
+
+    it("handles missing log file gracefully", async () => {
+      const logs = await store.getActivityLog();
+      expect(logs).toHaveLength(0);
+    });
+
+    it("recordActivity includes metadata when provided", async () => {
+      await store.recordActivity({
+        type: "task:moved",
+        taskId: "KB-001",
+        taskTitle: "Test Task",
+        details: "Moved to in-progress",
+        metadata: { from: "todo", to: "in-progress" },
+      });
+      const logs = await store.getActivityLog();
+      expect(logs[0].metadata).toEqual({ from: "todo", to: "in-progress" });
+      expect(logs[0].taskTitle).toBe("Test Task");
+    });
+
+    it("activity log survives TaskStore reinitialization", async () => {
+      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "Test" });
+
+      // Create new store instance
+      const newStore = new TaskStore(rootDir);
+      await newStore.init();
+
+      const logs = await newStore.getActivityLog();
+      expect(logs).toHaveLength(1);
+      expect(logs[0].taskId).toBe("KB-001");
+    });
+  });
 });

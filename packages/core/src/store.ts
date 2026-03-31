@@ -1881,7 +1881,7 @@ ${notificationsSection}`;
     }
 
     // Sort newest first (by timestamp descending)
-    filtered.sort((a, b) => b.timestamp.localeCompare(b.timestamp));
+    filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     // Apply limit if provided
     if (options?.limit && options.limit > 0) {
