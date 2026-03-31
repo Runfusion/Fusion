@@ -40,6 +40,7 @@ if (isBunBinary) {
 // Dynamic imports so the pi-coding-agent config module sees PI_PACKAGE_DIR
 const { runDashboard } = await import("./commands/dashboard.js");
 const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry } = await import("./commands/task.js");
+const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
 
 const HELP = `
 kb — AI-orchestrated task board
@@ -67,6 +68,8 @@ Usage:
   kb task unpause <id>                Unpause a task (resumes automation)
   kb task retry <id>                  Retry a failed task (clears error, moves to todo)
   kb task import <owner/repo> [opts]  Import GitHub issues as tasks
+  kb settings                          Show current kb configuration
+  kb settings set <key> <value>        Update a configuration setting
 
 Options:
   --port, -p <port>          Dashboard port (default: 4040)
@@ -306,6 +309,28 @@ async function main() {
             process.exit(1);
         }
         break;
+      }
+
+      case "settings": {
+        const subcommand = args[1];
+        if (!subcommand || subcommand === "show") {
+          await runSettingsShow();
+          break;
+        }
+        if (subcommand === "set") {
+          const key = args[2];
+          const value = args.slice(3).join(" ");
+          if (!key || value === undefined) {
+            console.error("Usage: kb settings set <key> <value>");
+            console.error("Example: kb settings set maxConcurrent 4");
+            process.exit(1);
+          }
+          await runSettingsSet(key, value);
+          break;
+        }
+        console.error(`Unknown settings subcommand: ${subcommand}`);
+        console.error("Try: kb settings | kb settings set <key> <value>");
+        process.exit(1);
       }
 
       default:
