@@ -76,6 +76,8 @@
   --surface: #161b22;
   --card: #21262d;
   --card-hover: #282e36;
+  --bg-secondary: #1a1a2e;
+  --bg-tertiary: #252536;
   --border: #30363d;
   --text: #e6edf3;
   --text-muted: #8b949e;
@@ -5118,6 +5120,8 @@ html .column.drag-over * {
   --surface: #f6f8fa;
   --card: #ffffff;
   --card-hover: #f3f4f6;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
   --border: #d0d7de;
 
   /* Text */

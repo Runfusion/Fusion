@@ -99,7 +99,7 @@ export function SteeringTab({ task, addToast }: SteeringTabProps) {
                 style={{
                   marginTop: "4px",
                   padding: "8px 12px",
-                  background: "var(--bg-secondary, #1a1a2e)",
+                  background: "var(--bg-secondary)",
                   borderRadius: "6px",
                   border: "1px solid var(--border, #333)",
                   fontSize: "14px",
@@ -129,7 +129,7 @@ export function SteeringTab({ task, addToast }: SteeringTabProps) {
             padding: "12px",
             fontSize: "14px",
             fontFamily: "inherit",
-            background: "var(--bg-secondary, #1a1a2e)",
+            background: "var(--bg-secondary)",
             border: "1px solid var(--border, #333)",
             borderRadius: "6px",
             color: "inherit",
