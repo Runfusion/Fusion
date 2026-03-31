@@ -1149,7 +1149,7 @@ describe("TaskDetailModal", () => {
       );
 
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(6); // Definition, Activity, Agent Log, Steering, Model, Spec
+      expect(tabs.length).toBe(5); // Definition, Activity, Agent Log, Steering, Model (Spec combined into Definition)
       // Tabs should use class-based styling, not inline styles
       expect(tabs[0].classList.contains("detail-tab")).toBe(true);
       expect(tabs[0].classList.contains("detail-tab-active")).toBe(true); // Definition is default active
@@ -1157,7 +1157,6 @@ describe("TaskDetailModal", () => {
       expect(tabs[2].classList.contains("detail-tab-active")).toBe(false);
       expect(tabs[3].classList.contains("detail-tab-active")).toBe(false);
       expect(tabs[4].classList.contains("detail-tab-active")).toBe(false);
-      expect(tabs[5].classList.contains("detail-tab-active")).toBe(false);
       // Verify no inline padding/fontSize (responsive CSS controls this)
       expect((tabs[0] as HTMLElement).style.padding).toBe("");
       expect((tabs[0] as HTMLElement).style.fontSize).toBe("");
@@ -1521,8 +1520,8 @@ describe("TaskDetailModal", () => {
       // Click Edit button
       fireEvent.click(screen.getByText("Edit"));
 
-      // Should show textarea
-      const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      // Should show spec edit textarea (query by class for specificity)
+      const textarea = container.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
       expect(textarea).toBeTruthy();
       expect(textarea.value).toBe("# Test\n\nSpec content.");
     });
@@ -1541,7 +1540,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByText("Edit"));
-      const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      const textarea = container.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
       fireEvent.change(textarea, { target: { value: "Modified content" } });
 
       // Click Cancel
@@ -1549,7 +1548,7 @@ describe("TaskDetailModal", () => {
 
       // Should show markdown view with original content
       expect(container.querySelector(".markdown-body")).toBeTruthy();
-      expect(screen.queryByRole("textbox")).toBeNull();
+      expect(container.querySelector(".spec-editor-textarea")).toBeNull();
     });
 
     it("saving updates the task and returns to view mode", async () => {
@@ -1570,7 +1569,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByText("Edit"));
-      const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      const textarea = container.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
       fireEvent.change(textarea, { target: { value: "# Updated" } });
 
       fireEvent.click(screen.getByText("Save"));
