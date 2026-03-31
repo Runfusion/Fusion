@@ -517,14 +517,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   private async writeConfig(config: BoardConfig): Promise<void> {
+    const now = new Date().toISOString();
+    // Use INSERT OR REPLACE to ensure the config row exists (handles edge case where row is missing)
     this.db.prepare(
-      `UPDATE config SET nextId = ?, nextWorkflowStepId = ?, settings = ?, workflowSteps = ?, updatedAt = ? WHERE id = 1`,
+      `INSERT OR REPLACE INTO config (id, nextId, nextWorkflowStepId, settings, workflowSteps, updatedAt) 
+       VALUES (1, ?, ?, ?, ?, ?)`,
     ).run(
       config.nextId || 1,
       config.nextWorkflowStepId || 1,
       JSON.stringify(config.settings || {}),
       JSON.stringify(config.workflowSteps || []),
-      new Date().toISOString(),
+      now,
     );
     this.db.bumpLastModified();
     // Also write config.json to disk for backward compatibility
@@ -549,12 +552,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       return taskId;
     });
     // Sync config.json to disk for backward compatibility
-    try {
-      const config = await this.readConfig();
-      await writeFile(this.configPath, JSON.stringify(config, null, 2));
-    } catch {
-      // Non-fatal
-    }
+    // Use withConfigLock to prevent race conditions when creating tasks in parallel
+    await this.withConfigLock(async () => {
+      try {
+        const config = await this.readConfig();
+        const tmpPath = this.configPath + ".tmp";
+        await writeFile(tmpPath, JSON.stringify(config, null, 2));
+        await rename(tmpPath, this.configPath);
+      } catch {
+        // Non-fatal: SQLite is the primary store
+      }
+    });
     return id;
   }
 

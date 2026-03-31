@@ -513,6 +513,81 @@ describe("TaskStore", () => {
       expect(globalStore).toBeDefined();
       expect(globalStore.getSettingsPath()).toContain("settings.json");
     });
+
+    it("updateSettings creates config row if missing and persists settings", async () => {
+      // Manually delete the config row to simulate corruption/edge case
+      const db = (store as any).db;
+      db.prepare("DELETE FROM config WHERE id = 1").run();
+
+      // updateSettings should still work (INSERT OR REPLACE creates row)
+      await store.updateSettings({ maxConcurrent: 7 });
+
+      const settings = await store.getSettings();
+      expect(settings.maxConcurrent).toBe(7);
+
+      // Verify row was recreated
+      const row = db.prepare("SELECT * FROM config WHERE id = 1").get() as any;
+      expect(row).toBeDefined();
+      expect(row.nextId).toBeDefined();
+    });
+
+    it("updateSettings persists multiple settings correctly to SQLite", async () => {
+      await store.updateSettings({
+        maxConcurrent: 3,
+        maxWorktrees: 8,
+        pollIntervalMs: 30000,
+        autoMerge: false,
+        mergeStrategy: "pull-request",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.maxConcurrent).toBe(3);
+      expect(settings.maxWorktrees).toBe(8);
+      expect(settings.pollIntervalMs).toBe(30000);
+      expect(settings.autoMerge).toBe(false);
+      expect(settings.mergeStrategy).toBe("pull-request");
+    });
+
+    it("updateGlobalSettings persists multiple global settings correctly", async () => {
+      await store.updateGlobalSettings({
+        themeMode: "light",
+        colorTheme: "ocean",
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      });
+
+      const settings = await store.getSettings();
+      expect(settings.themeMode).toBe("light");
+      expect(settings.colorTheme).toBe("ocean");
+      expect(settings.ntfyEnabled).toBe(true);
+      expect(settings.ntfyTopic).toBe("test-topic");
+      expect(settings.defaultProvider).toBe("anthropic");
+      expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("settings are correctly merged from all sources", async () => {
+      // Set global settings
+      await store.updateGlobalSettings({ themeMode: "light", ntfyEnabled: true });
+
+      // Set project settings (should override where applicable)
+      await store.updateSettings({ maxConcurrent: 5, autoMerge: false });
+
+      const settings = await store.getSettings();
+
+      // Project settings
+      expect(settings.maxConcurrent).toBe(5);
+      expect(settings.autoMerge).toBe(false);
+
+      // Global settings
+      expect(settings.themeMode).toBe("light");
+      expect(settings.ntfyEnabled).toBe(true);
+
+      // Defaults for unset fields
+      expect(settings.maxWorktrees).toBe(4); // default
+      expect(settings.pollIntervalMs).toBe(15000); // default
+    });
   });
 
   // ── Concurrent stress test ───────────────────────────────────────

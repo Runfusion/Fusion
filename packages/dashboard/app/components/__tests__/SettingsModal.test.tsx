@@ -1391,4 +1391,67 @@ describe("SettingsModal", () => {
     expect(container.querySelector(".settings-scope-global")).toBeTruthy();
     expect(container.querySelector(".settings-scope-project")).toBeNull();
   });
+
+  // --- Settings save error handling tests ---
+
+  it("shows error toast when settings save fails", async () => {
+    (updateSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Failed to save settings"));
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Failed to save settings", "error"));
+
+    // Modal should stay open on error
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("shows error toast when global settings save fails", async () => {
+    (updateGlobalSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Failed to save global settings"));
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    // Switch to Model section (global scope)
+    fireEvent.click(screen.getByText("Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Failed to save global settings", "error"));
+
+    // Modal should stay open on error
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("closes modal and shows success toast when settings save succeeds", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Settings saved", "success"));
+
+    // Modal should close on success
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("handles network error during settings save", async () => {
+    (updateSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network error"));
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Network error", "error"));
+  });
+
+  it("handles 500 server error during settings save", async () => {
+    (updateSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Internal server error"));
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Internal server error", "error"));
+  });
 });
