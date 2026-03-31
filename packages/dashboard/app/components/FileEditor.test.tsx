@@ -252,6 +252,8 @@ describe("FileEditor", () => {
       
       const preview = document.querySelector(".file-editor-preview");
       expect(preview).toBeInTheDocument();
+      // The class includes scrollable styles: flex: 1, min-height: 0, overflow-y: auto
+      expect(preview?.classList.contains("file-editor-preview")).toBe(true);
     });
   });
 });

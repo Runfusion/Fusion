@@ -6029,6 +6029,8 @@ html .column.drag-over * {
   max-width: 1200px;
   height: 80vh;
   max-height: 90vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .file-browser-split {
@@ -6053,6 +6055,7 @@ html .column.drag-over * {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  min-height: 0;
 }
 
 /* File Browser Component */
@@ -6247,6 +6250,7 @@ html .column.drag-over * {
   flex-direction: column;
   overflow: hidden;
   background: var(--bg);
+  min-height: 0;
 }
 
 .file-editor-container .cm-editor {
@@ -6486,6 +6490,7 @@ html .column.drag-over * {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  min-height: 0;
 }
 
 .file-browser {
@@ -6648,6 +6653,9 @@ html .column.drag-over * {
   overflow: hidden;
   background: var(--bg);
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .file-browser-footer {
