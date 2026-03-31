@@ -756,6 +756,13 @@ export function TaskDetailModal({
             )}
           </div>
           <div className="detail-section">
+            {!isEditingSpec && (
+              <div style={{ marginBottom: "12px" }}>
+                <button className="btn btn-sm" onClick={enterSpecEditMode}>
+                  Edit
+                </button>
+              </div>
+            )}
             {isEditingSpec ? (
               <div className="spec-editor-edit-mode">
                 <textarea
@@ -823,13 +830,6 @@ export function TaskDetailModal({
               </div>
             ) : (
               <div className="detail-prompt">(no prompt)</div>
-            )}
-            {!isEditingSpec && (
-              <div style={{ marginTop: "12px" }}>
-                <button className="btn btn-sm" onClick={enterSpecEditMode}>
-                  Edit
-                </button>
-              </div>
             )}
           </div>
           <div className="detail-section">
