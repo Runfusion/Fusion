@@ -141,6 +141,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         });
       }
     });
+
+    // Task deleted
+    this.on("task:deleted", (task) => {
+      this.recordActivity({
+        type: "task:deleted",
+        taskId: task.id,
+        taskTitle: task.title,
+        details: `Task ${task.id} deleted${task.title ? `: ${task.title}` : ""}`,
+      }).catch(() => {
+        // Best-effort: ignore recording errors
+      });
+    });
   }
 
   /**
