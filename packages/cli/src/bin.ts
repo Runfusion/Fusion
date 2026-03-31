@@ -15,6 +15,11 @@ import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 
+// ── Runtime native module resolution patch ───────────────────────────
+// This must be imported before any modules that load native binaries (node-pty)
+// It sets up paths so the standalone binary can find staged native assets.
+import "./runtime/native-patch.js";
+
 // @ts-expect-error -- Bun-only global; undefined in Node
 const isBunBinary = typeof Bun !== "undefined" && !!Bun.embeddedFiles;
 

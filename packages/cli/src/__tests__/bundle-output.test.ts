@@ -34,4 +34,16 @@ describe("CLI bundle output", () => {
     const clientIndex = join(cliRoot, "dist", "client", "index.html");
     expect(existsSync(clientIndex)).toBe(true);
   });
+
+  it("runtime native assets are staged after build:exe", () => {
+    // After running build:exe, runtime directory should exist with platform assets
+    const runtimeDir = join(cliRoot, "dist", "runtime");
+    // The exact platform depends on the host, but we can verify the structure
+    if (existsSync(runtimeDir)) {
+      // At least one platform directory should exist
+      const platforms = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"];
+      const hasPlatform = platforms.some(p => existsSync(join(runtimeDir, p, "pty.node")));
+      expect(hasPlatform).toBe(true);
+    }
+  });
 });

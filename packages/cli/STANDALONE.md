@@ -126,4 +126,27 @@ Prebuilt standalone binaries are available that require no Node.js runtime. You 
 bun run build.ts
 ```
 
+### Runtime Assets
+
+When using standalone binaries, the dashboard's integrated terminal requires native platform assets that must be co-located with the binary:
+
+```
+dist/
+├── kb                    # Binary (or kb-darwin-arm64, kb-linux-x64, etc.)
+├── client/               # Dashboard web assets (required)
+└── runtime/              # Native terminal assets (required for terminal)
+    └── darwin-arm64/     # Platform-specific subdirectory
+        ├── pty.node      # Native PTY module
+        └── spawn-helper  # Unix spawn helper (macOS/Linux only)
+```
+
+**Platform-specific subdirectories:**
+- `darwin-arm64/` - macOS Apple Silicon
+- `darwin-x64/` - macOS Intel  
+- `linux-arm64/` - Linux ARM64
+- `linux-x64/` - Linux x64
+- `win32-x64/` - Windows x64
+
+**Important:** When distributing or moving the binary, ensure the `client/` and `runtime/` directories are copied alongside it. Terminal functionality will be unavailable if runtime assets are missing.
+
 See the [GitHub repository](https://github.com/dustinbyrne/kb) for platform-specific binaries and build instructions.

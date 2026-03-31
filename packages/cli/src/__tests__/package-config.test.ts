@@ -56,6 +56,15 @@ describe("CLI package.json publishing config", () => {
     }
   });
 
+  it("excludes runtime directory from npm package (GitHub Releases only)", () => {
+    // Runtime assets are for standalone binaries distributed via GitHub Releases
+    // npm package should not include them (users install via npm get node-pty naturally)
+    for (const entry of pkg.files) {
+      expect(entry).not.toContain("runtime");
+      expect(entry).not.toMatch(/dist\/runtime/);
+    }
+  });
+
   it("is not private", () => {
     expect(pkg.private).not.toBe(true);
   });

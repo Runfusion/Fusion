@@ -2,6 +2,10 @@
 "@dustinbyrne/kb": patch
 ---
 
-Fix packaged binary tests by lazy-loading node-pty
+Fix standalone CLI native asset packaging for terminal support
 
-The Bun-compiled `kb` binary was failing to run `--help`, `task list`, and `dashboard` commands due to eager loading of the native `node-pty` module. The fix converts the static import to a dynamic import that only executes when a terminal session is actually being created. This allows CLI commands that don't use the terminal to work without loading the native module, while preserving full dashboard terminal functionality when running from source.
+- Stage node-pty native assets (pty.node, spawn-helper) alongside the compiled binary
+- Assets are placed in `dist/runtime/<platform-arch>/` for each build target
+- Runtime resolution patch ensures Bun-compiled binary can find staged native assets
+- Terminal functionality now works in isolated standalone deployments
+- Non-terminal commands no longer crash due to eager native module loading

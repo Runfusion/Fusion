@@ -81,7 +81,7 @@ export async function runTaskList() {
 
   if (tasks.length === 0) {
     console.log("\n  No tasks yet. Create one with: kb task create\n");
-    return;
+    process.exit(0);
   }
 
   console.log();
@@ -105,6 +105,8 @@ export async function runTaskList() {
     }
     console.log();
   }
+
+  process.exit(0);
 }
 
 export async function runTaskUpdate(id: string, stepStr: string, status: string) {

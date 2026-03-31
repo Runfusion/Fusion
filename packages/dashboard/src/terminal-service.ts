@@ -11,15 +11,93 @@ import { EventEmitter } from "events";
 import * as os from "os";
 import * as path from "path";
 import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+
+// Detect if we're running as a Bun-compiled binary
+// @ts-expect-error - Bun global is only available in Bun runtime
+const isBunBinary = typeof Bun !== "undefined" && !!Bun.embeddedFiles;
 
 // Lazy-loaded node-pty module (only loaded when terminal is actually used)
 let ptyModule: typeof import("node-pty") | null = null;
+let ptyLoadError: Error | null = null;
 
-async function getPtyModule(): Promise<typeof import("node-pty")> {
-  if (!ptyModule) {
-    ptyModule = await import("node-pty");
+/**
+ * Find the staged native assets directory for Bun-compiled binaries.
+ * Looks for runtime/<platform-arch>/ next to the binary.
+ */
+function findStagedNativeDir(): string | null {
+  const platform = process.platform === "darwin" ? "darwin" : 
+                   process.platform === "linux" ? "linux" : 
+                   process.platform === "win32" ? "win32" : "unknown";
+  const arch = process.arch === "arm64" ? "arm64" : 
+               process.arch === "x64" ? "x64" : "unknown";
+  const prebuildName = `${platform}-${arch}`;
+
+  // Check KB_RUNTIME_DIR env var first
+  if (process.env.KB_RUNTIME_DIR) {
+    const envPath = join(process.env.KB_RUNTIME_DIR, prebuildName);
+    if (existsSync(join(envPath, "pty.node"))) {
+      return envPath;
+    }
   }
-  return ptyModule;
+
+  // Look next to the executable
+  const execDir = dirname(process.execPath);
+  const nextToBinary = join(execDir, "runtime", prebuildName);
+  if (existsSync(join(nextToBinary, "pty.node"))) {
+    return nextToBinary;
+  }
+
+  return null;
+}
+
+async function loadPtyModule(): Promise<typeof import("node-pty")> {
+  if (ptyModule) {
+    return ptyModule;
+  }
+
+  if (ptyLoadError) {
+    throw ptyLoadError;
+  }
+
+  try {
+    if (isBunBinary) {
+      // In Bun-compiled binary, try to load with direct native path
+      const nativeDir = findStagedNativeDir();
+      if (nativeDir) {
+        // Set spawn-helper directory
+        process.env.NODE_PTY_SPAWN_HELPER_DIR = nativeDir;
+        
+        // Try to load the native module directly first
+        const nativePath = join(nativeDir, "pty.node");
+        if (existsSync(nativePath)) {
+          try {
+            // Use process.dlopen to load the native module directly
+            // This bypasses node-pty's internal resolution
+            const nativeModule = { exports: {} };
+            (process as any).dlopen(nativeModule, nativePath);
+            
+            // Now that we have the native module loaded, try importing node-pty
+            // which should find the already-loaded module
+            const mod = await import("node-pty");
+            ptyModule = mod;
+            return ptyModule as typeof import("node-pty");
+          } catch (directErr) {
+            // Direct loading failed, fall through to standard import
+            console.warn("[terminal] Direct native load failed, trying standard import:", directErr);
+          }
+        }
+      }
+    }
+    
+    // Standard import path
+    const mod = await import("node-pty");
+    ptyModule = mod;
+    return ptyModule as typeof import("node-pty");
+  } catch (err) {
+    ptyLoadError = err instanceof Error ? err : new Error(String(err));
+    throw ptyLoadError;
+  }
 }
 
 // Maximum scrollback buffer size (characters)
@@ -356,8 +434,8 @@ export class TerminalService extends EventEmitter {
 
     console.info(`Creating session ${id} with shell: ${shell} in ${cwd}`);
 
-    // Lazy-load node-pty module
-    const pty = await getPtyModule();
+    // Lazy-load node-pty module with proper error handling
+    const pty = await loadPtyModule();
 
     // Build PTY spawn options
     const ptyOptions: IPtyForkOptions = {

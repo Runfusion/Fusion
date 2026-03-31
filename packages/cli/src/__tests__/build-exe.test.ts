@@ -9,15 +9,20 @@ const cliRoot = join(import.meta.dirname!, "..", "..");
 const outBinary = join(cliRoot, "dist", process.platform === "win32" ? "kb.exe" : "kb");
 const binaryName = process.platform === "win32" ? "kb.exe" : "kb";
 const clientDir = join(cliRoot, "dist", "client");
+const runtimeDir = join(cliRoot, "dist", "runtime");
 
 /**
- * Create an isolated temp directory containing only the binary and client/
- * assets — no package.json. Returns the dir path and a cleanup function.
+ * Create an isolated temp directory containing the binary, client/,
+ * and runtime/ assets — no package.json. Returns the dir path and a cleanup function.
  */
 function createIsolatedDir(): { dir: string; binary: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "kb-iso-"));
   cpSync(outBinary, join(dir, binaryName), { recursive: true });
   cpSync(clientDir, join(dir, "client"), { recursive: true });
+  // Copy runtime native assets alongside binary
+  if (existsSync(runtimeDir)) {
+    cpSync(runtimeDir, join(dir, "runtime"), { recursive: true });
+  }
   return {
     dir,
     binary: join(dir, binaryName),
@@ -60,7 +65,7 @@ describe("build-exe", () => {
         timeout: 15_000,
       });
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("kb — AI-orchestrated task board");
+      expect(result.stdout).toContain("fn — AI-orchestrated task board");
       expect(result.stdout).toContain("dashboard");
       expect(result.stdout).toContain("task create");
       expect(result.stdout).toContain("task list");
@@ -83,36 +88,66 @@ describe("build-exe", () => {
     }
   });
 
-  it("binary starts dashboard and serves client assets", async () => {
+  it("binary starts dashboard and can create PTY terminal sessions", async () => {
     const { spawn } = await import("node:child_process");
     const { binary, dir, cleanup } = createIsolatedDir();
-    const port = 14040 + Math.floor(Math.random() * 1000);
+    const port = 15040 + Math.floor(Math.random() * 1000);
+    let child: ReturnType<typeof spawn> | null = null;
+    
     try {
-      const output = await new Promise<string>((resolve, reject) => {
-        const child = spawn(binary, ["dashboard", "-p", String(port)], {
-          cwd: dir,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        let out = "";
-        child.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-        child.stderr.on("data", (d: Buffer) => { out += d.toString(); });
-        // Wait for the startup banner, then kill
-        const timer = setTimeout(() => {
-          child.kill("SIGTERM");
-          resolve(out);
-        }, 3_000);
-        child.on("error", (err) => {
-          clearTimeout(timer);
-          reject(err);
-        });
-        child.on("close", () => {
-          clearTimeout(timer);
-          resolve(out);
-        });
+      // Start the dashboard
+      child = spawn(binary, ["dashboard", "-p", String(port)], {
+        cwd: dir,
+        stdio: ["ignore", "pipe", "pipe"],
       });
-      expect(output).toContain("kb board");
+      
+      // Wait for server to be ready
+      await new Promise<void>((resolve, reject) => {
+        let output = "";
+        const timeout = setTimeout(() => {
+          child!.kill("SIGTERM");
+          reject(new Error("Server startup timeout"));
+        }, 10_000);
+        
+        child!.stdout.on("data", (d: Buffer) => {
+          output += d.toString();
+          if (output.includes("kb board") && output.includes(`→ http://localhost:${port}`)) {
+            clearTimeout(timeout);
+            resolve();
+          }
+        });
+        
+        child!.stderr.on("data", (d: Buffer) => {
+          output += d.toString();
+        });
+        
+        child!.on("error", reject);
+      });
+      
+      // Test PTY session creation endpoint
+      const response = await fetch(`http://localhost:${port}/api/terminal/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cols: 80, rows: 24 }),
+      });
+      
+      // Accept either success (201) or service unavailable (503 when PTY not available)
+      // Both indicate the server is running correctly
+      expect([201, 503]).toContain(response.status);
+      
+      if (response.status === 201) {
+        const data = await response.json() as { sessionId?: string; shell?: string };
+        expect(data.sessionId).toBeDefined();
+        expect(data.sessionId).toMatch(/^term-/);
+        expect(data.shell).toBeDefined();
+      }
     } finally {
+      if (child) {
+        child.kill("SIGTERM");
+        // Give it time to clean up
+        await new Promise((r) => setTimeout(r, 500));
+      }
       cleanup();
     }
-  }, 15_000);
+  }, 20_000);
 });

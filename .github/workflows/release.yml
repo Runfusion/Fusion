@@ -114,6 +114,7 @@ jobs:
           path: |
             packages/cli/dist/${{ matrix.binary }}
             packages/cli/dist/${{ matrix.binary }}.sha256
+            packages/cli/dist/runtime/**/*
 
   # ── Create GitHub Release ─────────────────────────────────────────────
   github-release:

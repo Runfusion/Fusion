@@ -93,6 +93,24 @@ describe("build-exe-cross: --all builds all platforms", () => {
     expect(existsSync(join(clientDir, "index.html"))).toBe(true);
   });
 
+  it("stages runtime native assets for current platform", () => {
+    // After --all build, runtime directory should have current platform's assets
+    const platform = process.platform === "darwin" ? "darwin" : 
+                     process.platform === "linux" ? "linux" : 
+                     process.platform === "win32" ? "win32" : "unknown";
+    const arch = process.arch === "arm64" ? "arm64" : 
+                 process.arch === "x64" ? "x64" : "unknown";
+    const prebuildName = `${platform}-${arch}`;
+    const runtimeDir = join(distDir, "runtime", prebuildName);
+    
+    // pty.node is required for all platforms
+    expect(existsSync(join(runtimeDir, "pty.node"))).toBe(true);
+    // spawn-helper is only for Unix platforms
+    if (process.platform !== "win32") {
+      expect(existsSync(join(runtimeDir, "spawn-helper"))).toBe(true);
+    }
+  });
+
   it("native-platform binary runs --help", () => {
     const target = nativeTarget();
     if (!target) {
@@ -108,7 +126,7 @@ describe("build-exe-cross: --all builds all platforms", () => {
       timeout: 15_000,
     });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("kb");
+    expect(result.stdout).toContain("fn");
   });
 });
 
