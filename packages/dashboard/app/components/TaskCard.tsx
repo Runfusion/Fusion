@@ -633,7 +633,7 @@ function TaskCardComponent({
         </div>
       )}
       <div className="card-title">
-        {task.title || (task.description ? task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "") : task.id)}
+        {task.title || task.description || task.id}
       </div>
       {task.steps.length > 0 && (() => {
         const completedSteps = task.steps.filter((s) => s.status === "done" || s.status === "skipped").length;
