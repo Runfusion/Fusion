@@ -53,6 +53,60 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
 
+  const handleStartPlanning = useCallback(async (planOverride?: string) => {
+    const plan = planOverride ?? initialPlan;
+    if (!plan.trim()) return;
+
+    setError(null);
+    setStreamingOutput("");
+    setView({ type: "loading" });
+
+    try {
+      // Use streaming mode for real-time AI thinking display
+      const { sessionId } = await startPlanningStreaming(plan.trim());
+      currentSessionIdRef.current = sessionId;
+
+      // Connect to SSE stream
+      const connection = connectPlanningStream(sessionId, {
+        onThinking: (data) => {
+          setStreamingOutput((prev) => prev + data);
+        },
+        onQuestion: (question) => {
+          setView({
+            type: "question",
+            session: { sessionId, currentQuestion: question, summary: null },
+          });
+          setStreamingOutput("");
+        },
+        onSummary: (summary) => {
+          setView({
+            type: "summary",
+            session: { sessionId, currentQuestion: null, summary },
+            summary,
+          });
+          setEditedSummary(summary);
+          setStreamingOutput("");
+        },
+        onError: (message) => {
+          setError(message);
+          setView({ type: "initial" });
+          setStreamingOutput("");
+          currentSessionIdRef.current = null;
+        },
+        onComplete: () => {
+          currentSessionIdRef.current = null;
+        },
+      });
+
+      streamConnectionRef.current = connection;
+      setResponseHistory([]);
+    } catch (err: any) {
+      setError(err.message || "Failed to start planning session");
+      setView({ type: "initial" });
+      currentSessionIdRef.current = null;
+    }
+  }, [initialPlan]);
+
   // Focus textarea when opening
   useEffect(() => {
     if (isOpen && view.type === "initial") {
@@ -64,14 +118,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
   useEffect(() => {
     if (isOpen && initialPlanProp && !hasAutoStartedRef.current && view.type === "initial") {
       setInitialPlan(initialPlanProp);
-      hasAutoStartedRef.current = true;
       // Use a small timeout to allow state update to propagate before starting
       const timer = setTimeout(() => {
-        handleStartPlanningWithPlan(initialPlanProp);
+        // Only mark as auto-started when we actually start planning
+        hasAutoStartedRef.current = true;
+        handleStartPlanning(initialPlanProp);
       }, 0);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, initialPlanProp, view.type]);
+  }, [isOpen, initialPlanProp, view.type, handleStartPlanning]);
 
   // Reset hasAutoStarted when modal closes
   useEffect(() => {
@@ -124,111 +179,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, view]);
-
-  const handleStartPlanning = useCallback(async () => {
-    if (!initialPlan.trim()) return;
-
-    setError(null);
-    setStreamingOutput("");
-    setView({ type: "loading" });
-
-    try {
-      // Use streaming mode for real-time AI thinking display
-      const { sessionId } = await startPlanningStreaming(initialPlan.trim());
-      currentSessionIdRef.current = sessionId;
-
-      // Connect to SSE stream
-      const connection = connectPlanningStream(sessionId, {
-        onThinking: (data) => {
-          setStreamingOutput((prev) => prev + data);
-        },
-        onQuestion: (question) => {
-          setView({
-            type: "question",
-            session: { sessionId, currentQuestion: question, summary: null },
-          });
-          setStreamingOutput("");
-        },
-        onSummary: (summary) => {
-          setView({
-            type: "summary",
-            session: { sessionId, currentQuestion: null, summary },
-            summary,
-          });
-          setEditedSummary(summary);
-          setStreamingOutput("");
-        },
-        onError: (message) => {
-          setError(message);
-          setView({ type: "initial" });
-          setStreamingOutput("");
-          currentSessionIdRef.current = null;
-        },
-        onComplete: () => {
-          currentSessionIdRef.current = null;
-        },
-      });
-
-      streamConnectionRef.current = connection;
-      setResponseHistory([]);
-    } catch (err: any) {
-      setError(err.message || "Failed to start planning session");
-      setView({ type: "initial" });
-      currentSessionIdRef.current = null;
-    }
-  }, [initialPlan]);
-
-  // Helper for auto-start with a specific plan (from prop)
-  const handleStartPlanningWithPlan = useCallback(async (plan: string) => {
-    if (!plan.trim()) return;
-
-    setError(null);
-    setStreamingOutput("");
-    setView({ type: "loading" });
-
-    try {
-      const { sessionId } = await startPlanningStreaming(plan.trim());
-      currentSessionIdRef.current = sessionId;
-
-      const connection = connectPlanningStream(sessionId, {
-        onThinking: (data) => {
-          setStreamingOutput((prev) => prev + data);
-        },
-        onQuestion: (question) => {
-          setView({
-            type: "question",
-            session: { sessionId, currentQuestion: question, summary: null },
-          });
-          setStreamingOutput("");
-        },
-        onSummary: (summary) => {
-          setView({
-            type: "summary",
-            session: { sessionId, currentQuestion: null, summary },
-            summary,
-          });
-          setEditedSummary(summary);
-          setStreamingOutput("");
-        },
-        onError: (message) => {
-          setError(message);
-          setView({ type: "initial" });
-          setStreamingOutput("");
-          currentSessionIdRef.current = null;
-        },
-        onComplete: () => {
-          currentSessionIdRef.current = null;
-        },
-      });
-
-      streamConnectionRef.current = connection;
-      setResponseHistory([]);
-    } catch (err: any) {
-      setError(err.message || "Failed to start planning session");
-      setView({ type: "initial" });
-      currentSessionIdRef.current = null;
-    }
-  }, []);
 
   const handleSubmitResponse = useCallback(
     async (responses: QuestionResponse) => {
@@ -388,7 +338,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
               <div className="planning-view-footer">
                 <button
                   className="btn btn-primary planning-start-btn"
-                  onClick={handleStartPlanning}
+                  onClick={() => handleStartPlanning()}
                   disabled={!initialPlan.trim()}
                 >
                   <Lightbulb size={16} style={{ marginRight: "8px" }} />
