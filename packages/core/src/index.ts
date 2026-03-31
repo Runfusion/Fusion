@@ -1,9 +1,10 @@
-export { COLUMNS, COLUMN_LABELS, COLUMN_DESCRIPTIONS, VALID_TRANSITIONS, DEFAULT_SETTINGS, DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, THINKING_LEVELS, THEME_MODES, COLOR_THEMES, WORKFLOW_STEP_TEMPLATES, AGENT_STATES, AGENT_VALID_TRANSITIONS } from "./types.js";
-export type { Column, IssueInfo, IssueState, PrInfo, PrStatus, Task, TaskAttachment, TaskCreateInput, TaskDetail, AgentLogEntry, AgentLogType, AgentRole, BoardConfig, MergeResult, Settings, GlobalSettings, ProjectSettings, SettingsScope, TaskStep, StepStatus, TaskLogEntry, ActivityLogEntry, ActivityEventType, ThinkingLevel, SteeringComment, ThemeMode, ColorTheme, PlanningQuestion, PlanningSummary, PlanningResponse, PlanningQuestionType, ArchivedTaskEntry, BatchStatusRequest, BatchStatusResponse, BatchStatusEntry, BatchStatusResult, ModelPreset, WorkflowStep, WorkflowStepInput, WorkflowStepResult, WorkflowStepTemplate, AgentState, AgentCapability, Agent, AgentDetail, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput } from "./types.js";
+export { COLUMNS, COLUMN_LABELS, COLUMN_DESCRIPTIONS, VALID_TRANSITIONS, DEFAULT_SETTINGS, DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, THINKING_LEVELS, THEME_MODES, COLOR_THEMES, WORKFLOW_STEP_TEMPLATES } from "./types.js";
+export type { Column, IssueInfo, IssueState, PrInfo, PrStatus, Task, TaskAttachment, TaskCreateInput, TaskDetail, AgentLogEntry, AgentLogType, AgentRole, BoardConfig, MergeResult, Settings, GlobalSettings, ProjectSettings, SettingsScope, TaskStep, StepStatus, TaskLogEntry, ActivityLogEntry, ActivityEventType, ThinkingLevel, SteeringComment, ThemeMode, ColorTheme, PlanningQuestion, PlanningSummary, PlanningResponse, PlanningQuestionType, ArchivedTaskEntry, BatchStatusRequest, BatchStatusResponse, BatchStatusEntry, BatchStatusResult, ModelPreset, WorkflowStep, WorkflowStepInput, WorkflowStepResult, WorkflowStepTemplate } from "./types.js";
 export { TaskStore } from "./store.js";
+export { Database, createDatabase, toJson, toJsonNullable, fromJson } from "./db.js";
+export type { Statement } from "./db.js";
+export { detectLegacyData, migrateFromLegacy, getMigrationStatus } from "./db-migrate.js";
 export { GlobalSettingsStore } from "./global-settings.js";
-export { AgentStore } from "./agent-store.js";
-export type { AgentStoreEvents } from "./agent-store.js";
 export { canTransition, getValidTransitions, resolveDependencyOrder } from "./board.js";
 export { 
   isGhAvailable, 

@@ -12,6 +12,7 @@ import type {
 } from "./automation.js";
 import { AUTOMATION_PRESETS, MAX_RUN_HISTORY } from "./automation.js";
 import type { ScheduleType } from "./automation.js";
+import { Database, toJsonNullable, fromJson } from "./db.js";
 
 export interface AutomationStoreEvents {
   "schedule:created": [schedule: ScheduledTask];
@@ -24,15 +25,83 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   private automationsDir: string;
   /** Per-schedule promise chain for serializing writes. */
   private scheduleLocks: Map<string, Promise<void>> = new Map();
+  /** SQLite database instance */
+  private _db: Database | null = null;
 
   constructor(private rootDir: string) {
     super();
     this.automationsDir = join(rootDir, ".kb", "automations");
   }
 
-  /** Create the .kb/automations/ directory if it doesn't exist. */
+  /**
+   * Get the SQLite database, initializing it on first access.
+   */
+  private get db(): Database {
+    if (!this._db) {
+      const kbDir = join(this.rootDir, ".kb");
+      this._db = new Database(kbDir);
+      this._db.init();
+    }
+    return this._db;
+  }
+
+  /** Initialize the store. */
   async init(): Promise<void> {
+    // Ensure DB is initialized
+    const _ = this.db;
+    // Keep automations dir for backward compat
     await mkdir(this.automationsDir, { recursive: true });
+  }
+
+  // ── Row Conversion ─────────────────────────────────────────────────
+
+  private rowToSchedule(row: any): ScheduledTask {
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description || undefined,
+      scheduleType: row.scheduleType as ScheduleType,
+      cronExpression: row.cronExpression,
+      command: row.command,
+      enabled: row.enabled === 1,
+      timeoutMs: row.timeoutMs ?? undefined,
+      steps: fromJson<ScheduledTask["steps"]>(row.steps),
+      nextRunAt: row.nextRunAt || undefined,
+      lastRunAt: row.lastRunAt || undefined,
+      lastRunResult: fromJson<AutomationRunResult>(row.lastRunResult),
+      runCount: row.runCount || 0,
+      runHistory: fromJson<AutomationRunResult[]>(row.runHistory) || [],
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private upsertSchedule(schedule: ScheduledTask): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO automations (
+        id, name, description, scheduleType, cronExpression, command,
+        enabled, timeoutMs, steps, nextRunAt, lastRunAt, lastRunResult,
+        runCount, runHistory, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      schedule.id,
+      schedule.name,
+      schedule.description ?? null,
+      schedule.scheduleType,
+      schedule.cronExpression,
+      schedule.command,
+      schedule.enabled ? 1 : 0,
+      schedule.timeoutMs ?? null,
+      schedule.steps ? JSON.stringify(schedule.steps) : null,
+      schedule.nextRunAt ?? null,
+      schedule.lastRunAt ?? null,
+      schedule.lastRunResult ? JSON.stringify(schedule.lastRunResult) : null,
+      schedule.runCount || 0,
+      JSON.stringify(schedule.runHistory || []),
+      schedule.createdAt,
+      schedule.updatedAt,
+    );
+    this.db.bumpLastModified();
   }
 
   // ── Locking ────────────────────────────────────────────────────────
@@ -66,6 +135,11 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   }
 
   private async readScheduleJson(id: string): Promise<ScheduledTask> {
+    // Read from SQLite first
+    const row = this.db.prepare('SELECT * FROM automations WHERE id = ?').get(id);
+    if (row) return this.rowToSchedule(row);
+    
+    // Fallback to file
     const filePath = this.schedulePath(id);
     const raw = await readFile(filePath, "utf-8");
     try {
@@ -78,14 +152,19 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   }
 
   /**
-   * Atomically write a schedule JSON file by writing to a temp file first,
-   * then renaming it into place.
+   * Write a schedule to SQLite and also to disk for backward compat.
    */
   private async atomicWriteScheduleJson(id: string, schedule: ScheduledTask): Promise<void> {
-    const filePath = this.schedulePath(id);
-    const tmpPath = filePath + ".tmp";
-    await writeFile(tmpPath, JSON.stringify(schedule, null, 2));
-    await rename(tmpPath, filePath);
+    this.upsertSchedule(schedule);
+    // Also write to disk for backward compatibility
+    try {
+      const filePath = this.schedulePath(id);
+      const tmpPath = filePath + ".tmp";
+      await writeFile(tmpPath, JSON.stringify(schedule, null, 2));
+      await rename(tmpPath, filePath);
+    } catch {
+      // Non-fatal
+    }
   }
 
   // ── Cron Computation ───────────────────────────────────────────────
@@ -168,30 +247,16 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   }
 
   async getSchedule(id: string): Promise<ScheduledTask> {
-    const filePath = this.schedulePath(id);
-    if (!existsSync(filePath)) {
+    const row = this.db.prepare('SELECT * FROM automations WHERE id = ?').get(id);
+    if (!row) {
       throw Object.assign(new Error(`Schedule '${id}' not found`), { code: "ENOENT" });
     }
-    return this.readScheduleJson(id);
+    return this.rowToSchedule(row);
   }
 
   async listSchedules(): Promise<ScheduledTask[]> {
-    if (!existsSync(this.automationsDir)) return [];
-
-    const entries = await readdir(this.automationsDir);
-    const schedules: ScheduledTask[] = [];
-
-    for (const entry of entries) {
-      if (!entry.endsWith(".json") || entry.endsWith(".tmp")) continue;
-      const id = entry.replace(/\.json$/, "");
-      try {
-        schedules.push(await this.readScheduleJson(id));
-      } catch {
-        // skip invalid files
-      }
-    }
-
-    return schedules.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const rows = this.db.prepare('SELECT * FROM automations ORDER BY createdAt ASC').all() as any[];
+    return rows.map((row) => this.rowToSchedule(row));
   }
 
   async updateSchedule(id: string, updates: ScheduledTaskUpdateInput): Promise<ScheduledTask> {
@@ -293,9 +358,17 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   async deleteSchedule(id: string): Promise<ScheduledTask> {
     return this.withScheduleLock(id, async () => {
       const schedule = await this.getSchedule(id);
-      const filePath = this.schedulePath(id);
-      const { unlink } = await import("node:fs/promises");
-      await unlink(filePath);
+      // Delete from SQLite
+      this.db.prepare('DELETE FROM automations WHERE id = ?').run(id);
+      this.db.bumpLastModified();
+      // Also remove file for backward compat
+      try {
+        const filePath = this.schedulePath(id);
+        const { unlink } = await import("node:fs/promises");
+        await unlink(filePath);
+      } catch {
+        // Non-fatal
+      }
       this.emit("schedule:deleted", schedule);
       return schedule;
     });
@@ -335,11 +408,10 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    * Get all schedules that are due to run (nextRunAt <= now and enabled).
    */
   async getDueSchedules(): Promise<ScheduledTask[]> {
-    const schedules = await this.listSchedules();
     const now = new Date().toISOString();
-
-    return schedules.filter(
-      (s) => s.enabled && s.nextRunAt && s.nextRunAt <= now,
-    );
+    const rows = this.db.prepare(
+      'SELECT * FROM automations WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ?'
+    ).all(now) as any[];
+    return rows.map((row) => this.rowToSchedule(row));
   }
 }

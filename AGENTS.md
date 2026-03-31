@@ -33,6 +33,58 @@ Only create changesets for changes that affect the published `@dustinbyrne/kb` p
 
 Only `@dustinbyrne/kb` is published. The others are internal workspace packages.
 
+## SQLite Storage Architecture
+
+kb uses a hybrid storage architecture: structured metadata lives in SQLite while large blob files remain on the filesystem.
+
+### Database Location
+
+- **Project database:** `.kb/kb.db` — SQLite database with WAL mode enabled
+- **Blob files:** `.kb/tasks/{ID}/PROMPT.md`, `agent.log`, `attachments/` — remain on filesystem
+- **Global settings:** `~/.pi/kb/settings.json` — remains file-based (not in SQLite)
+
+### Tables
+
+| Table | Purpose |
+|-------|---------|
+| `tasks` | Task metadata with JSON columns for nested arrays/objects |
+| `config` | Single-row project config (nextId, settings, workflowSteps) |
+| `activityLog` | Activity log entries with indexed timestamp/type/taskId |
+| `archivedTasks` | Compact archived task entries (full metadata as JSON) |
+| `automations` | Scheduled automation definitions |
+| `agents` | Agent state and metadata |
+| `agentHeartbeats` | Agent heartbeat events (FK cascade from agents) |
+| `__meta` | Schema version and change detection timestamp |
+
+### WAL Mode & Concurrency
+
+The database runs in WAL (Write-Ahead Logging) mode for concurrent reader/writer access. Foreign keys are enforced per connection. Change detection uses a monotonic `lastModified` timestamp in the `__meta` table.
+
+### Auto-Migration from Legacy Storage
+
+On first run, if legacy file-based data exists (`.kb/tasks/`, `.kb/config.json`, etc.) but no `.kb/kb.db`, the system automatically migrates all data to SQLite:
+
+1. Config, tasks, activity log, archive, automations, and agents are migrated
+2. Original files are backed up (`.bak` suffix)
+3. Blob files (PROMPT.md, agent.log, attachments) remain in place
+4. Individual `task.json` files are renamed to `task.json.bak`
+5. Migration is idempotent — re-running with an existing database is a no-op
+
+### Recovery
+
+If something goes wrong after migration:
+- Backup files (`.bak`) contain the original data
+- Delete `.kb/kb.db` and rename `.bak` files back to restore legacy storage
+- The system will re-migrate on next startup
+
+### JSON Columns
+
+Nested data (arrays, objects) is stored as JSON text in SQLite columns:
+- Array columns: `dependencies`, `steps`, `log`, `attachments`, `steeringComments`, etc.
+- Nullable object columns: `prInfo`, `issueInfo`, `lastRunResult`
+- Use `toJson()` for array columns, `toJsonNullable()` for nullable object columns
+- Use `fromJson<T>()` to parse JSON columns back to TypeScript types
+
 ## Testing
 
 ```bash

@@ -6,6 +6,8 @@ import { existsSync, watch, type FSWatcher, readFileSync } from "node:fs";
 import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType } from "./types.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS } from "./types.js";
 import { GlobalSettingsStore } from "./global-settings.js";
+import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
+import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
 
 export interface TaskStoreEvents {
   "task:created": [task: Task];
@@ -23,6 +25,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private configPath: string;
   private archiveLogPath: string;
   private activityLogPath: string;
+  /** SQLite database for structured data storage */
+  private _db: Database | null = null;
 
   /** File-system watcher instance */
   private watcher: FSWatcher | null = null;
@@ -40,6 +44,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private configLock: Promise<void> = Promise.resolve();
   /** Global settings store (`~/.pi/kb/settings.json`) */
   private globalSettingsStore: GlobalSettingsStore;
+  /** Polling interval for change detection */
+  private pollInterval: ReturnType<typeof setInterval> | null = null;
+  /** Last known modification timestamp for change detection */
+  private lastKnownModified: number = 0;
 
   constructor(private rootDir: string, globalSettingsDir?: string) {
     super();
@@ -52,12 +60,158 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.globalSettingsStore = new GlobalSettingsStore(globalSettingsDir);
   }
 
+  /**
+   * Get the SQLite database, initializing it on first access.
+   * Also performs auto-migration from legacy file-based storage if needed.
+   */
+  private get db(): Database {
+    if (!this._db) {
+      this._db = new Database(this.kbDir);
+      this._db.init();
+      // Auto-migrate legacy data if needed
+      if (detectLegacyData(this.kbDir)) {
+        // Note: migrateFromLegacy is async but we need sync access.
+        // The init() method handles async migration. This getter
+        // just ensures the DB is available for synchronous operations.
+      }
+    }
+    return this._db;
+  }
+
   async init(): Promise<void> {
     await mkdir(this.tasksDir, { recursive: true });
-    if (!existsSync(this.configPath)) {
-      await this.writeConfig({ nextId: 1 });
+    
+    // Initialize SQLite database
+    if (!this._db) {
+      this._db = new Database(this.kbDir);
+      this._db.init();
     }
+    
+    // Auto-migrate from legacy file-based storage
+    if (detectLegacyData(this.kbDir)) {
+      await migrateFromLegacy(this.kbDir, this._db);
+    }
+    
+    // Write config.json for backward compatibility if it doesn't exist
+    if (!existsSync(this.configPath)) {
+      const config = await this.readConfig();
+      try {
+        await writeFile(this.configPath, JSON.stringify(config, null, 2));
+      } catch {
+        // Non-fatal
+      }
+    }
+    
     this.setupActivityLogListeners();
+  }
+
+  // ── Row <-> Task Conversion ────────────────────────────────────────
+
+  /**
+   * Convert a database row to a Task object, parsing JSON columns.
+   */
+  private rowToTask(row: any): Task {
+    return {
+      id: row.id,
+      title: row.title || undefined,
+      description: row.description,
+      column: row.column as Column,
+      status: row.status || undefined,
+      size: row.size || undefined,
+      reviewLevel: row.reviewLevel ?? undefined,
+      currentStep: row.currentStep || 0,
+      worktree: row.worktree || undefined,
+      blockedBy: row.blockedBy || undefined,
+      paused: row.paused ? true : undefined,
+      baseBranch: row.baseBranch || undefined,
+      modelPresetId: row.modelPresetId || undefined,
+      modelProvider: row.modelProvider || undefined,
+      modelId: row.modelId || undefined,
+      validatorModelProvider: row.validatorModelProvider || undefined,
+      validatorModelId: row.validatorModelId || undefined,
+      mergeRetries: row.mergeRetries ?? undefined,
+      error: row.error || undefined,
+      summary: row.summary || undefined,
+      thinkingLevel: row.thinkingLevel || undefined,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      columnMovedAt: row.columnMovedAt || undefined,
+      dependencies: fromJson<string[]>(row.dependencies) || [],
+      steps: fromJson<import("./types.js").TaskStep[]>(row.steps) || [],
+      log: fromJson<import("./types.js").TaskLogEntry[]>(row.log) || [],
+      attachments: (() => { const a = fromJson<TaskAttachment[]>(row.attachments); return a && a.length > 0 ? a : undefined; })(),
+      steeringComments: (() => { const s = fromJson<import("./types.js").SteeringComment[]>(row.steeringComments); return s && s.length > 0 ? s : undefined; })(),
+      workflowStepResults: (() => { const w = fromJson<import("./types.js").WorkflowStepResult[]>(row.workflowStepResults); return w && w.length > 0 ? w : undefined; })(),
+      prInfo: fromJson<import("./types.js").PrInfo>(row.prInfo),
+      issueInfo: fromJson<import("./types.js").IssueInfo>(row.issueInfo),
+      breakIntoSubtasks: row.breakIntoSubtasks ? true : undefined,
+      enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return e && e.length > 0 ? e : undefined; })(),
+    };
+  }
+
+  /**
+   * Upsert a task to the database. Used by create and update operations.
+   */
+  private upsertTask(task: Task): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO tasks (
+        id, title, description, "column", status, size, reviewLevel, currentStep,
+        worktree, blockedBy, paused, baseBranch, modelPresetId, modelProvider,
+        modelId, validatorModelProvider, validatorModelId, mergeRetries, error,
+        summary, thinkingLevel, createdAt, updatedAt, columnMovedAt,
+        dependencies, steps, log, attachments, steeringComments,
+        workflowStepResults, prInfo, issueInfo, breakIntoSubtasks,
+        enabledWorkflowSteps
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      )
+    `).run(
+      task.id,
+      task.title ?? null,
+      task.description,
+      task.column,
+      task.status ?? null,
+      task.size ?? null,
+      task.reviewLevel ?? null,
+      task.currentStep || 0,
+      task.worktree ?? null,
+      task.blockedBy ?? null,
+      task.paused ? 1 : 0,
+      task.baseBranch ?? null,
+      task.modelPresetId ?? null,
+      task.modelProvider ?? null,
+      task.modelId ?? null,
+      task.validatorModelProvider ?? null,
+      task.validatorModelId ?? null,
+      task.mergeRetries ?? null,
+      task.error ?? null,
+      task.summary ?? null,
+      task.thinkingLevel ?? null,
+      task.createdAt,
+      task.updatedAt,
+      task.columnMovedAt ?? null,
+      toJson(task.dependencies || []),
+      toJson(task.steps || []),
+      toJson(task.log || []),
+      toJson(task.attachments || []),
+      toJson(task.steeringComments || []),
+      toJson(task.workflowStepResults || []),
+      toJsonNullable(task.prInfo),
+      toJsonNullable(task.issueInfo),
+      task.breakIntoSubtasks ? 1 : 0,
+      toJson(task.enabledWorkflowSteps || []),
+    );
+    this.db.bumpLastModified();
+  }
+
+  /**
+   * Read a task from SQLite by ID.
+   */
+  private readTaskFromDb(id: string): Task | undefined {
+    const row = this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+    if (!row) return undefined;
+    return this.rowToTask(row);
   }
 
   /**
@@ -202,20 +356,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
-   * Read and parse a task.json file. Throws immediately on invalid JSON —
-   * atomic writes (write-to-temp-then-rename) prevent partial-write
-   * corruption, so a `SyntaxError` indicates a real bug rather than a race.
+   * Read a task from SQLite by ID (extracted from dir path for backward compat).
+   * Falls back to file-based reading if not in DB.
    */
   private async readTaskJson(dir: string): Promise<Task> {
+    // Extract task ID from directory path (handles both / and \ separators)
+    const parts = dir.replace(/\\/g, "/").split("/");
+    const id = parts[parts.length - 1];
+    
+    // Try SQLite first
+    const task = this.readTaskFromDb(id);
+    if (task) return task;
+    
+    // Fallback to file-based reading (for legacy compatibility)
     const filePath = join(dir, "task.json");
     const raw = await readFile(filePath, "utf-8");
     try {
-      const task = JSON.parse(raw) as Task;
-      // Normalize legacy task.json files so newer code can safely mutate them.
-      if (!Array.isArray(task.log)) task.log = [];
-      if (!Array.isArray(task.dependencies)) task.dependencies = [];
-      if (!Array.isArray(task.steps)) task.steps = [];
-      return task;
+      const fileTask = JSON.parse(raw) as Task;
+      if (!Array.isArray(fileTask.log)) fileTask.log = [];
+      if (!Array.isArray(fileTask.dependencies)) fileTask.dependencies = [];
+      if (!Array.isArray(fileTask.steps)) fileTask.steps = [];
+      return fileTask;
     } catch (err) {
       throw new Error(
         `Failed to parse task.json at ${filePath}: ${(err as Error).message}`,
@@ -224,11 +385,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
-   * Atomically write a task.json file by writing to a temp file first,
-   * then renaming it into place. The rename is atomic on POSIX filesystems,
-   * preventing partial writes from corrupting the file on crash/kill.
+   * Write a task to SQLite (primary store) and also write task.json to disk
+   * for backward compatibility and debugging.
    */
   private async atomicWriteTaskJson(dir: string, task: Task): Promise<void> {
+    this.upsertTask(task);
+    // Also write to disk for backward compatibility
     const taskJsonPath = join(dir, "task.json");
     const tmpPath = join(dir, "task.json.tmp");
     this.suppressWatcher(taskJsonPath);
@@ -338,34 +500,58 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   private async readConfig(): Promise<BoardConfig> {
-    const data = await readFile(this.configPath, "utf-8");
-    return JSON.parse(data);
-  }
-
-  /**
-   * Atomically write config.json by writing to a temp file first, then
-   * renaming into place. The rename is atomic on POSIX filesystems,
-   * preventing partial writes from corrupting the file.
-   */
-  private async atomicWriteConfig(config: BoardConfig): Promise<void> {
-    const tmpPath = this.configPath + ".tmp";
-    await writeFile(tmpPath, JSON.stringify(config, null, 2));
-    await rename(tmpPath, this.configPath);
+    const row = this.db.prepare("SELECT * FROM config WHERE id = 1").get() as any;
+    if (!row) {
+      return { nextId: 1 };
+    }
+    return {
+      nextId: row.nextId || 1,
+      settings: fromJson<Settings>(row.settings),
+      workflowSteps: fromJson<import("./types.js").WorkflowStep[]>(row.workflowSteps),
+      nextWorkflowStepId: row.nextWorkflowStepId || 1,
+    };
   }
 
   private async writeConfig(config: BoardConfig): Promise<void> {
-    await this.atomicWriteConfig(config);
+    this.db.prepare(
+      `UPDATE config SET nextId = ?, nextWorkflowStepId = ?, settings = ?, workflowSteps = ?, updatedAt = ? WHERE id = 1`,
+    ).run(
+      config.nextId || 1,
+      config.nextWorkflowStepId || 1,
+      JSON.stringify(config.settings || {}),
+      JSON.stringify(config.workflowSteps || []),
+      new Date().toISOString(),
+    );
+    this.db.bumpLastModified();
+    // Also write config.json to disk for backward compatibility
+    try {
+      const tmpPath = this.configPath + ".tmp";
+      await writeFile(tmpPath, JSON.stringify(config, null, 2));
+      await rename(tmpPath, this.configPath);
+    } catch {
+      // Best-effort: SQLite is the primary store
+    }
   }
 
   private async allocateId(): Promise<string> {
-    return this.withConfigLock(async () => {
-      const config = await this.readConfig();
-      const prefix = config.settings?.taskPrefix || "KB";
-      const id = `${prefix}-${String(config.nextId).padStart(3, "0")}`;
-      config.nextId++;
-      await this.writeConfig(config);
-      return id;
+    const id = this.db.transaction(() => {
+      const row = this.db.prepare("SELECT nextId, settings FROM config WHERE id = 1").get() as any;
+      const settings = fromJson<Settings>(row.settings);
+      const prefix = settings?.taskPrefix || "KB";
+      const nextId = row.nextId || 1;
+      const taskId = `${prefix}-${String(nextId).padStart(3, "0")}`;
+      this.db.prepare("UPDATE config SET nextId = ? WHERE id = 1").run(nextId + 1);
+      this.db.bumpLastModified();
+      return taskId;
     });
+    // Sync config.json to disk for backward compatibility
+    try {
+      const config = await this.readConfig();
+      await writeFile(this.configPath, JSON.stringify(config, null, 2));
+    } catch {
+      // Non-fatal
+    }
+    return id;
   }
 
   private taskDir(id: string): string {
@@ -542,18 +728,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
-   * Read a task's JSON and prompt content.
-   *
-   * Retries once after a short delay on non-ENOENT errors to handle
-   * transient read failures caused by concurrent `writeFile` calls
-   * (e.g. partial JSON from a non-atomic write during executor updates).
+   * Read a task and its prompt content.
    */
   async getTask(id: string): Promise<TaskDetail> {
-    const dir = this.taskDir(id);
-    const task = await this.readTaskJson(dir);
+    const task = this.readTaskFromDb(id);
+    if (!task) {
+      throw new Error(`Task ${id} not found`);
+    }
 
     let prompt = "";
-    const promptPath = join(dir, "PROMPT.md");
+    const promptPath = join(this.taskDir(id), "PROMPT.md");
     if (existsSync(promptPath)) {
       prompt = await readFile(promptPath, "utf-8");
     }
@@ -562,21 +746,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   async listTasks(options?: { limit?: number; offset?: number }): Promise<Task[]> {
-    if (!existsSync(this.tasksDir)) return [];
+    const rows = this.db.prepare('SELECT * FROM tasks ORDER BY createdAt ASC').all();
+    const tasks = (rows as any[]).map((row) => this.rowToTask(row));
 
-    const entries = await readdir(this.tasksDir, { withFileTypes: true });
-    const tasks: Task[] = [];
-
-    for (const entry of entries) {
-      if (entry.isDirectory() && /^[A-Z]+-\d+$/.test(entry.name)) {
-        try {
-          tasks.push(await this.readTaskJson(join(this.tasksDir, entry.name)));
-        } catch {
-          // skip invalid task dirs
-        }
-      }
-    }
-
+    // Sort by createdAt, then by numeric ID suffix for tie-breaking
     const sorted = tasks.sort((a, b) => {
       const cmp = a.createdAt.localeCompare(b.createdAt);
       if (cmp !== 0) return cmp;
@@ -954,17 +1127,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async deleteTask(id: string): Promise<Task> {
     return this.withTaskLock(id, async () => {
-      const dir = this.taskDir(id);
-      const task = await this.readTaskJson(dir);
+      const task = this.readTaskFromDb(id);
+      if (!task) {
+        throw new Error(`Task ${id} not found`);
+      }
 
-      const taskJsonPath = join(dir, "task.json");
-      this.suppressWatcher(taskJsonPath);
+      // Delete from SQLite
+      this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+      this.db.bumpLastModified();
 
       // Remove from cache if watcher is active
       if (this.watcher) this.taskCache.delete(id);
 
-      const { rm } = await import("node:fs/promises");
-      await rm(dir, { recursive: true });
+      // Delete directory from disk
+      const dir = this.taskDir(id);
+      if (existsSync(dir)) {
+        const { rm } = await import("node:fs/promises");
+        await rm(dir, { recursive: true });
+      }
 
       this.emit("task:deleted", task);
       return task;
@@ -1162,8 +1342,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           error: task.error,
         };
 
-        // Write to archive.jsonl atomically (append only)
-        await appendFile(this.archiveLogPath, JSON.stringify(entry) + "\n");
+        // Write to archivedTasks table in SQLite
+        this.db.prepare(
+          `INSERT OR REPLACE INTO archivedTasks (id, data, archivedAt) VALUES (?, ?, ?)`,
+        ).run(entry.id, JSON.stringify(entry), entry.archivedAt!);
+
+        // Remove from tasks table
+        this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+        this.db.bumpLastModified();
 
         // Remove task directory recursively
         const { rm } = await import("node:fs/promises");
@@ -1174,7 +1360,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           this.taskCache.delete(id);
         }
       } else {
-        // Normal archive - just write task.json
+        // Normal archive - update task in SQLite
         await this.atomicWriteTaskJson(dir, task);
 
         // Update cache if watcher is active
@@ -1268,12 +1454,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   // ── File-system watcher ───────────────────────────────────────────
 
   /**
-   * Start watching the tasks directory for external changes.
+   * Start watching for changes via SQLite polling.
    * Populates the in-memory cache and begins emitting events for
-   * any task.json mutations made outside this process.
+   * any task mutations.
    */
   async watch(): Promise<void> {
-    if (this.watcher) return; // already watching
+    if (this.watcher || this.pollInterval) return; // already watching
 
     // Populate cache with current state
     const tasks = await this.listTasks();
@@ -1282,28 +1468,83 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.taskCache.set(task.id, { ...task });
     }
 
+    // Store current lastModified
+    this.lastKnownModified = this.db.getLastModified();
+
+    // Use a sentinel watcher object so existing code that checks `this.watcher` still works
     try {
       this.watcher = watch(this.tasksDir, { recursive: true }, (_event, filename) => {
-        if (typeof filename !== "string") return;
-        this.handleFsChange(filename);
+        // No-op - we use polling now, but keep watcher for API compat
       });
-
-      // Ignore watcher errors (e.g. dir deleted) – just stop watching
       this.watcher.on("error", () => {
-        this.stopWatching();
+        // Ignore errors
       });
     } catch {
-      // fs.watch may throw on some platforms; silently degrade
+      // fs.watch may not be available - that's fine
+    }
+
+    // Poll for changes every second
+    this.pollInterval = setInterval(() => {
+      this.checkForChanges();
+    }, 1000);
+  }
+
+  /**
+   * Check for changes by comparing lastModified timestamps.
+   */
+  private checkForChanges(): void {
+    try {
+      const currentModified = this.db.getLastModified();
+      if (currentModified <= this.lastKnownModified) return;
+      this.lastKnownModified = currentModified;
+
+      // Reload all tasks and diff against cache
+      const rows = this.db.prepare('SELECT * FROM tasks').all() as any[];
+      const currentTasks = new Map<string, Task>();
+      for (const row of rows) {
+        const task = this.rowToTask(row);
+        currentTasks.set(task.id, task);
+      }
+
+      // Check for deleted tasks
+      for (const [id, cached] of this.taskCache) {
+        if (!currentTasks.has(id)) {
+          this.taskCache.delete(id);
+          this.emit("task:deleted", cached);
+        }
+      }
+
+      // Check for new and updated tasks
+      for (const [id, task] of currentTasks) {
+        const cached = this.taskCache.get(id);
+        if (!cached) {
+          this.taskCache.set(id, { ...task });
+          this.emit("task:created", task);
+        } else if (cached.column !== task.column) {
+          const from = cached.column;
+          this.taskCache.set(id, { ...task });
+          this.emit("task:moved", { task, from, to: task.column });
+        } else if (JSON.stringify(cached) !== JSON.stringify(task)) {
+          this.taskCache.set(id, { ...task });
+          this.emit("task:updated", task);
+        }
+      }
+    } catch {
+      // Ignore polling errors
     }
   }
 
   /**
-   * Stop the file-system watcher and clean up.
+   * Stop watching and clean up.
    */
   stopWatching(): void {
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
+    }
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
     }
     for (const timer of this.debounceTimers.values()) {
       clearTimeout(timer);
@@ -1776,45 +2017,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   // ── Archive Cleanup Methods ─────────────────────────────────────────
 
   /**
-   * Read and parse the archive log file (archive.jsonl).
-   * Returns empty array if archive file doesn't exist.
+   * Read all archived task entries from SQLite.
    */
   async readArchiveLog(): Promise<import("./types.js").ArchivedTaskEntry[]> {
-    if (!existsSync(this.archiveLogPath)) {
-      return [];
-    }
-
-    const content = await readFile(this.archiveLogPath, "utf-8");
-    const entries: import("./types.js").ArchivedTaskEntry[] = [];
-
-    for (const line of content.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        entries.push(JSON.parse(line) as import("./types.js").ArchivedTaskEntry);
-      } catch {
-        // Skip malformed lines
-      }
-    }
-
-    return entries;
+    const rows = this.db.prepare("SELECT * FROM archivedTasks ORDER BY archivedAt DESC").all() as any[];
+    return rows.map((row) => JSON.parse(row.data) as import("./types.js").ArchivedTaskEntry);
   }
 
   /**
-   * Find a specific task in the archive log by ID.
-   * Returns undefined if not found or archive doesn't exist.
+   * Find a specific task in the archive by ID.
    */
   async findInArchive(id: string): Promise<import("./types.js").ArchivedTaskEntry | undefined> {
-    const entries = await this.readArchiveLog();
-    return entries.find((e) => e.id === id);
+    const row = this.db.prepare("SELECT * FROM archivedTasks WHERE id = ?").get(id) as any;
+    if (!row) return undefined;
+    return JSON.parse(row.data) as import("./types.js").ArchivedTaskEntry;
   }
 
   /**
-   * Cleanup archived tasks by condensing them into compact archive entries.
-   * For each archived task with an existing directory:
-   * - Creates a compact archive entry (metadata only, no agent logs)
-   * - Appends entry to archive.jsonl atomically
-   * - Removes the entire task directory
-   * Skips tasks already cleaned up (directory already gone).
+   * Cleanup archived tasks by writing compact entries to archivedTasks table
+   * and removing task directories. Also removes from tasks table.
    */
   async cleanupArchivedTasks(): Promise<string[]> {
     const archivedTasks = await this.listTasks().then((tasks) =>
@@ -1861,8 +2082,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         error: task.error,
       };
 
-      // Atomic append to archive.jsonl
-      await appendFile(this.archiveLogPath, JSON.stringify(entry) + "\n");
+      // Write to archivedTasks table
+      this.db.prepare(
+        `INSERT OR REPLACE INTO archivedTasks (id, data, archivedAt) VALUES (?, ?, ?)`,
+      ).run(entry.id, JSON.stringify(entry), entry.archivedAt);
+
+      // Remove task from tasks table
+      this.db.prepare('DELETE FROM tasks WHERE id = ?').run(task.id);
+      this.db.bumpLastModified();
 
       // Remove task directory recursively
       const { rm } = await import("node:fs/promises");
@@ -2150,18 +2377,14 @@ ${notificationsSection}`;
    * Synchronous version of getSettings for internal use.
    * Returns project-level settings merged with defaults.
    * Note: This does NOT merge global settings because it's synchronous
-   * and global settings require async I/O. For prompt generation this
-   * is fine since the fields used (ntfyEnabled, ntfyTopic) will be
-   * present in project config for backward compatibility.
+   * and global settings require async I/O.
    */
   private getSettingsSync(): Settings {
-    // Since we can't easily make generateSpecifiedPrompt async,
-    // we read settings synchronously from the file.
-    // The settings file is read during init and on each update,
-    // so this should be reasonably up-to-date for prompt generation.
     try {
-      const config = JSON.parse(readFileSync(this.configPath, "utf-8"));
-      return { ...DEFAULT_SETTINGS, ...config.settings };
+      const row = this.db.prepare("SELECT settings FROM config WHERE id = 1").get() as any;
+      if (!row) return DEFAULT_SETTINGS;
+      const settings = fromJson<Settings>(row.settings);
+      return { ...DEFAULT_SETTINGS, ...settings };
     } catch {
       return DEFAULT_SETTINGS;
     }
@@ -2170,8 +2393,7 @@ ${notificationsSection}`;
   // ── Activity Log Methods ─────────────────────────────────────────
 
   /**
-   * Record an activity log entry to the global activity log.
-   * Appends to .kb/activity-log.jsonl (JSON Lines format).
+   * Record an activity log entry to the SQLite database.
    * Auto-generates ID and timestamp.
    */
   async recordActivity(entry: Omit<ActivityLogEntry, "id" | "timestamp">): Promise<ActivityLogEntry> {
@@ -2182,7 +2404,19 @@ ${notificationsSection}`;
     };
 
     try {
-      await appendFile(this.activityLogPath, JSON.stringify(fullEntry) + "\n");
+      this.db.prepare(
+        `INSERT INTO activityLog (id, timestamp, type, taskId, taskTitle, details, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        fullEntry.id,
+        fullEntry.timestamp,
+        fullEntry.type,
+        fullEntry.taskId ?? null,
+        fullEntry.taskTitle ?? null,
+        fullEntry.details,
+        fullEntry.metadata ? JSON.stringify(fullEntry.metadata) : null,
+      );
+      this.db.bumpLastModified();
     } catch (err) {
       // Best-effort: log errors but don't break operations
       console.error("Failed to record activity:", err);
@@ -2192,61 +2426,49 @@ ${notificationsSection}`;
   }
 
   /**
-   * Get activity log entries from the JSONL file.
+   * Get activity log entries from SQLite.
    * Returns entries sorted newest first.
    * Supports filtering by limit, since timestamp, and event type.
    */
   async getActivityLog(options?: { limit?: number; since?: string; type?: ActivityEventType }): Promise<ActivityLogEntry[]> {
-    if (!existsSync(this.activityLogPath)) {
-      return [];
-    }
+    let sql = "SELECT * FROM activityLog WHERE 1=1";
+    const params: any[] = [];
 
-    const content = await readFile(this.activityLogPath, "utf-8");
-    const entries: ActivityLogEntry[] = [];
-
-    for (const line of content.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        entries.push(JSON.parse(line) as ActivityLogEntry);
-      } catch {
-        // Skip malformed lines
-      }
-    }
-
-    // Filter by since timestamp if provided
-    let filtered = entries;
     if (options?.since) {
-      filtered = filtered.filter((e) => e.timestamp > options.since!);
+      sql += " AND timestamp > ?";
+      params.push(options.since);
     }
 
-    // Filter by type if provided
     if (options?.type) {
-      filtered = filtered.filter((e) => e.type === options.type);
+      sql += " AND type = ?";
+      params.push(options.type);
     }
 
-    // Sort newest first (by timestamp descending)
-    filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    sql += " ORDER BY timestamp DESC";
 
-    // Apply limit if provided
     if (options?.limit && options.limit > 0) {
-      filtered = filtered.slice(0, options.limit);
+      sql += " LIMIT ?";
+      params.push(options.limit);
     }
 
-    return filtered;
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map((row) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      type: row.type as ActivityEventType,
+      taskId: row.taskId || undefined,
+      taskTitle: row.taskTitle || undefined,
+      details: row.details,
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+    }));
   }
 
   /**
-   * Clear all activity log entries by truncating the log file.
+   * Clear all activity log entries.
    * Use with caution - this permanently deletes activity history.
    */
   async clearActivityLog(): Promise<void> {
-    try {
-      if (existsSync(this.activityLogPath)) {
-        await writeFile(this.activityLogPath, "", "utf-8");
-      }
-    } catch (err) {
-      console.error("Failed to clear activity log:", err);
-      throw err;
-    }
+    this.db.prepare("DELETE FROM activityLog").run();
+    this.db.bumpLastModified();
   }
 }
