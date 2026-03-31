@@ -25,6 +25,9 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
   const [loadingRemotes, setLoadingRemotes] = useState(false);
   const [selectedRemoteName, setSelectedRemoteName] = useState<string>("");
   const mountedRef = useRef(false);
+  
+  // Track which owner/repo we've already auto-loaded to prevent duplicate loads
+  const autoLoadedRef = useRef<{ owner: string; repo: string; labels: string } | null>(null);
 
   // Build set of already imported URLs from existing tasks
   const importedUrls = new Set<string>();
@@ -48,6 +51,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
       setRemotes([]);
       setLoadingRemotes(true);
       setSelectedRemoteName("");
+      autoLoadedRef.current = null;
 
       mountedRef.current = true;
 
@@ -100,16 +104,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
     }
   }, [remotes]);
 
-  // Handle escape key
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [isOpen, onClose]);
-
+  // Handle load issues - defined BEFORE the auto-load useEffect
   const handleLoad = useCallback(async () => {
     if (!owner.trim() || !repo.trim()) {
       setError("Repository must be selected");
@@ -137,6 +132,37 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
       setLoading(false);
     }
   }, [owner, repo, labels]);
+
+  // Auto-load issues when owner and repo are set and valid
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!owner.trim() || !repo.trim()) return;
+    if (loading || importing) return;
+    
+    // Check if we've already auto-loaded for this exact combination
+    const currentKey = { owner: owner.trim(), repo: repo.trim(), labels: labels.trim() };
+    if (
+      autoLoadedRef.current?.owner === currentKey.owner &&
+      autoLoadedRef.current?.repo === currentKey.repo &&
+      autoLoadedRef.current?.labels === currentKey.labels
+    ) {
+      return;
+    }
+    
+    // Mark as auto-loaded and trigger the load
+    autoLoadedRef.current = currentKey;
+    handleLoad();
+  }, [owner, repo, labels, isOpen, loading, importing, handleLoad]);
+
+  // Handle escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [isOpen, onClose]);
 
   const handleImport = useCallback(async () => {
     if (selectedIssueNumber === null) return;
@@ -294,7 +320,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks }: GitHubIm
                   onClick={handleLoad}
                   disabled={loading || importing || !owner.trim() || !repo.trim()}
                 >
-                  {loading ? <Loader2 size={14} className="spin" /> : "Load"}
+                  {loading ? <Loader2 size={14} className="spin" /> : "Refresh"}
                 </button>
                 <small>Load issues from the selected repository without changing any board data.</small>
               </div>
