@@ -773,9 +773,14 @@ export class TaskExecutor {
       description:
         "Signal that all steps are complete, tests pass, and documentation is updated. " +
         "Call this as the final action after finishing all work. " +
-        "Automatically marks all remaining steps as done.",
-      parameters: Type.Object({}),
-      execute: async () => {
+        "Automatically marks all remaining steps as done. " +
+        "Optionally provide a summary of what was changed/fixed.",
+      parameters: Type.Object({
+        summary: Type.Optional(Type.String({
+          description: "Optional summary of what was changed/fixed and what was verified (2-4 sentences)",
+        })),
+      }),
+      execute: async (_id: string, params: { summary?: string }) => {
         onDone();
         // Mark all pending/in-progress steps as done
         const task = await store.getTask(taskId);
@@ -784,9 +789,16 @@ export class TaskExecutor {
             await store.updateStep(taskId, i, "done");
           }
         }
+        // Save summary if provided
+        if (params.summary) {
+          await store.updateTask(taskId, { summary: params.summary });
+        }
         await store.logEntry(taskId, "Task marked done by agent");
+        const successMessage = params.summary
+          ? "Task marked complete with summary. All steps done. Moving to in-review."
+          : "Task marked complete. All steps done. Moving to in-review.";
         return {
-          content: [{ type: "text" as const, text: "Task marked complete. All steps done. Moving to in-review." }],
+          content: [{ type: "text" as const, text: successMessage }],
           details: {},
         };
       },

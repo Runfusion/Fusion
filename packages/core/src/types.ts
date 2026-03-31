@@ -186,6 +186,8 @@ export interface Task {
   mergeRetries?: number;
   /** Error message from the last failure, if the task failed during execution */
   error?: string;
+  /** Optional summary of what was changed/fixed when task is completed */
+  summary?: string;
   /** ISO-8601 timestamp of when the task last entered its current column.
    *  Used to sort cards within a column so that recently-moved cards appear at the top. */
   columnMovedAt?: string;

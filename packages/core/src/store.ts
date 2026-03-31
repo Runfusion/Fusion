@@ -550,7 +550,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
@@ -622,6 +622,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.error = undefined;
       } else if (updates.error !== undefined) {
         task.error = updates.error;
+      }
+      if (updates.summary === null) {
+        task.summary = undefined;
+      } else if (updates.summary !== undefined) {
+        task.summary = updates.summary;
       }
       task.updatedAt = new Date().toISOString();
 
