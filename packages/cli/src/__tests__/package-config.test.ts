@@ -19,9 +19,9 @@ function loadWorkflowYaml(name: string): any {
 describe("CLI package.json publishing config", () => {
   const pkg = loadPackageJson("cli");
 
-  it('has "bin" field with kb pointing to ./dist/bin.js', () => {
+  it('has "bin" field with fn pointing to ./dist/bin.js', () => {
     expect(pkg.bin).toBeDefined();
-    expect(pkg.bin.kb).toBe("./dist/bin.js");
+    expect(pkg.bin.fn).toBe("./dist/bin.js");
   });
 
   it('has "files" array with refined globs for dist output', () => {

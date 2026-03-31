@@ -6,7 +6,7 @@
     "pi-package"
   ],
   "bin": {
-    "kb": "./dist/bin.js"
+    "fn": "./dist/bin.js"
   },
   "pi": {
     "extensions": [
