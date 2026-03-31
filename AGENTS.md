@@ -344,6 +344,74 @@ Controls how worktree directory names are generated when `recycleWorktrees` is N
 - Task branches are always named `kb/{task-id}` regardless of this setting
 - When using `"task-title"` mode, special characters are replaced with hyphens and the result is lowercased
 
+### `autoBackupEnabled` (default: `false`)
+
+When true, enables automatic database backups for the kb SQLite database.
+
+**How it works:**
+- When enabled, the system creates scheduled automation to run backups on the configured schedule
+- Backups are timestamped copies of `.kb/kb.db` stored in the backup directory
+- Old backups are automatically cleaned up based on the retention setting
+- Manual backups can still be created via CLI or dashboard even when auto-backup is disabled
+
+**Configuration:**
+```json
+{
+  "settings": {
+    "autoBackupEnabled": true,
+    "autoBackupSchedule": "0 2 * * *",
+    "autoBackupRetention": 7,
+    "autoBackupDir": ".kb/backups"
+  }
+}
+```
+
+### `autoBackupSchedule` (default: `"0 2 * * *"`)
+
+Cron expression for automatic backup timing. The default runs daily at 2 AM.
+
+**Common schedules:**
+- `"0 2 * * *"` — Daily at 2 AM (default)
+- `"0 * * * *"` — Hourly
+- `"*/15 * * * *"` — Every 15 minutes
+- `"0 0 * * 0"` — Weekly on Sunday
+
+The schedule is validated when saved. Invalid cron expressions will be rejected.
+
+### `autoBackupRetention` (default: `7`)
+
+Number of backup files to retain. When the count exceeds this limit, the oldest backups are automatically deleted.
+
+**Valid range:** 1–100
+
+### `autoBackupDir` (default: `".kb/backups"`)
+
+Directory for backup files, relative to the project root. The directory is created automatically if it doesn't exist.
+
+**Constraints:**
+- Must be a relative path (no leading `/` or `\`)
+- Must not contain parent directory traversal (`..`)
+
+### CLI Commands
+
+Manual backup operations are available via the CLI:
+
+```bash
+kb backup --create         # Create a backup immediately
+kb backup --list           # List all backups with sizes
+kb backup --restore <file> # Restore database from backup
+kb backup --cleanup        # Remove old backups
+```
+
+### Dashboard
+
+The dashboard Settings modal includes a "Backups" section where you can:
+- Enable/disable automatic backups
+- Configure the backup schedule
+- Set retention count and backup directory
+- View current backup count and total size
+- Create manual backups with the "Backup Now" button
+
 ## Model Presets
 
 The kb dashboard supports reusable model presets so teams can standardize AI model choices without manually selecting executor and validator models for every task.

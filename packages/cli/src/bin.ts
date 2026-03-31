@@ -42,6 +42,7 @@ const { runDashboard } = await import("./commands/dashboard.js");
 const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry, runTaskComment, runTaskComments, runTaskSteer, runTaskPrCreate } = await import("./commands/task.js");
 const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
 const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
+const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
 
 const HELP = `
 fn — AI-orchestrated task board
@@ -83,6 +84,10 @@ Usage:
   fn git push                Push current branch
   fn git pull                Pull current branch
   fn git fetch [remote]      Fetch from remote (default: origin)
+  fn backup --create         Create a database backup immediately
+  fn backup --list           List all database backups
+  fn backup --restore <file> Restore database from a backup file
+  fn backup --cleanup        Remove old backups exceeding retention limit
 
 Options:
   --port, -p <port>          Dashboard port (default: 4040)
@@ -459,6 +464,28 @@ async function main() {
             console.error(`Unknown subcommand: git ${subcommand || ""}`);
             console.log("Try: fn git status | fetch | pull | push");
             process.exit(1);
+        }
+        break;
+      }
+
+      case "backup": {
+        const create = args.includes("--create");
+        const list = args.includes("--list");
+        const cleanup = args.includes("--cleanup");
+        const restoreIdx = args.indexOf("--restore");
+        const restoreFile = restoreIdx !== -1 && restoreIdx + 1 < args.length ? args[restoreIdx + 1] : undefined;
+
+        if (create) {
+          await runBackupCreate();
+        } else if (list) {
+          await runBackupList();
+        } else if (cleanup) {
+          await runBackupCleanup();
+        } else if (restoreFile) {
+          await runBackupRestore(restoreFile);
+        } else {
+          console.error("Usage: fn backup --create | --list | --cleanup | --restore <filename>");
+          process.exit(1);
         }
         break;
       }

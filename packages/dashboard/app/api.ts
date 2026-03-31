@@ -1563,3 +1563,39 @@ export function fetchAgentHeartbeats(agentId: string, limit?: number): Promise<A
   const query = limit !== undefined ? `?limit=${limit}` : "";
   return api<AgentHeartbeatEvent[]>(`/agents/${encodeURIComponent(agentId)}/heartbeats${query}`);
 }
+
+// --- Backup API ---
+
+/** Backup metadata from the API */
+export interface BackupInfo {
+  filename: string;
+  createdAt: string;
+  size: number;
+  path: string;
+}
+
+/** Result of listing backups */
+export interface BackupListResponse {
+  backups: BackupInfo[];
+  count: number;
+  totalSize: number;
+}
+
+/** Result of creating a backup */
+export interface BackupCreateResponse {
+  success: boolean;
+  backupPath?: string;
+  output?: string;
+  deletedCount?: number;
+  error?: string;
+}
+
+/** Fetch all database backups */
+export function fetchBackups(): Promise<BackupListResponse> {
+  return api<BackupListResponse>("/backups");
+}
+
+/** Create a new database backup immediately */
+export function createBackup(): Promise<BackupCreateResponse> {
+  return api<BackupCreateResponse>("/backups", { method: "POST" });
+}

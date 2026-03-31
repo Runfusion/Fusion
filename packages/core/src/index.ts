@@ -25,3 +25,15 @@ export { AUTOMATION_PRESETS, MAX_RUN_HISTORY } from "./automation.js";
 export type { ScheduleType, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, AutomationStepType, AutomationStep, AutomationStepResult } from "./automation.js";
 export { AutomationStore } from "./automation-store.js";
 export type { AutomationStoreEvents } from "./automation-store.js";
+export {
+  BackupManager,
+  createBackupManager,
+  generateBackupFilename,
+  validateBackupSchedule,
+  validateBackupRetention,
+  validateBackupDir,
+  runBackupCommand,
+  syncBackupAutomation,
+  BACKUP_SCHEDULE_NAME,
+} from "./backup.js";
+export type { BackupInfo, BackupOptions } from "./backup.js";

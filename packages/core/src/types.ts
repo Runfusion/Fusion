@@ -633,6 +633,14 @@ export interface ProjectSettings {
   /** When true, automatically create GitHub PRs for completed tasks.
    *  Default: false. */
   autoCreatePr?: boolean;
+  /** When true, automatic database backups are enabled. Default: false. */
+  autoBackupEnabled?: boolean;
+  /** Cron expression for backup schedule. Default: "0 2 * * *" (daily at 2 AM). */
+  autoBackupSchedule?: string;
+  /** Number of backup files to retain (oldest deleted when exceeded). Default: 7. */
+  autoBackupRetention?: number;
+  /** Directory for backup files, relative to project root. Default: ".kb/backups". */
+  autoBackupDir?: string;
 }
 
 /**
@@ -689,6 +697,10 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   taskStuckTimeoutMs: undefined,
   autoUpdatePrStatus: false,
   autoCreatePr: false,
+  autoBackupEnabled: false,
+  autoBackupSchedule: "0 2 * * *",
+  autoBackupRetention: 7,
+  autoBackupDir: ".kb/backups",
 };
 
 /**
@@ -742,6 +754,10 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "taskStuckTimeoutMs",
   "autoUpdatePrStatus",
   "autoCreatePr",
+  "autoBackupEnabled",
+  "autoBackupSchedule",
+  "autoBackupRetention",
+  "autoBackupDir",
 ] as const;
 
 export interface BoardConfig {

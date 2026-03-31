@@ -3,7 +3,7 @@ import multer from "multer";
 import { createReadStream, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset, AutomationStep } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -1114,7 +1114,32 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         clientSettings.modelPresets = validateModelPresets(clientSettings.modelPresets);
       }
 
+      // Validate backup settings if provided
+      if (clientSettings.autoBackupSchedule !== undefined && !validateBackupSchedule(clientSettings.autoBackupSchedule)) {
+        res.status(400).json({ error: "Invalid cron expression for autoBackupSchedule" });
+        return;
+      }
+      if (clientSettings.autoBackupRetention !== undefined && !validateBackupRetention(clientSettings.autoBackupRetention)) {
+        res.status(400).json({ error: "autoBackupRetention must be between 1 and 100" });
+        return;
+      }
+      if (clientSettings.autoBackupDir !== undefined && !validateBackupDir(clientSettings.autoBackupDir)) {
+        res.status(400).json({ error: "autoBackupDir must be a relative path without '..' traversal" });
+        return;
+      }
+
       const settings = await store.updateSettings(clientSettings);
+      
+      // Sync backup automation schedule when backup settings change
+      if (options?.automationStore) {
+        try {
+          await syncBackupAutomation(options.automationStore, settings);
+        } catch (err) {
+          // Log but don't fail the settings update if automation sync fails
+          console.error("Failed to sync backup automation:", err);
+        }
+      }
+      
       res.json(settings);
     } catch (err: any) {
       const status = typeof err?.message === "string" && (
@@ -1213,6 +1238,60 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Failed to send test notification" });
+    }
+  });
+
+  // ── Backup Routes ─────────────────────────────────────────────────
+
+  /**
+   * GET /api/backups
+   * List all database backups with metadata.
+   */
+  router.get("/backups", async (_req, res) => {
+    try {
+      const { createBackupManager } = await import("@fusion/core");
+      const settings = await store.getSettings();
+      const manager = createBackupManager(store["kbDir"], settings);
+      const backups = await manager.listBackups();
+      
+      // Calculate total size
+      const totalSize = backups.reduce((sum, b) => sum + b.size, 0);
+      
+      res.json({
+        backups,
+        count: backups.length,
+        totalSize,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Failed to list backups" });
+    }
+  });
+
+  /**
+   * POST /api/backups
+   * Create a new database backup immediately.
+   */
+  router.post("/backups", async (_req, res) => {
+    try {
+      const { runBackupCommand } = await import("@fusion/core");
+      const settings = await store.getSettings();
+      const result = await runBackupCommand(store["kbDir"], settings);
+      
+      if (result.success) {
+        res.json({
+          success: true,
+          backupPath: result.backupPath,
+          output: result.output,
+          deletedCount: result.deletedCount,
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          error: result.output,
+        });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Failed to create backup" });
     }
   });
 
