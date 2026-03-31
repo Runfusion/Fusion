@@ -1332,18 +1332,21 @@ describe("ListView Quick Entry", () => {
     expect(input).toBeDefined();
   });
 
-  it("renders QuickEntryBox in list-create-area, not in toolbar", () => {
+  it("renders QuickEntryBox in list-quick-entry-above-table, not in toolbar", () => {
     const mockOnQuickCreate = vi.fn().mockResolvedValue(undefined);
     renderListView({ onQuickCreate: mockOnQuickCreate });
 
     const quickEntry = screen.getByTestId("quick-entry-box");
     const toolbar = document.querySelector(".list-toolbar");
-    const createArea = document.querySelector(".list-create-area");
+    const quickEntryArea = document.querySelector(".list-quick-entry-above-table");
+    const tableContainer = document.querySelector(".list-table-container");
 
     // QuickEntryBox should not be inside toolbar
     expect(toolbar?.contains(quickEntry)).toBe(false);
-    // QuickEntryBox should be inside create-area
-    expect(createArea?.contains(quickEntry)).toBe(true);
+    // QuickEntryBox should be inside the new quick-entry area
+    expect(quickEntryArea?.contains(quickEntry)).toBe(true);
+    // QuickEntryBox should be inside the table container (parent of quick-entry area)
+    expect(tableContainer?.contains(quickEntry)).toBe(true);
   });
 
   it("shows model selector button when QuickEntryBox is expanded", async () => {

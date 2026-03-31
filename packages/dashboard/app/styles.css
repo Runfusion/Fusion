@@ -3527,6 +3527,19 @@ body {
   margin: 0 auto;
 }
 
+/* New class for QuickEntryBox positioned above the table in list view */
+.list-quick-entry-above-table {
+  width: 100%;
+  padding: var(--space-md) var(--space-xl);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.list-quick-entry-above-table .quick-entry-box {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
 .list-column-dropdown {
   position: absolute;
   top: 100%;

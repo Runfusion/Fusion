@@ -469,17 +469,6 @@ export function ListView({
         ) : null}
       </div>
 
-      <div className="list-create-area">
-        <QuickEntryBox 
-          onCreate={onQuickCreate ?? (async () => addToast("Task creation not available", "error"))} 
-          addToast={addToast}
-          tasks={tasks}
-          availableModels={availableModels}
-          onPlanningMode={onPlanningMode}
-          onSubtaskBreakdown={onSubtaskBreakdown}
-        />
-      </div>
-
       <div className="list-drop-zones">
         {COLUMNS.map((column) => {
           const totalCount = tasks.filter((t) => t.column === column).length;
@@ -508,6 +497,16 @@ export function ListView({
       </div>
 
       <div className="list-table-container">
+        <div className="list-quick-entry-above-table">
+          <QuickEntryBox 
+            onCreate={onQuickCreate ?? (async () => addToast("Task creation not available", "error"))} 
+            addToast={addToast}
+            tasks={tasks}
+            availableModels={availableModels}
+            onPlanningMode={onPlanningMode}
+            onSubtaskBreakdown={onSubtaskBreakdown}
+          />
+        </div>
         {filteredCount === 0 ? (
           <div className="list-empty">
             {filter ? "No tasks match your filter" : "No tasks yet"}
