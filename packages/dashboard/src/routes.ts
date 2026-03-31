@@ -4715,6 +4715,57 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     }
   });
 
+  // ── Workflow Step Templates ───────────────────────────────────────────
+
+  /**
+   * GET /api/workflow-step-templates
+   * List all built-in workflow step templates.
+   * Returns: { templates: WorkflowStepTemplate[] }
+   */
+  router.get("/workflow-step-templates", async (_req, res) => {
+    try {
+      const { WORKFLOW_STEP_TEMPLATES } = await import("@kb/core");
+      res.json({ templates: WORKFLOW_STEP_TEMPLATES });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/workflow-step-templates/:id/create
+   * Create a workflow step from a built-in template.
+   * Returns: WorkflowStep
+   */
+  router.post("/workflow-step-templates/:id/create", async (req, res) => {
+    try {
+      const { WORKFLOW_STEP_TEMPLATES } = await import("@kb/core");
+      const template = WORKFLOW_STEP_TEMPLATES.find((t) => t.id === req.params.id);
+
+      if (!template) {
+        res.status(404).json({ error: `Template '${req.params.id}' not found` });
+        return;
+      }
+
+      // Check for name conflicts with existing workflow steps
+      const existing = await store.listWorkflowSteps();
+      if (existing.some((ws) => ws.name.toLowerCase() === template.name.toLowerCase())) {
+        res.status(409).json({ error: `A workflow step named '${template.name}' already exists` });
+        return;
+      }
+
+      const step = await store.createWorkflowStep({
+        name: template.name,
+        description: template.description,
+        prompt: template.prompt,
+        enabled: true,
+      });
+
+      res.status(201).json(step);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
 

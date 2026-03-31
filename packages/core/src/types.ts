@@ -66,6 +66,154 @@ export interface WorkflowStepInput {
   enabled?: boolean;
 }
 
+/** A built-in workflow step template for one-click creation. */
+export interface WorkflowStepTemplate {
+  /** Unique template identifier (e.g., "documentation-review") */
+  id: string;
+  /** Display name (e.g., "Documentation Review") */
+  name: string;
+  /** Short description for UI */
+  description: string;
+  /** Full agent prompt template */
+  prompt: string;
+  /** Grouping category (e.g., "Quality", "Security") */
+  category: string;
+  /** Optional icon identifier for UI (e.g., "file-text", "shield") */
+  icon?: string;
+}
+
+/** Built-in workflow step templates available for one-click creation. */
+export const WORKFLOW_STEP_TEMPLATES: WorkflowStepTemplate[] = [
+  {
+    id: "documentation-review",
+    name: "Documentation Review",
+    description: "Verify all public APIs, functions, and complex logic have appropriate documentation",
+    category: "Quality",
+    icon: "file-text",
+    prompt: `You are a documentation reviewer. Review the completed task and verify documentation quality.
+
+Review Criteria:
+1. All new public functions, classes, and modules have JSDoc comments or equivalent documentation
+2. Complex logic has inline comments explaining the "why" not just the "what"
+3. README files are updated if the task changes user-facing behavior
+4. CHANGELOG or release notes are considered for significant changes
+5. Type definitions are documented for public APIs
+
+Files to Review:
+- Review all files modified in the task worktree
+- Focus on public API surface area
+- Check test files for test documentation
+
+Output Requirements:
+- If documentation is adequate: call task_done() with success status
+- If documentation is missing: list specific files and functions that need documentation using task_log()
+- Provide specific suggestions for what documentation should be added`,
+  },
+  {
+    id: "qa-check",
+    name: "QA Check",
+    description: "Run tests and verify they pass, check for obvious bugs",
+    category: "Quality",
+    icon: "check-circle",
+    prompt: `You are a QA tester. Verify the task implementation by running tests and checking for bugs.
+
+Test Execution:
+1. Run the project's test suite (use pnpm test, npm test, or the configured test command)
+2. Verify all tests pass
+3. If tests fail, analyze whether failures are related to the task changes
+
+Code Review:
+1. Review the changes for obvious bugs or edge cases
+2. Check error handling is appropriate
+3. Verify input validation is present where needed
+4. Look for common issues: null pointer risks, off-by-one errors, race conditions
+
+Output Requirements:
+- If all tests pass and no bugs found: call task_done() with success status
+- If tests fail: provide detailed failure information via task_log()
+- If bugs are found: describe the bug, affected files, and suggested fix via task_log()`,
+  },
+  {
+    id: "security-audit",
+    name: "Security Audit",
+    description: "Check for common security vulnerabilities and anti-patterns",
+    category: "Security",
+    icon: "shield",
+    prompt: `You are a security auditor. Review the task changes for common security vulnerabilities.
+
+Security Checklist:
+1. **Injection vulnerabilities** — Check for SQL injection, command injection, XSS via unsanitized user input
+2. **Secrets and credentials** — Ensure no hardcoded passwords, API keys, tokens, or private keys
+3. **Unsafe eval** — Check for eval(), new Function(), or similar dangerous patterns
+4. **Path traversal** — Verify file path handling prevents directory traversal attacks
+5. **Insecure deserialization** — Check for unsafe parsing of untrusted data
+6. **Authentication/Authorization** — Verify access controls are properly implemented
+7. **Dependency risks** — Note any new dependencies that might have known vulnerabilities
+
+Files to Review:
+- All modified files in the task
+- Configuration files that might contain secrets
+- Areas handling user input or external data
+
+Output Requirements:
+- If no security issues found: call task_done() with success status
+- If issues found: describe each vulnerability with specific file paths, line numbers, and severity via task_log()
+- Provide remediation suggestions for each issue`,
+  },
+  {
+    id: "performance-review",
+    name: "Performance Review",
+    description: "Check for performance anti-patterns and optimization opportunities",
+    category: "Quality",
+    icon: "zap",
+    prompt: `You are a performance reviewer. Analyze the task changes for performance implications.
+
+Performance Checklist:
+1. **Algorithmic complexity** — Check for O(n²) or worse patterns that could bottleneck
+2. **N+1 queries** — Look for database queries in loops
+3. **Memory leaks** — Check for unclosed resources, event listeners, or accumulating caches
+4. **Unnecessary re-renders** — For UI code, check for inefficient React/Angular/Vue patterns
+5. **Bundle size** — Note if large dependencies are added unnecessarily
+6. **Async patterns** — Verify proper use of async/await, Promise.all for parallel work
+7. **Caching opportunities** — Identify where caching could improve performance
+
+Files to Review:
+- All modified files, focusing on hot paths and frequently executed code
+- Database query files
+- API endpoints and route handlers
+
+Output Requirements:
+- If performance is acceptable: call task_done() with success status
+- If issues found: describe each issue with specific file paths and suggested optimizations via task_log()`,
+  },
+  {
+    id: "accessibility-check",
+    name: "Accessibility Check",
+    description: "Verify UI changes meet accessibility standards (WCAG 2.1)",
+    category: "Quality",
+    icon: "eye",
+    prompt: `You are an accessibility reviewer. Check UI changes for WCAG 2.1 compliance.
+
+Accessibility Checklist:
+1. **Keyboard navigation** — Ensure all interactive elements are keyboard accessible
+2. **ARIA labels** — Check that screen reader announcements are appropriate
+3. **Color contrast** — Verify text meets minimum contrast ratios (4.5:1 for normal text)
+4. **Focus indicators** — Ensure visible focus states for keyboard navigation
+5. **Alt text** — Check that images have meaningful alternative text
+6. **Form labels** — Verify all inputs have associated labels
+7. **Semantic HTML** — Check that proper HTML elements are used (buttons not divs)
+
+Files to Review:
+- Modified UI components
+- CSS/styling changes
+- New HTML templates or JSX
+
+Output Requirements:
+- If accessibility requirements are met: call task_done() with success status
+- If issues found: describe each issue with specific file paths, WCAG guideline references, and remediation steps via task_log()`,
+  },
+];
+
 export interface PrInfo {
   url: string;
   number: number;

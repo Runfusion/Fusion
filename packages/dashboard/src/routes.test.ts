@@ -5001,3 +5001,143 @@ describe("POST /workflow-steps/:id/refine", () => {
     expect(store.updateWorkflowStep).toHaveBeenCalled();
   });
 });
+
+// ── Workflow Step Template Tests ──────────────────────────────────────────
+
+describe("GET /workflow-step-templates", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns all built-in templates", async () => {
+    const res = await GET(buildApp(), "/api/workflow-step-templates");
+
+    expect(res.status).toBe(200);
+    expect(res.body.templates).toBeDefined();
+    expect(Array.isArray(res.body.templates)).toBe(true);
+    expect(res.body.templates.length).toBeGreaterThanOrEqual(5);
+
+    // Check that templates have required fields
+    for (const template of res.body.templates) {
+      expect(template.id).toBeDefined();
+      expect(template.name).toBeDefined();
+      expect(template.description).toBeDefined();
+      expect(template.category).toBeDefined();
+      expect(template.prompt).toBeDefined();
+    }
+  });
+
+  it("includes expected template IDs", async () => {
+    const res = await GET(buildApp(), "/api/workflow-step-templates");
+
+    expect(res.status).toBe(200);
+    const ids = res.body.templates.map((t: { id: string }) => t.id);
+    expect(ids).toContain("documentation-review");
+    expect(ids).toContain("qa-check");
+    expect(ids).toContain("security-audit");
+    expect(ids).toContain("performance-review");
+    expect(ids).toContain("accessibility-check");
+  });
+});
+
+describe("POST /workflow-step-templates/:id/create", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("creates workflow step from template", async () => {
+    const created = {
+      id: "WS-001",
+      name: "Documentation Review",
+      description: "Verify all public APIs, functions, and complex logic have appropriate documentation",
+      prompt: expect.stringContaining("documentation reviewer"),
+      enabled: true,
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+    };
+    (store.listWorkflowSteps as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-step-templates/documentation-review/create", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("WS-001");
+    expect(res.body.name).toBe("Documentation Review");
+    expect(store.createWorkflowStep).toHaveBeenCalledWith({
+      name: "Documentation Review",
+      description: "Verify all public APIs, functions, and complex logic have appropriate documentation",
+      prompt: expect.stringContaining("documentation reviewer"),
+      enabled: true,
+    });
+  });
+
+  it("creates workflow step from qa-check template", async () => {
+    const created = {
+      id: "WS-002",
+      name: "QA Check",
+      description: "Run tests and verify they pass, check for obvious bugs",
+      prompt: expect.stringContaining("QA tester"),
+      enabled: true,
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+    };
+    (store.listWorkflowSteps as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-step-templates/qa-check/create", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.name).toBe("QA Check");
+    expect(store.createWorkflowStep).toHaveBeenCalledWith({
+      name: "QA Check",
+      description: "Run tests and verify they pass, check for obvious bugs",
+      prompt: expect.stringContaining("QA tester"),
+      enabled: true,
+    });
+  });
+
+  it("returns 404 for non-existent template", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-step-templates/nonexistent/create", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("not found");
+  });
+
+  it("returns 409 when workflow step with same name already exists", async () => {
+    const existingSteps = [
+      { id: "WS-001", name: "Documentation Review", description: "Check docs", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+    ];
+    (store.listWorkflowSteps as ReturnType<typeof vi.fn>).mockResolvedValueOnce(existingSteps);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-step-templates/documentation-review/create", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("already exists");
+  });
+});

@@ -499,3 +499,48 @@ Tasks store their enabled workflow step IDs in `task.json`:
 - If a workflow step fails, the task is marked as failed (not moved to in-review)
 - Steps with empty prompts are skipped with a log entry
 - All workflow step activity is logged to the task's agent log
+
+## Workflow Step Templates
+
+Workflow step templates are pre-defined quality gates that can be added with one click instead of creating from scratch. The dashboard includes 5 built-in templates covering common quality, security, and compliance checks.
+
+### Available Templates
+
+| Template | Category | Description |
+|----------|----------|-------------|
+| **Documentation Review** | Quality | Verify all public APIs, functions, and complex logic have appropriate documentation |
+| **QA Check** | Quality | Run tests and verify they pass, check for obvious bugs |
+| **Security Audit** | Security | Check for common security vulnerabilities and anti-patterns |
+| **Performance Review** | Quality | Check for performance anti-patterns and optimization opportunities |
+| **Accessibility Check** | Quality | Verify UI changes meet accessibility standards (WCAG 2.1) |
+
+### How to Use
+
+1. Open the Workflow Step Manager in the dashboard (button in header)
+2. Click the **Templates** tab to browse available templates
+3. Click **Add** on any template to create a workflow step from it
+4. The template's pre-crafted prompt is copied as an editable workflow step
+5. Customize the name, description, or prompt if needed
+6. Enable the step for tasks you want it to run on
+
+### Template Prompts
+
+Templates include high-quality agent prompts that guide the AI through specific review criteria:
+
+- **Documentation Review** — Checks JSDoc comments, inline comments, README updates, type definitions
+- **QA Check** — Runs test suites, checks for bugs, validates error handling and input validation
+- **Security Audit** — Scans for injection vulnerabilities, hardcoded secrets, unsafe eval, path traversal
+- **Performance Review** — Identifies algorithmic complexity issues, N+1 queries, memory leaks, unnecessary re-renders
+- **Accessibility Check** — Validates keyboard navigation, ARIA labels, color contrast, focus indicators, semantic HTML
+
+### API
+
+- `GET /api/workflow-step-templates` — List all built-in templates
+- `POST /api/workflow-step-templates/:id/create` — Create workflow step from template
+
+### Adding Templates
+
+When you add a template:
+1. The template data is copied to a new workflow step (templates themselves are immutable)
+2. The new step is enabled by default
+3. You can edit the step after creation to customize the prompt

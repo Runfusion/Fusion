@@ -1229,6 +1229,23 @@ export function refineWorkflowStepPrompt(id: string): Promise<{ prompt: string; 
   });
 }
 
+// ── Workflow Step Templates ──────────────────────────────────────────────
+
+/** Re-export WorkflowStepTemplate type from core */
+export type { WorkflowStepTemplate } from "@kb/core";
+
+/** Fetch all built-in workflow step templates */
+export function fetchWorkflowStepTemplates(): Promise<{ templates: import("@kb/core").WorkflowStepTemplate[] }> {
+  return api<{ templates: import("@kb/core").WorkflowStepTemplate[] }>("/workflow-step-templates");
+}
+
+/** Create a workflow step from a built-in template */
+export function createWorkflowStepFromTemplate(templateId: string): Promise<WorkflowStep> {
+  return api<WorkflowStep>(`/workflow-step-templates/${encodeURIComponent(templateId)}/create`, {
+    method: "POST",
+  });
+}
+
 // ── AI Text Refinement API ────────────────────────────────────────────
 
 /** Refinement types for AI text refinement */
