@@ -6673,6 +6673,54 @@ html .column.drag-over * {
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
+
+  /* Mobile two-state view: show only list or editor at a time */
+  .file-browser-sidebar.mobile {
+    display: none;
+  }
+
+  .file-browser-sidebar.mobile.active {
+    display: flex;
+    flex: 1;
+    height: 100%;
+    max-height: none;
+    border-bottom: none;
+  }
+
+  .file-browser-content.mobile {
+    display: none;
+  }
+
+  .file-browser-content.mobile.active {
+    display: flex;
+    flex: 1;
+    height: 100%;
+  }
+
+  /* Back button styles */
+  .file-browser-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    margin-right: 8px;
+  }
+
+  .file-browser-back-button:hover {
+    background: var(--card-hover);
+  }
+
+  .file-browser-back-button:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
 }
 
 /* === Planning Mode Styles === */

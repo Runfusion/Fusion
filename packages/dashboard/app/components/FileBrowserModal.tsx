@@ -1,11 +1,14 @@
 import { useState, useCallback, useEffect } from "react";
-import { X, Save, RotateCcw, Folder, FileType } from "lucide-react";
+import { X, Save, RotateCcw, Folder, FileType, ArrowLeft } from "lucide-react";
 import { useFileBrowser } from "../hooks/useFileBrowser";
 import { useFileEditor } from "../hooks/useFileEditor";
 import { useProjectFileBrowser } from "../hooks/useProjectFileBrowser";
 import { useProjectFileEditor } from "../hooks/useProjectFileEditor";
 import { FileBrowser } from "./FileBrowser";
 import { FileEditor } from "./FileEditor";
+
+// Mobile breakpoint - must match existing codebase
+const MOBILE_BREAKPOINT = 768;
 
 /**
  * Binary file extensions that should be displayed as read-only.
@@ -48,6 +51,31 @@ type FileBrowserModalProps = {
 export function FileBrowserModal(props: FileBrowserModalProps) {
   const { taskId, projectRoot, onClose } = props;
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  
+  // Mobile detection and view state (following GitHubImportModal pattern)
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileView, setMobileView] = useState<'list' | 'editor'>('list');
+  
+  // Detect mobile viewport
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    };
+    
+    // Check initially
+    checkMobile();
+    
+    // Listen for resize
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
+  
+  // Reset to list view when modal opens (selectedFile becomes null)
+  useEffect(() => {
+    if (!selectedFile) {
+      setMobileView('list');
+    }
+  }, [selectedFile]);
 
   // Determine mode based on which prop is provided
   const isTaskMode = taskId !== undefined;
@@ -102,6 +130,15 @@ export function FileBrowserModal(props: FileBrowserModalProps) {
 
   const handleSelectFile = useCallback((path: string) => {
     setSelectedFile(path);
+    // On mobile, switch to editor view when a file is selected
+    if (isMobile) {
+      setMobileView('editor');
+    }
+  }, [isMobile]);
+  
+  // Handle back button - return to list view on mobile
+  const handleBackToList = useCallback(() => {
+    setMobileView('list');
   }, []);
 
   const handleDiscard = useCallback(() => {
@@ -137,7 +174,7 @@ export function FileBrowserModal(props: FileBrowserModalProps) {
         </div>
 
         <div className="file-browser-body">
-          <div className="file-browser-sidebar">
+          <div className={`file-browser-sidebar ${isMobile ? 'mobile' : ''} ${mobileView === 'list' ? 'active' : ''}`}>
             <FileBrowser
               entries={entries}
               currentPath={currentPath}
@@ -149,11 +186,21 @@ export function FileBrowserModal(props: FileBrowserModalProps) {
             />
           </div>
 
-          <div className="file-browser-content">
+          <div className={`file-browser-content ${isMobile ? 'mobile' : ''} ${mobileView === 'editor' ? 'active' : ''}`}>
             {selectedFile ? (
               <>
                 <div className="file-browser-toolbar">
                   <div className="file-browser-file-info">
+                    {isMobile && mobileView === 'editor' && (
+                      <button
+                        className="file-browser-back-button"
+                        onClick={handleBackToList}
+                        aria-label="Back to file list"
+                      >
+                        <ArrowLeft size={16} />
+                        <span>Back</span>
+                      </button>
+                    )}
                     {selectedFile}
                     {selectedFile && isBinaryFile(selectedFile) && (
                       <span className="file-browser-binary-indicator">
