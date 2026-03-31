@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 import { TaskStore, AutomationStore } from "@kb/core";
 import type { Settings, TaskDetail, PrInfo } from "@kb/core";
 import { createServer, GitHubClient } from "@kb/dashboard";
-import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner } from "@kb/engine";
+import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner, StuckTaskDetector } from "@kb/engine";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 
 /**
@@ -466,14 +466,28 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       onSpecifyError: (t, e) => console.log(`[engine] ✗ ${t.id}: ${e.message}`),
     });
 
+    // ── Stuck task detector: monitors agent sessions for stagnation ────
+    // Created before the executor so it can be passed in options.
+    // The onStuck callback is wired to executor.markStuckAborted after
+    // executor creation (late-binding via closure on executorRef).
+    const executorRef: { current: TaskExecutor | null } = { current: null };
+    const stuckTaskDetector = new StuckTaskDetector(store, {
+      onStuck: (taskId) => {
+        executorRef.current?.markStuckAborted(taskId);
+        console.log(`[engine] ⚠ ${taskId} stuck — terminated, will retry`);
+      },
+    });
+
     const executor = new TaskExecutor(store, cwd, {
       semaphore,
       pool,
       usageLimitPauser,
+      stuckTaskDetector,
       onStart: (t, p) => console.log(`[engine] Executing ${t.id} in ${p}`),
       onComplete: (t) => console.log(`[engine] ✓ ${t.id} → in-review`),
       onError: (t, e) => console.log(`[engine] ✗ ${t.id}: ${e.message}`),
     });
+    executorRef.current = executor;
 
     const settings = await store.getSettings();
     const prMonitor = new PrMonitor();
@@ -495,6 +509,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
     triage.start();
     scheduler.start();
+    stuckTaskDetector.start();
 
     // ── Startup sweep: resume orphaned in-progress tasks ──────────────
     executor.resumeOrphaned().catch((err) =>
@@ -595,6 +610,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     scheduleMergeRetry();
 
     process.on("SIGINT", () => {
+      stuckTaskDetector.stop();
       triage.stop();
       scheduler.stop();
       cronRunner.stop();

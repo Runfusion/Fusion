@@ -13,6 +13,7 @@ import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
 import { executorLog, reviewerLog } from "./logger.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
+import type { StuckTaskDetector } from "./stuck-task-detector.js";
 
 // Re-export for backward compatibility (tests import from executor.ts)
 export { summarizeToolArgs } from "./agent-logger.js";
@@ -147,6 +148,8 @@ export interface TaskExecutorOptions {
   pool?: WorktreePool;
   /** Usage limit pauser — triggers global pause when API limits are detected. */
   usageLimitPauser?: UsageLimitPauser;
+  /** Stuck task detector — monitors agent sessions for stagnation and triggers recovery. */
+  stuckTaskDetector?: StuckTaskDetector;
   onStart?: (task: Task, worktreePath: string) => void;
   onComplete?: (task: Task) => void;
   onError?: (task: Task, error: Error) => void;
@@ -163,6 +166,8 @@ export class TaskExecutor {
   private pausedAborted = new Set<string>();
   /** Tasks that had a dependency added mid-execution (abort + discard worktree). */
   private depAborted = new Set<string>();
+  /** Tasks that were killed by stuck task detector (to avoid marking them as "failed"). */
+  private stuckAborted = new Set<string>();
 
   /**
    * @param store — Task store instance (also used to listen for events)
@@ -194,6 +199,7 @@ export class TaskExecutor {
       if (task.paused && this.activeSessions.has(task.id)) {
         executorLog.log(`Pausing ${task.id} — terminating agent session`);
         this.pausedAborted.add(task.id);
+        this.options.stuckTaskDetector?.untrackTask(task.id);
         const session = this.activeSessions.get(task.id);
         session?.dispose();
       }
@@ -205,6 +211,7 @@ export class TaskExecutor {
         for (const [taskId, session] of this.activeSessions) {
           executorLog.log(`Global pause — terminating agent session for ${taskId}`);
           this.pausedAborted.add(taskId);
+          this.options.stuckTaskDetector?.untrackTask(taskId);
           session.dispose();
         }
       }
@@ -417,8 +424,10 @@ export class TaskExecutor {
       const sessionRef: { current: AgentSession | null } = { current: null };
       const stepCheckpoints = new Map<number, string>();
 
+      const stuckDetector = this.options.stuckTaskDetector;
+
       const customTools = [
-        this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stepCheckpoints),
+        this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stepCheckpoints, stuckDetector),
         this.createTaskLogTool(task.id),
         this.createTaskCreateTool(),
         this.createTaskAddDepTool(task.id),
@@ -430,8 +439,14 @@ export class TaskExecutor {
         store: this.store,
         taskId: task.id,
         agent: "executor",
-        onAgentText: this.options.onAgentText,
-        onAgentTool: this.options.onAgentTool,
+        onAgentText: (taskId, delta) => {
+          stuckDetector?.recordActivity(taskId);
+          this.options.onAgentText?.(taskId, delta);
+        },
+        onAgentTool: (taskId, toolName) => {
+          stuckDetector?.recordActivity(taskId);
+          this.options.onAgentTool?.(taskId, toolName);
+        },
       });
 
       const agentWork = async () => {
@@ -464,8 +479,13 @@ export class TaskExecutor {
         // Register session so the pause listener can terminate it
         this.activeSessions.set(task.id, session);
 
+        // Register with stuck task detector for heartbeat monitoring
+        stuckDetector?.trackTask(task.id, session);
+
         try {
           const agentPrompt = buildExecutionPrompt(detail, this.rootDir, settings);
+          // Record activity on prompt start (heartbeat for stuck detection)
+          stuckDetector?.recordActivity(task.id);
           await session.prompt(agentPrompt);
 
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
@@ -498,6 +518,7 @@ export class TaskExecutor {
           }
         } finally {
           this.activeSessions.delete(task.id);
+          stuckDetector?.untrackTask(task.id);
           await agentLogger.flush();
           session.dispose();
         }
@@ -530,6 +551,11 @@ export class TaskExecutor {
         this.pausedAborted.delete(task.id);
         await this.store.logEntry(task.id, "Execution paused — agent terminated, moved to todo");
         await this.store.moveTask(task.id, "todo");
+      } else if (this.stuckAborted.has(task.id)) {
+        // Task was killed by stuck task detector — already moved to todo by killAndRetry.
+        // Don't mark as failed; the scheduler will retry it naturally.
+        executorLog.log(`${task.id} terminated by stuck task detector — will retry`);
+        this.stuckAborted.delete(task.id);
       } else {
         // Check if the error is a usage-limit error and trigger global pause
         if (this.options.usageLimitPauser && isUsageLimitError(err.message)) {
@@ -552,6 +578,7 @@ export class TaskExecutor {
     codeReviewVerdicts: Map<number, ReviewVerdict>,
     sessionRef: { current: AgentSession | null },
     stepCheckpoints: Map<number, string>,
+    stuckDetector?: StuckTaskDetector,
   ): ToolDefinition {
     const store = this.store;
     return {
@@ -564,6 +591,9 @@ export class TaskExecutor {
       parameters: taskUpdateParams,
       execute: async (_id: string, params: Static<typeof taskUpdateParams>) => {
         const { step, status } = params;
+
+        // Record heartbeat for stuck task detection
+        stuckDetector?.recordActivity(taskId);
 
         // Enforce code review REVISE: block advancing to "done" when the last
         // code review for this step returned REVISE. The agent must fix the
@@ -1041,6 +1071,15 @@ export class TaskExecutor {
     } catch (err: any) {
       executorLog.error(`Failed to clean up worktree for ${taskId}:`, err.message);
     }
+  }
+
+  /**
+   * Mark a task as stuck-aborted so the executor's error handling
+   * knows not to treat the disposed session as a genuine failure.
+   * Called by the stuck task detector's onStuck callback.
+   */
+  markStuckAborted(taskId: string): void {
+    this.stuckAborted.add(taskId);
   }
 
   getWorktreePath(taskId: string): string | undefined {

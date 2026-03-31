@@ -301,6 +301,11 @@ export interface Settings {
   /** When true, enables ntfy.sh push notifications for task completion and failures.
    *  Requires ntfyTopic to be set. Default: false. */
   ntfyEnabled?: boolean;
+  /** Timeout in milliseconds for detecting stuck tasks. When a task's agent session
+   *  shows no activity (no text deltas, tool calls, or progress updates) for longer
+   *  than this duration, the task is considered stuck and will be terminated and retried.
+   *  Default: undefined (disabled). Suggested value: 600000 (10 minutes). */
+  taskStuckTimeoutMs?: number;
   /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
   themeMode?: ThemeMode;
   /** Color theme preference for accent colors and styling. Default: "default". */
@@ -329,6 +334,7 @@ export const DEFAULT_SETTINGS: Settings = {
   requirePlanApproval: false,
   ntfyEnabled: false,
   ntfyTopic: undefined,
+  taskStuckTimeoutMs: undefined,
   themeMode: "dark",
   colorTheme: "default",
 };

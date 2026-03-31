@@ -172,6 +172,35 @@ When true, enables ntfy.sh push notifications for task completion and failures.
 - Topic must be 1–64 alphanumeric/hyphen/underscore characters
 - Notifications are best-effort: failures are logged but don't block task execution
 
+### `taskStuckTimeoutMs` (default: `undefined` — disabled)
+
+Timeout in milliseconds for detecting stuck tasks. When a task's agent session shows no activity (no text deltas, tool calls, or progress updates) for longer than this duration, the task is considered stuck and will be terminated and retried.
+
+**How it works:**
+- The `StuckTaskDetector` polls tracked in-progress tasks every 30 seconds
+- When no agent activity is detected for longer than `taskStuckTimeoutMs`, the detector:
+  1. Terminates the stuck agent session
+  2. Logs the event to the task log
+  3. Moves the task back to "todo" (preserving current step progress)
+  4. The scheduler picks it up for retry, resuming from where it left off
+
+**Suggested value:** `600000` (10 minutes)
+
+```json
+{
+  "settings": {
+    "taskStuckTimeoutMs": 600000
+  }
+}
+```
+
+**Notes:**
+- When `undefined` (default), stuck task detection is completely disabled
+- Activity is tracked on text deltas, tool calls, tool results, and step status updates
+- Recovery preserves step progress — the task resumes from the current step, not from scratch
+- Paused tasks are automatically untracked from monitoring
+- The timeout is read from settings on every poll cycle, so changes take effect immediately
+
 ### `worktreeNaming` (default: `"random"`)
 
 Controls how worktree directory names are generated when `recycleWorktrees` is NOT enabled. This setting only affects fresh worktrees (not pooled/recycled ones).
