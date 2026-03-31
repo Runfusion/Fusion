@@ -85,9 +85,9 @@ This will trigger `release.yml` to build binaries and create a GitHub Release. N
 | `pnpm changeset` | Add a new changeset |
 | `pnpm changeset status` | Check pending changesets |
 | `pnpm release:version` | Apply changesets and bump versions (used by CI) |
-| `pnpm --filter @dustinbyrne/kb build:exe` | Build binary for current platform |
-| `pnpm --filter @dustinbyrne/kb build:exe -- --target <target>` | Cross-compile for a specific platform |
-| `pnpm --filter @dustinbyrne/kb build:exe:all` | Build binaries for all platforms |
+| `pnpm --filter @gsxdsm/fusion build:exe` | Build binary for current platform |
+| `pnpm --filter @gsxdsm/fusion build:exe -- --target <target>` | Cross-compile for a specific platform |
+| `pnpm --filter @gsxdsm/fusion build:exe:all` | Build binaries for all platforms |
 
 ## Tips
 

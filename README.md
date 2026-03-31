@@ -45,7 +45,7 @@ Tasks with dependencies are processed sequentially. Independent tasks run in par
 ## Quick Start
 
 ```bash
-npm i -g @dustinbyrne/kb
+npm i -g @gsxdsm/fusion
 ```
 
 Then from the root of your repository:
