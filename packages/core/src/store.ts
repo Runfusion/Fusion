@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { appendFile, mkdir, readFile, writeFile, readdir, rename, unlink } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { existsSync, watch, type FSWatcher, readFileSync } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, ActivityLogEntry, ActivityEventType } from "./types.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS } from "./types.js";
 
 export interface TaskStoreEvents {
@@ -21,6 +21,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private tasksDir: string;
   private configPath: string;
   private archiveLogPath: string;
+  private activityLogPath: string;
 
   /** File-system watcher instance */
   private watcher: FSWatcher | null = null;
@@ -44,6 +45,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.tasksDir = join(this.kbDir, "tasks");
     this.configPath = join(this.kbDir, "config.json");
     this.archiveLogPath = join(this.kbDir, "archive.jsonl");
+    this.activityLogPath = join(this.kbDir, "activity-log.jsonl");
   }
 
   async init(): Promise<void> {
@@ -1818,6 +1820,89 @@ ${notificationsSection}`;
       return { ...DEFAULT_SETTINGS, ...config.settings };
     } catch {
       return DEFAULT_SETTINGS;
+    }
+  }
+
+  // ── Activity Log Methods ─────────────────────────────────────────
+
+  /**
+   * Record an activity log entry to the global activity log.
+   * Appends to .kb/activity-log.jsonl (JSON Lines format).
+   * Auto-generates ID and timestamp.
+   */
+  async recordActivity(entry: Omit<ActivityLogEntry, "id" | "timestamp">): Promise<ActivityLogEntry> {
+    const fullEntry: ActivityLogEntry = {
+      ...entry,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      timestamp: new Date().toISOString(),
+    };
+
+    try {
+      await appendFile(this.activityLogPath, JSON.stringify(fullEntry) + "\n");
+    } catch (err) {
+      // Best-effort: log errors but don't break operations
+      console.error("Failed to record activity:", err);
+    }
+
+    return fullEntry;
+  }
+
+  /**
+   * Get activity log entries from the JSONL file.
+   * Returns entries sorted newest first.
+   * Supports filtering by limit, since timestamp, and event type.
+   */
+  async getActivityLog(options?: { limit?: number; since?: string; type?: ActivityEventType }): Promise<ActivityLogEntry[]> {
+    if (!existsSync(this.activityLogPath)) {
+      return [];
+    }
+
+    const content = await readFile(this.activityLogPath, "utf-8");
+    const entries: ActivityLogEntry[] = [];
+
+    for (const line of content.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        entries.push(JSON.parse(line) as ActivityLogEntry);
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    // Filter by since timestamp if provided
+    let filtered = entries;
+    if (options?.since) {
+      filtered = filtered.filter((e) => e.timestamp > options.since!);
+    }
+
+    // Filter by type if provided
+    if (options?.type) {
+      filtered = filtered.filter((e) => e.type === options.type);
+    }
+
+    // Sort newest first (by timestamp descending)
+    filtered.sort((a, b) => b.timestamp.localeCompare(b.timestamp));
+
+    // Apply limit if provided
+    if (options?.limit && options.limit > 0) {
+      filtered = filtered.slice(0, options.limit);
+    }
+
+    return filtered;
+  }
+
+  /**
+   * Clear all activity log entries by truncating the log file.
+   * Use with caution - this permanently deletes activity history.
+   */
+  async clearActivityLog(): Promise<void> {
+    try {
+      if (existsSync(this.activityLogPath)) {
+        await writeFile(this.activityLogPath, "", "utf-8");
+      }
+    } catch (err) {
+      console.error("Failed to clear activity log:", err);
+      throw err;
     }
   }
 }
