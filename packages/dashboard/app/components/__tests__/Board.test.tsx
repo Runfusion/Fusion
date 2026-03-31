@@ -10,7 +10,7 @@ const columnRenderCounts: Record<string, number> = {};
 
 // Mock child components so we only test Board's own rendering
 vi.mock("../Column", () => ({
-  Column: React.memo(({ column, tasks, onToggleCollapse }: { column: string; tasks: Task[]; onToggleCollapse?: () => void }) => {
+  Column: React.memo(({ column, tasks, onToggleCollapse, availableModels }: { column: string; tasks: Task[]; onToggleCollapse?: () => void; availableModels?: unknown }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
       <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)}>

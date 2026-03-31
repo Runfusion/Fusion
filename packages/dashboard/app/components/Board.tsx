@@ -4,6 +4,7 @@ import { Column } from "./Column";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useBatchBadgeFetch } from "../hooks/useBatchBadgeFetch";
+import type { ModelInfo } from "../api";
 
 interface BoardProps {
   tasks: Task[];
@@ -24,6 +25,7 @@ interface BoardProps {
   onUnarchiveTask?: (id: string) => Promise<Task>;
   onArchiveAllDone?: () => Promise<Task[]>;
   searchQuery?: string;
+  availableModels?: ModelInfo[];
 }
 
 function sortTasksForColumn(tasks: Task[]): Task[] {
@@ -42,7 +44,7 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "" }: BoardProps) {
+export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const { fetchBatch } = useBatchBadgeFetch();
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -147,6 +149,7 @@ export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast
           onArchiveTask={onArchiveTask}
           onUnarchiveTask={onUnarchiveTask}
           allTasks={filteredTasks}
+          availableModels={availableModels}
           {...(col === "triage" ? { onQuickCreate, onNewTask } : {})}
           {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
           {...(col === "done" ? { onArchiveAllDone } : {})}

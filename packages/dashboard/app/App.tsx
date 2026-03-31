@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@kb/core";
-import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings } from "./api";
+import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, fetchModels } from "./api";
+import type { ModelInfo } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
@@ -49,6 +50,7 @@ function AppInner() {
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone } = useTasks();
 
   // Theme management
@@ -85,6 +87,13 @@ function AppInner() {
         }
       })
       .catch(() => {/* fail silently — do not auto-open */});
+  }, []);
+
+  // Fetch available models
+  useEffect(() => {
+    fetchModels()
+      .then((models) => setAvailableModels(models))
+      .catch(() => {/* keep empty array on failure */});
   }, []);
   const { toasts, addToast, removeToast } = useToast();
 
@@ -230,6 +239,7 @@ function AppInner() {
           onUnarchiveTask={unarchiveTask}
           onArchiveAllDone={archiveAllDone}
           searchQuery={searchQuery}
+          availableModels={availableModels}
         />
       ) : (
         // List view now uses the same modal-based create flow as board view.
@@ -241,6 +251,7 @@ function AppInner() {
           globalPaused={globalPaused}
           onNewTask={handleNewTaskOpen}
           onQuickCreate={handleBoardQuickCreate}
+          availableModels={availableModels}
         />
       )}
       {detailTask && (

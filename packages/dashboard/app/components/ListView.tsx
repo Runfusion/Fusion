@@ -3,6 +3,7 @@ import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Search, 
 import type { Task, TaskDetail, Column, TaskStep, TaskCreateInput } from "@kb/core";
 import { COLUMN_LABELS, COLUMNS } from "@kb/core";
 import { fetchTaskDetail } from "../api";
+import type { ModelInfo } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
 import type { ToastType } from "../hooks/useToast";
 
@@ -32,6 +33,7 @@ interface ListViewProps {
   globalPaused?: boolean;
   onNewTask?: () => void;
   onQuickCreate?: (input: TaskCreateInput) => Promise<void>;
+  availableModels?: ModelInfo[];
 }
 
 function getStepProgress(steps: TaskStep[]): string {
@@ -54,6 +56,7 @@ export function ListView({
   globalPaused,
   onNewTask,
   onQuickCreate,
+  availableModels,
 }: ListViewProps) {
   const [sortField, setSortField] = useState<SortField>("id");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -390,7 +393,9 @@ export function ListView({
         <div className="list-quick-entry">
           <QuickEntryBox 
             onCreate={onQuickCreate ?? (async () => addToast("Task creation not available", "error"))} 
-            addToast={addToast} 
+            addToast={addToast}
+            tasks={tasks}
+            availableModels={availableModels}
           />
         </div>
         <div className="list-column-toggle" ref={columnDropdownRef}>

@@ -8,6 +8,7 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
 import { ChevronDown, ChevronUp, Archive } from "lucide-react";
+import type { ModelInfo } from "../api";
 
 const PAGINATED_COLUMN_THRESHOLD = 100;
 const VISIBLE_TASKS_INITIAL = 50;
@@ -35,9 +36,10 @@ interface ColumnProps {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   allTasks?: Task[];
+  availableModels?: ModelInfo[];
 }
 
-function ColumnComponent({ column, tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks }: ColumnProps) {
+function ColumnComponent({ column, tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
@@ -174,6 +176,7 @@ function ColumnComponent({ column, tasks, maxConcurrent, onMoveTask, onOpenDetai
               onCreate={onQuickCreate} 
               addToast={addToast} 
               tasks={allTasks ?? []}
+              availableModels={availableModels}
             />
           )}
           {column === "in-progress" ? (
