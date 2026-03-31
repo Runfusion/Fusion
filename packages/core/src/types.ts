@@ -597,6 +597,12 @@ export interface ProjectSettings {
    *  than this duration, the task is considered stuck and will be terminated and retried.
    *  Default: undefined (disabled). Suggested value: 600000 (10 minutes). */
   taskStuckTimeoutMs?: number;
+  /** When true, automatically poll and update PR status badges for tasks linked to GitHub PRs.
+   *  Default: false. */
+  autoUpdatePrStatus?: boolean;
+  /** When true, automatically create GitHub PRs for completed tasks.
+   *  Default: false. */
+  autoCreatePr?: boolean;
 }
 
 /**
@@ -651,6 +657,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   smartConflictResolution: true,
   requirePlanApproval: false,
   taskStuckTimeoutMs: undefined,
+  autoUpdatePrStatus: false,
+  autoCreatePr: false,
 };
 
 /**
@@ -702,6 +710,8 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "smartConflictResolution",
   "requirePlanApproval",
   "taskStuckTimeoutMs",
+  "autoUpdatePrStatus",
+  "autoCreatePr",
 ] as const;
 
 export interface BoardConfig {
