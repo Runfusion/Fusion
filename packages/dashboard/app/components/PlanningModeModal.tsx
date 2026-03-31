@@ -305,18 +305,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
                     className="planning-textarea"
                     placeholder="e.g., Build a user authentication system with login, signup, and password reset..."
                     value={initialPlan}
-                    onChange={(e) => setInitialPlan(e.target.value.slice(0, 500))}
+                    onChange={(e) => setInitialPlan(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey && initialPlan.trim()) {
                         e.preventDefault();
                         handleStartPlanning();
                       }
                     }}
-                    maxLength={500}
                   />
-                  <div className="planning-char-count">
-                    {initialPlan.length}/500 characters
-                  </div>
                 </div>
 
                 <div className="planning-examples">
