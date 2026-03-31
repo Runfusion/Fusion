@@ -372,6 +372,196 @@ describe("fetchGitRemotes", () => {
   });
 });
 
+import {
+  fetchGitRemotesDetailed,
+  addGitRemote,
+  removeGitRemote,
+  renameGitRemote,
+  updateGitRemoteUrl,
+} from "./api";
+
+describe("fetchGitRemotesDetailed", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("returns array of remotes with fetch and push URLs", async () => {
+    const remotes = [
+      { name: "origin", fetchUrl: "https://github.com/dustinbyrne/kb.git", pushUrl: "https://github.com/dustinbyrne/kb.git" },
+      { name: "upstream", fetchUrl: "https://github.com/upstream/kb.git", pushUrl: "git@github.com:upstream/kb.git" },
+    ];
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, remotes));
+
+    const result = await fetchGitRemotesDetailed();
+
+    expect(result).toEqual(remotes);
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/detailed", {
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  it("returns empty array when no remotes", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+    const result = await fetchGitRemotesDetailed();
+
+    expect(result).toEqual([]);
+  });
+
+  it("throws on error", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Not a git repository" }, 400));
+
+    await expect(fetchGitRemotesDetailed()).rejects.toThrow("Not a git repository");
+  });
+});
+
+describe("addGitRemote", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("adds a new remote successfully", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { name: "origin", added: true }, 201));
+
+    await addGitRemote("origin", "https://github.com/dustinbyrne/kb.git");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "origin", url: "https://github.com/dustinbyrne/kb.git" }),
+    });
+  });
+
+  it("throws on invalid name", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Invalid remote name" }, 400));
+
+    await expect(addGitRemote("invalid;cmd", "https://github.com/test/repo.git")).rejects.toThrow("Invalid remote name");
+  });
+
+  it("throws on invalid URL", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Invalid git URL format" }, 400));
+
+    await expect(addGitRemote("origin", "not-a-valid-url")).rejects.toThrow("Invalid git URL format");
+  });
+
+  it("throws on duplicate remote", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Remote 'origin' already exists" }, 409));
+
+    await expect(addGitRemote("origin", "https://github.com/test/repo.git")).rejects.toThrow("Remote 'origin' already exists");
+  });
+});
+
+describe("removeGitRemote", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("removes a remote successfully", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { name: "origin", removed: true }));
+
+    await removeGitRemote("origin");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/origin", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  it("throws on invalid name", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Invalid remote name" }, 400));
+
+    await expect(removeGitRemote("invalid;cmd")).rejects.toThrow("Invalid remote name");
+  });
+
+  it("throws when remote does not exist", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Remote 'origin' does not exist" }, 404));
+
+    await expect(removeGitRemote("origin")).rejects.toThrow("Remote 'origin' does not exist");
+  });
+});
+
+describe("renameGitRemote", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("renames a remote successfully", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { oldName: "origin", newName: "upstream", renamed: true }));
+
+    await renameGitRemote("origin", "upstream");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/origin", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newName: "upstream" }),
+    });
+  });
+
+  it("throws on invalid name", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Invalid remote name" }, 400));
+
+    await expect(renameGitRemote("invalid;cmd", "upstream")).rejects.toThrow("Invalid remote name");
+  });
+
+  it("throws when remote does not exist", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Remote 'origin' does not exist" }, 404));
+
+    await expect(renameGitRemote("origin", "upstream")).rejects.toThrow("Remote 'origin' does not exist");
+  });
+
+  it("throws when new name already exists", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Remote 'upstream' already exists" }, 409));
+
+    await expect(renameGitRemote("origin", "upstream")).rejects.toThrow("Remote 'upstream' already exists");
+  });
+});
+
+describe("updateGitRemoteUrl", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("updates remote URL successfully", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { name: "origin", url: "https://new-url.com/repo.git", updated: true }));
+
+    await updateGitRemoteUrl("origin", "https://new-url.com/repo.git");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/origin/url", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://new-url.com/repo.git" }),
+    });
+  });
+
+  it("throws on invalid name", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Invalid remote name" }, 400));
+
+    await expect(updateGitRemoteUrl("invalid;cmd", "https://github.com/test/repo.git")).rejects.toThrow("Invalid remote name");
+  });
+
+  it("throws on invalid URL", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Invalid git URL format" }, 400));
+
+    await expect(updateGitRemoteUrl("origin", "not-a-valid-url")).rejects.toThrow("Invalid git URL format");
+  });
+
+  it("throws when remote does not exist", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Remote 'origin' does not exist" }, 404));
+
+    await expect(updateGitRemoteUrl("origin", "https://github.com/test/repo.git")).rejects.toThrow("Remote 'origin' does not exist");
+  });
+});
+
 // --- Plan approval API tests ---
 
 import { approvePlan, rejectPlan } from "./api";
@@ -1082,7 +1272,7 @@ describe("API Error Handling", () => {
         mockFetchResponse(false, { message: "Different field" }, 500)
       );
 
-      await expect(fetchTasks()).rejects.toThrow("Request failed: 500 Error");
+      await expect(fetchTasks()).rejects.toThrow("Request failed for /api/tasks: 500 Error");
     });
   });
 
@@ -1091,22 +1281,22 @@ describe("API Error Handling", () => {
       const html404 = "<!doctype html><html><body>Not Found</body></html>";
       globalThis.fetch = vi.fn().mockReturnValue(mockHtmlErrorResponse(404, html404));
 
-      await expect(fetchTasks()).rejects.toThrow("Request failed: 404 Not Found");
-      await expect(fetchTasks()).rejects.toThrow("Not Found");
+      await expect(fetchTasks()).rejects.toThrow("API returned HTML instead of JSON");
+      await expect(fetchTasks()).rejects.toThrow("404 Not Found");
     });
 
     it("truncates long HTML responses in error message", async () => {
       const longHtml = "<!doctype html>" + "x".repeat(200);
       globalThis.fetch = vi.fn().mockReturnValue(mockHtmlErrorResponse(500, longHtml));
 
-      await expect(fetchTasks()).rejects.toThrow("...");
+      await expect(fetchTasks()).rejects.toThrow("API returned HTML instead of JSON");
       await expect(fetchTasks()).rejects.not.toThrow(longHtml);
     });
 
     it("handles empty HTML error responses", async () => {
       globalThis.fetch = vi.fn().mockReturnValue(mockHtmlErrorResponse(500, ""));
 
-      await expect(fetchTasks()).rejects.toThrow("Request failed: 500 Not Found");
+      await expect(fetchTasks()).rejects.toThrow("API returned HTML instead of JSON");
     });
   });
 
