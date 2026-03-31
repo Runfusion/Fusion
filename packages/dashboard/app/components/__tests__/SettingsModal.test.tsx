@@ -1208,6 +1208,7 @@ describe("SettingsModal", () => {
     fireEvent.click(testButton);
 
     await waitFor(() => expect(testNtfyNotification).toHaveBeenCalledTimes(1));
+    expect(testNtfyNotification).toHaveBeenCalledWith({ ntfyEnabled: true, ntfyTopic: "my-valid-topic" });
   });
 
   it("Success toast is shown when test notification succeeds", async () => {

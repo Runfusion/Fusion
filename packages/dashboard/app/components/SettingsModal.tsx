@@ -190,7 +190,10 @@ export function SettingsModal({
 
     setTestNotificationLoading(true);
     try {
-      const result = await testNtfyNotification();
+      const result = await testNtfyNotification({
+        ntfyEnabled: form.ntfyEnabled,
+        ntfyTopic: form.ntfyTopic,
+      });
       if (result.success) {
         addToast("Test notification sent — check your ntfy app!", "success");
       } else {

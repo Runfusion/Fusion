@@ -222,9 +222,10 @@ export function fetchSettingsByScope(): Promise<{ global: GlobalSettings; projec
   return api<{ global: GlobalSettings; project: Partial<ProjectSettings> }>("/settings/scopes");
 }
 
-export function testNtfyNotification(): Promise<{ success: boolean }> {
+export function testNtfyNotification(config?: { ntfyEnabled?: boolean; ntfyTopic?: string }): Promise<{ success: boolean }> {
   return api<{ success: boolean }>("/settings/test-ntfy", {
     method: "POST",
+    body: config ? JSON.stringify(config) : undefined,
   });
 }
 
