@@ -1,7 +1,26 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Scheduler, pathsOverlap } from "./scheduler.js";
 import { AgentSemaphore } from "./concurrency.js";
 import type { TaskStore, Task } from "@fusion/core";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+
+// Mock fs modules
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    existsSync: vi.fn(),
+  };
+});
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    readFile: vi.fn(),
+  };
+});
 
 // Helper to create mock tasks
 function createMockTask(overrides: Partial<Task> = {}): Task {
@@ -27,6 +46,8 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateTask: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn().mockResolvedValue(undefined),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+    logEntry: vi.fn().mockResolvedValue(undefined),
+    getRootDir: vi.fn().mockReturnValue("/test/project"),
     on: vi.fn(),
     off: vi.fn(),
     ...overrides,
@@ -238,6 +259,200 @@ describe("Scheduler", () => {
       await scheduler.schedule();
 
       expect(store.moveTask).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("filesystem validation", () => {
+    it("moves task to triage when task directory is missing", async () => {
+      const tasks = [
+        createMockTask({ id: "KB-001", column: "todo", dependencies: [] }),
+      ];
+      
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        getRootDir: vi.fn().mockReturnValue("/test/project"),
+      });
+      
+      // Set up mocks directly on the store
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const logEntry = vi.fn().mockResolvedValue(undefined);
+      store.moveTask = moveTask;
+      store.logEntry = logEntry;
+
+      // Mock missing directory
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+      await scheduler.schedule();
+      
+      // Flush any remaining microtasks
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // Task should be moved to triage
+      expect(moveTask).toHaveBeenCalledWith("KB-001", "triage");
+      // Log entry should be written with reason
+      expect(logEntry).toHaveBeenCalledWith(
+        "KB-001",
+        "Task moved to triage — filesystem validation failed",
+        "missing directory"
+      );
+      // Task should not be moved to in-progress
+      expect(moveTask).not.toHaveBeenCalledWith("KB-001", "in-progress");
+    });
+
+    it("moves task to triage when PROMPT.md is missing", async () => {
+      const tasks = [
+        createMockTask({ id: "KB-002", column: "todo", dependencies: [] }),
+      ];
+      
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        getRootDir: vi.fn().mockReturnValue("/test/project"),
+      });
+
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const logEntry = vi.fn().mockResolvedValue(undefined);
+      store.moveTask = moveTask;
+      store.logEntry = logEntry;
+
+      // Mock directory exists but PROMPT.md doesn't
+      vi.mocked(existsSync).mockImplementation((path) => {
+        if (typeof path === "string" && path.includes("KB-002") && !path.endsWith("PROMPT.md")) {
+          return true; // Directory exists
+        }
+        return false; // PROMPT.md missing
+      });
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+      await scheduler.schedule();
+      
+      // Flush any remaining microtasks
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(moveTask).toHaveBeenCalledWith("KB-002", "triage");
+      expect(logEntry).toHaveBeenCalledWith(
+        "KB-002",
+        "Task moved to triage — filesystem validation failed",
+        "missing or empty PROMPT.md"
+      );
+    });
+
+    it("moves task to triage when PROMPT.md is empty", async () => {
+      const tasks = [
+        createMockTask({ id: "KB-003", column: "todo", dependencies: [] }),
+      ];
+      
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        getRootDir: vi.fn().mockReturnValue("/test/project"),
+      });
+
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const logEntry = vi.fn().mockResolvedValue(undefined);
+      store.moveTask = moveTask;
+      store.logEntry = logEntry;
+
+      // Mock directory and PROMPT.md exist
+      vi.mocked(existsSync).mockReturnValue(true);
+      // Mock empty file content
+      vi.mocked(readFile).mockResolvedValue("   "); // whitespace only
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+      await scheduler.schedule();
+      
+      // Flush any remaining microtasks
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(moveTask).toHaveBeenCalledWith("KB-003", "triage");
+      expect(logEntry).toHaveBeenCalledWith(
+        "KB-003",
+        "Task moved to triage — filesystem validation failed",
+        "missing or empty PROMPT.md"
+      );
+    });
+
+    it("proceeds with scheduling when filesystem is valid", async () => {
+      const tasks = [
+        createMockTask({ id: "KB-004", column: "todo", dependencies: [] }),
+      ];
+      
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        getRootDir: vi.fn().mockReturnValue("/test/project"),
+      });
+
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const logEntry = vi.fn().mockResolvedValue(undefined);
+      store.moveTask = moveTask;
+      store.logEntry = logEntry;
+
+      // Mock directory and PROMPT.md exist with valid content
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Valid PROMPT.md content\n\nThis task is valid.");
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+      await scheduler.schedule();
+      
+      // Flush any remaining microtasks
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // Should NOT move to triage
+      expect(moveTask).not.toHaveBeenCalledWith("KB-004", "triage");
+      // Should NOT log validation failure
+      expect(logEntry).not.toHaveBeenCalledWith(
+        "KB-004",
+        "Task moved to triage — filesystem validation failed",
+        expect.any(String)
+      );
+      // Should move to in-progress (since deps are satisfied and concurrency allows)
+      expect(moveTask).toHaveBeenCalledWith("KB-004", "in-progress");
+    });
+
+    it("does not validate filesystem for tasks with unmet dependencies", async () => {
+      const tasks = [
+        createMockTask({ id: "KB-005", column: "todo", dependencies: ["KB-006"] }),
+        createMockTask({ id: "KB-006", column: "todo", dependencies: [] }), // Unsatisfied dep
+      ];
+      
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        getRootDir: vi.fn().mockReturnValue("/test/project"),
+      });
+
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      store.moveTask = moveTask;
+      store.updateTask = updateTask;
+
+      // Mock that directory/PROMPT.md don't exist (would fail validation if checked)
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+      await scheduler.schedule();
+      
+      // Flush any remaining microtasks
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // Task with unmet deps should be queued, not validated
+      // Since KB-006 is not done, KB-005 should not be validated
+      expect(updateTask).toHaveBeenCalledWith("KB-005", { status: "queued" });
+      // No filesystem validation should occur (no move to triage)
+      expect(moveTask).not.toHaveBeenCalledWith("KB-005", "triage");
     });
   });
 });

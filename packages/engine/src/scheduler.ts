@@ -1,4 +1,7 @@
 import { resolveDependencyOrder, type TaskStore, type Task } from "@fusion/core";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AgentSemaphore } from "./concurrency.js";
 import { schedulerLog } from "./logger.js";
 import type { PrMonitor } from "./pr-monitor.js";
@@ -160,6 +163,39 @@ export class Scheduler {
         this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
       }
     });
+  }
+
+  /**
+   * Validate that a task's filesystem state is intact.
+   * Checks that the task directory exists and PROMPT.md is present and non-empty.
+   * 
+   * @param id - The task ID to validate
+   * @returns Object with `valid: true` if checks pass, or `valid: false` with a `reason` string if they fail
+   */
+  private async validateTaskFilesystem(id: string): Promise<{ valid: boolean; reason?: string }> {
+    const taskDir = join(this.store.getRootDir(), ".kb", "tasks", id);
+    
+    // Check if task directory exists
+    if (!existsSync(taskDir)) {
+      return { valid: false, reason: "missing directory" };
+    }
+    
+    // Check if PROMPT.md exists and has non-empty content
+    const promptPath = join(taskDir, "PROMPT.md");
+    if (!existsSync(promptPath)) {
+      return { valid: false, reason: "missing or empty PROMPT.md" };
+    }
+    
+    try {
+      const content = await readFile(promptPath, "utf-8");
+      if (!content || content.trim().length === 0) {
+        return { valid: false, reason: "missing or empty PROMPT.md" };
+      }
+    } catch {
+      return { valid: false, reason: "missing or empty PROMPT.md" };
+    }
+    
+    return { valid: true };
   }
 
   start(): void {
@@ -386,6 +422,15 @@ export class Scheduler {
         if (unmetDeps.length > 0) {
           await this.store.updateTask(task.id, { status: "queued" });
           this.options.onBlocked?.(task, unmetDeps);
+          continue;
+        }
+
+        // Validate filesystem state before starting (only for tasks with satisfied deps)
+        const validation = await this.validateTaskFilesystem(task.id);
+        if (!validation.valid) {
+          schedulerLog.warn(`Task ${task.id} filesystem validation failed: ${validation.reason}`);
+          await this.store.moveTask(task.id, "triage");
+          await this.store.logEntry(task.id, "Task moved to triage — filesystem validation failed", validation.reason);
           continue;
         }
 
