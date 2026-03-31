@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { CustomModelDropdown } from "../CustomModelDropdown";
 import type { ModelInfo } from "../../api";
 
-// Mock ProviderIcon to avoid rendering actual icons
+// Mock ProviderIcon to avoid rendering actual icons in most tests
 vi.mock("../ProviderIcon", () => ({
   ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`provider-icon-${provider}`} />,
 }));
