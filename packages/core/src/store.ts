@@ -398,6 +398,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const taskJsonPath = join(dir, "task.json");
     const tmpPath = join(dir, "task.json.tmp");
     this.suppressWatcher(taskJsonPath);
+    await mkdir(dir, { recursive: true }); // Ensure directory exists
     await writeFile(tmpPath, JSON.stringify(task, null, 2));
     await rename(tmpPath, taskJsonPath);
   }
