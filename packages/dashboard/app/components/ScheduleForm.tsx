@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-import type { ScheduledTask, ScheduledTaskCreateInput, ScheduleType } from "@kb/core";
+import type { ScheduledTask, ScheduledTaskCreateInput, ScheduleType, AutomationStep } from "@kb/core";
+import { ScheduleStepsEditor } from "./ScheduleStepsEditor";
 
 /** Mapping from preset schedule types to their cron expressions. Mirrored from @kb/core. */
 const PRESET_CRON: Record<Exclude<ScheduleType, "custom">, string> = {
@@ -40,6 +41,8 @@ function isLikelyCron(expr: string): boolean {
   return parts.every((p) => /^[\d*,/\-]+$/.test(p));
 }
 
+type ScheduleMode = "simple" | "advanced";
+
 interface ScheduleFormProps {
   /** Existing schedule for editing. Omit for create mode. */
   schedule?: ScheduledTask;
@@ -52,6 +55,10 @@ interface ScheduleFormProps {
 export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps) {
   const isEditing = !!schedule;
 
+  // Determine initial mode based on whether the schedule has steps
+  const initialMode: ScheduleMode = schedule?.steps && schedule.steps.length > 0 ? "advanced" : "simple";
+
+  const [mode, setMode] = useState<ScheduleMode>(initialMode);
   const [name, setName] = useState(schedule?.name ?? "");
   const [description, setDescription] = useState(schedule?.description ?? "");
   const [scheduleType, setScheduleType] = useState<ScheduleType>(schedule?.scheduleType ?? "daily");
@@ -59,6 +66,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
   const [command, setCommand] = useState(schedule?.command ?? "");
   const [enabled, setEnabled] = useState(schedule?.enabled ?? true);
   const [timeoutMs, setTimeoutMs] = useState<number>(schedule?.timeoutMs ?? 300000);
+  const [steps, setSteps] = useState<AutomationStep[]>(schedule?.steps ?? []);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -73,7 +81,8 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
   const validate = useCallback((): boolean => {
     const e: Record<string, string> = {};
     if (!name.trim()) e.name = "Name is required";
-    if (!command.trim()) e.command = "Command is required";
+    if (mode === "simple" && !command.trim()) e.command = "Command is required";
+    if (mode === "advanced" && steps.length === 0) e.steps = "At least one step is required";
     if (scheduleType === "custom") {
       if (!cronExpression.trim()) {
         e.cronExpression = "Cron expression is required for custom schedules";
@@ -86,7 +95,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
     }
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, command, scheduleType, cronExpression, timeoutMs]);
+  }, [name, command, mode, steps, scheduleType, cronExpression, timeoutMs]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -99,15 +108,16 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
           description: description.trim() || undefined,
           scheduleType,
           cronExpression: scheduleType === "custom" ? cronExpression.trim() : undefined,
-          command: command.trim(),
+          command: mode === "simple" ? command.trim() : "",
           enabled,
           timeoutMs,
+          steps: mode === "advanced" ? steps : undefined,
         });
       } finally {
         setSubmitting(false);
       }
     },
-    [validate, onSubmit, name, description, scheduleType, cronExpression, command, enabled, timeoutMs],
+    [validate, onSubmit, name, description, scheduleType, cronExpression, command, enabled, timeoutMs, mode, steps],
   );
 
   const cronFieldId = "schedule-cron";
@@ -189,23 +199,62 @@ export function ScheduleForm({ schedule, onSubmit, onCancel }: ScheduleFormProps
         )}
       </div>
 
+      {/* Mode switcher */}
       <div className="form-group">
-        <label htmlFor="schedule-command">Command</label>
-        <input
-          id="schedule-command"
-          type="text"
-          placeholder="e.g. npm run update-deps"
-          value={command}
-          onChange={(e) => setCommand(e.target.value)}
-          aria-invalid={!!errors.command}
-          aria-describedby={errors.command ? commandErrorId : undefined}
-        />
-        {errors.command ? (
-          <small id={commandErrorId} className="field-error">{errors.command}</small>
-        ) : (
-          <small>Shell command to execute. Runs with your user permissions.</small>
-        )}
+        <label>Execution Mode</label>
+        <div className="schedule-mode-toggle" role="radiogroup" aria-label="Execution mode">
+          <button
+            type="button"
+            className={`schedule-mode-btn${mode === "simple" ? " active" : ""}`}
+            onClick={() => setMode("simple")}
+            role="radio"
+            aria-checked={mode === "simple"}
+          >
+            Simple
+          </button>
+          <button
+            type="button"
+            className={`schedule-mode-btn${mode === "advanced" ? " active" : ""}`}
+            onClick={() => setMode("advanced")}
+            role="radio"
+            aria-checked={mode === "advanced"}
+          >
+            Multi-Step
+          </button>
+        </div>
+        <small>
+          {mode === "simple"
+            ? "Run a single shell command"
+            : "Run multiple steps sequentially (commands and AI prompts)"}
+        </small>
       </div>
+
+      {mode === "simple" ? (
+        <div className="form-group">
+          <label htmlFor="schedule-command">Command</label>
+          <input
+            id="schedule-command"
+            type="text"
+            placeholder="e.g. npm run update-deps"
+            value={command}
+            onChange={(e) => setCommand(e.target.value)}
+            aria-invalid={!!errors.command}
+            aria-describedby={errors.command ? commandErrorId : undefined}
+          />
+          {errors.command ? (
+            <small id={commandErrorId} className="field-error">{errors.command}</small>
+          ) : (
+            <small>Shell command to execute. Runs with your user permissions.</small>
+          )}
+        </div>
+      ) : (
+        <>
+          <ScheduleStepsEditor steps={steps} onChange={setSteps} />
+          {errors.steps && (
+            <small className="field-error">{errors.steps}</small>
+          )}
+        </>
+      )}
 
       <div className="form-group">
         <label htmlFor="schedule-timeout">Timeout (ms)</label>

@@ -14,6 +14,7 @@ vi.mock("lucide-react", () => ({
   XCircle: () => <span data-testid="icon-x">✗</span>,
   ChevronDown: () => <span data-testid="icon-down">▼</span>,
   ChevronUp: () => <span data-testid="icon-up">▲</span>,
+  Layers: () => <span data-testid="icon-layers">≡</span>,
 }));
 
 function makeResult(overrides: Partial<AutomationRunResult> = {}): AutomationRunResult {
@@ -205,6 +206,93 @@ describe("ScheduleCard", () => {
       fireEvent.click(screen.getByText("Run History (1)"));
       // History items should now be visible
       expect(screen.getByText(/just now|ago/)).toBeDefined();
+    });
+  });
+
+  describe("multi-step schedules", () => {
+    it("shows step count badge when schedule has steps", () => {
+      const schedule = makeSchedule({
+        steps: [
+          { id: "s1", type: "command", name: "Build", command: "npm run build" },
+          { id: "s2", type: "ai-prompt", name: "Review", prompt: "Review code" },
+        ],
+      });
+      render(
+        <ScheduleCard schedule={schedule} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />
+      );
+      expect(screen.getByText("2 steps")).toBeDefined();
+    });
+
+    it("shows singular 'step' for single step", () => {
+      const schedule = makeSchedule({
+        steps: [{ id: "s1", type: "command", name: "Build", command: "npm run build" }],
+      });
+      render(
+        <ScheduleCard schedule={schedule} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />
+      );
+      expect(screen.getByText("1 step")).toBeDefined();
+    });
+
+    it("shows command preview for legacy schedules without steps", () => {
+      const schedule = makeSchedule({ command: "npm update" });
+      const { container } = render(
+        <ScheduleCard schedule={schedule} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />
+      );
+      expect(container.querySelector(".schedule-command-preview")?.textContent).toBe("npm update");
+    });
+
+    it("does not show command preview when schedule has steps", () => {
+      const schedule = makeSchedule({
+        steps: [{ id: "s1", type: "command", name: "Build", command: "npm run build" }],
+      });
+      const { container } = render(
+        <ScheduleCard schedule={schedule} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />
+      );
+      expect(container.querySelector(".schedule-command-preview")).toBeNull();
+    });
+
+    it("shows step result dots in run history", () => {
+      const history = [
+        makeResult({
+          stepResults: [
+            { stepId: "s1", stepName: "Build", stepIndex: 0, success: true, output: "", startedAt: "2026-01-01T00:00:00Z", completedAt: "2026-01-01T00:00:01Z" },
+            { stepId: "s2", stepName: "Test", stepIndex: 1, success: false, output: "", error: "Tests failed", startedAt: "2026-01-01T00:00:01Z", completedAt: "2026-01-01T00:00:02Z" },
+          ],
+        }),
+      ];
+      const schedule = makeSchedule({ runHistory: history });
+      const { container } = render(
+        <ScheduleCard schedule={schedule} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />
+      );
+      // Expand the history
+      fireEvent.click(screen.getByText("Run History (1)"));
+      const dots = container.querySelectorAll(".step-result-dot");
+      expect(dots).toHaveLength(2);
+      expect(dots[0].classList.contains("success")).toBe(true);
+      expect(dots[1].classList.contains("failure")).toBe(true);
+    });
+
+    it("shows per-step results in expanded run history", () => {
+      const history = [
+        makeResult({
+          stepResults: [
+            { stepId: "s1", stepName: "Build", stepIndex: 0, success: true, output: "build ok", startedAt: "2026-01-01T00:00:00Z", completedAt: "2026-01-01T00:00:01Z" },
+            { stepId: "s2", stepName: "Test", stepIndex: 1, success: false, output: "", error: "Tests failed", startedAt: "2026-01-01T00:00:01Z", completedAt: "2026-01-01T00:00:02Z" },
+          ],
+        }),
+      ];
+      const schedule = makeSchedule({ runHistory: history });
+      render(
+        <ScheduleCard schedule={schedule} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />
+      );
+      // Expand the history
+      fireEvent.click(screen.getByText("Run History (1)"));
+      // Expand the run item
+      fireEvent.click(screen.getByRole("button", { name: /Run #1/ }));
+      // Check per-step results
+      expect(screen.getByText("Build")).toBeDefined();
+      expect(screen.getByText("Test")).toBeDefined();
+      expect(screen.getByText("Tests failed")).toBeDefined();
     });
   });
 });

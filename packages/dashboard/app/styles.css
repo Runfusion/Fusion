@@ -8784,6 +8784,264 @@ html .column.drag-over * {
   text-align: center;
 }
 
+/* Schedule card: step count badge */
+.schedule-steps-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.schedule-meta-command-preview {
+  max-width: 200px;
+  overflow: hidden;
+}
+
+.schedule-command-preview {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+/* Step result indicators (dots in run history header) */
+.step-results-indicator {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  margin: 0 4px;
+}
+
+.step-result-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.step-result-dot.success {
+  background: var(--color-green, #22c55e);
+}
+
+.step-result-dot.failure {
+  background: var(--color-red, #ef4444);
+}
+
+/* Per-step results in run history detail */
+.schedule-step-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 6px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+
+.schedule-step-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.schedule-step-result-status {
+  display: flex;
+  align-items: center;
+}
+
+.schedule-step-result.success .schedule-step-result-status {
+  color: var(--color-green, #22c55e);
+}
+
+.schedule-step-result.failure .schedule-step-result-status {
+  color: var(--color-red, #ef4444);
+}
+
+.schedule-step-result-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.schedule-step-result-error {
+  color: var(--color-red, #ef4444);
+  font-size: 10px;
+}
+
+/* Step type badges */
+.step-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.step-type-command {
+  color: var(--color-blue, #3b82f6);
+  background: color-mix(in srgb, var(--color-blue, #3b82f6) 12%, transparent);
+}
+
+.step-type-ai-prompt {
+  color: var(--color-purple, #a855f7);
+  background: color-mix(in srgb, var(--color-purple, #a855f7) 12%, transparent);
+}
+
+/* Steps editor */
+.steps-editor {
+  margin: 8px 0;
+}
+
+.steps-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.steps-editor-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.steps-empty-state {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.step-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+}
+
+.step-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.step-card-drag {
+  color: var(--text-muted);
+  cursor: grab;
+  display: flex;
+  align-items: center;
+}
+
+.step-card-index {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  min-width: 16px;
+  text-align: center;
+}
+
+.step-card-name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-card-flag {
+  font-size: 10px;
+}
+
+.step-card-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+/* Step editor inline form */
+.step-editor {
+  padding: 12px;
+}
+
+.step-editor .form-group {
+  margin-bottom: 8px;
+}
+
+.step-editor-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* Steps add buttons */
+.steps-add-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.steps-add-buttons .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Schedule form mode toggle */
+.schedule-mode-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.schedule-mode-btn {
+  flex: 1;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.schedule-mode-btn:hover {
+  background: var(--bg-tertiary, var(--bg-secondary));
+}
+
+.schedule-mode-btn.active {
+  background: var(--accent-color, #3b82f6);
+  color: white;
+}
+
+.form-group-row {
+  display: flex;
+  gap: 12px;
+}
+
+.form-group-row .form-group {
+  flex: 1;
+}
+
 /* Schedule form within modal */
 .schedule-form {
   padding: 0;

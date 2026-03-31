@@ -15,6 +15,53 @@ export const AUTOMATION_PRESETS: Record<Exclude<ScheduleType, "custom">, string>
   weekdays: "0 9 * * 1-5",
 };
 
+// ── Automation Step Types ────────────────────────────────────────────
+
+/** The type of an automation step. */
+export type AutomationStepType = "command" | "ai-prompt";
+
+/** A single step within a multi-step scheduled task. */
+export interface AutomationStep {
+  /** Unique step identifier (UUID). */
+  id: string;
+  /** The type of this step. */
+  type: AutomationStepType;
+  /** Human-readable step name. */
+  name: string;
+  /** Shell command to execute (for command steps). */
+  command?: string;
+  /** AI prompt to run (for ai-prompt steps). */
+  prompt?: string;
+  /** AI model provider (for ai-prompt steps). */
+  modelProvider?: string;
+  /** AI model ID (for ai-prompt steps). */
+  modelId?: string;
+  /** Per-step timeout override in milliseconds. */
+  timeoutMs?: number;
+  /** Whether to continue to the next step if this one fails. Default: false. */
+  continueOnFailure?: boolean;
+}
+
+/** Result of executing a single automation step. */
+export interface AutomationStepResult {
+  /** Step ID that produced this result. */
+  stepId: string;
+  /** Step name (for display). */
+  stepName: string;
+  /** Zero-based index of the step. */
+  stepIndex: number;
+  /** Whether the step completed successfully. */
+  success: boolean;
+  /** Output from the step. */
+  output: string;
+  /** Error message if the step failed. */
+  error?: string;
+  /** ISO-8601 timestamp of when this step started. */
+  startedAt: string;
+  /** ISO-8601 timestamp of when this step completed. */
+  completedAt: string;
+}
+
 /** Result of a single automation run. */
 export interface AutomationRunResult {
   success: boolean;
@@ -22,6 +69,8 @@ export interface AutomationRunResult {
   error?: string;
   startedAt: string;
   completedAt: string;
+  /** Per-step results (present only for multi-step schedules). */
+  stepResults?: AutomationStepResult[];
 }
 
 /** A scheduled automation task. */
@@ -36,8 +85,12 @@ export interface ScheduledTask {
   scheduleType: ScheduleType;
   /** The cron expression (auto-derived from preset or user-supplied for custom). */
   cronExpression: string;
-  /** The shell command to execute. */
+  /** The shell command to execute (legacy single-command mode). */
   command: string;
+  /** Multi-step workflow. When present, steps execute sequentially instead of `command`. */
+  steps?: AutomationStep[];
+  /** Index of the step currently being executed (runtime only, not persisted as running state). */
+  currentStepIndex?: number;
   /** Whether this schedule is currently active. */
   enabled: boolean;
   /** ISO-8601 timestamp of the last run start, if any. */
@@ -65,9 +118,12 @@ export interface ScheduledTaskCreateInput {
   scheduleType: ScheduleType;
   /** Required for 'custom' type; ignored for presets (auto-derived). */
   cronExpression?: string;
+  /** Shell command (legacy single-command mode). Required if `steps` is not provided. */
   command: string;
   enabled?: boolean;
   timeoutMs?: number;
+  /** Multi-step workflow. When provided, `command` is ignored in favor of sequential step execution. */
+  steps?: AutomationStep[];
 }
 
 /** Input for updating an existing scheduled task. */
@@ -79,6 +135,8 @@ export interface ScheduledTaskUpdateInput {
   command?: string;
   enabled?: boolean;
   timeoutMs?: number;
+  /** Multi-step workflow. When provided, `command` is ignored in favor of sequential step execution. */
+  steps?: AutomationStep[];
 }
 
 /** Maximum number of run history entries to retain per schedule. */

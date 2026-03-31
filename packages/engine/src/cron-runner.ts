@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { TaskStore } from "@kb/core";
 import type { AutomationStore } from "@kb/core";
-import type { ScheduledTask, AutomationRunResult } from "@kb/core";
+import type { ScheduledTask, AutomationRunResult, AutomationStep, AutomationStepResult } from "@kb/core";
 import { createLogger } from "./logger.js";
 
 const execAsync = promisify(exec);
@@ -118,53 +118,26 @@ export class CronRunner {
   }
 
   /**
-   * Execute a single schedule's command.
-   * - Tracks in-flight state to prevent concurrent runs.
-   * - Enforces timeout and output buffer limits.
-   * - Records the run result in the automation store.
+   * Execute a single schedule.
+   *
+   * - **Legacy mode**: When `steps` is undefined/empty, execute `command` directly.
+   * - **Step mode**: When `steps` is present, execute steps sequentially.
+   *
+   * Tracks in-flight state to prevent concurrent runs.
+   * Records the run result in the automation store.
    */
   async executeSchedule(schedule: ScheduledTask): Promise<AutomationRunResult> {
     this.inFlight.add(schedule.id);
     const startedAt = new Date().toISOString();
-    log.log(`Executing ${schedule.name} (${schedule.id}): ${schedule.command}`);
 
     let result: AutomationRunResult;
 
     try {
-      const timeoutMs = schedule.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-      const { stdout, stderr } = await execAsync(schedule.command, {
-        timeout: timeoutMs,
-        maxBuffer: MAX_BUFFER,
-        shell: "/bin/sh",
-      });
-
-      const output = truncateOutput(stdout, stderr);
-
-      result = {
-        success: true,
-        output,
-        startedAt,
-        completedAt: new Date().toISOString(),
-      };
-
-      log.log(`✓ ${schedule.name} completed (${result.output.length} bytes output)`);
-    } catch (err: any) {
-      const stdout = err.stdout ?? "";
-      const stderr = err.stderr ?? "";
-      const output = truncateOutput(stdout, stderr);
-      const errorMessage = err.killed
-        ? `Command timed out after ${(schedule.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000}s`
-        : err.message ?? String(err);
-
-      result = {
-        success: false,
-        output,
-        error: errorMessage,
-        startedAt,
-        completedAt: new Date().toISOString(),
-      };
-
-      log.warn(`✗ ${schedule.name} failed: ${errorMessage}`);
+      if (schedule.steps && schedule.steps.length > 0) {
+        result = await this.executeSteps(schedule, startedAt);
+      } else {
+        result = await this.executeLegacyCommand(schedule, startedAt);
+      }
     } finally {
       this.inFlight.delete(schedule.id);
     }
@@ -177,6 +150,245 @@ export class CronRunner {
     }
 
     return result;
+  }
+
+  /**
+   * Execute a legacy single-command schedule.
+   */
+  private async executeLegacyCommand(
+    schedule: ScheduledTask,
+    startedAt: string,
+  ): Promise<AutomationRunResult> {
+    log.log(`Executing ${schedule.name} (${schedule.id}): ${schedule.command}`);
+
+    try {
+      const timeoutMs = schedule.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const { stdout, stderr } = await execAsync(schedule.command, {
+        timeout: timeoutMs,
+        maxBuffer: MAX_BUFFER,
+        shell: "/bin/sh",
+      });
+
+      const output = truncateOutput(stdout, stderr);
+      log.log(`✓ ${schedule.name} completed (${output.length} bytes output)`);
+
+      return {
+        success: true,
+        output,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    } catch (err: any) {
+      const stdout = err.stdout ?? "";
+      const stderr = err.stderr ?? "";
+      const output = truncateOutput(stdout, stderr);
+      const errorMessage = err.killed
+        ? `Command timed out after ${(schedule.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000}s`
+        : err.message ?? String(err);
+
+      log.warn(`✗ ${schedule.name} failed: ${errorMessage}`);
+
+      return {
+        success: false,
+        output,
+        error: errorMessage,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * Execute multiple steps sequentially.
+   * Aggregates per-step results into an overall AutomationRunResult.
+   */
+  private async executeSteps(
+    schedule: ScheduledTask,
+    startedAt: string,
+  ): Promise<AutomationRunResult> {
+    const steps = schedule.steps!;
+    log.log(`Executing ${schedule.name} (${schedule.id}): ${steps.length} steps`);
+
+    const stepResults: AutomationStepResult[] = [];
+    let overallSuccess = true;
+    let stoppedEarly = false;
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      log.log(`  Step ${i + 1}/${steps.length}: ${step.name} (${step.type})`);
+
+      const stepResult = await this.executeStep(schedule, step, i);
+      stepResults.push(stepResult);
+
+      if (!stepResult.success) {
+        overallSuccess = false;
+        if (!step.continueOnFailure) {
+          log.warn(`  Step "${step.name}" failed — stopping execution`);
+          stoppedEarly = true;
+          break;
+        }
+        log.warn(`  Step "${step.name}" failed — continuing (continueOnFailure=true)`);
+      } else {
+        log.log(`  ✓ Step "${step.name}" completed`);
+      }
+    }
+
+    // Aggregate output from all steps
+    const outputParts: string[] = [];
+    for (const sr of stepResults) {
+      outputParts.push(`=== Step ${sr.stepIndex + 1}: ${sr.stepName} (${sr.success ? "success" : "FAILED"}) ===`);
+      if (sr.output) outputParts.push(sr.output);
+      if (sr.error) outputParts.push(`Error: ${sr.error}`);
+    }
+    const output = truncateOutput(outputParts.join("\n"), "");
+
+    // Build error summary
+    const failedSteps = stepResults.filter((sr) => !sr.success);
+    const error = failedSteps.length > 0
+      ? `${failedSteps.length} step(s) failed: ${failedSteps.map((s) => s.stepName).join(", ")}${stoppedEarly ? " (execution stopped)" : ""}`
+      : undefined;
+
+    const status = overallSuccess ? "✓" : "✗";
+    log.log(`${status} ${schedule.name}: ${stepResults.length}/${steps.length} steps executed, ${failedSteps.length} failed`);
+
+    return {
+      success: overallSuccess,
+      output,
+      error,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      stepResults,
+    };
+  }
+
+  /**
+   * Execute a single automation step.
+   */
+  async executeStep(
+    schedule: ScheduledTask,
+    step: AutomationStep,
+    stepIndex: number,
+  ): Promise<AutomationStepResult> {
+    const stepStartedAt = new Date().toISOString();
+    const timeoutMs = step.timeoutMs ?? schedule.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+    if (step.type === "command") {
+      return this.executeCommandStep(step, stepIndex, timeoutMs, stepStartedAt);
+    } else if (step.type === "ai-prompt") {
+      return this.executeAiPromptStep(step, stepIndex, timeoutMs, stepStartedAt);
+    }
+
+    // Unknown step type
+    return {
+      stepId: step.id,
+      stepName: step.name,
+      stepIndex,
+      success: false,
+      output: "",
+      error: `Unknown step type: "${(step as any).type}"`,
+      startedAt: stepStartedAt,
+      completedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Execute a command step using shell execution.
+   */
+  private async executeCommandStep(
+    step: AutomationStep,
+    stepIndex: number,
+    timeoutMs: number,
+    startedAt: string,
+  ): Promise<AutomationStepResult> {
+    if (!step.command?.trim()) {
+      return {
+        stepId: step.id,
+        stepName: step.name,
+        stepIndex,
+        success: false,
+        output: "",
+        error: "Command step has no command specified",
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
+
+    try {
+      const { stdout, stderr } = await execAsync(step.command, {
+        timeout: timeoutMs,
+        maxBuffer: MAX_BUFFER,
+        shell: "/bin/sh",
+      });
+
+      return {
+        stepId: step.id,
+        stepName: step.name,
+        stepIndex,
+        success: true,
+        output: truncateOutput(stdout, stderr),
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    } catch (err: any) {
+      const stdout = err.stdout ?? "";
+      const stderr = err.stderr ?? "";
+      const errorMessage = err.killed
+        ? `Command timed out after ${timeoutMs / 1000}s`
+        : err.message ?? String(err);
+
+      return {
+        stepId: step.id,
+        stepName: step.name,
+        stepIndex,
+        success: false,
+        output: truncateOutput(stdout, stderr),
+        error: errorMessage,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * Execute an AI prompt step.
+   * In a full implementation, this would create an agent session and run the prompt.
+   * For now, we log the prompt and model selection and return a placeholder result.
+   */
+  private async executeAiPromptStep(
+    step: AutomationStep,
+    stepIndex: number,
+    _timeoutMs: number,
+    startedAt: string,
+  ): Promise<AutomationStepResult> {
+    if (!step.prompt?.trim()) {
+      return {
+        stepId: step.id,
+        stepName: step.name,
+        stepIndex,
+        success: false,
+        output: "",
+        error: "AI prompt step has no prompt specified",
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
+
+    const model = step.modelProvider && step.modelId
+      ? `${step.modelProvider}/${step.modelId}`
+      : "default";
+    log.log(`    AI prompt step "${step.name}" using model: ${model}`);
+    log.log(`    Prompt: ${step.prompt.slice(0, 100)}${step.prompt.length > 100 ? "…" : ""}`);
+
+    // TODO: Integrate with actual agent session for AI prompt execution
+    return {
+      stepId: step.id,
+      stepName: step.name,
+      stepIndex,
+      success: true,
+      output: `[AI prompt step — model: ${model}]\nPrompt: ${step.prompt}\n\n(AI execution not yet implemented — prompt recorded for future integration)`,
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
   }
 }
 

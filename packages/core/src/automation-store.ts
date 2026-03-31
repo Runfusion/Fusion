@@ -122,7 +122,8 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
     if (!input.name?.trim()) {
       throw new Error("Name is required and cannot be empty");
     }
-    if (!input.command?.trim()) {
+    const hasSteps = input.steps && input.steps.length > 0;
+    if (!hasSteps && !input.command?.trim()) {
       throw new Error("Command is required and cannot be empty");
     }
 
@@ -150,11 +151,12 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       description: input.description?.trim() || undefined,
       scheduleType: input.scheduleType,
       cronExpression,
-      command: input.command.trim(),
+      command: (input.command ?? "").trim(),
       enabled,
       runCount: 0,
       runHistory: [],
       timeoutMs: input.timeoutMs,
+      steps: hasSteps ? input.steps : undefined,
       nextRunAt: enabled ? this.computeNextRun(cronExpression) : undefined,
       createdAt: now,
       updatedAt: now,
@@ -207,6 +209,9 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
         if (!updates.command.trim()) throw new Error("Command cannot be empty");
         schedule.command = updates.command.trim();
       }
+      if (updates.steps !== undefined) {
+        schedule.steps = updates.steps.length > 0 ? updates.steps : undefined;
+      }
       if (updates.timeoutMs !== undefined) {
         schedule.timeoutMs = updates.timeoutMs;
       }
@@ -246,6 +251,40 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
       schedule.updatedAt = new Date().toISOString();
       await this.atomicWriteScheduleJson(id, schedule);
+      this.emit("schedule:updated", schedule);
+      return schedule;
+    });
+  }
+
+  /**
+   * Reorder the steps of a schedule by providing the step IDs in the desired order.
+   * The `stepIds` array must contain exactly the same IDs as the current steps.
+   */
+  async reorderSteps(scheduleId: string, stepIds: string[]): Promise<ScheduledTask> {
+    return this.withScheduleLock(scheduleId, async () => {
+      const schedule = await this.getSchedule(scheduleId);
+      if (!schedule.steps || schedule.steps.length === 0) {
+        throw new Error("Schedule has no steps to reorder");
+      }
+      if (stepIds.length !== schedule.steps.length) {
+        throw new Error(
+          `Step ID count mismatch: expected ${schedule.steps.length}, got ${stepIds.length}`,
+        );
+      }
+
+      const stepMap = new Map(schedule.steps.map((s) => [s.id, s]));
+      const reordered = [];
+      for (const id of stepIds) {
+        const step = stepMap.get(id);
+        if (!step) {
+          throw new Error(`Unknown step ID: "${id}"`);
+        }
+        reordered.push(step);
+      }
+
+      schedule.steps = reordered;
+      schedule.updatedAt = new Date().toISOString();
+      await this.atomicWriteScheduleJson(scheduleId, schedule);
       this.emit("schedule:updated", schedule);
       return schedule;
     });

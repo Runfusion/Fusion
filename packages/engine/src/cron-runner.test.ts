@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CronRunner } from "./cron-runner.js";
-import type { TaskStore, AutomationStore, ScheduledTask, AutomationRunResult, Settings } from "@kb/core";
+import type { TaskStore, AutomationStore, ScheduledTask, AutomationRunResult, AutomationStep, Settings } from "@kb/core";
 import { DEFAULT_SETTINGS } from "@kb/core";
+import { randomUUID } from "node:crypto";
 
 function createMockSchedule(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
@@ -355,6 +356,272 @@ describe("CronRunner", () => {
       runner = new CronRunner(store, automationStore);
 
       expect(runner["pollIntervalMs"]).toBe(60000);
+    });
+  });
+
+  // ── Multi-step execution ──────────────────────────────────────────
+
+  describe("multi-step execution", () => {
+    function makeStep(overrides: Partial<AutomationStep> = {}): AutomationStep {
+      return {
+        id: randomUUID(),
+        type: "command",
+        name: "Test step",
+        command: "echo step-output",
+        ...overrides,
+      };
+    }
+
+    it("legacy single-command mode still works when no steps are defined", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo legacy-mode" });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("legacy-mode");
+      expect(result.stepResults).toBeUndefined();
+    });
+
+    it("executes multiple command steps sequentially", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Step 1", command: "echo first" }),
+          makeStep({ name: "Step 2", command: "echo second" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.stepResults).toHaveLength(2);
+      expect(result.stepResults![0].success).toBe(true);
+      expect(result.stepResults![0].output).toContain("first");
+      expect(result.stepResults![1].success).toBe(true);
+      expect(result.stepResults![1].output).toContain("second");
+    });
+
+    it("stops on step failure when continueOnFailure is false", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Failing step", command: "exit 1" }),
+          makeStep({ name: "Should not run", command: "echo should-not-run" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults).toHaveLength(1); // Only the first step ran
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.error).toContain("1 step(s) failed");
+      expect(result.error).toContain("execution stopped");
+    });
+
+    it("continues after failure when continueOnFailure is true", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Failing step", command: "exit 1", continueOnFailure: true }),
+          makeStep({ name: "Should still run", command: "echo continued" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false); // Overall failure
+      expect(result.stepResults).toHaveLength(2); // Both steps ran
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![1].success).toBe(true);
+      expect(result.stepResults![1].output).toContain("continued");
+    });
+
+    it("uses per-step timeout override", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        timeoutMs: 30000, // schedule-level timeout (large)
+        steps: [
+          makeStep({ name: "Slow step", command: "sleep 60", timeoutMs: 100 }), // step-level timeout (tiny)
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults).toHaveLength(1);
+      expect(result.stepResults![0].error).toContain("timed out");
+    }, 10000);
+
+    it("falls back to schedule-level timeout when step has no timeout", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        timeoutMs: 100, // tiny schedule-level timeout
+        steps: [
+          makeStep({ name: "Slow step", command: "sleep 60" }), // no step-level timeout
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].error).toContain("timed out");
+    }, 10000);
+
+    it("handles AI prompt step execution (mocked)", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "AI Analysis",
+            prompt: "Analyze the codebase",
+            modelProvider: "anthropic",
+            modelId: "claude-sonnet-4-5",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.stepResults).toHaveLength(1);
+      expect(result.stepResults![0].success).toBe(true);
+      expect(result.stepResults![0].output).toContain("anthropic/claude-sonnet-4-5");
+      expect(result.stepResults![0].output).toContain("Analyze the codebase");
+    });
+
+    it("fails AI prompt step when no prompt is provided", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "Empty prompt",
+            prompt: "",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].error).toContain("no prompt specified");
+    });
+
+    it("fails command step when no command is provided", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Empty command", command: "" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults![0].error).toContain("no command specified");
+    });
+
+    it("aggregates output from all steps with headers", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Alpha", command: "echo alpha-output" }),
+          makeStep({ name: "Beta", command: "echo beta-output" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.output).toContain("Step 1: Alpha");
+      expect(result.output).toContain("alpha-output");
+      expect(result.output).toContain("Step 2: Beta");
+      expect(result.output).toContain("beta-output");
+    });
+
+    it("records run result with stepResults to automation store", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeStep({ name: "S1", command: "echo ok" })],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.executeSchedule(schedule);
+
+      expect(automationStore.recordRun).toHaveBeenCalledWith(
+        schedule.id,
+        expect.objectContaining({
+          success: true,
+          stepResults: expect.arrayContaining([
+            expect.objectContaining({
+              stepName: "S1",
+              success: true,
+            }),
+          ]),
+        }),
+      );
+    });
+
+    it("mixed step types execute correctly", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({ name: "Build", command: "echo build-done" }),
+          makeStep({
+            type: "ai-prompt",
+            name: "Summarize",
+            prompt: "Summarize results",
+            command: undefined,
+          }),
+          makeStep({ name: "Deploy", command: "echo deployed" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.stepResults).toHaveLength(3);
+      expect(result.stepResults![0].stepName).toBe("Build");
+      expect(result.stepResults![1].stepName).toBe("Summarize");
+      expect(result.stepResults![2].stepName).toBe("Deploy");
     });
   });
 });

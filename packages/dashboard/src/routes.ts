@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import multer from "multer";
 import { createReadStream, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
-import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset } from "@kb/core";
+import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset, AutomationStep } from "@kb/core";
 import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore } from "@kb/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
@@ -3906,16 +3906,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       return res.status(503).json({ error: "Automation store not available" });
     }
     try {
-      const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs } = req.body;
+      const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps } = req.body;
 
       // Validation
       if (!name?.trim()) {
         return res.status(400).json({ error: "Name is required" });
       }
-      if (!command?.trim()) {
-        return res.status(400).json({ error: "Command is required" });
+      const hasSteps = Array.isArray(steps) && steps.length > 0;
+      if (!hasSteps && !command?.trim()) {
+        return res.status(400).json({ error: "Command is required when no steps are provided" });
       }
-      const validTypes = ["hourly", "daily", "weekly", "monthly", "custom"];
+      const validTypes = ["hourly", "daily", "weekly", "monthly", "custom", "every15Minutes", "every30Minutes", "every2Hours", "every6Hours", "every12Hours", "weekdays"];
       if (!scheduleType || !validTypes.includes(scheduleType)) {
         return res.status(400).json({ error: `Invalid schedule type. Must be one of: ${validTypes.join(", ")}` });
       }
@@ -3927,15 +3928,23 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           return res.status(400).json({ error: `Invalid cron expression: "${cronExpression}"` });
         }
       }
+      // Validate steps if provided
+      if (hasSteps) {
+        const stepErr = validateAutomationSteps(steps);
+        if (stepErr) {
+          return res.status(400).json({ error: stepErr });
+        }
+      }
 
       const schedule = await automationStore.createSchedule({
         name,
         description,
         scheduleType: scheduleType as ScheduleType,
         cronExpression,
-        command,
+        command: command ?? "",
         enabled,
         timeoutMs,
+        steps: hasSteps ? steps : undefined,
       });
       res.status(201).json(schedule);
     } catch (err: any) {
@@ -3967,12 +3976,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
     try {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs } = req.body;
+      const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps } = req.body;
 
       // Validate cron if switching to custom
       if (scheduleType === "custom" && cronExpression) {
         if (!AutomationStore.isValidCron(cronExpression)) {
           return res.status(400).json({ error: `Invalid cron expression: "${cronExpression}"` });
+        }
+      }
+
+      // Validate steps if provided
+      if (Array.isArray(steps) && steps.length > 0) {
+        const stepErr = validateAutomationSteps(steps);
+        if (stepErr) {
+          return res.status(400).json({ error: stepErr });
         }
       }
 
@@ -3984,6 +4001,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         command,
         enabled,
         timeoutMs,
+        steps: steps !== undefined ? steps : undefined,
       });
       res.json(schedule);
     } catch (err: any) {
@@ -4023,59 +4041,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
       const schedule = await automationStore.getSchedule(id);
 
-      // Execute the command directly
-      const { exec } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      const execAsync = promisify(exec);
-
       const startedAt = new Date().toISOString();
       let result: import("@kb/core").AutomationRunResult;
 
-      try {
-        const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-        const MAX_BUFFER = 1024 * 1024;
-        const { stdout, stderr } = await execAsync(schedule.command, {
-          timeout: schedule.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          maxBuffer: MAX_BUFFER,
-          shell: "/bin/sh",
-        });
-
-        let output = stdout;
-        if (stderr) {
-          output += stdout ? "\n--- stderr ---\n" : "";
-          output += stderr;
-        }
-        if (output.length > 10240) {
-          output = output.slice(0, 10240) + "\n[output truncated]";
-        }
-
-        result = {
-          success: true,
-          output,
-          startedAt,
-          completedAt: new Date().toISOString(),
-        };
-      } catch (err: any) {
-        const stdout = err.stdout ?? "";
-        const stderr = err.stderr ?? "";
-        let output = stdout;
-        if (stderr) {
-          output += stdout ? "\n--- stderr ---\n" : "";
-          output += stderr;
-        }
-        if (output.length > 10240) {
-          output = output.slice(0, 10240) + "\n[output truncated]";
-        }
-
-        result = {
-          success: false,
-          output,
-          error: err.killed
-            ? `Command timed out after ${(schedule.timeoutMs ?? 300000) / 1000}s`
-            : err.message ?? String(err),
-          startedAt,
-          completedAt: new Date().toISOString(),
-        };
+      if (schedule.steps && schedule.steps.length > 0) {
+        // Multi-step execution
+        result = await executeScheduleSteps(schedule, startedAt);
+      } else {
+        // Legacy single-command execution
+        result = await executeSingleCommand(schedule.command, schedule.timeoutMs, startedAt);
       }
 
       // Record the result
@@ -4104,6 +4078,30 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     } catch (err: any) {
       if (err.code === "ENOENT") {
         return res.status(404).json({ error: "Schedule not found" });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /automations/:id/steps/reorder — reorder steps
+  router.post("/automations/:id/steps/reorder", async (req, res) => {
+    if (!automationStore) {
+      return res.status(503).json({ error: "Automation store not available" });
+    }
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const { stepIds } = req.body;
+      if (!Array.isArray(stepIds)) {
+        return res.status(400).json({ error: "stepIds must be an array" });
+      }
+      const schedule = await automationStore.reorderSteps(id, stepIds);
+      res.json(schedule);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        return res.status(404).json({ error: "Schedule not found" });
+      }
+      if (err.message?.includes("mismatch") || err.message?.includes("Unknown step") || err.message?.includes("no steps")) {
+        return res.status(400).json({ error: err.message });
       }
       res.status(500).json({ error: err.message });
     }
@@ -4374,6 +4372,199 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   return router;
+}
+
+// ── Automation step helpers ─────────────────────────────────────────
+
+/**
+ * Validate an array of automation steps.
+ * Returns an error string if invalid, or null if valid.
+ */
+function validateAutomationSteps(steps: unknown[]): string | null {
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i] as Record<string, unknown>;
+    if (!step.id || typeof step.id !== "string") {
+      return `Step ${i + 1}: id is required`;
+    }
+    if (!step.type || (step.type !== "command" && step.type !== "ai-prompt")) {
+      return `Step ${i + 1}: type must be "command" or "ai-prompt"`;
+    }
+    if (!step.name || typeof step.name !== "string" || !step.name.trim()) {
+      return `Step ${i + 1}: name is required`;
+    }
+    if (step.type === "command") {
+      if (!step.command || typeof step.command !== "string" || !step.command.trim()) {
+        return `Step ${i + 1}: command is required for command steps`;
+      }
+    }
+    if (step.type === "ai-prompt") {
+      if (!step.prompt || typeof step.prompt !== "string" || !step.prompt.trim()) {
+        return `Step ${i + 1}: prompt is required for ai-prompt steps`;
+      }
+    }
+    // Validate model fields are both present or both absent
+    const hasProvider = step.modelProvider && typeof step.modelProvider === "string";
+    const hasModelId = step.modelId && typeof step.modelId === "string";
+    if ((hasProvider && !hasModelId) || (!hasProvider && hasModelId)) {
+      return `Step ${i + 1}: modelProvider and modelId must both be present or both absent`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Execute a single shell command (used by manual run endpoint).
+ */
+async function executeSingleCommand(
+  command: string,
+  timeoutMs: number | undefined,
+  startedAt: string,
+): Promise<import("@kb/core").AutomationRunResult> {
+  const { exec } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execAsyncFn = promisify(exec);
+  const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+  const MAX_BUFFER = 1024 * 1024;
+  const MAX_OUTPUT = 10240;
+
+  try {
+    const { stdout, stderr } = await execAsyncFn(command, {
+      timeout: timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      maxBuffer: MAX_BUFFER,
+      shell: "/bin/sh",
+    });
+
+    let output = stdout;
+    if (stderr) {
+      output += stdout ? "\n--- stderr ---\n" : "";
+      output += stderr;
+    }
+    if (output.length > MAX_OUTPUT) {
+      output = output.slice(0, MAX_OUTPUT) + "\n[output truncated]";
+    }
+
+    return { success: true, output, startedAt, completedAt: new Date().toISOString() };
+  } catch (err: any) {
+    const stdout = err.stdout ?? "";
+    const stderr = err.stderr ?? "";
+    let output = stdout;
+    if (stderr) {
+      output += stdout ? "\n--- stderr ---\n" : "";
+      output += stderr;
+    }
+    if (output.length > MAX_OUTPUT) {
+      output = output.slice(0, MAX_OUTPUT) + "\n[output truncated]";
+    }
+
+    return {
+      success: false,
+      output,
+      error: err.killed
+        ? `Command timed out after ${(timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000}s`
+        : err.message ?? String(err),
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  }
+}
+
+/**
+ * Execute all steps in a multi-step schedule (used by manual run endpoint).
+ */
+async function executeScheduleSteps(
+  schedule: import("@kb/core").ScheduledTask,
+  startedAt: string,
+): Promise<import("@kb/core").AutomationRunResult> {
+  const steps = schedule.steps!;
+  const stepResults: import("@kb/core").AutomationStepResult[] = [];
+  let overallSuccess = true;
+  let stoppedEarly = false;
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const stepStartedAt = new Date().toISOString();
+    const timeoutMs = step.timeoutMs ?? schedule.timeoutMs ?? 300000;
+
+    let stepResult: import("@kb/core").AutomationStepResult;
+
+    if (step.type === "command") {
+      const cmdResult = await executeSingleCommand(step.command ?? "", timeoutMs, stepStartedAt);
+      stepResult = {
+        stepId: step.id,
+        stepName: step.name,
+        stepIndex: i,
+        success: cmdResult.success,
+        output: cmdResult.output,
+        error: cmdResult.error,
+        startedAt: stepStartedAt,
+        completedAt: cmdResult.completedAt,
+      };
+    } else if (step.type === "ai-prompt") {
+      // AI prompt steps return a placeholder in manual run mode
+      const model = step.modelProvider && step.modelId
+        ? `${step.modelProvider}/${step.modelId}`
+        : "default";
+      stepResult = {
+        stepId: step.id,
+        stepName: step.name,
+        stepIndex: i,
+        success: !!step.prompt?.trim(),
+        output: step.prompt?.trim()
+          ? `[AI prompt step — model: ${model}]\nPrompt: ${step.prompt}`
+          : "",
+        error: step.prompt?.trim() ? undefined : "AI prompt step has no prompt specified",
+        startedAt: stepStartedAt,
+        completedAt: new Date().toISOString(),
+      };
+    } else {
+      stepResult = {
+        stepId: step.id,
+        stepName: step.name,
+        stepIndex: i,
+        success: false,
+        output: "",
+        error: `Unknown step type: "${step.type}"`,
+        startedAt: stepStartedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
+
+    stepResults.push(stepResult);
+
+    if (!stepResult.success) {
+      overallSuccess = false;
+      if (!step.continueOnFailure) {
+        stoppedEarly = true;
+        break;
+      }
+    }
+  }
+
+  // Aggregate output
+  const outputParts: string[] = [];
+  for (const sr of stepResults) {
+    outputParts.push(`=== Step ${sr.stepIndex + 1}: ${sr.stepName} (${sr.success ? "success" : "FAILED"}) ===`);
+    if (sr.output) outputParts.push(sr.output);
+    if (sr.error) outputParts.push(`Error: ${sr.error}`);
+  }
+  let output = outputParts.join("\n");
+  if (output.length > 10240) {
+    output = output.slice(0, 10240) + "\n[output truncated]";
+  }
+
+  const failedSteps = stepResults.filter((sr) => !sr.success);
+  const error = failedSteps.length > 0
+    ? `${failedSteps.length} step(s) failed: ${failedSteps.map((s) => s.stepName).join(", ")}${stoppedEarly ? " (execution stopped)" : ""}`
+    : undefined;
+
+  return {
+    success: overallSuccess,
+    output,
+    error,
+    startedAt,
+    completedAt: new Date().toISOString(),
+    stepResults,
+  };
 }
 
 function getDefaultGitHubRepo(store: TaskStore): { owner: string; repo: string } | null {

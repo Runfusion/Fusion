@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
-import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp } from "lucide-react";
-import type { ScheduledTask, AutomationRunResult } from "@kb/core";
+import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, Layers } from "lucide-react";
+import type { ScheduledTask, AutomationRunResult, AutomationStepResult } from "@kb/core";
 
 /**
  * Format a duration in milliseconds to a human-readable string.
@@ -80,9 +80,24 @@ function RunResultBadge({ result }: { result: AutomationRunResult }) {
   );
 }
 
+function StepResultIndicator({ stepResults }: { stepResults: AutomationStepResult[] }) {
+  return (
+    <span className="step-results-indicator">
+      {stepResults.map((sr) => (
+        <span
+          key={sr.stepId}
+          className={`step-result-dot ${sr.success ? "success" : "failure"}`}
+          title={`${sr.stepName}: ${sr.success ? "success" : "failed"}`}
+        />
+      ))}
+    </span>
+  );
+}
+
 function RunHistoryItem({ result, index }: { result: AutomationRunResult; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const duration = new Date(result.completedAt).getTime() - new Date(result.startedAt).getTime();
+  const hasStepResults = result.stepResults && result.stepResults.length > 0;
 
   return (
     <div className="schedule-history-item">
@@ -96,11 +111,25 @@ function RunHistoryItem({ result, index }: { result: AutomationRunResult; index:
           {result.success ? <CheckCircle size={12} /> : <XCircle size={12} />}
         </span>
         <span className="schedule-history-time">{relativeTime(result.startedAt)}</span>
+        {hasStepResults && <StepResultIndicator stepResults={result.stepResults!} />}
         <span className="schedule-history-duration">{formatDurationMs(duration)}</span>
         {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
       </button>
       {expanded && (
         <div className="schedule-history-detail">
+          {hasStepResults && (
+            <div className="schedule-step-results">
+              {result.stepResults!.map((sr) => (
+                <div key={sr.stepId} className={`schedule-step-result ${sr.success ? "success" : "failure"}`}>
+                  <span className="schedule-step-result-status">
+                    {sr.success ? <CheckCircle size={10} /> : <XCircle size={10} />}
+                  </span>
+                  <span className="schedule-step-result-name">{sr.stepName}</span>
+                  {sr.error && <span className="schedule-step-result-error">{sr.error}</span>}
+                </div>
+              ))}
+            </div>
+          )}
           {result.output && (
             <pre className="schedule-history-output">{result.output}</pre>
           )}
@@ -180,6 +209,16 @@ export function ScheduleCard({ schedule, onEdit, onDelete, onRun, onToggle, runn
       </div>
 
       <div className="schedule-card-meta">
+        {schedule.steps && schedule.steps.length > 0 ? (
+          <div className="schedule-meta-item">
+            <Layers size={12} />
+            <span className="schedule-steps-badge">{schedule.steps.length} step{schedule.steps.length !== 1 ? "s" : ""}</span>
+          </div>
+        ) : (
+          <div className="schedule-meta-item schedule-meta-command-preview" title={schedule.command}>
+            <code className="schedule-command-preview">{schedule.command}</code>
+          </div>
+        )}
         <div className="schedule-meta-item">
           <Clock size={12} />
           <code className="schedule-cron">{schedule.cronExpression}</code>

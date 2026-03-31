@@ -18,7 +18,7 @@ import type {
   WorkflowStepInput,
 } from "@kb/core";
 import type { PlanningQuestion, PlanningSummary, PlanningResponse } from "@kb/core";
-import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult } from "@kb/core";
+import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, AutomationStep } from "@kb/core";
 
 function looksLikeHtml(body: string): boolean {
   const trimmed = body.trim();
@@ -1093,18 +1093,18 @@ export function fetchAutomation(id: string): Promise<ScheduledTask> {
 }
 
 export function createAutomation(input: ScheduledTaskCreateInput): Promise<ScheduledTask> {
-  const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs } = input;
+  const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps } = input;
   return api<ScheduledTask>("/automations", {
     method: "POST",
-    body: JSON.stringify({ name, description, scheduleType, cronExpression, command, enabled, timeoutMs }),
+    body: JSON.stringify({ name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps }),
   });
 }
 
 export function updateAutomation(id: string, updates: ScheduledTaskUpdateInput): Promise<ScheduledTask> {
-  const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs } = updates;
+  const { name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps } = updates;
   return api<ScheduledTask>(`/automations/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({ name, description, scheduleType, cronExpression, command, enabled, timeoutMs }),
+    body: JSON.stringify({ name, description, scheduleType, cronExpression, command, enabled, timeoutMs, steps }),
   });
 }
 
@@ -1123,6 +1123,13 @@ export function runAutomation(id: string): Promise<AutomationRunResponse> {
 export function toggleAutomation(id: string): Promise<ScheduledTask> {
   return api<ScheduledTask>(`/automations/${id}/toggle`, {
     method: "POST",
+  });
+}
+
+export function reorderAutomationSteps(id: string, stepIds: string[]): Promise<ScheduledTask> {
+  return api<ScheduledTask>(`/automations/${id}/steps/reorder`, {
+    method: "POST",
+    body: JSON.stringify({ stepIds }),
   });
 }
 

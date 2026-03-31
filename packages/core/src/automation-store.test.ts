@@ -4,7 +4,19 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { ScheduledTask, AutomationRunResult } from "./automation.js";
+import type { ScheduledTask, AutomationRunResult, AutomationStep } from "./automation.js";
+import { randomUUID } from "node:crypto";
+
+/** Create a test automation step. */
+function makeStep(overrides: Partial<AutomationStep> = {}): AutomationStep {
+  return {
+    id: randomUUID(),
+    type: "command",
+    name: "Test step",
+    command: "echo hello",
+    ...overrides,
+  };
+}
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "kb-automation-test-"));
@@ -127,10 +139,23 @@ describe("AutomationStore", () => {
       ).rejects.toThrow("Name is required");
     });
 
-    it("rejects empty command", async () => {
+    it("rejects empty command when no steps are provided", async () => {
       await expect(
         store.createSchedule({ name: "Test", command: "", scheduleType: "hourly" }),
       ).rejects.toThrow("Command is required");
+    });
+
+    it("allows empty command when steps are provided", async () => {
+      const step = makeStep();
+      const schedule = await store.createSchedule({
+        name: "Steps only",
+        command: "",
+        scheduleType: "hourly",
+        steps: [step],
+      });
+      expect(schedule.steps).toHaveLength(1);
+      expect(schedule.steps![0].id).toBe(step.id);
+      expect(schedule.command).toBe("");
     });
 
     it("rejects custom type without cron expression", async () => {
@@ -498,6 +523,186 @@ describe("AutomationStore", () => {
       // nextRunAt is in the future by default
       const due = await store.getDueSchedules();
       expect(due.some((d) => d.id === schedule.id)).toBe(false);
+    });
+  });
+
+  // ── Steps persistence ─────────────────────────────────────────────
+
+  describe("steps", () => {
+    it("creates schedule with steps and persists them", async () => {
+      const steps: AutomationStep[] = [
+        makeStep({ name: "Step A", command: "echo a" }),
+        makeStep({ name: "Step B", type: "ai-prompt", prompt: "Summarize", command: undefined }),
+      ];
+      const schedule = await store.createSchedule({
+        name: "Multi-step",
+        command: "",
+        scheduleType: "daily",
+        steps,
+      });
+
+      expect(schedule.steps).toHaveLength(2);
+      expect(schedule.steps![0].name).toBe("Step A");
+      expect(schedule.steps![1].type).toBe("ai-prompt");
+
+      // Verify round-trip persistence
+      const fetched = await store.getSchedule(schedule.id);
+      expect(fetched.steps).toHaveLength(2);
+      expect(fetched.steps![0].id).toBe(steps[0].id);
+      expect(fetched.steps![1].prompt).toBe("Summarize");
+    });
+
+    it("creates schedule without steps (legacy mode)", async () => {
+      const schedule = await store.createSchedule({
+        name: "Legacy",
+        command: "echo hello",
+        scheduleType: "hourly",
+      });
+
+      expect(schedule.steps).toBeUndefined();
+    });
+
+    it("updates steps on existing schedule", async () => {
+      const schedule = await store.createSchedule({
+        name: "Updateable",
+        command: "echo old",
+        scheduleType: "hourly",
+      });
+      expect(schedule.steps).toBeUndefined();
+
+      const steps = [makeStep({ name: "New step" })];
+      const updated = await store.updateSchedule(schedule.id, { steps });
+      expect(updated.steps).toHaveLength(1);
+      expect(updated.steps![0].name).toBe("New step");
+    });
+
+    it("clears steps when updating with empty array", async () => {
+      const schedule = await store.createSchedule({
+        name: "Clear steps",
+        command: "echo hello",
+        scheduleType: "hourly",
+        steps: [makeStep()],
+      });
+      expect(schedule.steps).toHaveLength(1);
+
+      const updated = await store.updateSchedule(schedule.id, { steps: [] });
+      expect(updated.steps).toBeUndefined();
+    });
+
+    it("preserves step model fields through round-trip", async () => {
+      const step = makeStep({
+        type: "ai-prompt",
+        name: "AI Step",
+        prompt: "Analyze this",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        timeoutMs: 60000,
+        continueOnFailure: true,
+        command: undefined,
+      });
+      const schedule = await store.createSchedule({
+        name: "AI schedule",
+        command: "",
+        scheduleType: "daily",
+        steps: [step],
+      });
+
+      const fetched = await store.getSchedule(schedule.id);
+      const fetchedStep = fetched.steps![0];
+      expect(fetchedStep.type).toBe("ai-prompt");
+      expect(fetchedStep.prompt).toBe("Analyze this");
+      expect(fetchedStep.modelProvider).toBe("anthropic");
+      expect(fetchedStep.modelId).toBe("claude-sonnet-4-5");
+      expect(fetchedStep.timeoutMs).toBe(60000);
+      expect(fetchedStep.continueOnFailure).toBe(true);
+    });
+  });
+
+  // ── reorderSteps ──────────────────────────────────────────────────
+
+  describe("reorderSteps", () => {
+    it("reorders steps by ID array", async () => {
+      const stepA = makeStep({ name: "A" });
+      const stepB = makeStep({ name: "B" });
+      const stepC = makeStep({ name: "C" });
+      const schedule = await store.createSchedule({
+        name: "Reorder test",
+        command: "",
+        scheduleType: "daily",
+        steps: [stepA, stepB, stepC],
+      });
+
+      const reordered = await store.reorderSteps(
+        schedule.id,
+        [stepC.id, stepA.id, stepB.id],
+      );
+
+      expect(reordered.steps![0].name).toBe("C");
+      expect(reordered.steps![1].name).toBe("A");
+      expect(reordered.steps![2].name).toBe("B");
+
+      // Verify persisted
+      const fetched = await store.getSchedule(schedule.id);
+      expect(fetched.steps![0].name).toBe("C");
+    });
+
+    it("throws when schedule has no steps", async () => {
+      const schedule = await store.createSchedule({
+        name: "No steps",
+        command: "echo",
+        scheduleType: "hourly",
+      });
+
+      await expect(
+        store.reorderSteps(schedule.id, []),
+      ).rejects.toThrow("no steps to reorder");
+    });
+
+    it("throws on step ID count mismatch", async () => {
+      const stepA = makeStep({ name: "A" });
+      const stepB = makeStep({ name: "B" });
+      const schedule = await store.createSchedule({
+        name: "Mismatch test",
+        command: "",
+        scheduleType: "daily",
+        steps: [stepA, stepB],
+      });
+
+      await expect(
+        store.reorderSteps(schedule.id, [stepA.id]),
+      ).rejects.toThrow("count mismatch");
+    });
+
+    it("throws on unknown step ID", async () => {
+      const stepA = makeStep({ name: "A" });
+      const stepB = makeStep({ name: "B" });
+      const schedule = await store.createSchedule({
+        name: "Unknown ID test",
+        command: "",
+        scheduleType: "daily",
+        steps: [stepA, stepB],
+      });
+
+      await expect(
+        store.reorderSteps(schedule.id, [stepA.id, "nonexistent"]),
+      ).rejects.toThrow('Unknown step ID: "nonexistent"');
+    });
+
+    it("emits schedule:updated event", async () => {
+      const stepA = makeStep({ name: "A" });
+      const stepB = makeStep({ name: "B" });
+      const schedule = await store.createSchedule({
+        name: "Event test",
+        command: "",
+        scheduleType: "daily",
+        steps: [stepA, stepB],
+      });
+
+      const listener = vi.fn();
+      store.on("schedule:updated", listener);
+
+      await store.reorderSteps(schedule.id, [stepB.id, stepA.id]);
+      expect(listener).toHaveBeenCalledTimes(1);
     });
   });
 
