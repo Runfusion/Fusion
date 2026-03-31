@@ -41,6 +41,7 @@ if (isBunBinary) {
 const { runDashboard } = await import("./commands/dashboard.js");
 const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry } = await import("./commands/task.js");
 const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
+const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
 
 const HELP = `
 kb — AI-orchestrated task board
@@ -72,6 +73,11 @@ Usage:
   kb task import <owner/repo> [opts]  Import GitHub issues as tasks
   kb settings                          Show current kb configuration
   kb settings set <key> <value>        Update a configuration setting
+
+  kb git status              Show current branch, commit, dirty state, ahead/behind
+  kb git push                Push current branch
+  kb git pull                Pull current branch
+  kb git fetch [remote]      Fetch from remote (default: origin)
 
 Options:
   --port, -p <port>          Dashboard port (default: 4040)
@@ -358,6 +364,35 @@ async function main() {
         console.error(`Unknown settings subcommand: ${subcommand}`);
         console.error("Try: kb settings | kb settings set <key> <value>");
         process.exit(1);
+      }
+
+      case "git": {
+        const subcommand = args[1];
+        switch (subcommand) {
+          case "status":
+            await runGitStatus();
+            break;
+          case "fetch": {
+            const remote = args[2];
+            await runGitFetch(remote);
+            break;
+          }
+          case "pull": {
+            const skipConfirm = args.includes("--yes");
+            await runGitPull({ skipConfirm });
+            break;
+          }
+          case "push": {
+            const skipConfirm = args.includes("--yes");
+            await runGitPush({ skipConfirm });
+            break;
+          }
+          default:
+            console.error(`Unknown subcommand: git ${subcommand || ""}`);
+            console.log("Try: kb git status | fetch | pull | push");
+            process.exit(1);
+        }
+        break;
       }
 
       default:
