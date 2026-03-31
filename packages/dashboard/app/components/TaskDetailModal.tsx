@@ -722,6 +722,17 @@ export function TaskDetailModal({
             </div>
           ) : (
           <>
+          {/* Summary section - only for done tasks with summary */}
+          {task.column === "done" && task.summary && (
+            <div className="detail-section detail-summary">
+              <h4>Summary</h4>
+              <div className="markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {task.summary}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
           <div className="detail-section detail-step-progress">
             <h4>Progress</h4>
             {task.steps && task.steps.length > 0 ? (
