@@ -619,4 +619,98 @@ describe("QuickEntryBox", () => {
       expect(screen.queryByTestId("subtask-button")).toBeNull();
     });
   });
+
+  describe("localStorage persistence", () => {
+    beforeEach(() => {
+      // Clear localStorage before each test
+      localStorage.clear();
+    });
+
+    afterEach(() => {
+      localStorage.clear();
+    });
+
+    it("restores description from localStorage on mount", () => {
+      // Pre-populate localStorage
+      localStorage.setItem("kb-quick-entry-text", "Saved task description");
+
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      // Should restore the saved description
+      expect((textarea as HTMLTextAreaElement).value).toBe("Saved task description");
+    });
+
+    it("updates localStorage when typing", async () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Typing this task" } });
+
+      // Wait for the useEffect to run
+      await waitFor(() => {
+        expect(localStorage.getItem("kb-quick-entry-text")).toBe("Typing this task");
+      });
+    });
+
+    it("clears localStorage after successful task creation", async () => {
+      const { props } = renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      // Type something to set localStorage
+      fireEvent.change(textarea, { target: { value: "Task to create" } });
+      await waitFor(() => {
+        expect(localStorage.getItem("kb-quick-entry-text")).toBe("Task to create");
+      });
+
+      // Submit the task
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalled();
+      });
+
+      // localStorage should be cleared
+      expect(localStorage.getItem("kb-quick-entry-text")).toBeNull();
+    });
+
+    it("clears localStorage when Escape clears non-empty input", async () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      // Type something to set localStorage
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Task to clear" } });
+      await waitFor(() => {
+        expect(localStorage.getItem("kb-quick-entry-text")).toBe("Task to clear");
+      });
+
+      // Press Escape to clear the input
+      fireEvent.keyDown(textarea, { key: "Escape" });
+
+      // Input and localStorage should be cleared
+      expect((textarea as HTMLTextAreaElement).value).toBe("");
+      expect(localStorage.getItem("kb-quick-entry-text")).toBeNull();
+    });
+
+    it("does not clear localStorage on first Escape when closing dropdowns", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      // Type something and open dropdown
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Task with dropdown" } });
+      fireEvent.click(screen.getByTestId("quick-entry-deps-button"));
+
+      // localStorage should have the value
+      expect(localStorage.getItem("kb-quick-entry-text")).toBe("Task with dropdown");
+
+      // First Escape closes dropdown but keeps input
+      fireEvent.keyDown(textarea, { key: "Escape" });
+
+      // Input and localStorage should be preserved
+      expect((textarea as HTMLTextAreaElement).value).toBe("Task with dropdown");
+      expect(localStorage.getItem("kb-quick-entry-text")).toBe("Task with dropdown");
+    });
+  });
 });

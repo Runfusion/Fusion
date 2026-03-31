@@ -6,6 +6,8 @@ import { fetchModels } from "../api";
 import { Link, Brain, Lightbulb, ListTree } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 
+const STORAGE_KEY = "kb-quick-entry-text";
+
 interface QuickEntryBoxProps {
   onCreate?: (input: TaskCreateInput) => Promise<void>;
   addToast: (message: string, type?: ToastType) => void;
@@ -42,7 +44,12 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
 }
 
 export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels, onPlanningMode, onSubtaskBreakdown }: QuickEntryBoxProps) {
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(STORAGE_KEY) || "";
+    }
+    return "";
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -115,6 +122,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     [loadedModels],
   );
 
+  // Persist description to localStorage whenever it changes
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEY, description);
+    }
+  }, [description]);
+
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
@@ -172,6 +186,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     justResetRef.current = true;
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
+    }
+    // Clear localStorage when form is reset (after successful creation)
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(STORAGE_KEY);
     }
   }, []);
 
@@ -233,12 +251,16 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           setShowModels(false);
           return;
         }
-        // Clear non-empty input on Escape
+        // Clear non-empty input on Escape and clear localStorage
         if (description.trim()) {
           setDescription("");
           // Reset height
           if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
+          }
+          // Clear localStorage when user explicitly clears input
+          if (typeof window !== "undefined") {
+            localStorage.removeItem(STORAGE_KEY);
           }
         }
         // Collapse on escape
