@@ -589,7 +589,7 @@ describe("UsageIndicator", () => {
               pace: {
                 status: "behind",
                 percentElapsed: 57,
-                message: "Using 27% under pace",
+                message: "27% under pace",
               },
             },
           ],
@@ -694,7 +694,7 @@ describe("UsageIndicator", () => {
               pace: {
                 status: "ahead",
                 percentElapsed: 50,
-                message: "Using 20% over pace",
+                message: "20% over pace",
               },
             },
           ],
@@ -731,7 +731,7 @@ describe("UsageIndicator", () => {
               pace: {
                 status: "behind",
                 percentElapsed: 50,
-                message: "Using 30% under pace",
+                message: "30% under pace",
               },
             },
           ],
@@ -805,7 +805,7 @@ describe("UsageIndicator", () => {
               pace: {
                 status: "behind",
                 percentElapsed: 50,
-                message: "Using 20% under pace",
+                message: "20% under pace",
               },
             },
           ],
@@ -855,7 +855,7 @@ describe("UsageIndicator", () => {
               pace: {
                 status: "ahead",
                 percentElapsed: 50,
-                message: "Using 20% over pace",
+                message: "20% over pace",
               },
             },
           ],
@@ -879,7 +879,7 @@ describe("UsageIndicator", () => {
 
     // The message comes from backend, so it doesn't change based on view mode
     paceRow = screen.getByTestId("pace-row");
-    expect(paceRow).toHaveTextContent("Using 20% over pace");
+    expect(paceRow).toHaveTextContent("20% over pace");
   });
 
   it("verifies pace appears for weekly windows with valid backend timing data", () => {
@@ -903,7 +903,7 @@ describe("UsageIndicator", () => {
               pace: {
                 status: "behind",
                 percentElapsed: 43,
-                message: "Using 3% under pace",
+                message: "3% under pace",
               },
             },
           ],

@@ -91,13 +91,13 @@ export function calculatePace(
     return {
       status: "ahead",
       percentElapsed: Math.round(percentElapsed),
-      message: `Using ${Math.abs(Math.round(paceDelta))}% over pace`,
+      message: `${Math.abs(Math.round(paceDelta))}% over pace`,
     };
   } else if (paceDelta < -PACE_THRESHOLD) {
     return {
       status: "behind",
       percentElapsed: Math.round(percentElapsed),
-      message: `Using ${Math.abs(Math.round(paceDelta))}% under pace`,
+      message: `${Math.abs(Math.round(paceDelta))}% under pace`,
     };
   } else {
     return {
