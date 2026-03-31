@@ -36,13 +36,13 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
     devDependencies:
-      '@kb/core':
+      '@fusion/core':
         specifier: workspace:*
         version: link:../core
-      '@kb/dashboard':
+      '@fusion/dashboard':
         specifier: workspace:*
         version: link:../dashboard
-      '@kb/engine':
+      '@fusion/engine':
         specifier: workspace:*
         version: link:../engine
       '@sinclair/typebox':
@@ -115,10 +115,10 @@ importers:
       '@codemirror/view':
         specifier: ^6.36.4
         version: 6.40.0
-      '@kb/core':
+      '@fusion/core':
         specifier: workspace:*
         version: link:../core
-      '@kb/engine':
+      '@fusion/engine':
         specifier: workspace:*
         version: link:../engine
       '@types/multer':
@@ -215,7 +215,7 @@ importers:
 
   packages/engine:
     dependencies:
-      '@kb/core':
+      '@fusion/core':
         specifier: workspace:*
         version: link:../core
       '@mariozechner/pi-ai':
