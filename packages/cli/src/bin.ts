@@ -15,11 +15,6 @@ import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 
-// ── Runtime native module resolution patch ───────────────────────────
-// This must be imported before any modules that load native binaries (node-pty)
-// It sets up paths so the standalone binary can find staged native assets.
-import "./runtime/native-patch.js";
-
 // @ts-expect-error -- Bun-only global; undefined in Node
 const isBunBinary = typeof Bun !== "undefined" && !!Bun.embeddedFiles;
 
@@ -119,6 +114,13 @@ async function main() {
   try {
     switch (command) {
       case "dashboard": {
+        // Initialize native module resolution for Bun binary before starting dashboard
+        // This sets up the paths so node-pty can find its native assets
+        if (isBunBinary) {
+          const { initNativePatch } = await import("./runtime/native-patch.js");
+          initNativePatch();
+        }
+
         const portIdx = args.indexOf("--port");
         const portIdxShort = args.indexOf("-p");
         const pi = portIdx !== -1 ? portIdx : portIdxShort;

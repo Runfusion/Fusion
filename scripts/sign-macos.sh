@@ -4,7 +4,7 @@
 # Usage:
 #   APPLE_CERTIFICATE_BASE64=... APPLE_CERTIFICATE_PASSWORD=... \
 #   APPLE_IDENTITY=... APPLE_ID=... APPLE_TEAM_ID=... APPLE_APP_PASSWORD=... \
-#   bash scripts/sign-macos.sh path/to/binary
+#   bash scripts/sign-macos.sh path/to/binary [path/to/runtime/dir]
 #
 # Environment variables (all required):
 #   APPLE_CERTIFICATE_BASE64      — Base64-encoded .p12 Developer ID Application certificate
@@ -15,14 +15,17 @@
 #   APPLE_APP_PASSWORD            — App-specific password for notarization
 #
 # The script is idempotent — re-running on an already-signed binary will re-sign it.
+# If runtime directory is provided, all .node files in it will also be signed.
 
 set -euo pipefail
 
 # ── Validate arguments ────────────────────────────────────────────────
 BINARY="${1:-}"
+RUNTIME_DIR="${2:-}"  # Optional: path to runtime/ directory with native assets
+
 if [[ -z "$BINARY" ]]; then
   echo "ERROR: No binary path provided."
-  echo "Usage: $0 <path-to-binary>"
+  echo "Usage: $0 <path-to-binary> [path-to-runtime-dir]"
   exit 1
 fi
 
@@ -86,6 +89,18 @@ security list-keychains -d user -s "$KEYCHAIN_NAME" $(security list-keychains -d
 
 echo "==> Keychain configured."
 
+# ── Sign native runtime assets if provided ──────────────────────────
+if [[ -n "$RUNTIME_DIR" && -d "$RUNTIME_DIR" ]]; then
+  echo "==> Signing native runtime assets in: $RUNTIME_DIR"
+  find "$RUNTIME_DIR" -name "*.node" -type f | while read -r native_file; do
+    echo "    Signing: $native_file"
+    codesign --force --options runtime --sign "$APPLE_IDENTITY" \
+      --keychain "$KEYCHAIN_NAME" \
+      "$native_file"
+  done
+  echo "==> Native runtime assets signed."
+fi
+
 # ── Codesign the binary ───────────────────────────────────────────────
 echo "==> Codesigning with identity: $APPLE_IDENTITY"
 codesign --force --options runtime --sign "$APPLE_IDENTITY" \
@@ -101,7 +116,19 @@ ZIP_FILE="$(mktemp -t notarize.XXXXXX).zip"
 trap 'rm -f "$ZIP_FILE"; cleanup' EXIT
 
 # Create a ZIP for notarization submission
-ditto -c -k --keepParent "$BINARY" "$ZIP_FILE"
+# Include runtime directory if it exists
+if [[ -n "$RUNTIME_DIR" && -d "$RUNTIME_DIR" ]]; then
+  BINARY_DIR=$(dirname "$BINARY")
+  BINARY_NAME=$(basename "$BINARY")
+  # Create temp directory with both binary and runtime
+  TEMP_DIR=$(mktemp -d)
+  cp "$BINARY" "$TEMP_DIR/"
+  cp -r "$RUNTIME_DIR" "$TEMP_DIR/"
+  ditto -c -k --keepParent "$TEMP_DIR/$BINARY_NAME" "$ZIP_FILE"
+  rm -rf "$TEMP_DIR"
+else
+  ditto -c -k --keepParent "$BINARY" "$ZIP_FILE"
+fi
 
 echo "==> Submitting to Apple notarization service..."
 xcrun notarytool submit "$ZIP_FILE" \

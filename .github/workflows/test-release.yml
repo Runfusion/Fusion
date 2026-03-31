@@ -80,7 +80,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-        run: bash scripts/sign-macos.sh packages/cli/dist/${{ matrix.binary }}
+        run: bash scripts/sign-macos.sh packages/cli/dist/${{ matrix.binary }} packages/cli/dist/runtime
 
       - name: Sign Windows binary
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE_BASE64 != ''

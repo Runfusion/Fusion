@@ -26,10 +26,10 @@ let ptyLoadError: Error | null = null;
  * Looks for runtime/<platform-arch>/ next to the binary.
  */
 function findStagedNativeDir(): string | null {
-  const platform = process.platform === "darwin" ? "darwin" : 
-                   process.platform === "linux" ? "linux" : 
+  const platform = process.platform === "darwin" ? "darwin" :
+                   process.platform === "linux" ? "linux" :
                    process.platform === "win32" ? "win32" : "unknown";
-  const arch = process.arch === "arm64" ? "arm64" : 
+  const arch = process.arch === "arm64" ? "arm64" :
                process.arch === "x64" ? "x64" : "unknown";
   const prebuildName = `${platform}-${arch}`;
 
@@ -60,37 +60,37 @@ async function loadPtyModule(): Promise<typeof import("node-pty")> {
     throw ptyLoadError;
   }
 
-  try {
-    if (isBunBinary) {
-      // In Bun-compiled binary, try to load with direct native path
-      const nativeDir = findStagedNativeDir();
-      if (nativeDir) {
-        // Set spawn-helper directory
+  // For Bun-compiled binary, set up native paths before loading
+  if (isBunBinary) {
+    const nativeDir = findStagedNativeDir();
+    if (nativeDir) {
+      // Set spawn-helper directory
+      if (process.platform !== "win32") {
         process.env.NODE_PTY_SPAWN_HELPER_DIR = nativeDir;
-        
-        // Try to load the native module directly first
-        const nativePath = join(nativeDir, "pty.node");
-        if (existsSync(nativePath)) {
-          try {
-            // Use process.dlopen to load the native module directly
-            // This bypasses node-pty's internal resolution
-            const nativeModule = { exports: {} };
-            (process as any).dlopen(nativeModule, nativePath);
-            
-            // Now that we have the native module loaded, try importing node-pty
-            // which should find the already-loaded module
-            const mod = await import("node-pty");
-            ptyModule = mod;
-            return ptyModule as typeof import("node-pty");
-          } catch (directErr) {
-            // Direct loading failed, fall through to standard import
-            console.warn("[terminal] Direct native load failed, trying standard import:", directErr);
-          }
+      }
+      // Store reference for debugging
+      process.env.KB_NATIVE_ASSETS_PATH = nativeDir;
+
+      // Try to pre-load the native module using process.dlopen
+      // This can help when the normal require() path fails
+      const nativePath = join(nativeDir, "pty.node");
+      if (existsSync(nativePath)) {
+        try {
+          const nativeModule: { exports?: unknown } = { exports: {} };
+          // @ts-ignore - process.dlopen is Node internal
+          process.dlopen(nativeModule, nativePath);
+          console.log("[terminal] Pre-loaded native module via dlopen");
+        } catch (dlopenErr) {
+          // dlopen failed - log but continue, normal import might still work
+          console.log("[terminal] dlopen pre-load failed (continuing):", dlopenErr);
         }
       }
     }
-    
-    // Standard import path
+  }
+
+  try {
+    // Standard import path - the native-patch setup should have created
+    // the necessary symlink structure for node-pty to find the module
     const mod = await import("node-pty");
     ptyModule = mod;
     return ptyModule as typeof import("node-pty");
@@ -435,7 +435,15 @@ export class TerminalService extends EventEmitter {
     console.info(`Creating session ${id} with shell: ${shell} in ${cwd}`);
 
     // Lazy-load node-pty module with proper error handling
-    const pty = await loadPtyModule();
+    let pty: typeof import("node-pty");
+    try {
+      pty = await loadPtyModule();
+    } catch (loadErr) {
+      // Native module couldn't be loaded (common in Bun binaries without proper setup)
+      // Return null for graceful degradation - routes will return 503
+      console.error(`[terminal] Failed to load PTY module: ${loadErr}`);
+      return null;
+    }
 
     // Build PTY spawn options
     const ptyOptions: IPtyForkOptions = {
