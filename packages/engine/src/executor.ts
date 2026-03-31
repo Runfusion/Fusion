@@ -1025,28 +1025,55 @@ export class TaskExecutor {
     if (!currentTask.enabledWorkflowSteps?.length) return true;
 
     const workflowStepIds = currentTask.enabledWorkflowSteps;
+    const results: import("@kb/core").WorkflowStepResult[] = [];
 
     for (const wsId of workflowStepIds) {
       const ws = await this.store.getWorkflowStep(wsId);
       if (!ws) {
         await this.store.logEntry(task.id, `Workflow step ${wsId} not found — skipping`);
+        results.push({
+          workflowStepId: wsId,
+          workflowStepName: "Unknown",
+          status: "skipped",
+          output: "Workflow step definition not found",
+        });
+        await this.store.updateTask(task.id, { workflowStepResults: results });
         continue;
       }
 
       if (!ws.prompt?.trim()) {
         await this.store.logEntry(task.id, `Workflow step '${ws.name}' has no prompt — skipping`);
+        results.push({
+          workflowStepId: ws.id,
+          workflowStepName: ws.name,
+          status: "skipped",
+          output: "No prompt configured for this workflow step",
+        });
+        await this.store.updateTask(task.id, { workflowStepResults: results });
         continue;
       }
 
       await this.store.logEntry(task.id, `Starting workflow step: ${ws.name}`);
       executorLog.log(`${task.id} — running workflow step: ${ws.name}`);
 
+      const startedAt = new Date().toISOString();
+
       try {
         const result = await this.executeWorkflowStep(task, ws, worktreePath, settings);
+        const completedAt = new Date().toISOString();
 
         if (result.success) {
           await this.store.logEntry(task.id, `Workflow step completed: ${ws.name}`);
           executorLog.log(`${task.id} — workflow step passed: ${ws.name}`);
+          results.push({
+            workflowStepId: ws.id,
+            workflowStepName: ws.name,
+            status: "passed",
+            output: result.output,
+            startedAt,
+            completedAt,
+          });
+          await this.store.updateTask(task.id, { workflowStepResults: results });
         } else {
           await this.store.logEntry(
             task.id,
@@ -1054,15 +1081,34 @@ export class TaskExecutor {
             result.error || "Unknown error",
           );
           executorLog.error(`${task.id} — workflow step failed: ${ws.name} — ${result.error}`);
+          results.push({
+            workflowStepId: ws.id,
+            workflowStepName: ws.name,
+            status: "failed",
+            output: result.error || "Workflow step failed",
+            startedAt,
+            completedAt,
+          });
+          await this.store.updateTask(task.id, { workflowStepResults: results });
           return false;
         }
       } catch (err: any) {
+        const completedAt = new Date().toISOString();
         await this.store.logEntry(
           task.id,
           `Workflow step failed: ${ws.name}`,
           err.message || "Unknown error",
         );
         executorLog.error(`${task.id} — workflow step error: ${ws.name} — ${err.message}`);
+        results.push({
+          workflowStepId: ws.id,
+          workflowStepName: ws.name,
+          status: "failed",
+          output: err.message || "Workflow step error",
+          startedAt,
+          completedAt,
+        });
+        await this.store.updateTask(task.id, { workflowStepResults: results });
         return false;
       }
     }

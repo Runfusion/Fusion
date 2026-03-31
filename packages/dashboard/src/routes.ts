@@ -194,10 +194,11 @@ function parseGitHubBadgeUrl(url: string | undefined): { owner: string; repo: st
  * Get GitHub remotes from the current git repository.
  * Executes `git remote -v` and parses the output.
  */
-function getGitHubRemotes(): GitRemote[] {
+function getGitHubRemotes(cwd?: string): GitRemote[] {
   try {
     // Execute git remote -v to get all remotes with their URLs
-    const output = execSync("git remote -v", { encoding: "utf-8", timeout: 5000 });
+    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
+    const output = execSync("git remote -v", execOptions);
 
     const remotes: GitRemote[] = [];
     const seen = new Set<string>();
@@ -237,9 +238,10 @@ function getGitHubRemotes(): GitRemote[] {
  * Check if the current directory is a git repository.
  * Used to validate git operations before executing commands.
  */
-function isGitRepo(): boolean {
+function isGitRepo(cwd?: string): boolean {
   try {
-    execSync("git rev-parse --git-dir", { encoding: "utf-8", timeout: 5000 });
+    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
+    execSync("git rev-parse --git-dir", execOptions);
     return true;
   } catch {
     return false;
@@ -250,7 +252,7 @@ function isGitRepo(): boolean {
  * Get the current git status including branch, commit hash, and dirty state.
  * Returns structured data for the Git Manager UI.
  */
-function getGitStatus(): {
+function getGitStatus(cwd?: string): {
   branch: string;
   commit: string;
   isDirty: boolean;
@@ -258,21 +260,22 @@ function getGitStatus(): {
   behind: number;
 } | null {
   try {
+    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
     // Get current branch
-    const branch = execSync("git branch --show-current", { encoding: "utf-8", timeout: 5000 }).trim() || "HEAD detached";
+    const branch = execSync("git branch --show-current", execOptions).trim() || "HEAD detached";
 
     // Get current commit hash (short)
-    const commit = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
+    const commit = execSync("git rev-parse --short HEAD", execOptions).trim();
 
     // Check if working directory is dirty
-    const statusOutput = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000 }).trim();
+    const statusOutput = execSync("git status --porcelain", execOptions).trim();
     const isDirty = statusOutput.length > 0;
 
     // Get ahead/behind counts from origin
     let ahead = 0;
     let behind = 0;
     try {
-      const revListOutput = execSync("git rev-list --left-right --count HEAD...@{u}", { encoding: "utf-8", timeout: 5000 }).trim();
+      const revListOutput = execSync("git rev-list --left-right --count HEAD...@{u}", execOptions).trim();
       const match = revListOutput.match(/(\d+)\s+(\d+)/);
       if (match) {
         ahead = parseInt(match[1], 10);
@@ -302,14 +305,12 @@ export interface GitCommit {
  * Get recent commits from the git log.
  * @param limit Maximum number of commits to return (default 20)
  */
-function getGitCommits(limit: number = 20): GitCommit[] {
+function getGitCommits(limit: number = 20, cwd?: string): GitCommit[] {
   try {
     // Format: hash|shortHash|message|author|date|parents
     const format = "%H|%h|%s|%an|%aI|%P";
-    const output = execSync(`git log --max-count=${limit} --pretty=format:"${format}"`, {
-      encoding: "utf-8",
-      timeout: 10000,
-    });
+    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
+    const output = execSync(`git log --max-count=${limit} --pretty=format:"${format}"`, execOptions);
 
     const commits: GitCommit[] = [];
     for (const line of output.split("\n")) {
@@ -340,16 +341,17 @@ function getGitCommits(limit: number = 20): GitCommit[] {
  * @param hash The commit hash
  * @returns Object with stat and patch
  */
-function getCommitDiff(hash: string): { stat: string; patch: string } | null {
+function getCommitDiff(hash: string, cwd?: string): { stat: string; patch: string } | null {
   try {
+    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
     // Validate the hash is a valid git object
-    execSync(`git cat-file -t ${hash}`, { encoding: "utf-8", timeout: 5000 });
+    execSync(`git cat-file -t ${hash}`, { encoding: "utf-8", timeout: 5000, cwd });
 
     // Get diff stat
-    const stat = execSync(`git show --stat --format="" ${hash}`, { encoding: "utf-8", timeout: 10000 }).trim();
+    const stat = execSync(`git show --stat --format="" ${hash}`, execOptions).trim();
 
     // Get patch
-    const patch = execSync(`git show --format="" ${hash}`, { encoding: "utf-8", timeout: 10000 });
+    const patch = execSync(`git show --format="" ${hash}`, execOptions);
 
     return { stat, patch };
   } catch {
@@ -368,12 +370,13 @@ export interface GitBranch {
 /**
  * Get all local branches with their info.
  */
-function getGitBranches(): GitBranch[] {
+function getGitBranches(cwd?: string): GitBranch[] {
   try {
+    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
     // Get current branch name
     let currentBranch = "";
     try {
-      currentBranch = execSync("git branch --show-current", { encoding: "utf-8", timeout: 5000 }).trim();
+      currentBranch = execSync("git branch --show-current", execOptions).trim();
     } catch {
       // Detached HEAD - no current branch
     }
@@ -383,6 +386,7 @@ function getGitBranches(): GitBranch[] {
     const output = execSync(`git for-each-ref --format="${format}" refs/heads/`, {
       encoding: "utf-8",
       timeout: 10000,
+      cwd,
     });
 
     const branches: GitBranch[] = [];
@@ -420,9 +424,10 @@ export interface GitWorktree {
  * Get all git worktrees.
  * @param tasks Optional task list to correlate worktrees with tasks
  */
-function getGitWorktrees(tasks: { id: string; worktree?: string }[] = []): GitWorktree[] {
+function getGitWorktrees(tasks: { id: string; worktree?: string }[] = [], cwd?: string): GitWorktree[] {
   try {
-    const output = execSync("git worktree list --porcelain", { encoding: "utf-8", timeout: 10000 });
+    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
+    const output = execSync("git worktree list --porcelain", execOptions);
 
     const worktrees: GitWorktree[] = [];
     let currentWorktree: Partial<GitWorktree> = {};
@@ -510,7 +515,7 @@ function isValidBranchName(name: string): boolean {
  * Create a new branch from current HEAD or specified base.
  * Returns the created branch name.
  */
-function createGitBranch(name: string, base?: string): string {
+function createGitBranch(name: string, base?: string, cwd?: string): string {
   if (!isValidBranchName(name)) {
     throw new Error("Invalid branch name");
   }
@@ -520,7 +525,7 @@ function createGitBranch(name: string, base?: string): string {
   const cmd = base
     ? `git checkout -b ${name} ${base}`
     : `git checkout -b ${name}`;
-  execSync(cmd, { encoding: "utf-8", timeout: 10000 });
+  execSync(cmd, { encoding: "utf-8", timeout: 10000, cwd });
   return name;
 }
 
@@ -528,33 +533,34 @@ function createGitBranch(name: string, base?: string): string {
  * Checkout an existing branch.
  * Throws if there are uncommitted changes that would be lost.
  */
-function checkoutGitBranch(name: string): void {
+function checkoutGitBranch(name: string, cwd?: string): void {
   if (!isValidBranchName(name)) {
     throw new Error("Invalid branch name");
   }
+  const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
   // Check for uncommitted changes that would be lost
   try {
-    execSync("git diff-index --quiet HEAD --", { encoding: "utf-8", timeout: 5000 });
+    execSync("git diff-index --quiet HEAD --", execOptions);
   } catch {
     // Has uncommitted changes - check if they'd be lost
-    const diff = execSync("git diff --name-only", { encoding: "utf-8", timeout: 5000 }).trim();
+    const diff = execSync("git diff --name-only", execOptions).trim();
     if (diff) {
       throw new Error("Uncommitted changes would be lost. Commit or stash changes first.");
     }
   }
-  execSync(`git checkout ${name}`, { encoding: "utf-8", timeout: 10000 });
+  execSync(`git checkout ${name}`, { encoding: "utf-8", timeout: 10000, cwd });
 }
 
 /**
  * Delete a branch.
  * Throws if it's the current branch or has unmerged commits.
  */
-function deleteGitBranch(name: string, force: boolean = false): void {
+function deleteGitBranch(name: string, force: boolean = false, cwd?: string): void {
   if (!isValidBranchName(name)) {
     throw new Error("Invalid branch name");
   }
   const flag = force ? "-D" : "-d";
-  execSync(`git branch ${flag} ${name}`, { encoding: "utf-8", timeout: 10000 });
+  execSync(`git branch ${flag} ${name}`, { encoding: "utf-8", timeout: 10000, cwd });
 }
 
 /** Result of a fetch operation */
@@ -566,12 +572,12 @@ export interface GitFetchResult {
 /**
  * Fetch from origin or specified remote.
  */
-function fetchGitRemote(remote: string = "origin"): GitFetchResult {
+function fetchGitRemote(remote: string = "origin", cwd?: string): GitFetchResult {
   if (!isValidBranchName(remote)) {
     throw new Error("Invalid remote name");
   }
   try {
-    const output = execSync(`git fetch ${remote}`, { encoding: "utf-8", timeout: 30000 });
+    const output = execSync(`git fetch ${remote}`, { encoding: "utf-8", timeout: 30000, cwd });
     return { fetched: true, message: output.trim() || "Fetch completed" };
   } catch (err: any) {
     const message = err.message || String(err);
@@ -593,9 +599,9 @@ export interface GitPullResult {
 /**
  * Pull the current branch.
  */
-function pullGitBranch(): GitPullResult {
+function pullGitBranch(cwd?: string): GitPullResult {
   try {
-    const output = execSync("git pull", { encoding: "utf-8", timeout: 30000 });
+    const output = execSync("git pull", { encoding: "utf-8", timeout: 30000, cwd });
     return { success: true, message: output.trim() };
   } catch (err: any) {
     const message = err.message || String(err);
@@ -615,9 +621,9 @@ export interface GitPushResult {
 /**
  * Push the current branch.
  */
-function pushGitBranch(): GitPushResult {
+function pushGitBranch(cwd?: string): GitPushResult {
   try {
-    const output = execSync("git push", { encoding: "utf-8", timeout: 30000 });
+    const output = execSync("git push", { encoding: "utf-8", timeout: 30000, cwd });
     return { success: true, message: output.trim() || "Push completed" };
   } catch (err: any) {
     const message = err.message || String(err);
@@ -666,9 +672,10 @@ function isValidGitUrl(url: string): boolean {
  * Get all git remotes with their fetch and push URLs.
  * Executes `git remote -v` and parses the output.
  */
-function listGitRemotes(): GitRemoteDetailed[] {
+function listGitRemotes(cwd?: string): GitRemoteDetailed[] {
   try {
-    const output = execSync("git remote -v", { encoding: "utf-8", timeout: 5000 });
+    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
+    const output = execSync("git remote -v", execOptions);
 
     const remotes = new Map<string, { fetchUrl: string; pushUrl: string }>();
 
@@ -704,7 +711,7 @@ function listGitRemotes(): GitRemoteDetailed[] {
 /**
  * Add a new git remote.
  */
-function addGitRemote(name: string, url: string): void {
+function addGitRemote(name: string, url: string, cwd?: string): void {
   if (!isValidBranchName(name)) {
     throw new Error("Invalid remote name");
   }
@@ -712,7 +719,7 @@ function addGitRemote(name: string, url: string): void {
     throw new Error("Invalid git URL format");
   }
   try {
-    execSync(`git remote add ${name} ${url}`, { encoding: "utf-8", timeout: 10000 });
+    execSync(`git remote add ${name} ${url}`, { encoding: "utf-8", timeout: 10000, cwd });
   } catch (err: any) {
     const message = err.message || String(err);
     if (message.includes("already exists")) {
@@ -725,12 +732,12 @@ function addGitRemote(name: string, url: string): void {
 /**
  * Remove a git remote.
  */
-function removeGitRemote(name: string): void {
+function removeGitRemote(name: string, cwd?: string): void {
   if (!isValidBranchName(name)) {
     throw new Error("Invalid remote name");
   }
   try {
-    execSync(`git remote remove ${name}`, { encoding: "utf-8", timeout: 10000 });
+    execSync(`git remote remove ${name}`, { encoding: "utf-8", timeout: 10000, cwd });
   } catch (err: any) {
     const message = err.message || String(err);
     if (message.includes("No such remote")) {
@@ -743,7 +750,7 @@ function removeGitRemote(name: string): void {
 /**
  * Rename a git remote.
  */
-function renameGitRemote(oldName: string, newName: string): void {
+function renameGitRemote(oldName: string, newName: string, cwd?: string): void {
   if (!isValidBranchName(oldName)) {
     throw new Error("Invalid remote name");
   }
@@ -751,7 +758,7 @@ function renameGitRemote(oldName: string, newName: string): void {
     throw new Error("Invalid new remote name");
   }
   try {
-    execSync(`git remote rename ${oldName} ${newName}`, { encoding: "utf-8", timeout: 10000 });
+    execSync(`git remote rename ${oldName} ${newName}`, { encoding: "utf-8", timeout: 10000, cwd });
   } catch (err: any) {
     const message = err.message || String(err);
     if (message.includes("No such remote")) {
@@ -767,7 +774,7 @@ function renameGitRemote(oldName: string, newName: string): void {
 /**
  * Set the URL for a git remote.
  */
-function setGitRemoteUrl(name: string, url: string): void {
+function setGitRemoteUrl(name: string, url: string, cwd?: string): void {
   if (!isValidBranchName(name)) {
     throw new Error("Invalid remote name");
   }
@@ -775,7 +782,7 @@ function setGitRemoteUrl(name: string, url: string): void {
     throw new Error("Invalid git URL format");
   }
   try {
-    execSync(`git remote set-url ${name} ${url}`, { encoding: "utf-8", timeout: 10000 });
+    execSync(`git remote set-url ${name} ${url}`, { encoding: "utf-8", timeout: 10000, cwd });
   } catch (err: any) {
     const message = err.message || String(err);
     if (message.includes("No such remote")) {
@@ -806,11 +813,12 @@ export interface GitFileChange {
 /**
  * Get list of stash entries.
  */
-function getGitStashList(): GitStash[] {
+function getGitStashList(cwd?: string): GitStash[] {
   try {
     const output = execSync('git stash list --format="%gd|%gs|%ai"', {
       encoding: "utf-8",
       timeout: 5000,
+      cwd,
     }).trim();
     if (!output) return [];
 
@@ -835,17 +843,18 @@ function getGitStashList(): GitStash[] {
 /**
  * Create a new stash.
  */
-function createGitStash(message?: string): string {
+function createGitStash(message?: string, cwd?: string): string {
   let output: string;
+  const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
   if (message) {
     // Sanitize message: remove shell metacharacters to prevent injection
     const sanitized = message.replace(/[`$\\!"]/g, "").trim();
     if (!sanitized) {
       throw new Error("Invalid stash message");
     }
-    output = execSync(`git stash push -m '${sanitized.replace(/'/g, "'\\''")}'`, { encoding: "utf-8", timeout: 10000 }).trim();
+    output = execSync(`git stash push -m '${sanitized.replace(/'/g, "'\\''")}'`, execOptions).trim();
   } else {
-    output = execSync("git stash push", { encoding: "utf-8", timeout: 10000 }).trim();
+    output = execSync("git stash push", execOptions).trim();
   }
   if (output.includes("No local changes to save")) {
     throw new Error("No local changes to stash");
@@ -856,21 +865,22 @@ function createGitStash(message?: string): string {
 /**
  * Apply a stash entry.
  */
-function applyGitStash(index: number, drop: boolean = false): string {
+function applyGitStash(index: number, drop: boolean = false, cwd?: string): string {
   if (index < 0 || !Number.isInteger(index)) throw new Error("Invalid stash index");
   const cmd = drop ? `git stash pop stash@{${index}}` : `git stash apply stash@{${index}}`;
-  const output = execSync(cmd, { encoding: "utf-8", timeout: 10000 }).trim();
+  const output = execSync(cmd, { encoding: "utf-8", timeout: 10000, cwd }).trim();
   return output || (drop ? "Stash popped" : "Stash applied");
 }
 
 /**
  * Drop a stash entry.
  */
-function dropGitStash(index: number): string {
+function dropGitStash(index: number, cwd?: string): string {
   if (index < 0 || !Number.isInteger(index)) throw new Error("Invalid stash index");
   const output = execSync(`git stash drop stash@{${index}}`, {
     encoding: "utf-8",
     timeout: 10000,
+    cwd,
   }).trim();
   return output || "Stash dropped";
 }
@@ -878,11 +888,12 @@ function dropGitStash(index: number): string {
 /**
  * Get file changes (staged and unstaged).
  */
-function getGitFileChanges(): GitFileChange[] {
+function getGitFileChanges(cwd?: string): GitFileChange[] {
   try {
     const output = execSync("git status --porcelain=v1", {
       encoding: "utf-8",
       timeout: 5000,
+      cwd,
     }).trim();
     if (!output) return [];
 
@@ -944,10 +955,11 @@ function getGitFileChanges(): GitFileChange[] {
 /**
  * Get working directory diff.
  */
-function getGitWorkingDiff(): { stat: string; patch: string } {
+function getGitWorkingDiff(cwd?: string): { stat: string; patch: string } {
   try {
-    const stat = execSync("git diff --stat", { encoding: "utf-8", timeout: 10000 }).trim();
-    const patch = execSync("git diff", { encoding: "utf-8", timeout: 10000 });
+    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
+    const stat = execSync("git diff --stat", execOptions).trim();
+    const patch = execSync("git diff", execOptions);
     return { stat, patch };
   } catch {
     return { stat: "", patch: "" };
@@ -957,7 +969,7 @@ function getGitWorkingDiff(): { stat: string; patch: string } {
 /**
  * Stage specific files.
  */
-function stageGitFiles(files: string[]): string[] {
+function stageGitFiles(files: string[], cwd?: string): string[] {
   if (!files.length) throw new Error("No files specified");
   // Validate file paths - no shell metacharacters
   for (const f of files) {
@@ -966,14 +978,14 @@ function stageGitFiles(files: string[]): string[] {
     }
   }
   const escaped = files.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
-  execSync(`git add ${escaped}`, { encoding: "utf-8", timeout: 10000 });
+  execSync(`git add ${escaped}`, { encoding: "utf-8", timeout: 10000, cwd });
   return files;
 }
 
 /**
  * Unstage specific files.
  */
-function unstageGitFiles(files: string[]): string[] {
+function unstageGitFiles(files: string[], cwd?: string): string[] {
   if (!files.length) throw new Error("No files specified");
   for (const f of files) {
     if (/[;&|`$(){}[\]\r\n]/.test(f)) {
@@ -981,37 +993,39 @@ function unstageGitFiles(files: string[]): string[] {
     }
   }
   const escaped = files.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
-  execSync(`git reset HEAD ${escaped}`, { encoding: "utf-8", timeout: 10000 });
+  execSync(`git reset HEAD ${escaped}`, { encoding: "utf-8", timeout: 10000, cwd });
   return files;
 }
 
 /**
  * Create a commit with staged changes.
  */
-function createGitCommit(message: string): { hash: string; message: string } {
+function createGitCommit(message: string, cwd?: string): { hash: string; message: string } {
   if (!message || !message.trim()) throw new Error("Commit message is required");
+  const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
   // Check there are staged changes
-  const staged = execSync("git diff --cached --name-only", { encoding: "utf-8", timeout: 5000 }).trim();
+  const staged = execSync("git diff --cached --name-only", { encoding: "utf-8", timeout: 5000, cwd }).trim();
   if (!staged) throw new Error("No staged changes to commit");
   // Sanitize: use single quotes and escape embedded single quotes for shell safety
   const sanitized = message.trim().replace(/'/g, "'\\''");
-  execSync(`git commit -m '${sanitized}'`, { encoding: "utf-8", timeout: 10000 });
-  const hash = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
+  execSync(`git commit -m '${sanitized}'`, execOptions);
+  const hash = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000, cwd }).trim();
   return { hash, message: message.trim() };
 }
 
 /**
  * Discard changes for specific files.
  */
-function discardGitChanges(files: string[]): string[] {
+function discardGitChanges(files: string[], cwd?: string): string[] {
   if (!files.length) throw new Error("No files specified");
   for (const f of files) {
     if (/[;&|`$(){}[\]\r\n]/.test(f)) {
       throw new Error(`Invalid file path: ${f}`);
     }
   }
+  const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
   // Separate untracked from tracked
-  const statusOutput = execSync("git status --porcelain=v1", { encoding: "utf-8", timeout: 5000 }).trim();
+  const statusOutput = execSync("git status --porcelain=v1", execOptions).trim();
   const untracked = new Set<string>();
   for (const line of statusOutput.split("\n")) {
     if (line.startsWith("??")) {
@@ -1023,11 +1037,11 @@ function discardGitChanges(files: string[]): string[] {
 
   if (trackedFiles.length) {
     const escaped = trackedFiles.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
-    execSync(`git checkout -- ${escaped}`, { encoding: "utf-8", timeout: 10000 });
+    execSync(`git checkout -- ${escaped}`, { encoding: "utf-8", timeout: 10000, cwd });
   }
   if (untrackedFiles.length) {
     const escaped = untrackedFiles.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
-    execSync(`git clean -f -- ${escaped}`, { encoding: "utf-8", timeout: 10000 });
+    execSync(`git clean -f -- ${escaped}`, { encoding: "utf-8", timeout: 10000, cwd });
   }
   return files;
 }
@@ -1757,7 +1771,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/remotes", (_req, res) => {
     try {
-      const remotes = getGitHubRemotes();
+      const rootDir = store.getRootDir();
+      const remotes = getGitHubRemotes(rootDir);
       res.json(remotes);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1771,11 +1786,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/remotes/detailed", (_req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
-      const remotes = listGitRemotes();
+      const remotes = listGitRemotes(rootDir);
       res.json(remotes);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1789,7 +1805,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/remotes", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -1802,7 +1819,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "url is required" });
         return;
       }
-      addGitRemote(name, url);
+      addGitRemote(name, url, rootDir);
       res.status(201).json({ name, added: true });
     } catch (err: any) {
       if (err.message?.includes("Invalid remote name")) {
@@ -1823,12 +1840,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.delete("/git/remotes/:name", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
       const { name } = req.params;
-      removeGitRemote(name);
+      removeGitRemote(name, rootDir);
       res.json({ name, removed: true });
     } catch (err: any) {
       if (err.message?.includes("Invalid remote name")) {
@@ -1848,7 +1866,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.patch("/git/remotes/:name", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -1858,7 +1877,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "newName is required" });
         return;
       }
-      renameGitRemote(name, newName);
+      renameGitRemote(name, newName, rootDir);
       res.json({ oldName: name, newName, renamed: true });
     } catch (err: any) {
       if (err.message?.includes("Invalid")) {
@@ -1880,7 +1899,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.put("/git/remotes/:name/url", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -1890,7 +1910,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "url is required" });
         return;
       }
-      setGitRemoteUrl(name, url);
+      setGitRemoteUrl(name, url, rootDir);
       res.json({ name, url, updated: true });
     } catch (err: any) {
       if (err.message?.includes("Invalid")) {
@@ -1910,11 +1930,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/status", (_req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
-      const status = getGitStatus();
+      const status = getGitStatus(rootDir);
       if (!status) {
         res.status(500).json({ error: "Failed to get git status" });
         return;
@@ -1932,12 +1953,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/commits", (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
       const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
-      const commits = getGitCommits(limit);
+      const commits = getGitCommits(limit, rootDir);
       res.json(commits);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1951,7 +1973,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/commits/:hash/diff", (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -1961,7 +1984,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "Invalid commit hash format" });
         return;
       }
-      const diff = getCommitDiff(hash);
+      const diff = getCommitDiff(hash, rootDir);
       if (!diff) {
         res.status(404).json({ error: "Commit not found" });
         return;
@@ -1979,11 +2002,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/branches", (_req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
-      const branches = getGitBranches();
+      const branches = getGitBranches(rootDir);
       res.json(branches);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1997,13 +2021,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/worktrees", async (_req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
       // Get tasks to correlate with worktrees
       const tasks = await store.listTasks();
-      const worktrees = getGitWorktrees(tasks);
+      const worktrees = getGitWorktrees(tasks, rootDir);
       res.json(worktrees);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2019,7 +2044,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/branches", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -2028,7 +2054,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "name is required" });
         return;
       }
-      const branchName = createGitBranch(name, base);
+      const branchName = createGitBranch(name, base, rootDir);
       res.status(201).json({ name: branchName, created: true });
     } catch (err: any) {
       if (err.message.includes("Invalid branch name")) {
@@ -2047,12 +2073,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/branches/:name/checkout", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
       const { name } = req.params;
-      checkoutGitBranch(name);
+      checkoutGitBranch(name, rootDir);
       res.json({ checkedOut: name });
     } catch (err: any) {
       if (err.message.includes("Invalid branch name")) {
@@ -2072,13 +2099,14 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.delete("/git/branches/:name", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
       const { name } = req.params;
       const force = req.query.force === "true";
-      deleteGitBranch(name, force);
+      deleteGitBranch(name, force, rootDir);
       res.json({ deleted: name });
     } catch (err: any) {
       if (err.message.includes("Invalid branch name")) {
@@ -2100,12 +2128,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/fetch", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
       const { remote } = req.body;
-      const result = fetchGitRemote(remote || "origin");
+      const result = fetchGitRemote(remote || "origin", rootDir);
       res.json(result);
     } catch (err: any) {
       if (err.message.includes("Invalid remote name")) {
@@ -2124,11 +2153,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/pull", async (_req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
-      const result = pullGitBranch();
+      const result = pullGitBranch(rootDir);
       if (result.conflict) {
         res.status(409).json(result);
       } else {
@@ -2145,11 +2175,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/push", async (_req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
-      const result = pushGitBranch();
+      const result = pushGitBranch(rootDir);
       res.json(result);
     } catch (err: any) {
       if (err.message.includes("rejected") || err.message.includes("Pull latest")) {
@@ -2170,11 +2201,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/stashes", (_req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
-      const stashes = getGitStashList();
+      const stashes = getGitStashList(rootDir);
       res.json(stashes);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2188,12 +2220,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/stashes", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
       const { message } = req.body;
-      const result = createGitStash(message);
+      const result = createGitStash(message, rootDir);
       res.status(201).json({ message: result });
     } catch (err: any) {
       if (err.message?.includes("No local changes")) {
@@ -2211,7 +2244,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/stashes/:index/apply", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -2221,7 +2255,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
       const { drop } = req.body;
-      const result = applyGitStash(index, drop === true);
+      const result = applyGitStash(index, drop === true, rootDir);
       res.json({ message: result });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2234,7 +2268,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.delete("/git/stashes/:index", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -2243,7 +2278,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "Invalid stash index" });
         return;
       }
-      const result = dropGitStash(index);
+      const result = dropGitStash(index, rootDir);
       res.json({ message: result });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2256,11 +2291,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/diff", (_req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
-      const diff = getGitWorkingDiff();
+      const diff = getGitWorkingDiff(rootDir);
       res.json(diff);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2273,11 +2309,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/git/changes", (_req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
-      const changes = getGitFileChanges();
+      const changes = getGitFileChanges(rootDir);
       res.json(changes);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2291,7 +2328,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/stage", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -2300,7 +2338,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "files array is required" });
         return;
       }
-      const staged = stageGitFiles(files);
+      const staged = stageGitFiles(files, rootDir);
       res.json({ staged });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2314,7 +2352,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/unstage", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -2323,7 +2362,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "files array is required" });
         return;
       }
-      const unstaged = unstageGitFiles(files);
+      const unstaged = unstageGitFiles(files, rootDir);
       res.json({ unstaged });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2337,7 +2376,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/commit", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -2346,7 +2386,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "Commit message is required" });
         return;
       }
-      const result = createGitCommit(message);
+      const result = createGitCommit(message, rootDir);
       res.status(201).json(result);
     } catch (err: any) {
       if (err.message?.includes("No staged changes")) {
@@ -2364,7 +2404,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.post("/git/discard", async (req, res) => {
     try {
-      if (!isGitRepo()) {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
         res.status(400).json({ error: "Not a git repository" });
         return;
       }
@@ -2373,7 +2414,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "files array is required" });
         return;
       }
-      const discarded = discardGitChanges(files);
+      const discarded = discardGitChanges(files, rootDir);
       res.json({ discarded });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
