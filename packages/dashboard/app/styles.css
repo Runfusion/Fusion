@@ -6560,6 +6560,17 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
+.file-browser-binary-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
 .file-browser-loading {
   font-size: 11px;
   color: var(--todo);

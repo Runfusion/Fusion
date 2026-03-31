@@ -1,11 +1,32 @@
 import { useState, useCallback, useEffect } from "react";
-import { X, Save, RotateCcw, Folder } from "lucide-react";
+import { X, Save, RotateCcw, Folder, FileType } from "lucide-react";
 import { useFileBrowser } from "../hooks/useFileBrowser";
 import { useFileEditor } from "../hooks/useFileEditor";
 import { useProjectFileBrowser } from "../hooks/useProjectFileBrowser";
 import { useProjectFileEditor } from "../hooks/useProjectFileEditor";
 import { FileBrowser } from "./FileBrowser";
 import { FileEditor } from "./FileEditor";
+
+/**
+ * Binary file extensions that should be displayed as read-only.
+ */
+const BINARY_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".svgz",
+  ".exe", ".dll", ".so", ".dylib",
+  ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+  ".mp3", ".mp4", ".avi", ".mov", ".webm", ".mkv", ".flv",
+  ".woff", ".woff2", ".ttf", ".otf", ".eot",
+  ".wasm", ".bin",
+]);
+
+/**
+ * Check if a file is a binary file based on extension.
+ */
+function isBinaryFile(filename: string): boolean {
+  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+  return BINARY_EXTENSIONS.has(ext);
+}
 
 type TaskModeProps = {
   taskId: string;
@@ -134,6 +155,12 @@ export function FileBrowserModal(props: FileBrowserModalProps) {
                 <div className="file-browser-toolbar">
                   <div className="file-browser-file-info">
                     {selectedFile}
+                    {selectedFile && isBinaryFile(selectedFile) && (
+                      <span className="file-browser-binary-indicator">
+                        <FileType size={12} />
+                        Binary file — read only
+                      </span>
+                    )}
                     {mtime && (
                       <span className="file-browser-mtime">
                         Modified: {new Date(mtime).toLocaleString()}
@@ -176,6 +203,7 @@ export function FileBrowserModal(props: FileBrowserModalProps) {
                     content={content}
                     onChange={setContent}
                     filePath={selectedFile}
+                    readOnly={selectedFile ? isBinaryFile(selectedFile) : false}
                   />
                 </div>
 

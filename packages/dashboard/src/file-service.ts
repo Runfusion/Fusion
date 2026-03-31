@@ -82,30 +82,6 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 /**
- * Binary file extensions set.
- */
-const BINARY_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".svgz",
-  ".exe", ".dll", ".so", ".dylib",
-  ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-  ".mp3", ".mp4", ".avi", ".mov", ".webm", ".mkv", ".flv",
-  ".woff", ".woff2", ".ttf", ".otf", ".eot",
-  ".wasm", ".bin",
-]);
-
-/**
- * Check if a file is a binary file based on extension.
- */
-function isBinaryFile(filename: string): boolean {
-  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-  if (BINARY_EXTENSIONS.has(ext)) {
-    return true;
-  }
-  return false;
-}
-
-/**
  * Get the base path for a task's files.
  * Returns the worktree path if it exists, otherwise the task directory.
  */
@@ -288,12 +264,6 @@ export async function readFile(
 
   if (stats.size > MAX_FILE_SIZE) {
     throw new FileServiceError(`File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`, "ETOOLARGE");
-  }
-
-  // Check if it's a binary file
-  const basename = filePath.split("/").pop() || filePath;
-  if (isBinaryFile(basename)) {
-    throw new FileServiceError(`Binary file, cannot edit: ${filePath}`, "EINVAL");
   }
 
   try {
@@ -504,12 +474,6 @@ export async function readProjectFile(
 
   if (stats.size > MAX_FILE_SIZE) {
     throw new FileServiceError(`File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`, "ETOOLARGE");
-  }
-
-  // Check if it's a binary file
-  const basename = filePath.split("/").pop() || filePath;
-  if (isBinaryFile(basename)) {
-    throw new FileServiceError(`Binary file, cannot edit: ${filePath}`, "EINVAL");
   }
 
   try {

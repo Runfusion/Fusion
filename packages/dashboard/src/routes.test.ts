@@ -3456,14 +3456,15 @@ describe("Git Management endpoints", () => {
         expect(res.status === 400 || res.status === 404).toBe(true);
       });
 
-      it("returns 415 for binary files", async () => {
+      it("allows reading binary files (returns 404 if not found)", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
           id: "KB-001",
           worktree: null,
         });
 
         const res = await GET(buildApp(), "/api/tasks/KB-001/files/image.png");
-        expect([415, 404, 500]).toContain(res.status);
+        // Binary files are now allowed; returns 404 if file doesn't exist
+        expect(res.status).toBe(404);
       });
 
       it("rejects path traversal attempts", async () => {
