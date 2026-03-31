@@ -3,7 +3,7 @@ import type { ToastType } from "../hooks/useToast";
 import type { Task, TaskCreateInput } from "@kb/core";
 import type { ModelInfo, RefinementType } from "../api";
 import { fetchModels, refineText, getRefineErrorMessage } from "../api";
-import { Link, Brain, Lightbulb, ListTree, Sparkles } from "lucide-react";
+import { Link, Brain, Lightbulb, ListTree, Sparkles, Save } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 
 const STORAGE_KEY = "kb-quick-entry-text";
@@ -394,6 +394,17 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     resetForm();
   }, [description, onSubtaskBreakdown, addToast, resetForm]);
 
+  const handleSaveClick = useCallback(() => {
+    const trimmed = description.trim();
+    if (!trimmed) return;
+
+    // Explicitly save to localStorage (even though auto-save already does this)
+    if (typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEY, trimmed);
+    }
+    addToast("Draft saved", "success");
+  }, [description, addToast]);
+
   const handleRefine = useCallback(async (type: RefinementType) => {
     const trimmed = description.trim();
     if (!trimmed || isRefining) return;
@@ -618,6 +629,17 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 >
                   <ListTree size={12} style={{ verticalAlign: "middle" }} />
                   Subtask
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={handleSaveClick}
+                  disabled={!description.trim() || isSubmitting}
+                  data-testid="save-button"
+                  title="Save draft to browser storage"
+                >
+                  <Save size={12} style={{ verticalAlign: "middle" }} />
+                  Save
                 </button>
                 <div className="refine-trigger-wrap" ref={refineMenuRef}>
                   <button

@@ -76,6 +76,7 @@ vi.mock("lucide-react", () => ({
   Lightbulb: () => null,
   ListTree: () => null,
   Sparkles: () => null,
+  Save: () => null,
 }));
 
 function renderQuickEntryBox(props = {}) {
@@ -921,6 +922,119 @@ describe("QuickEntryBox", () => {
 
       // After reset, refine menu should be closed
       expect(screen.queryByTestId("refine-clarify")).toBeNull();
+    });
+  });
+
+  describe("Save button", () => {
+    it("shows save button when text is entered", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      // Initially, save button is not visible
+      expect(screen.queryByTestId("save-button")).toBeNull();
+
+      // Focus and type something
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Task to save" } });
+
+      // Now the save button should be visible
+      expect(screen.getByTestId("save-button")).toBeTruthy();
+    });
+
+    it("save button is disabled when textarea is empty", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      // Focus and type something
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Some text" } });
+      expect(screen.getByTestId("save-button")).toBeTruthy();
+
+      // Clear the input
+      fireEvent.change(textarea, { target: { value: "" } });
+
+      // Button should be hidden or disabled when input is empty
+      const saveButton = screen.queryByTestId("save-button") as HTMLButtonElement | null;
+      if (saveButton) {
+        expect(saveButton.disabled).toBe(true);
+      }
+    });
+
+    it("save button is disabled during submission", async () => {
+      const { props } = renderQuickEntryBox();
+      // Slow down the promise to see loading state
+      props.onCreate.mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 100)));
+
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "New task" } });
+
+      // Start submission with Enter key
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      // During submission, button should be disabled
+      await waitFor(() => {
+        const saveButton = screen.queryByTestId("save-button") as HTMLButtonElement | null;
+        if (saveButton) {
+          expect(saveButton.disabled).toBe(true);
+        }
+      });
+    });
+
+    it("clicking save button persists to localStorage", async () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Draft task description" } });
+
+      // Click the save button
+      fireEvent.click(screen.getByTestId("save-button"));
+
+      // localStorage should have the value
+      await waitFor(() => {
+        expect(localStorage.getItem("kb-quick-entry-text")).toBe("Draft task description");
+      });
+    });
+
+    it("clicking save button shows success toast", async () => {
+      const { props } = renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Task to save" } });
+
+      // Click the save button
+      fireEvent.click(screen.getByTestId("save-button"));
+
+      // Success toast should be shown
+      await waitFor(() => {
+        expect(props.addToast).toHaveBeenCalledWith("Draft saved", "success");
+      });
+    });
+
+    it("save button has correct test id", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Task to save" } });
+
+      // Button should have data-testid="save-button"
+      const saveButton = screen.getByTestId("save-button");
+      expect(saveButton).toBeTruthy();
+    });
+
+    it("save button has correct title attribute", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Task to save" } });
+
+      const saveButton = screen.getByTestId("save-button");
+      expect(saveButton.getAttribute("title")).toBe("Save draft to browser storage");
     });
   });
 });
