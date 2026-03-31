@@ -1485,11 +1485,11 @@ describe("TaskDetailModal", () => {
     });
   });
 
-  describe("Spec tab", () => {
-    it("shows Spec tab alongside other tabs", () => {
+  describe("Definition tab edit mode", () => {
+    it("shows Edit button in Definition tab", () => {
       render(
         <TaskDetailModal
-          task={makeTask()}
+          task={makeTask({ prompt: "# Test\n\nSpec content." })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1499,10 +1499,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Spec")).toBeTruthy();
+      expect(screen.getByText("Edit")).toBeTruthy();
     });
 
-    it("switches to Spec tab when clicked", () => {
+    it("clicking Edit shows textarea with current prompt content", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Test\n\nSpec content." })}
@@ -1515,17 +1515,19 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Initially not showing Spec content
-      expect(container.querySelector(".spec-editor")).toBeNull();
+      // Initially showing markdown view
+      expect(container.querySelector(".markdown-body")).toBeTruthy();
 
-      // Click Spec tab
-      fireEvent.click(screen.getByText("Spec"));
+      // Click Edit button
+      fireEvent.click(screen.getByText("Edit"));
 
-      // Should show SpecEditor
-      expect(container.querySelector(".spec-editor")).toBeTruthy();
+      // Should show textarea
+      const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      expect(textarea).toBeTruthy();
+      expect(textarea.value).toBe("# Test\n\nSpec content.");
     });
 
-    it("Spec tab shows SpecEditor with task prompt", () => {
+    it("clicking Cancel returns to view mode without saving", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Test Task\n\nTest specification." })}
@@ -1538,13 +1540,102 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Spec"));
+      fireEvent.click(screen.getByText("Edit"));
+      const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: "Modified content" } });
 
-      // Should show the spec content (without leading heading)
-      expect(container.querySelector(".spec-editor")).toBeTruthy();
+      // Click Cancel
+      fireEvent.click(screen.getByText("Cancel"));
+
+      // Should show markdown view with original content
+      expect(container.querySelector(".markdown-body")).toBeTruthy();
+      expect(screen.queryByRole("textbox")).toBeNull();
     });
 
-    it("shows all 5 tabs in correct order", () => {
+    it("saving updates the task and returns to view mode", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValueOnce({ id: "KB-099" } as Task);
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-099", prompt: "# Original" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Edit"));
+      const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: "# Updated" } });
+
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("KB-099", { prompt: "# Updated" });
+      });
+
+      // Should return to view mode
+      expect(container.querySelector(".markdown-body")).toBeTruthy();
+    });
+
+    it("AI revision feedback section appears in edit mode", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Test" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Edit"));
+
+      expect(screen.getByText("Ask AI to Revise")).toBeTruthy();
+      expect(screen.getByPlaceholderText(/e.g., 'Add more details/)).toBeTruthy();
+      expect(screen.getByText("Request AI Revision")).toBeTruthy();
+    });
+
+    it("requesting AI revision works and closes modal", async () => {
+      const { requestSpecRevision } = await import("../../api");
+      vi.mocked(requestSpecRevision).mockResolvedValueOnce({});
+      const onClose = vi.fn();
+      const addToast = vi.fn();
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "KB-099", column: "todo", prompt: "# Test" })}
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Edit"));
+
+      const feedbackInput = screen.getByPlaceholderText(/e.g., 'Add more details/);
+      fireEvent.change(feedbackInput, { target: { value: "Please add more error handling details" } });
+
+      fireEvent.click(screen.getByText("Request AI Revision"));
+
+      await waitFor(() => {
+        expect(requestSpecRevision).toHaveBeenCalledWith("KB-099", "Please add more error handling details");
+        expect(addToast).toHaveBeenCalledWith("AI revision requested. Task moved to triage.", "success");
+        expect(onClose).toHaveBeenCalled();
+      });
+    });
+
+    it("shows all 5 tabs in correct order (Spec tab removed)", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask()}
@@ -1558,17 +1649,16 @@ describe("TaskDetailModal", () => {
       );
 
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(6);
+      expect(tabs.length).toBe(5);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Activity");
       expect(tabs[2].textContent).toBe("Agent Log");
       expect(tabs[3].textContent).toBe("Steering");
       expect(tabs[4].textContent).toBe("Model");
-      expect(tabs[5].textContent).toBe("Spec");
     });
 
-    it("shows empty state in Spec tab when no prompt", () => {
-      const { container } = render(
+    it("shows empty state and Edit button when no prompt", () => {
+      render(
         <TaskDetailModal
           task={makeTask({ prompt: "" })}
           onClose={noop}
@@ -1580,10 +1670,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Spec"));
-
-      // Should show spec editor (view mode with empty state)
-      expect(container.querySelector(".spec-editor")).toBeTruthy();
+      expect(screen.getByText("(no prompt)")).toBeTruthy();
+      expect(screen.getByText("Edit")).toBeTruthy();
     });
   });
 

@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder } from "lucide-react";
+import { Settings, Pause, Play, Square, Download, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History } from "lucide-react";
 
 interface HeaderProps {
   onOpenSettings?: () => void;
   onOpenGitHubImport?: () => void;
   onOpenPlanning?: () => void;
   onOpenUsage?: () => void;
+  onOpenActivityLog?: () => void;
   onOpenSchedules?: () => void;
   onToggleTerminal?: () => void;
   onToggleFiles?: () => void;
@@ -221,6 +222,13 @@ export function Header({
         {onOpenUsage && (
           <button className="btn-icon" onClick={onOpenUsage} title="View usage">
             <Activity size={16} />
+          </button>
+        )}
+
+        {/* Activity Log button */}
+        {onOpenActivityLog && (
+          <button className="btn-icon" onClick={onOpenActivityLog} title="View Activity Log">
+            <History size={16} />
           </button>
         )}
 

@@ -17,6 +17,7 @@ import { GitManagerModal } from "./components/GitManagerModal";
 import { UsageIndicator } from "./components/UsageIndicator";
 import { NewTaskModal } from "./components/NewTaskModal";
 import { ScheduledTasksModal } from "./components/ScheduledTasksModal";
+import { ActivityLogModal } from "./components/ActivityLogModal";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
@@ -32,6 +33,7 @@ function AppInner() {
   const [usageOpen, setUsageOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [rootDir, setRootDir] = useState<string>(".");
@@ -202,6 +204,10 @@ function AppInner() {
     setFilesOpen((prev) => !prev);
   }, []);
 
+  // Activity log handlers
+  const handleOpenActivityLog = useCallback(() => setActivityLogOpen(true), []);
+  const handleCloseActivityLog = useCallback(() => setActivityLogOpen(false), []);
+
   return (
     <>
       <Header
@@ -209,6 +215,7 @@ function AppInner() {
         onOpenGitHubImport={() => setGitHubImportOpen(true)}
         onOpenPlanning={handlePlanningOpen}
         onOpenUsage={handleOpenUsage}
+        onOpenActivityLog={handleOpenActivityLog}
         onOpenSchedules={handleOpenSchedules}
         onToggleTerminal={handleToggleTerminal}
         onToggleFiles={handleToggleFiles}
@@ -324,6 +331,12 @@ function AppInner() {
         onCreateTask={handleModalCreate}
         addToast={addToast}
         onPlanningMode={handleNewTaskPlanningMode}
+      />
+      <ActivityLogModal
+        isOpen={activityLogOpen}
+        onClose={handleCloseActivityLog}
+        tasks={tasks}
+        onOpenTaskDetail={handleDetailOpen}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>
