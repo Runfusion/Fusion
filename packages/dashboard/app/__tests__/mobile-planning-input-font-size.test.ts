@@ -45,7 +45,8 @@ describe("mobile planning input font size CSS", () => {
     it("only targets planning mode textareas, not all textareas globally", () => {
       // The selector should specifically target .planning-textarea
       // not a global textarea selector that would affect all textareas
-      const globalTextareaPattern = /@media[^{]*max-width[^}]*\{[^}]*textarea\s*\{[^}]*font-size:\s*16px/s;
+      // Match bare textarea selector (not .something-textarea)
+      const globalTextareaPattern = /@media[^{]*max-width[^}]*\{[^}]*\stextarea\s*\{[^}]*font-size:\s*16px/s;
       expect(css).not.toMatch(globalTextareaPattern);
     });
 
