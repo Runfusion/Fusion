@@ -148,8 +148,9 @@ describe("SubtaskBreakdownModal", () => {
       const firstSubtask = await screen.findByTestId("subtask-item-0");
       const secondSubtask = await screen.findByTestId("subtask-item-1");
 
-      // Start dragging first subtask
-      fireEvent.dragStart(firstSubtask);
+      // Start dragging first subtask with dataTransfer mock
+      const dataTransferStart = { setData: vi.fn(), effectAllowed: "" };
+      fireEvent.dragStart(firstSubtask, { dataTransfer: dataTransferStart });
 
       // Drag over second subtask (below midpoint = after)
       const rect = { top: 100, height: 100, left: 0, right: 200 };
@@ -178,7 +179,8 @@ describe("SubtaskBreakdownModal", () => {
       const firstItem = items[0];
       const lastItem = items[2];
 
-      fireEvent.dragStart(firstItem);
+      const dragStartDataTransfer = { setData: vi.fn(), effectAllowed: "" };
+      fireEvent.dragStart(firstItem, { dataTransfer: dragStartDataTransfer });
 
       const dataTransfer = { getData: vi.fn(() => "subtask-A") };
       fireEvent.dragOver(lastItem, { clientY: 200 });
@@ -200,7 +202,8 @@ describe("SubtaskBreakdownModal", () => {
       const items = await screen.findAllByTestId(/subtask-item-/);
       const firstItem = items[0];
 
-      fireEvent.dragStart(firstItem);
+      const dragStartDataTransfer = { setData: vi.fn(), effectAllowed: "" };
+      fireEvent.dragStart(firstItem, { dataTransfer: dragStartDataTransfer });
 
       const dataTransfer = { getData: vi.fn(() => "subtask-A") };
       fireEvent.drop(firstItem, { dataTransfer });
@@ -218,7 +221,8 @@ describe("SubtaskBreakdownModal", () => {
 
       const firstItem = await screen.findByTestId("subtask-item-0");
 
-      fireEvent.dragStart(firstItem);
+      const dragStartDataTransfer = { setData: vi.fn(), effectAllowed: "" };
+      fireEvent.dragStart(firstItem, { dataTransfer: dragStartDataTransfer });
       expect(firstItem.classList.contains("subtask-item-dragging")).toBe(true);
 
       fireEvent.dragEnd(firstItem);
