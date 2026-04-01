@@ -448,7 +448,7 @@ Controls how worktree directory names are generated when `recycleWorktrees` is N
 
 **Valid values:**
 - `"random"` — Human-friendly random names like `swift-falcon`, `calm-river` (default)
-- `"task-id"` — Use the task ID as the directory name, e.g., `kb-042`
+- `"task-id"` — Use the task ID as the directory name, e.g., `fn-042`
 - `"task-title"` — Use a slugified version of the task title, e.g., `fix-login-bug`
 
 **Example:**
