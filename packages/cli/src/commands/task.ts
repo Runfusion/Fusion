@@ -368,7 +368,6 @@ export async function runTaskMerge(id: string) {
   try {
     const result = await aiMergeTask(store, cwd, id, {
       onAgentText: (delta) => process.stdout.write(delta),
-      onAgentTool: (name) => console.log(`  [merge] tool: ${name}`),
     });
 
     console.log();

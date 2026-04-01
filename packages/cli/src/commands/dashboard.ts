@@ -289,7 +289,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       pool,
       usageLimitPauser,
       onAgentText: (delta) => process.stdout.write(delta),
-      onAgentTool: (name) => console.log(`[merger] tool: ${name}`),
       onSession: (session) => { activeMergeSession = session; },
     });
 
