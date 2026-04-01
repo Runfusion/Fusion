@@ -1,284 +1,310 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { SetupWizard } from "../SetupWizard";
-import type { ProjectInfo, ProjectCreateInput } from "../../api";
+import { SetupWizardModal } from "../SetupWizardModal";
 
-// Mock lucide-react
-vi.mock("lucide-react", async () => {
-  const actual = await vi.importActual("lucide-react");
-  return {
-    ...actual,
-    X: () => <span data-testid="close-icon">×</span>,
-    ChevronRight: () => <span data-testid="next-icon">→</span>,
-    ChevronLeft: () => <span data-testid="back-icon">←</span>,
-    Folder: () => <span data-testid="folder-icon">📁</span>,
-    Check: () => <span data-testid="check-icon">✓</span>,
-    Loader2: () => <span data-testid="loader-icon">⟳</span>,
-    AlertCircle: () => <span data-testid="alert-icon">⚠</span>,
-  };
-});
+// Mock the API and utils
+const mockFetchFirstRunStatus = vi.fn();
+const mockDetectProjects = vi.fn();
+const mockRegisterProject = vi.fn();
 
-describe("SetupWizard", () => {
-  it("does not render when isOpen is false", () => {
+vi.mock("../api", () => ({
+  fetchFirstRunStatus: (...args: unknown[]) => mockFetchFirstRunStatus(...args),
+  detectProjects: (...args: unknown[]) => mockDetectProjects(...args),
+  registerProject: (...args: unknown[]) => mockRegisterProject(...args),
+}));
+
+vi.mock("../utils/projectDetection", () => ({
+  scanForProjects: (...args: unknown[]) => mockDetectProjects(...args),
+  suggestProjectName: (path: string) => path.split("/").pop() || "",
+  isValidProjectName: (name: string) => /^[a-zA-Z0-9_-]+$/.test(name),
+}));
+
+// Mock lucide-react icons
+vi.mock("lucide-react", () => ({
+  X: () => <span data-testid="x-icon">×</span>,
+  Loader2: () => <span data-testid="loader-icon">⟳</span>,
+  FolderPlus: () => <span data-testid="folder-icon">📁</span>,
+  Search: () => <span data-testid="search-icon">🔍</span>,
+  CheckCircle: () => <span data-testid="check-icon">✓</span>,
+  ArrowRight: () => <span data-testid="arrow-right">→</span>,
+  ArrowLeft: () => <span data-testid="arrow-left">←</span>,
+  Folder: () => <span data-testid="folder-small">📂</span>,
+  Check: () => <span data-testid="check-small">✓</span>,
+  AlertCircle: () => <span data-testid="alert-icon">⚠</span>,
+  Pencil: () => <span data-testid="pencil-icon">✎</span>,
+}));
+
+const noop = () => {};
+
+describe("SetupWizardModal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    // Default: no projects, so wizard should auto-open
+    mockFetchFirstRunStatus.mockResolvedValue({ hasProjects: false });
+  });
+
+  it("auto-opens when no projects exist", async () => {
     render(
-      <SetupWizard
-        isOpen={false}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
+      <SetupWizardModal
+        onProjectRegistered={noop}
+        onProjectsRegistered={noop}
+        onClose={noop}
       />
     );
 
-    expect(screen.queryByText("Add New Project")).toBeNull();
+    // Wait for the effect to run
+    await waitFor(() => {
+      expect(mockFetchFirstRunStatus).toHaveBeenCalled();
+    });
+
+    // Should show welcome screen
+    await waitFor(() => {
+      expect(screen.getByText("Welcome to kb")).toBeDefined();
+    });
   });
 
-  it("renders when isOpen is true", () => {
+  it("does not auto-open when projects exist", async () => {
+    mockFetchFirstRunStatus.mockResolvedValue({ hasProjects: true });
+
     render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
+      <SetupWizardModal
+        onProjectRegistered={noop}
+        onProjectsRegistered={noop}
+        onClose={noop}
       />
     );
 
-    expect(screen.getByText("Add New Project")).toBeDefined();
+    await waitFor(() => {
+      expect(mockFetchFirstRunStatus).toHaveBeenCalled();
+    });
+
+    // Should not show welcome screen
+    expect(screen.queryByText("Welcome to kb")).toBeNull();
   });
 
-  it("starts at directory step", () => {
+  it("shows welcome step with auto-detect and manual options", async () => {
     render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
+      <SetupWizardModal
+        onProjectRegistered={noop}
+        onProjectsRegistered={noop}
+        onClose={noop}
       />
     );
 
-    expect(screen.getByText("Select Project Directory")).toBeDefined();
+    await waitFor(() => {
+      expect(screen.getByText("Welcome to kb")).toBeDefined();
+    });
+
+    expect(screen.getByText("Auto-detect Projects")).toBeDefined();
+    expect(screen.getByText("Add Manually")).toBeDefined();
   });
 
-  it("shows step indicator with 5 steps", () => {
+  it("transitions to detecting step when auto-detect clicked", async () => {
+    mockDetectProjects.mockResolvedValue({ projects: [] });
+
     render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
+      <SetupWizardModal
+        onProjectRegistered={noop}
+        onProjectsRegistered={noop}
+        onClose={noop}
       />
     );
 
-    expect(screen.getByText("Directory")).toBeDefined();
-    expect(screen.getByText("Name")).toBeDefined();
-    expect(screen.getByText("Mode")).toBeDefined();
-    expect(screen.getByText("Validate")).toBeDefined();
-    expect(screen.getByText("Confirm")).toBeDefined();
+    await waitFor(() => {
+      expect(screen.getByText("Auto-detect Projects")).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByText("Auto-detect Projects"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Detecting Projects...")).toBeDefined();
+    });
   });
 
-  it("disables Next button when directory is empty", () => {
+  it("shows review step with detected projects", async () => {
+    mockDetectProjects.mockResolvedValue({
+      projects: [
+        { path: "/home/user/project1", suggestedName: "project1", existing: false },
+        { path: "/home/user/project2", suggestedName: "project2", existing: false },
+      ],
+    });
+
     render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
+      <SetupWizardModal
+        onProjectRegistered={noop}
+        onProjectsRegistered={noop}
+        onClose={noop}
       />
     );
 
-    const nextButton = screen.getByRole("button", { name: /Next/i });
-    expect(nextButton).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText("Auto-detect Projects")).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByText("Auto-detect Projects"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Review Detected Projects")).toBeDefined();
+    });
+
+    // Should show detected projects
+    await waitFor(() => {
+      expect(screen.getByText("project1")).toBeDefined();
+      expect(screen.getByText("project2")).toBeDefined();
+    });
   });
 
-  it("enables Next button when directory is filled", () => {
+  it("transitions to manual step when manual option clicked", async () => {
     render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
+      <SetupWizardModal
+        onProjectRegistered={noop}
+        onProjectsRegistered={noop}
+        onClose={noop}
       />
     );
 
-    const input = screen.getByPlaceholderText("/path/to/your/project");
-    fireEvent.change(input, { target: { value: "/home/user/project" } });
+    await waitFor(() => {
+      expect(screen.getByText("Add Manually")).toBeDefined();
+    });
 
-    const nextButton = screen.getByRole("button", { name: /Next/i });
-    expect(nextButton).not.toBeDisabled();
+    fireEvent.click(screen.getByText("Add Manually"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Add Project Manually")).toBeDefined();
+    });
   });
 
-  it("navigates to next step when Next is clicked", () => {
+  it("allows entering project details in manual step", async () => {
     render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
+      <SetupWizardModal
+        onProjectRegistered={noop}
+        onProjectsRegistered={noop}
+        onClose={noop}
       />
     );
 
-    const input = screen.getByPlaceholderText("/path/to/your/project");
-    fireEvent.change(input, { target: { value: "/home/user/project" } });
+    await waitFor(() => {
+      expect(screen.getByText("Add Manually")).toBeDefined();
+    });
 
-    // Find the primary button (Next) in the actions area
-    const nextButton = screen.getByRole("button", { name: /Next/i });
-    fireEvent.click(nextButton);
+    fireEvent.click(screen.getByText("Add Manually"));
 
-    expect(screen.getByText("Project Name")).toBeDefined();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Project Path")).toBeDefined();
+    });
+
+    const pathInput = screen.getByLabelText("Project Path");
+    fireEvent.change(pathInput, { target: { value: "/path/to/project" } });
+
+    expect(pathInput).toHaveValue("/path/to/project");
   });
 
-  it("auto-suggests name from directory path", () => {
-    render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
-      />
-    );
-
-    const input = screen.getByPlaceholderText("/path/to/your/project");
-    fireEvent.change(input, { target: { value: "/home/user/my-awesome-project" } });
-
-    const nextButton = screen.getByRole("button", { name: /Next/i });
-    fireEvent.click(nextButton);
-
-    const nameInput = screen.getByPlaceholderText("My Project") as HTMLInputElement;
-    expect(nameInput.value).toBe("my-awesome-project");
-  });
-
-  it("allows navigation back to previous step", () => {
-    render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
-      />
-    );
-
-    // Go to step 2
-    const input = screen.getByPlaceholderText("/path/to/your/project");
-    fireEvent.change(input, { target: { value: "/home/user/project" } });
-    const nextButton = screen.getByRole("button", { name: /Next/i });
-    fireEvent.click(nextButton);
-
-    // Go back
-    const backButton = screen.getByRole("button", { name: /Back/i });
-    fireEvent.click(backButton);
-
-    expect(screen.getByText("Select Project Directory")).toBeDefined();
-  });
-
-  it("shows isolation mode options", () => {
-    render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
-      />
-    );
-
-    // Navigate to step 3 (isolation)
-    const dirInput = screen.getByPlaceholderText("/path/to/your/project");
-    fireEvent.change(dirInput, { target: { value: "/home/user/project" } });
-    
-    // Go to name step
-    fireEvent.click(screen.getByRole("button", { name: /Next/i }));
-    
-    // Go to isolation step
-    fireEvent.click(screen.getByRole("button", { name: /Next/i }));
-
-    expect(screen.getByText("In-Process (Default)")).toBeDefined();
-    expect(screen.getByText("Child Process (Isolated)")).toBeDefined();
-  });
-
-  it("calls onClose when Cancel is clicked", () => {
-    const onClose = vi.fn();
-    render(
-      <SetupWizard
-        isOpen={true}
-        onClose={onClose}
-        onProjectCreated={vi.fn()}
-      />
-    );
-
-    const cancelButton = screen.getByRole("button", { name: /Cancel/i });
-    fireEvent.click(cancelButton);
-
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("calls onClose when close icon is clicked", () => {
-    const onClose = vi.fn();
-    render(
-      <SetupWizard
-        isOpen={true}
-        onClose={onClose}
-        onProjectCreated={vi.fn()}
-      />
-    );
-
-    const closeButton = screen.getByLabelText("Close");
-    fireEvent.click(closeButton);
-
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("submits project data when created", async () => {
-    const mockRegisterProject = vi.fn().mockResolvedValue({
+  it("calls onProjectRegistered when manual registration succeeds", async () => {
+    const onProjectRegistered = vi.fn();
+    mockRegisterProject.mockResolvedValue({
       id: "proj_123",
-      name: "My Project",
-      path: "/home/user/project",
+      name: "Test Project",
+      path: "/path/to/project",
       status: "active",
       isolationMode: "in-process",
-    } as ProjectInfo);
-
-    const onProjectCreated = vi.fn();
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    });
 
     render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={onProjectCreated}
-        onRegisterProject={mockRegisterProject}
+      <SetupWizardModal
+        onProjectRegistered={onProjectRegistered}
+        onProjectsRegistered={noop}
+        onClose={noop}
       />
     );
 
-    // Fill directory
-    const dirInput = screen.getByPlaceholderText("/path/to/your/project");
-    fireEvent.change(dirInput, { target: { value: "/home/user/project" } });
+    await waitFor(() => {
+      expect(screen.getByText("Add Manually")).toBeDefined();
+    });
 
-    // The wizard should be in directory step with a Next button
-    expect(screen.getByRole("button", { name: /Next/i })).toBeDefined();
-    
-    // Note: Full wizard flow testing would require more complex setup
-    // including mocking the validation API call
+    fireEvent.click(screen.getByText("Add Manually"));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Project Path")).toBeDefined();
+    });
+
+    fireEvent.change(screen.getByLabelText("Project Path"), {
+      target: { value: "/path/to/project" },
+    });
+    fireEvent.change(screen.getByLabelText("Project Name"), {
+      target: { value: "test-project" },
+    });
+
+    fireEvent.click(screen.getByText("Register Project"));
+
+    await waitFor(() => {
+      expect(onProjectRegistered).toHaveBeenCalled();
+    });
   });
 
-  it("resets state when reopened", () => {
-    const { rerender } = render(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
+  it("persists wizard state to localStorage", async () => {
+    mockDetectProjects.mockResolvedValue({
+      projects: [{ path: "/home/user/project1", suggestedName: "project1", existing: false }],
+    });
+
+    render(
+      <SetupWizardModal
+        onProjectRegistered={noop}
+        onProjectsRegistered={noop}
+        onClose={noop}
       />
     );
 
-    // Fill some data
-    const input = screen.getByPlaceholderText("/path/to/your/project");
-    fireEvent.change(input, { target: { value: "/home/user/project" } });
+    await waitFor(() => {
+      expect(screen.getByText("Auto-detect Projects")).toBeDefined();
+    });
 
-    // Close and reopen
-    rerender(
-      <SetupWizard
-        isOpen={false}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
+    fireEvent.click(screen.getByText("Auto-detect Projects"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Review Detected Projects")).toBeDefined();
+    });
+
+    // Check localStorage was updated
+    await waitFor(() => {
+      const saved = localStorage.getItem("kb-setup-wizard-state");
+      expect(saved).toBeTruthy();
+      const parsed = JSON.parse(saved!);
+      expect(parsed.inProgress).toBe(true);
+      expect(parsed.step).toBe("review");
+    });
+  });
+
+  it("clears localStorage when closed", async () => {
+    const onClose = vi.fn();
+    
+    // Pre-populate localStorage
+    localStorage.setItem(
+      "kb-setup-wizard-state",
+      JSON.stringify({ inProgress: true, step: "review", detectedProjects: [] })
+    );
+
+    mockFetchFirstRunStatus.mockResolvedValue({ hasProjects: false });
+
+    render(
+      <SetupWizardModal
+        onProjectRegistered={noop}
+        onProjectsRegistered={noop}
+        onClose={onClose}
       />
     );
 
-    rerender(
-      <SetupWizard
-        isOpen={true}
-        onClose={vi.fn()}
-        onProjectCreated={vi.fn()}
-      />
-    );
+    // Wait for modal to open
+    await waitFor(() => {
+      expect(screen.getByText("Review Detected Projects")).toBeDefined();
+    });
 
-    // Should be back at step 1 with empty fields
-    expect(screen.getByText("Select Project Directory")).toBeDefined();
-    const newInput = screen.getByPlaceholderText("/path/to/your/project") as HTMLInputElement;
-    expect(newInput.value).toBe("");
+    // Close the modal
+    fireEvent.click(screen.getByLabelText("Close wizard"));
+
+    expect(localStorage.getItem("kb-setup-wizard-state")).toBeNull();
+    expect(onClose).toHaveBeenCalled();
   });
 });

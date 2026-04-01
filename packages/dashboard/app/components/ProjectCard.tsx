@@ -43,6 +43,10 @@ function truncatePath(path: string, maxLength: number = 40): string {
   return `${start}...${end}`;
 }
 
+/**
+ * Compare two sets of ProjectCardProps for memo equality.
+ * Checks project properties and health metrics to determine if re-render is needed.
+ */
 function areProjectCardPropsEqual(previous: ProjectCardProps, next: ProjectCardProps): boolean {
   if (previous.project.id !== next.project.id) return false;
   if (previous.project.status !== next.project.status) return false;
@@ -66,6 +70,28 @@ function areProjectCardPropsEqual(previous: ProjectCardProps, next: ProjectCardP
   );
 }
 
+/**
+ * Individual project card component showing project status, health metrics, and actions.
+ * 
+ * Displays:
+ * - Project name and truncated path
+ * - Status badge (active, paused, errored, initializing)
+ * - Health metrics: active tasks, running agents, completed tasks
+ * - Last activity timestamp
+ * - Action buttons: Open, Pause/Resume, Remove
+ * 
+ * @example
+ * ```tsx
+ * <ProjectCard
+ *   project={registeredProject}
+ *   health={projectHealth}
+ *   onSelect={(p) => setCurrentProject(p)}
+ *   onPause={(p) => pauseProject(p.id)}
+ *   onResume={(p) => resumeProject(p.id)}
+ *   onRemove={(p) => unregisterProject(p.id)}
+ * />
+ * ```
+ */
 function ProjectCardInner({
   project,
   health,

@@ -5995,6 +5995,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    * GET /api/projects
    * List all registered projects with their basic info.
    * Returns: ProjectInfo[]
+   * Gracefully returns empty array if CentralCore not available.
    */
   router.get("/projects", async (_req, res) => {
     try {
@@ -6006,6 +6007,134 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await central.close();
       
       res.json(projects);
+    } catch {
+      // Graceful fallback: return empty array if CentralCore unavailable
+      res.json([]);
+    }
+  });
+
+  /**
+   * GET /api/projects/:id
+   * Get a specific project by ID.
+   * Returns: ProjectInfo
+   */
+  router.get("/projects/:id", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const project = await central.getProject(req.params.id);
+      await central.close();
+      
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      
+      res.json(project);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * PATCH /api/projects/:id
+   * Update a project's metadata.
+   * Body: { name?: string, isolationMode?: "in-process" | "child-process", status?: "active" | "paused" }
+   * Returns: Updated ProjectInfo
+   */
+  router.patch("/projects/:id", async (req, res) => {
+    try {
+      const { name, isolationMode, status } = req.body;
+      
+      // Validate isolationMode if provided
+      if (isolationMode !== undefined && !["in-process", "child-process"].includes(isolationMode)) {
+        res.status(400).json({ error: "isolationMode must be 'in-process' or 'child-process'" });
+        return;
+      }
+      
+      // Validate status if provided
+      if (status !== undefined && !["active", "paused", "errored", "initializing"].includes(status)) {
+        res.status(400).json({ error: "status must be 'active', 'paused', 'errored', or 'initializing'" });
+        return;
+      }
+      
+      const updates: { name?: string; isolationMode?: "in-process" | "child-process"; status?: "active" | "paused" | "errored" | "initializing" } = {};
+      if (name !== undefined) updates.name = name;
+      if (isolationMode !== undefined) updates.isolationMode = isolationMode;
+      if (status !== undefined) updates.status = status;
+      
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const project = await central.updateProject(req.params.id, updates);
+      await central.close();
+      
+      res.json(project);
+    } catch (err: any) {
+      const status = err.message?.includes("not found") ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/projects/detect
+   * Auto-detect kb projects in a given base path.
+   * Body: { basePath?: string } (defaults to home directory)
+   * Returns: Array of detected projects with path and suggested name
+   */
+  router.post("/projects/detect", async (req, res) => {
+    try {
+      const { basePath } = req.body;
+      const { existsSync } = await import("node:fs");
+      const { join, basename } = await import("node:path");
+      const { readdir, stat } = await import("node:fs/promises");
+      const { homedir } = await import("node:os");
+      
+      const searchPath = basePath || homedir();
+      
+      if (!existsSync(searchPath)) {
+        res.status(400).json({ error: "Base path does not exist" });
+        return;
+      }
+      
+      const detectedProjects: Array<{ path: string; suggestedName: string; existing: boolean }> = [];
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      // Get list of already registered paths to avoid duplicates
+      const registeredProjects = await central.listProjects();
+      const registeredPaths = new Set(registeredProjects.map(p => p.path));
+      await central.close();
+      
+      // Scan immediate subdirectories for .fusion/kb.db
+      try {
+        const entries = await readdir(searchPath, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          
+          const projectPath = join(searchPath, entry.name);
+          const fusionDir = join(projectPath, ".fusion");
+          const dbPath = join(fusionDir, "kb.db");
+          
+          // Check if this directory has a .fusion/kb.db file
+          if (existsSync(dbPath)) {
+            detectedProjects.push({
+              path: projectPath,
+              suggestedName: entry.name,
+              existing: registeredPaths.has(projectPath),
+            });
+          }
+        }
+      } catch {
+        // Ignore errors reading directories
+      }
+      
+      res.json({ projects: detectedProjects });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

@@ -1845,6 +1845,37 @@ export function resumeProject(id: string): Promise<ProjectInfo> {
   });
 }
 
+/** Fetch a specific project by ID */
+export function fetchProject(id: string): Promise<ProjectInfo> {
+  return api<ProjectInfo>(`/projects/${encodeURIComponent(id)}`);
+}
+
+/** Update a project */
+export function updateProject(
+  id: string,
+  updates: { name?: string; isolationMode?: "in-process" | "child-process"; status?: "active" | "paused" | "errored" | "initializing" }
+): Promise<ProjectInfo> {
+  return api<ProjectInfo>(`/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+/** Detected project from auto-scan */
+export interface DetectedProject {
+  path: string;
+  suggestedName: string;
+  existing: boolean;
+}
+
+/** Auto-detect kb projects in a given base path */
+export function detectProjects(basePath?: string): Promise<{ projects: DetectedProject[] }> {
+  return api<{ projects: DetectedProject[] }>("/projects/detect", {
+    method: "POST",
+    body: JSON.stringify({ basePath }),
+  });
+}
+
 /** Fetch first run status to detect if user needs setup wizard */
 export function fetchFirstRunStatus(): Promise<FirstRunStatus> {
   return api<FirstRunStatus>("/first-run-status");

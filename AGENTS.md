@@ -535,6 +535,89 @@ kb task list --project api-service
 kb task list --project web-ui
 ```
 
+## Multi-Project Dashboard
+
+The kb dashboard provides a visual interface for managing multiple projects simultaneously. When multiple projects are registered, the dashboard shows a Project Overview page as the home view, with drill-down capability into individual project task boards.
+
+### Project Overview Page
+
+The Project Overview (`ProjectOverview` component) displays all registered projects in a responsive grid:
+
+- **Quick Stats Header**: Total projects, active projects, active tasks across all projects, total tasks
+- **Filter & Sort**: Filter by status (all, active, paused, errored, initializing); sort by name, last activity, or status
+- **Project Cards**: Each card shows:
+  - Project name and truncated path
+  - Status badge (color-coded: green=active, yellow=paused, red=errored, blue=initializing)
+  - Health metrics: active task count, running agents, completed tasks
+  - Last activity timestamp (relative, e.g., "5m ago")
+  - Actions: Open, Pause/Resume, Remove
+
+**Empty State**: When no projects exist, shows a welcome prompt to add the first project or run the setup wizard.
+
+### Project Selector
+
+The `ProjectSelector` component appears in the header when 2+ projects exist:
+
+- **Trigger Button**: Shows current project name with status dot indicator
+- **Dropdown Menu**: 
+  - "All Projects" option to return to overview
+  - Project list sorted by status (active first) then alphabetically
+  - Status badges next to each project name
+  - "Add Project..." and "Manage Projects..." shortcuts
+- **Keyboard Navigation**: Arrow keys, Enter to select, Escape to close
+
+**Single-Project Mode**: When only one project exists, the selector is hidden for a cleaner UI.
+
+### Project Drill-Down
+
+Clicking a project card opens that project's task view:
+
+- **Context Preservation**: The Board or ListView shows only that project's tasks
+- **Back Navigation**: "Back to All Projects" button returns to overview
+- **View Preference**: Board vs List preference is persisted per project in localStorage
+- **Project Context**: TaskDetailModal shows project breadcrumb in header
+
+### Setup Wizard
+
+The `SetupWizardModal` provides a first-run experience for new users:
+
+**Flow**:
+1. **Welcome**: Introduction to multi-project mode
+2. **Auto-detect**: Scans home directory for `.fusion/kb.db` files
+3. **Review**: Shows detected projects with checkboxes for selection, editable names
+4. **Manual**: Option to add project by path if auto-detect finds nothing
+5. **Complete**: Summary of registered projects
+
+**Features**:
+- Auto-opens when `fetchFirstRunStatus()` returns `hasProjects: false`
+- Persists state to localStorage (`kb-setup-wizard-state`) for resume capability
+- Bulk registration of selected detected projects
+- Already-registered projects shown as disabled in review list
+
+### Project Health Indicators
+
+Project health is polled every 10 seconds when the overview is visible:
+
+| Indicator | Meaning |
+|-----------|---------|
+| **Active Tasks** | Tasks currently in non-terminal columns (todo, in-progress, in-review) |
+| **Agents** | Currently running executor/reviewer agents for this project |
+| **Completed** | Cumulative count of tasks moved to "done" |
+| **Last Activity** | Timestamp of last task movement, creation, or update |
+| **Status Badge** | Project state: active (healthy), paused (suspended), errored (failed), initializing (starting up) |
+
+Health data comes from `useProjectHealth(projectId)` hook which calls `/api/projects/:id/health`.
+
+### Global Activity Feed
+
+The Activity Log (`ActivityLogModal`) shows events across all projects when viewing from the overview:
+
+- **Project Badges**: Each entry shows a folder icon with project name when viewing global activity
+- **Project Filter**: Dropdown to filter by specific project (only shown when 2+ projects)
+- **Event Types**: Same events as single-project mode (task:created, task:moved, etc.)
+
+When viewing a specific project's task board, the activity log is automatically filtered to that project.
+
 ## Pi Extension (`packages/cli/src/extension.ts`)
 
 The pi extension provides tools and a `/kb` command for interacting with kb from within a pi session. It ships as part of `@gsxdsm/fusion` — one `pi install` gives you both the CLI and the extension.
