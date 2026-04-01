@@ -3738,6 +3738,79 @@ body {
   font-style: italic;
 }
 
+/* Selection stats */
+.list-selection-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--todo-bg, rgba(59, 130, 246, 0.1));
+  border: 1px solid var(--todo-border, rgba(59, 130, 246, 0.3));
+  border-radius: var(--radius);
+  padding: 4px 12px;
+}
+
+.selection-count {
+  font-weight: 500;
+  color: var(--todo);
+}
+
+/* Bulk edit toolbar */
+.bulk-edit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--surface-hover, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-left: auto;
+}
+
+.bulk-edit-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.bulk-edit-dropdown {
+  min-width: 180px;
+}
+
+.bulk-edit-dropdown .model-combobox-trigger {
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.bulk-edit-apply-btn {
+  white-space: nowrap;
+}
+
+.bulk-edit-apply-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Checkbox column in table */
+.list-header-checkbox,
+.list-cell-checkbox {
+  width: 40px;
+  text-align: center;
+  padding: 8px 4px;
+}
+
+.list-header-checkbox input[type="checkbox"],
+.list-cell-checkbox input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.list-cell-checkbox input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 /* Column toggle dropdown */
 .list-column-toggle {
   position: relative;

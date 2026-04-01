@@ -2,9 +2,10 @@ import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "rea
 import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Search, Link, Columns3, EyeOff, Eye, ChevronRight } from "lucide-react";
 import type { Task, TaskDetail, Column, TaskStep, TaskCreateInput } from "@fusion/core";
 import { COLUMN_LABELS, COLUMNS } from "@fusion/core";
-import { fetchTaskDetail } from "../api";
+import { fetchTaskDetail, batchUpdateTaskModels } from "../api";
 import type { ModelInfo } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
+import { CustomModelDropdown } from "./CustomModelDropdown";
 import type { ToastType } from "../hooks/useToast";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
@@ -42,6 +43,11 @@ interface ListViewProps {
    * Called when the user clicks the "Subtask" button in the quick entry box.
    */
   onSubtaskBreakdown?: (description: string) => void;
+  /**
+   * Called when tasks are updated (e.g., after bulk model update).
+   * Allows parent to refresh task list or handle optimistically.
+   */
+  onTasksUpdated?: (updatedTasks: Task[]) => void;
 }
 
 function getStepProgress(steps: TaskStep[]): string {
@@ -67,6 +73,7 @@ export function ListView({
   availableModels,
   onPlanningMode,
   onSubtaskBreakdown,
+  onTasksUpdated,
 }: ListViewProps) {
   const [sortField, setSortField] = useState<SortField>("id");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -239,6 +246,96 @@ export function ListView({
     const selectedCount = visibleTaskIds.filter((t) => selectedTaskIds.has(t.id)).length;
     return selectedCount > 0 && selectedCount < visibleTaskIds.length;
   }, [groupedTasks, selectedTaskIds]);
+
+  // Bulk edit state
+  const [executorModel, setExecutorModel] = useState<string>("__no_change__");
+  const [validatorModel, setValidatorModel] = useState<string>("__no_change__");
+  const [isApplying, setIsApplying] = useState(false);
+
+  // Handle apply bulk model update
+  const handleApplyBulkUpdate = useCallback(async () => {
+    if (selectedTaskIds.size === 0) return;
+
+    const taskIds = Array.from(selectedTaskIds).filter((id) => {
+      const task = tasks.find((t) => t.id === id);
+      return task && task.column !== "archived";
+    });
+
+    if (taskIds.length === 0) {
+      addToast("No valid tasks to update (archived tasks cannot be modified)", "error");
+      return;
+    }
+
+    // Build payload - only include fields that changed from "__no_change__"
+    const payload: {
+      taskIds: string[];
+      modelProvider?: string | null;
+      modelId?: string | null;
+      validatorModelProvider?: string | null;
+      validatorModelId?: string | null;
+    } = { taskIds };
+
+    if (executorModel !== "__no_change__") {
+      if (executorModel === "") {
+        // "Use default" - clear override
+        payload.modelProvider = null;
+        payload.modelId = null;
+      } else {
+        const slashIdx = executorModel.indexOf("/");
+        if (slashIdx !== -1) {
+          payload.modelProvider = executorModel.slice(0, slashIdx);
+          payload.modelId = executorModel.slice(slashIdx + 1);
+        }
+      }
+    }
+
+    if (validatorModel !== "__no_change__") {
+      if (validatorModel === "") {
+        // "Use default" - clear override
+        payload.validatorModelProvider = null;
+        payload.validatorModelId = null;
+      } else {
+        const slashIdx = validatorModel.indexOf("/");
+        if (slashIdx !== -1) {
+          payload.validatorModelProvider = validatorModel.slice(0, slashIdx);
+          payload.validatorModelId = validatorModel.slice(slashIdx + 1);
+        }
+      }
+    }
+
+    // Check if any changes were made
+    if (Object.keys(payload).length === 1) {
+      addToast("No changes to apply", "info");
+      return;
+    }
+
+    setIsApplying(true);
+    try {
+      const result = await batchUpdateTaskModels(
+        payload.taskIds,
+        payload.modelProvider,
+        payload.modelId,
+        payload.validatorModelProvider,
+        payload.validatorModelId,
+      );
+
+      // Optimistically update parent with returned tasks
+      if (onTasksUpdated && result.updated.length > 0) {
+        onTasksUpdated(result.updated);
+      }
+
+      addToast(`Updated ${result.count} task${result.count === 1 ? "" : "s"}`, "success");
+
+      // Reset state
+      clearSelection();
+      setExecutorModel("__no_change__");
+      setValidatorModel("__no_change__");
+    } catch (err: any) {
+      addToast(err.message || "Failed to update models", "error");
+    } finally {
+      setIsApplying(false);
+    }
+  }, [selectedTaskIds, tasks, executorModel, validatorModel, addToast, clearSelection, onTasksUpdated]);
 
   // Toggle a column's visibility
   const toggleColumn = useCallback((column: ListColumn) => {
@@ -548,6 +645,37 @@ export function ListView({
             <span className="selection-count">{selectedTaskIds.size} selected</span>
             <button className="btn btn-sm btn-link" onClick={clearSelection}>
               Clear
+            </button>
+          </div>
+        )}
+        {/* Bulk Edit Toolbar */}
+        {selectedTaskIds.size > 0 && availableModels && availableModels.length > 0 && (
+          <div className="bulk-edit-toolbar">
+            <span className="bulk-edit-label">Bulk Edit Models:</span>
+            <div className="bulk-edit-dropdown">
+              <CustomModelDropdown
+                models={availableModels}
+                value={executorModel === "__no_change__" ? "" : executorModel}
+                onChange={(value) => setExecutorModel(value === "" ? "__no_change__" : value)}
+                label="Executor Model"
+                placeholder="No change"
+              />
+            </div>
+            <div className="bulk-edit-dropdown">
+              <CustomModelDropdown
+                models={availableModels}
+                value={validatorModel === "__no_change__" ? "" : validatorModel}
+                onChange={(value) => setValidatorModel(value === "" ? "__no_change__" : value)}
+                label="Validator Model"
+                placeholder="No change"
+              />
+            </div>
+            <button
+              className="btn btn-primary btn-sm bulk-edit-apply-btn"
+              onClick={handleApplyBulkUpdate}
+              disabled={isApplying || (executorModel === "__no_change__" && validatorModel === "__no_change__")}
+            >
+              {isApplying ? "Applying..." : "Apply"}
             </button>
           </div>
         )}
