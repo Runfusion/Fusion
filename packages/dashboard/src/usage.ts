@@ -228,6 +228,26 @@ function readClaudeKeychainCredentials(): any | null {
   }
 }
 
+/** Max number of retries for transient 429 responses */
+const CLAUDE_MAX_RETRIES = 3;
+/** Initial retry delay in ms (doubles each attempt) */
+const CLAUDE_INITIAL_RETRY_MS = 1000;
+
+/**
+ * Sleep for the given duration. Exported for test mocking.
+ */
+export const _sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+// Allow tests to swap the sleep implementation
+let sleepFn = _sleep;
+export function _setSleepFn(fn: typeof _sleep): void {
+  sleepFn = fn;
+}
+export function _resetSleepFn(): void {
+  sleepFn = _sleep;
+}
+
 async function fetchClaudeUsage(): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Claude",
@@ -280,29 +300,61 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
   }
 
   try {
-    const res = await httpsRequest("https://api.anthropic.com/api/oauth/usage", {
-      method: "GET",
-      headers: {
-        authorization: `Bearer ${oauthCreds.accessToken}`,
-        "anthropic-beta": "oauth-2025-04-20",
-      },
-    });
+    // Retry loop for transient 429 responses
+    let res: { status: number; headers: Record<string, string>; body: string } | undefined;
+    let lastStatus = 0;
 
-    if (res.status === 401 || res.status === 403) {
-      usage.status = "error";
-      usage.error = "Auth expired — run 'claude' to re-login";
-      return usage;
+    for (let attempt = 0; attempt < CLAUDE_MAX_RETRIES; attempt++) {
+      res = await httpsRequest("https://api.anthropic.com/api/oauth/usage", {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${oauthCreds.accessToken}`,
+        },
+      });
+
+      lastStatus = res.status;
+
+      // Auth errors are not transient — fail immediately
+      if (res.status === 401 || res.status === 403) {
+        usage.status = "error";
+        usage.error = "Auth expired — run 'claude' to re-login";
+        return usage;
+      }
+
+      // 429 is potentially transient — retry with exponential backoff
+      if (res.status === 429) {
+        if (attempt < CLAUDE_MAX_RETRIES - 1) {
+          // Use retry-after header if available, otherwise exponential backoff
+          const retryAfter = res.headers["retry-after"];
+          let delayMs: number;
+          if (retryAfter && !isNaN(Number(retryAfter))) {
+            delayMs = Number(retryAfter) * 1000;
+          } else {
+            delayMs = CLAUDE_INITIAL_RETRY_MS * Math.pow(2, attempt);
+          }
+          await sleepFn(delayMs);
+          continue;
+        }
+        // All retries exhausted
+        usage.status = "error";
+        usage.error = "Rate limited — try again later";
+        return usage;
+      }
+
+      // Any other non-200 status — fail immediately (not transient)
+      if (res.status !== 200) {
+        usage.status = "error";
+        usage.error = `HTTP ${res.status}`;
+        return usage;
+      }
+
+      // Success — break out of retry loop
+      break;
     }
 
-    if (res.status === 429) {
+    if (!res || lastStatus !== 200) {
       usage.status = "error";
-      usage.error = "Rate limited — try again later";
-      return usage;
-    }
-
-    if (res.status !== 200) {
-      usage.status = "error";
-      usage.error = `HTTP ${res.status}`;
+      usage.error = `HTTP ${lastStatus}`;
       return usage;
     }
 
