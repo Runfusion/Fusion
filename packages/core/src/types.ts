@@ -535,10 +535,6 @@ export interface GlobalSettings {
    *  no project can be auto-detected from the current directory.
    *  Used for multi-project CLI workflows. */
   defaultProjectId?: string;
-  /** Dashboard hostname for ntfy.sh deep links. When set along with ntfyEnabled
-   *  and ntfyTopic, notifications include a Click URL that opens the dashboard
-   *  directly to the task. Example: "http://localhost:3000" or "https://fusion.example.com" */
-  ntfyDashboardHost?: string;
 }
 
 /**
@@ -699,7 +695,6 @@ export const DEFAULT_GLOBAL_SETTINGS: Required<Pick<GlobalSettings, "themeMode" 
   ntfyEnabled: false,
   ntfyTopic: undefined,
   defaultProjectId: undefined,
-  ntfyDashboardHost: undefined,
 };
 
 /** Default values for project-level settings. */
@@ -759,7 +754,6 @@ export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<keyof GlobalSettings> = [
   "ntfyEnabled",
   "ntfyTopic",
   "defaultProjectId",
-  "ntfyDashboardHost",
 ] as const;
 
 /** Keys that belong to the project settings scope. */
