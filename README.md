@@ -220,7 +220,7 @@ Set overrides in the dashboard via **task detail → Model tab**, or choose **Cu
 
 ### Settings Hierarchy
 
-**Global settings** (`~/.pi/kb/settings.json`):
+**Global settings** (`~/.pi/fusion/settings.json`):
 - `defaultProvider` / `defaultModelId` — Default AI models
 - `planningProvider` / `planningModelId` — Task specification models
 - `validatorProvider` / `validatorModelId` — Review models
@@ -399,11 +399,11 @@ This produces binaries for all supported targets in `packages/cli/dist/`:
 
 | Target             | Output               |
 | ------------------ | -------------------- |
-| `bun-linux-x64`    | `kb-linux-x64`       |
-| `bun-linux-arm64`  | `kb-linux-arm64`     |
-| `bun-darwin-x64`   | `kb-darwin-x64`      |
-| `bun-darwin-arm64` | `kb-darwin-arm64`    |
-| `bun-windows-x64`  | `kb-windows-x64.exe` |
+| `bun-linux-x64`    | `fusion-linux-x64`       |
+| `bun-linux-arm64`  | `fusion-linux-arm64`     |
+| `bun-darwin-x64`   | `fusion-darwin-x64`      |
+| `bun-darwin-arm64` | `fusion-darwin-arm64`    |
+| `bun-windows-x64`  | `fusion-windows-x64.exe` |
 
 To build for a specific platform:
 
@@ -623,7 +623,7 @@ Schedules respect the global pause state (`fn dashboard --paused`).
 ## Configuration Reference
 
 Fusion uses a two-tier settings hierarchy:
-- **Global settings** (`~/.pi/kb/settings.json`) — User preferences across all projects
+- **Global settings** (`~/.pi/fusion/settings.json`) — User preferences across all projects
 - **Project settings** (`.kb/config.json`) — Project-specific workflow settings
 
 Project settings override global settings. Configure in the dashboard under **Settings**.

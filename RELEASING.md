@@ -54,10 +54,10 @@ When you merge the Version Packages PR:
 
 | Platform | Binary name | Signed |
 |----------|------------|--------|
-| Linux x64 | `kb-linux-x64` | — |
-| macOS arm64 | `kb-darwin-arm64` | ✓ (codesign + notarization) |
-| macOS x64 | `kb-darwin-x64` | ✓ (codesign + notarization) |
-| Windows x64 | `kb-windows-x64.exe` | ✓ (Authenticode) |
+| Linux x64 | `fusion-linux-x64` | — |
+| macOS arm64 | `fusion-darwin-arm64` | ✓ (codesign + notarization) |
+| macOS x64 | `fusion-darwin-x64` | ✓ (codesign + notarization) |
+| Windows x64 | `fusion-windows-x64.exe` | ✓ (Authenticode) |
 
 ## Testing binary builds
 
