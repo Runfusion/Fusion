@@ -867,6 +867,94 @@ export interface ArchivedTaskEntry {
 /** Type of planning question presented to the user */
 export type PlanningQuestionType = "text" | "single_select" | "multi_select" | "confirm";
 
+/** Isolation mode for project execution */
+export type IsolationMode = "in-process" | "child-process";
+
+/** Project status in the central registry */
+export type ProjectStatus = "active" | "paused" | "errored" | "initializing";
+
+/** A project registered in the central database */
+export interface RegisteredProject {
+  /** Unique project ID (e.g., "proj_abc123") */
+  id: string;
+  /** Display name */
+  name: string;
+  /** Absolute path to project directory */
+  path: string;
+  /** Current project status */
+  status: ProjectStatus;
+  /** Execution isolation mode */
+  isolationMode: IsolationMode;
+  /** ISO-8601 timestamp of creation */
+  createdAt: string;
+  /** ISO-8601 timestamp of last update */
+  updatedAt: string;
+  /** ISO-8601 timestamp of last activity */
+  lastActivityAt?: string;
+  /** Cached project settings snapshot */
+  settings?: ProjectSettings;
+}
+
+/** Health metrics for a registered project */
+export interface ProjectHealth {
+  /** Project ID reference */
+  projectId: string;
+  /** Current status */
+  status: ProjectStatus;
+  /** Number of tasks currently active */
+  activeTaskCount: number;
+  /** Number of agents currently running */
+  inFlightAgentCount: number;
+  /** ISO-8601 timestamp of last activity */
+  lastActivityAt?: string;
+  /** ISO-8601 timestamp of last error */
+  lastErrorAt?: string;
+  /** Last error message */
+  lastErrorMessage?: string;
+  /** Total completed tasks (cumulative) */
+  totalTasksCompleted: number;
+  /** Total failed tasks (cumulative) */
+  totalTasksFailed: number;
+  /** Rolling average task duration in milliseconds */
+  averageTaskDurationMs?: number;
+  /** ISO-8601 timestamp of last update */
+  updatedAt: string;
+}
+
+/** Activity log entry in the central unified feed */
+export interface CentralActivityLogEntry {
+  /** Unique entry ID */
+  id: string;
+  /** ISO-8601 timestamp */
+  timestamp: string;
+  /** Event type */
+  type: ActivityEventType;
+  /** Project ID this event belongs to */
+  projectId: string;
+  /** Project name (denormalized for display) */
+  projectName: string;
+  /** Task ID (optional) */
+  taskId?: string;
+  /** Task title (optional) */
+  taskTitle?: string;
+  /** Event details */
+  details: string;
+  /** Additional metadata */
+  metadata?: Record<string, unknown>;
+}
+
+/** Global concurrency state across all projects */
+export interface GlobalConcurrencyState {
+  /** System-wide concurrent agent limit (default: 4) */
+  globalMaxConcurrent: number;
+  /** Active agents across all projects */
+  currentlyActive: number;
+  /** Tasks waiting for concurrency slots */
+  queuedCount: number;
+  /** Per-project active agent counts */
+  projectsActive: Record<string, number>;
+}
+
 /** A single question in the planning conversation flow */
 export interface PlanningQuestion {
   id: string;

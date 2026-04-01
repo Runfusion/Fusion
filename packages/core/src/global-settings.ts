@@ -16,7 +16,7 @@ import type { GlobalSettings } from "./types.js";
 import { DEFAULT_GLOBAL_SETTINGS } from "./types.js";
 
 /** Default directory for global kb settings: `~/.pi/kb/` */
-function defaultGlobalDir(): string {
+export function defaultGlobalDir(): string {
   return join(homedir(), ".pi", "kb");
 }
 

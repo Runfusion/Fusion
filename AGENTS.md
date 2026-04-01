@@ -94,6 +94,126 @@ pnpm build         # build all packages
 
 Tests are required. Typechecks and manual verification are not substitutes for real tests with assertions.
 
+## Multi-Project Architecture / Central Core
+
+kb supports multi-project coordination through a central infrastructure that provides:
+
+- **Project Registry** — Track all registered projects with metadata and settings
+- **Unified Activity Feed** — Centralized activity log spanning all projects  
+- **Global Concurrency Management** — System-wide agent slot limits across projects
+- **Project Health Tracking** — Monitor active tasks, agents, and completion metrics
+
+### Central Database Location
+
+The central database is stored at `~/.pi/kb/kb-central.db` (global user directory):
+
+| Table | Purpose |
+|-------|---------|
+| `projects` | Project registry with path, status, isolation mode |
+| `projectHealth` | Mutable health metrics (active tasks, agent counts, totals) |
+| `centralActivityLog` | Unified activity feed across all projects |
+| `globalConcurrency` | Singleton row with global limits and current usage |
+
+### CentralCore API
+
+The `CentralCore` class is the main entry point for central operations:
+
+```typescript
+import { CentralCore } from "@fusion/core";
+
+const central = new CentralCore();
+await central.init();
+
+// Register a project
+const project = await central.registerProject({
+  name: "My Project",
+  path: "/absolute/path/to/project"
+});
+
+// Log activity
+await central.logActivity({
+  type: "task:created",
+  projectId: project.id,
+  projectName: project.name,
+  timestamp: new Date().toISOString(),
+  details: "Task KB-001 created"
+});
+
+// Get recent activity across all projects
+const activity = await central.getRecentActivity({ limit: 50 });
+
+// Update project health
+await central.updateProjectHealth(project.id, {
+  activeTaskCount: 5,
+  inFlightAgentCount: 2,
+  status: "active"
+});
+
+// Manage global concurrency
+await central.updateGlobalConcurrency({ globalMaxConcurrent: 4 });
+const acquired = await central.acquireGlobalSlot(project.id);
+if (acquired) {
+  // Run agent work...
+  await central.releaseGlobalSlot(project.id);
+}
+
+// Get statistics
+const stats = await central.getStats();
+console.log(`${stats.projectCount} projects, ${stats.totalTasksCompleted} tasks completed`);
+
+await central.close();
+```
+
+### Events
+
+CentralCore emits events for reactive updates:
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `project:registered` | `RegisteredProject` | New project registered |
+| `project:unregistered` | `string` (projectId) | Project removed |
+| `project:updated` | `RegisteredProject` | Project metadata changed |
+| `project:health:changed` | `ProjectHealth` | Health metrics updated |
+| `activity:logged` | `CentralActivityLogEntry` | New activity entry |
+| `concurrency:changed` | `GlobalConcurrencyState` | Concurrency state changed |
+
+### Isolation Modes
+
+Projects can run in different isolation modes:
+
+- **`in-process`** (default) — Tasks run in the main process
+- **`child-process`** — Tasks run in isolated child processes (future)
+
+### Project Status
+
+Projects have one of these statuses:
+
+- **`initializing`** — Project just registered, not fully set up
+- **`active`** — Project is operational and accepting tasks
+- **`paused`** — Project temporarily suspended
+- **`errored`** — Project has encountered errors
+
+### Unified vs Per-Project Activity Logs
+
+kb has two activity log systems:
+
+1. **Per-project activity log** (`.kb/kb.db` → `activityLog` table)
+   - Contains events for a single project
+   - Used by the dashboard for project-specific views
+   
+2. **Unified central activity log** (`~/.pi/kb/kb-central.db` → `centralActivityLog` table)
+   - Contains events from all projects
+   - Used for global dashboards and cross-project reporting
+   - Includes `projectId` and `projectName` for attribution
+
+### Security Considerations
+
+- Project paths must be absolute and validated before registration
+- Duplicate paths are rejected
+- Path traversal attacks are prevented through absolute path validation
+- Cascade deletes ensure no orphaned data when projects are unregistered
+- Foreign key constraints maintain referential integrity
+
 ## Pi Extension (`packages/cli/src/extension.ts`)
 
 The pi extension provides tools and a `/kb` command for interacting with kb from within a pi session. It ships as part of `@gsxdsm/fusion` — one `pi install` gives you both the CLI and the extension.
