@@ -34,8 +34,8 @@ interface HeaderProps {
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
   onToggleEnginePause?: () => void;
-  view?: "board" | "list";
-  onChangeView?: (view: "board" | "list") => void;
+  view?: "board" | "list" | "agents";
+  onChangeView?: (view: "board" | "list" | "agents") => void;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
 }
@@ -237,6 +237,15 @@ export function Header({
               aria-pressed={view === "list"}
             >
               <List size={16} />
+            </button>
+            <button
+              className={`view-toggle-btn${view === "agents" ? " active" : ""}`}
+              onClick={() => onChangeView("agents")}
+              title="Agents view"
+              aria-label="Agents view"
+              aria-pressed={view === "agents"}
+            >
+              <Bot size={16} />
             </button>
           </div>
         )}

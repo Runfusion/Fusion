@@ -21,6 +21,7 @@ import { ScheduledTasksModal } from "./components/ScheduledTasksModal";
 import { ActivityLogModal } from "./components/ActivityLogModal";
 import { WorkflowStepManager } from "./components/WorkflowStepManager";
 import { AgentListModal } from "./components/AgentListModal";
+import { AgentsView } from "./components/AgentsView";
 import { useTasks } from "./hooks/useTasks";
 import { ToastProvider, useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
@@ -49,11 +50,11 @@ function AppInner() {
   const [autoMerge, setAutoMerge] = useState(true);
   const [globalPaused, setGlobalPaused] = useState(false);
   const [enginePaused, setEnginePaused] = useState(false);
-  const [view, setView] = useState<"board" | "list">(() => {
+  const [view, setView] = useState<"board" | "list" | "agents">(() => {
     // Initialize from localStorage if available
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("kb-dashboard-view");
-      if (saved === "list" || saved === "board") {
+      if (saved === "list" || saved === "board" || saved === "agents") {
         return saved;
       }
     }
@@ -113,7 +114,7 @@ function AppInner() {
     localStorage.setItem("kb-dashboard-view", view);
   }, [view]);
 
-  const handleChangeView = useCallback((newView: "board" | "list") => {
+  const handleChangeView = useCallback((newView: "board" | "list" | "agents") => {
     setView(newView);
   }, []);
 
@@ -276,7 +277,9 @@ function AppInner() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
       />
-      {view === "board" ? (
+      {view === "agents" ? (
+        <AgentsView addToast={addToast} />
+      ) : view === "board" ? (
         <Board
           tasks={tasks}
           maxConcurrent={maxConcurrent}

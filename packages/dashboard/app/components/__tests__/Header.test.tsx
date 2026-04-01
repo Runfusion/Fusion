@@ -210,6 +210,47 @@ describe("Header", () => {
     expect(boardBtn.getAttribute("aria-pressed")).toBe("false");
   });
 
+  // ── Agents View Toggle ──────────────────────────────────────────
+
+  it("renders agents view button in view toggle when onChangeView is provided", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const agentsBtn = screen.getByTitle("Agents view");
+    expect(agentsBtn).toBeDefined();
+  });
+
+  it("calls onChangeView with 'agents' when agents view button is clicked", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const agentsBtn = screen.getByTitle("Agents view");
+    fireEvent.click(agentsBtn);
+    expect(onChangeView).toHaveBeenCalledWith("agents");
+  });
+
+  it("marks agents view button as active when view is 'agents'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="agents" onChangeView={onChangeView} />);
+    const agentsBtn = screen.getByTitle("Agents view");
+    expect(agentsBtn.className).toContain("active");
+    expect(agentsBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("does not mark agents view button as active when view is 'board'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="board" onChangeView={onChangeView} />);
+    const agentsBtn = screen.getByTitle("Agents view");
+    expect(agentsBtn.className).not.toContain("active");
+    expect(agentsBtn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("does not mark board view button as active when view is 'agents'", () => {
+    const onChangeView = vi.fn();
+    render(<Header view="agents" onChangeView={onChangeView} />);
+    const boardBtn = screen.getByTitle("Board view");
+    expect(boardBtn.className).not.toContain("active");
+    expect(boardBtn.getAttribute("aria-pressed")).toBe("false");
+  });
+
   // ── Terminal Button ─────────────────────────────────────────────
 
   it("renders terminal button with correct title", () => {
