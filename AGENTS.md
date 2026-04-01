@@ -559,11 +559,17 @@ The Project Overview (`ProjectOverview` component) displays all registered proje
 The `ProjectSelector` component appears in the header when 2+ projects exist:
 
 - **Trigger Button**: Shows current project name with status dot indicator
-- **Dropdown Menu**: 
+- **Dropdown Menu** (desktop ≥769px): 
   - "All Projects" option to return to overview
   - Project list sorted by status (active first) then alphabetically
   - Status badges next to each project name
   - "Add Project..." and "Manage Projects..." shortcuts
+- **Mobile Bottom Sheet** (mobile ≤768px):
+  - Compact trigger with truncated project name (max 8 chars) and status dot
+  - Full-screen bottom sheet with slide-up animation
+  - Swipe-down gesture to close
+  - Backdrop tap to close
+  - Touch-friendly project items (min 44px height)
 - **Keyboard Navigation**: Arrow keys, Enter to select, Escape to close
 
 **Single-Project Mode**: When only one project exists, the selector is hidden for a cleaner UI.
