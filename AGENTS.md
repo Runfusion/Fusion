@@ -41,7 +41,7 @@ kb uses a hybrid storage architecture: structured metadata lives in SQLite while
 
 - **Project database:** `.kb/kb.db` — SQLite database with WAL mode enabled
 - **Blob files:** `.kb/tasks/{ID}/PROMPT.md`, `agent.log`, `attachments/` — remain on filesystem
-- **Global settings:** `~/.pi/kb/settings.json` — remains file-based (not in SQLite)
+- **Global settings:** `~/.pi/fusion/settings.json` — remains file-based (not in SQLite)
 
 ### Tables
 
@@ -105,7 +105,7 @@ kb supports multi-project coordination through a central infrastructure that pro
 
 ### Central Database Location
 
-The central database is stored at `~/.pi/kb/kb-central.db` (global user directory):
+The central database is stored at `~/.pi/fusion/fusion-central.db` (global user directory):
 
 | Table | Purpose |
 |-------|---------|
@@ -201,7 +201,7 @@ kb has two activity log systems:
    - Contains events for a single project
    - Used by the dashboard for project-specific views
    
-2. **Unified central activity log** (`~/.pi/kb/kb-central.db` → `centralActivityLog` table)
+2. **Unified central activity log** (`~/.pi/fusion/fusion-central.db` → `centralActivityLog` table)
    - Contains events from all projects
    - Used for global dashboards and cross-project reporting
    - Includes `projectId` and `projectName` for attribution
@@ -295,14 +295,14 @@ Use `useBadgeWebSocket()` when a UI surface needs live badge snapshots for speci
 
 kb uses a two-tier settings hierarchy:
 
-- **Global settings** — User preferences stored in `~/.pi/kb/settings.json`. These persist across all kb projects for the current user.
+- **Global settings** — User preferences stored in `~/.pi/fusion/settings.json`. These persist across all kb projects for the current user.
 - **Project settings** — Project-specific workflow and resource settings stored in `.kb/config.json`. These control how the engine operates for a particular project.
 
 When reading settings, project values override global values. The merged view is what the engine and dashboard use.
 
 ### Settings Hierarchy
 
-**Global settings** (`~/.pi/kb/settings.json`):
+**Global settings** (`~/.pi/fusion/settings.json`):
 - `themeMode` — UI theme preference (dark/light/system)
 - `colorTheme` — Color theme (default/ocean/forest/etc)
 - `defaultProvider` — Default AI model provider
