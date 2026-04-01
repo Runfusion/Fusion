@@ -6,15 +6,15 @@ import type { WorkspaceInfo } from "../../hooks/useWorkspaces";
 
 const workspaces: WorkspaceInfo[] = [
   {
-    id: "KB-123",
-    label: "KB-123",
+    id: "FN-123",
+    label: "FN-123",
     title: "Implement a very long task title that should be truncated in the dropdown list",
     worktree: "/repo/.worktrees/kb-123",
     kind: "task",
   },
   {
-    id: "KB-200",
-    label: "KB-200",
+    id: "FN-200",
+    label: "FN-200",
     title: "Short title",
     worktree: "/repo/.worktrees/kb-200",
     kind: "task",
@@ -39,7 +39,7 @@ describe("WorkspaceSelector", () => {
     const user = userEvent.setup();
     render(
       <WorkspaceSelector
-        currentWorkspace="KB-200"
+        currentWorkspace="FN-200"
         projectName="kb"
         workspaces={workspaces}
         onSelect={vi.fn()}
@@ -69,7 +69,7 @@ describe("WorkspaceSelector", () => {
     await user.click(screen.getByRole("button", { name: /kb/i }));
     await user.click(screen.getByRole("button", { name: /KB-123/i }));
 
-    expect(onSelect).toHaveBeenCalledWith("KB-123");
+    expect(onSelect).toHaveBeenCalledWith("FN-123");
     expect(screen.queryByText("Task Worktrees")).not.toBeInTheDocument();
   });
 

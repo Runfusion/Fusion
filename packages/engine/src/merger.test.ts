@@ -42,7 +42,7 @@ const mockedReadFileSync = vi.mocked(mockedReadFileSyncRaw);
 
 function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = []) {
   const baseTask: Task = {
-    id: "KB-050",
+    id: "FN-050",
     title: "Test task",
     description: "Test",
     column: "in-review",
@@ -95,27 +95,27 @@ function setupHappyPathExecSync() {
 describe("findWorktreeUser", () => {
   it("returns null when no other task uses the worktree", async () => {
     const store = createMockStore({}, [
-      { id: "KB-050", worktree: "/tmp/wt", column: "done" } as Task,
+      { id: "FN-050", worktree: "/tmp/wt", column: "done" } as Task,
     ]);
-    const result = await findWorktreeUser(store, "/tmp/wt", "KB-050");
+    const result = await findWorktreeUser(store, "/tmp/wt", "FN-050");
     expect(result).toBeNull();
   });
 
   it("returns task ID when another non-done task uses the worktree", async () => {
     const store = createMockStore({}, [
-      { id: "KB-050", worktree: "/tmp/wt", column: "done" } as Task,
-      { id: "KB-051", worktree: "/tmp/wt", column: "in-progress" } as Task,
+      { id: "FN-050", worktree: "/tmp/wt", column: "done" } as Task,
+      { id: "FN-051", worktree: "/tmp/wt", column: "in-progress" } as Task,
     ]);
-    const result = await findWorktreeUser(store, "/tmp/wt", "KB-050");
-    expect(result).toBe("KB-051");
+    const result = await findWorktreeUser(store, "/tmp/wt", "FN-050");
+    expect(result).toBe("FN-051");
   });
 
   it("ignores done tasks", async () => {
     const store = createMockStore({}, [
-      { id: "KB-050", worktree: "/tmp/wt", column: "done" } as Task,
-      { id: "KB-051", worktree: "/tmp/wt", column: "done" } as Task,
+      { id: "FN-050", worktree: "/tmp/wt", column: "done" } as Task,
+      { id: "FN-051", worktree: "/tmp/wt", column: "done" } as Task,
     ]);
-    const result = await findWorktreeUser(store, "/tmp/wt", "KB-050");
+    const result = await findWorktreeUser(store, "/tmp/wt", "FN-050");
     expect(result).toBeNull();
   });
 });
@@ -136,14 +136,14 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   it("does NOT remove worktree when another task references the same path", async () => {
     const worktreePath = "/tmp/root/.worktrees/KB-050";
     const store = createMockStore(
-      { id: "KB-050", worktree: worktreePath },
+      { id: "FN-050", worktree: worktreePath },
       [
-        { id: "KB-050", worktree: worktreePath, column: "in-review" } as Task,
-        { id: "KB-051", worktree: worktreePath, column: "in-progress" } as Task,
+        { id: "FN-050", worktree: worktreePath, column: "in-review" } as Task,
+        { id: "FN-051", worktree: worktreePath, column: "in-progress" } as Task,
       ],
     );
 
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     // Worktree should NOT be removed
     const removeCall = mockedExecSync.mock.calls.find(
@@ -156,13 +156,13 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   it("removes worktree when no other task references it", async () => {
     const worktreePath = "/tmp/root/.worktrees/KB-050";
     const store = createMockStore(
-      { id: "KB-050", worktree: worktreePath },
+      { id: "FN-050", worktree: worktreePath },
       [
-        { id: "KB-050", worktree: worktreePath, column: "in-review" } as Task,
+        { id: "FN-050", worktree: worktreePath, column: "in-review" } as Task,
       ],
     );
 
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     const removeCall = mockedExecSync.mock.calls.find(
       (call) => String(call[0]).includes("worktree remove"),
@@ -174,14 +174,14 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   it("always deletes the branch regardless of worktree sharing", async () => {
     const worktreePath = "/tmp/root/.worktrees/KB-050";
     const store = createMockStore(
-      { id: "KB-050", worktree: worktreePath },
+      { id: "FN-050", worktree: worktreePath },
       [
-        { id: "KB-050", worktree: worktreePath, column: "in-review" } as Task,
-        { id: "KB-051", worktree: worktreePath, column: "in-progress" } as Task,
+        { id: "FN-050", worktree: worktreePath, column: "in-review" } as Task,
+        { id: "FN-051", worktree: worktreePath, column: "in-progress" } as Task,
       ],
     );
 
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     // Branch should be deleted even though worktree is shared
     const branchDeleteCall = mockedExecSync.mock.calls.find(
@@ -194,14 +194,14 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   it("result.worktreeRemoved is false when worktree is retained", async () => {
     const worktreePath = "/tmp/root/.worktrees/KB-050";
     const store = createMockStore(
-      { id: "KB-050", worktree: worktreePath },
+      { id: "FN-050", worktree: worktreePath },
       [
-        { id: "KB-050", worktree: worktreePath, column: "in-review" } as Task,
-        { id: "KB-051", worktree: worktreePath, column: "todo" } as Task,
+        { id: "FN-050", worktree: worktreePath, column: "in-review" } as Task,
+        { id: "FN-051", worktree: worktreePath, column: "todo" } as Task,
       ],
     );
 
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
     expect(result.worktreeRemoved).toBe(false);
     expect(result.merged).toBe(true);
   });
@@ -228,13 +228,13 @@ describe("aiMergeTask — empty squash merge (branch already merged via dep)", (
     });
 
     const store = createMockStore();
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
     // Agent should NOT have been spawned
     expect(mockedCreateHaiAgent).not.toHaveBeenCalled();
     // Task should still be moved to done
-    expect(store.moveTask).toHaveBeenCalledWith("KB-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
   });
 
   it("still cleans up branch and worktree when squash is empty", async () => {
@@ -251,7 +251,7 @@ describe("aiMergeTask — empty squash merge (branch already merged via dep)", (
     });
 
     const store = createMockStore();
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     // Branch should be deleted
     const branchDeleteCall = mockedExecSync.mock.calls.find(
@@ -284,11 +284,11 @@ describe("aiMergeTask — includeTaskIdInCommit setting", () => {
 
   it("includes task ID in system prompt by default (includeTaskIdInCommit: true)", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
-    await aiMergeTask(store, "/tmp/root", "KB-050");
+    await aiMergeTask(store, "/tmp/root", "FN-050");
 
     const agentCall = mockedCreateHaiAgent.mock.calls[0][0] as any;
     expect(agentCall.systemPrompt).toContain("<type>(<scope>): <summary>");
@@ -297,15 +297,15 @@ describe("aiMergeTask — includeTaskIdInCommit setting", () => {
 
   it("omits task ID scope in system prompt when includeTaskIdInCommit is false", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
       includeTaskIdInCommit: false,
     });
 
-    await aiMergeTask(store, "/tmp/root", "KB-050");
+    await aiMergeTask(store, "/tmp/root", "FN-050");
 
     const agentCall = mockedCreateHaiAgent.mock.calls[0][0] as any;
     expect(agentCall.systemPrompt).toContain("<type>: <summary>");
@@ -329,11 +329,11 @@ describe("aiMergeTask — includeTaskIdInCommit setting", () => {
     });
 
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
-    await aiMergeTask(store, "/tmp/root", "KB-050");
+    await aiMergeTask(store, "/tmp/root", "FN-050");
 
     const commitCall = mockedExecSync.mock.calls.find(
       (call) => String(call[0]).includes("git commit"),
@@ -357,15 +357,15 @@ describe("aiMergeTask — includeTaskIdInCommit setting", () => {
     });
 
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
       includeTaskIdInCommit: false,
     });
 
-    await aiMergeTask(store, "/tmp/root", "KB-050");
+    await aiMergeTask(store, "/tmp/root", "FN-050");
 
     const commitCall = mockedExecSync.mock.calls.find(
       (call) => String(call[0]).includes("git commit"),
@@ -391,8 +391,8 @@ describe("aiMergeTask — model settings threading", () => {
 
   it("passes defaultProvider and defaultModelId from settings to createKbAgent", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
@@ -400,7 +400,7 @@ describe("aiMergeTask — model settings threading", () => {
       defaultModelId: "gpt-4o",
     });
 
-    await aiMergeTask(store, "/tmp/root", "KB-050");
+    await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
     const opts = mockedCreateHaiAgent.mock.calls[0][0] as any;
@@ -410,11 +410,11 @@ describe("aiMergeTask — model settings threading", () => {
 
   it("does not set model fields when settings omit them", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
-    await aiMergeTask(store, "/tmp/root", "KB-050");
+    await aiMergeTask(store, "/tmp/root", "FN-050");
 
     const opts = mockedCreateHaiAgent.mock.calls[0][0] as any;
     expect(opts.defaultProvider).toBeUndefined();
@@ -447,13 +447,13 @@ describe("aiMergeTask — agent log persistence", () => {
 
     const worktreePath = "/tmp/root/.worktrees/KB-050";
     const store = createMockStore(
-      { id: "KB-050", worktree: worktreePath },
-      [{ id: "KB-050", worktree: worktreePath, column: "in-review" } as Task],
+      { id: "FN-050", worktree: worktreePath },
+      [{ id: "FN-050", worktree: worktreePath, column: "in-review" } as Task],
     );
 
-    await aiMergeTask(store, "/tmp/root", "KB-050");
+    await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-050", "Hello merge", "text", undefined, "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "Hello merge", "text", undefined, "merger");
   });
 
   it("logs tool invocations to store.appendAgentLog", async () => {
@@ -473,13 +473,13 @@ describe("aiMergeTask — agent log persistence", () => {
 
     const worktreePath = "/tmp/root/.worktrees/KB-050";
     const store = createMockStore(
-      { id: "KB-050", worktree: worktreePath },
-      [{ id: "KB-050", worktree: worktreePath, column: "in-review" } as Task],
+      { id: "FN-050", worktree: worktreePath },
+      [{ id: "FN-050", worktree: worktreePath, column: "in-review" } as Task],
     );
 
-    await aiMergeTask(store, "/tmp/root", "KB-050");
+    await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-050", "Bash", "tool", "git status", "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "Bash", "tool", "git status", "merger");
   });
 
   it("still fires onAgentText callback alongside logging", async () => {
@@ -500,14 +500,14 @@ describe("aiMergeTask — agent log persistence", () => {
 
     const worktreePath = "/tmp/root/.worktrees/KB-050";
     const store = createMockStore(
-      { id: "KB-050", worktree: worktreePath },
-      [{ id: "KB-050", worktree: worktreePath, column: "in-review" } as Task],
+      { id: "FN-050", worktree: worktreePath },
+      [{ id: "FN-050", worktree: worktreePath, column: "in-review" } as Task],
     );
 
-    await aiMergeTask(store, "/tmp/root", "KB-050", { onAgentText });
+    await aiMergeTask(store, "/tmp/root", "FN-050", { onAgentText });
 
     expect(onAgentText).toHaveBeenCalledWith("hi");
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-050", "hi", "text", undefined, "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "hi", "text", undefined, "merger");
   });
 });
 
@@ -524,8 +524,8 @@ describe("aiMergeTask — usage limit detection", () => {
 
   it("triggers global pause when merger catches a usage-limit error", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
     const pauser = new UsageLimitPauser(store);
     const onUsageLimitHitSpy = vi.spyOn(pauser, "onUsageLimitHit");
@@ -538,12 +538,12 @@ describe("aiMergeTask — usage limit detection", () => {
     } as any);
 
     await expect(
-      aiMergeTask(store, "/tmp/root", "KB-050", { usageLimitPauser: pauser }),
+      aiMergeTask(store, "/tmp/root", "FN-050", { usageLimitPauser: pauser }),
     ).rejects.toThrow("AI merge failed");
 
     expect(onUsageLimitHitSpy).toHaveBeenCalledWith(
       "merger",
-      "KB-050",
+      "FN-050",
       "rate_limit_error: Rate limit exceeded",
     );
     expect(store.updateSettings).toHaveBeenCalledWith({ globalPause: true });
@@ -551,8 +551,8 @@ describe("aiMergeTask — usage limit detection", () => {
 
   it("triggers global pause when session.prompt() resolves with exhausted-retry error on state.error", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
     const pauser = new UsageLimitPauser(store);
     const onUsageLimitHitSpy = vi.spyOn(pauser, "onUsageLimitHit");
@@ -566,13 +566,13 @@ describe("aiMergeTask — usage limit detection", () => {
     mockedCreateHaiAgent.mockResolvedValue({ session: mockSession } as any);
 
     await expect(
-      aiMergeTask(store, "/tmp/root", "KB-050", { usageLimitPauser: pauser }),
+      aiMergeTask(store, "/tmp/root", "FN-050", { usageLimitPauser: pauser }),
     ).rejects.toThrow("AI merge failed");
 
     // UsageLimitPauser should be called with "merger" agent type
     expect(onUsageLimitHitSpy).toHaveBeenCalledWith(
       "merger",
-      "KB-050",
+      "FN-050",
       "429 Too Many Requests",
     );
     // git reset --merge should be called to abort the merge
@@ -584,8 +584,8 @@ describe("aiMergeTask — usage limit detection", () => {
 
   it("does NOT trigger global pause for non-usage-limit errors", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
     const pauser = new UsageLimitPauser(store);
     const onUsageLimitHitSpy = vi.spyOn(pauser, "onUsageLimitHit");
@@ -598,7 +598,7 @@ describe("aiMergeTask — usage limit detection", () => {
     } as any);
 
     await expect(
-      aiMergeTask(store, "/tmp/root", "KB-050", { usageLimitPauser: pauser }),
+      aiMergeTask(store, "/tmp/root", "FN-050", { usageLimitPauser: pauser }),
     ).rejects.toThrow("AI merge failed");
 
     expect(onUsageLimitHitSpy).not.toHaveBeenCalled();
@@ -606,8 +606,8 @@ describe("aiMergeTask — usage limit detection", () => {
 
   it("works without usageLimitPauser (backward compatible)", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
     mockedCreateHaiAgent.mockResolvedValue({
@@ -619,14 +619,14 @@ describe("aiMergeTask — usage limit detection", () => {
 
     // Should not crash — just re-throw
     await expect(
-      aiMergeTask(store, "/tmp/root", "KB-050"),
+      aiMergeTask(store, "/tmp/root", "FN-050"),
     ).rejects.toThrow("AI merge failed");
   });
 
   it("triggers global pause for overloaded error", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
     const pauser = new UsageLimitPauser(store);
     const onUsageLimitHitSpy = vi.spyOn(pauser, "onUsageLimitHit");
@@ -639,12 +639,12 @@ describe("aiMergeTask — usage limit detection", () => {
     } as any);
 
     await expect(
-      aiMergeTask(store, "/tmp/root", "KB-050", { usageLimitPauser: pauser }),
+      aiMergeTask(store, "/tmp/root", "FN-050", { usageLimitPauser: pauser }),
     ).rejects.toThrow("AI merge failed");
 
     expect(onUsageLimitHitSpy).toHaveBeenCalledWith(
       "merger",
-      "KB-050",
+      "FN-050",
       "overloaded_error: Overloaded",
     );
   });
@@ -669,11 +669,11 @@ describe("aiMergeTask — onSession callback", () => {
 
     const onSession = vi.fn();
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
-    await aiMergeTask(store, "/tmp/root", "KB-050", { onSession });
+    await aiMergeTask(store, "/tmp/root", "FN-050", { onSession });
 
     expect(onSession).toHaveBeenCalledTimes(1);
     expect(onSession).toHaveBeenCalledWith(mockSession);
@@ -688,12 +688,12 @@ describe("aiMergeTask — onSession callback", () => {
     } as any);
 
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
     // Should not crash without onSession
-    await expect(aiMergeTask(store, "/tmp/root", "KB-050")).resolves.toBeDefined();
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).resolves.toBeDefined();
   });
 });
 
@@ -1108,8 +1108,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("attempt 1 success: sets resolutionStrategy to 'ai' and attemptsMade to 1", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
     // Clean merge with no conflicts - simulate empty diff for conflicts
@@ -1129,7 +1129,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       return Buffer.from("");
     });
 
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
     expect(result.resolutionStrategy).toBe("ai");
@@ -1138,8 +1138,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("with autoResolveConflicts disabled: only makes 1 attempt on conflict", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
@@ -1185,7 +1185,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       } as any);
     });
 
-    await expect(aiMergeTask(store, "/tmp/root", "KB-050")).rejects.toThrow();
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow();
 
     // Should have called agent exactly once (no retries since autoResolve is disabled)
     expect(agentCallCount).toBe(1);
@@ -1193,8 +1193,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("attempt 1 fails, attempt 2 auto-resolves lock files: sets resolutionStrategy to 'auto-resolve'", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
     let mergeCallCount = 0;
@@ -1230,7 +1230,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
     });
 
     // Agent should not be called since all conflicts are auto-resolved
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
     expect(result.resolutionStrategy).toBe("auto-resolve");
@@ -1239,8 +1239,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("attempt 3 uses -X theirs strategy: sets resolutionStrategy to 'theirs'", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
     let squashCallCount = 0;
@@ -1302,7 +1302,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       } as any);
     });
 
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
     expect(result.resolutionStrategy).toBe("theirs");
@@ -1313,8 +1313,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("all 3 attempts fail: throws error and calls git reset --merge", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
     const resetCalls: string[] = [];
@@ -1350,7 +1350,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       },
     } as any);
 
-    await expect(aiMergeTask(store, "/tmp/root", "KB-050")).rejects.toThrow(
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
       "all 3 attempts exhausted",
     );
 
@@ -1360,8 +1360,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("tracks resolutionStrategy as 'ai' when attempt 1 succeeds even with autoResolve enabled", async () => {
     const store = createMockStore(
-      { id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "KB-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
 
     // Clean merge with no conflicts
@@ -1379,7 +1379,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       return Buffer.from("");
     });
 
-    const result = await aiMergeTask(store, "/tmp/root", "KB-050");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
     expect(result.resolutionStrategy).toBe("ai");

@@ -20,50 +20,50 @@ describe("PrMonitor", () => {
     number: 42,
     status: "open" as const,
     title: "Test PR",
-    headBranch: "kb/kb-001",
+    headBranch: "fusion/fn-001",
     baseBranch: "main",
     commentCount: 0,
   };
 
   describe("startMonitoring", () => {
     it("starts monitoring a PR", () => {
-      monitor.startMonitoring("KB-001", "owner", "repo", mockPrInfo);
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
 
       const tracked = monitor.getTrackedPrs();
-      expect(tracked.has("KB-001")).toBe(true);
-      expect(tracked.get("KB-001")?.prInfo.number).toBe(42);
+      expect(tracked.has("FN-001")).toBe(true);
+      expect(tracked.get("FN-001")?.prInfo.number).toBe(42);
     });
 
     it("replaces existing monitoring for same task", () => {
-      monitor.startMonitoring("KB-001", "owner", "repo", mockPrInfo);
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
       const newPrInfo = { ...mockPrInfo, number: 43 };
-      monitor.startMonitoring("KB-001", "owner", "repo", newPrInfo);
+      monitor.startMonitoring("FN-001", "owner", "repo", newPrInfo);
 
       const tracked = monitor.getTrackedPrs();
-      expect(tracked.get("KB-001")?.prInfo.number).toBe(43);
+      expect(tracked.get("FN-001")?.prInfo.number).toBe(43);
     });
   });
 
   describe("updatePrInfo", () => {
     it("updates tracked PR metadata without restarting monitoring", () => {
-      monitor.startMonitoring("KB-001", "owner", "repo", mockPrInfo);
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
       const updatedPrInfo = { ...mockPrInfo, status: "merged" as const };
 
-      monitor.updatePrInfo("KB-001", updatedPrInfo);
+      monitor.updatePrInfo("FN-001", updatedPrInfo);
 
       const tracked = monitor.getTrackedPrs();
-      expect(tracked.get("KB-001")?.prInfo.status).toBe("merged");
-      expect(tracked.get("KB-001")?.owner).toBe("owner");
+      expect(tracked.get("FN-001")?.prInfo.status).toBe("merged");
+      expect(tracked.get("FN-001")?.owner).toBe("owner");
     });
   });
 
   describe("stopMonitoring", () => {
     it("stops monitoring a task", () => {
-      monitor.startMonitoring("KB-001", "owner", "repo", mockPrInfo);
-      monitor.stopMonitoring("KB-001");
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      monitor.stopMonitoring("FN-001");
 
       const tracked = monitor.getTrackedPrs();
-      expect(tracked.has("KB-001")).toBe(false);
+      expect(tracked.has("FN-001")).toBe(false);
     });
 
     it("does nothing for untracked task", () => {
@@ -73,8 +73,8 @@ describe("PrMonitor", () => {
 
   describe("stopAll", () => {
     it("stops all monitoring", () => {
-      monitor.startMonitoring("KB-001", "owner", "repo", mockPrInfo);
-      monitor.startMonitoring("KB-002", "owner", "repo", mockPrInfo);
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      monitor.startMonitoring("FN-002", "owner", "repo", mockPrInfo);
 
       monitor.stopAll();
 

@@ -64,7 +64,7 @@ describe("useBadgeWebSocket", () => {
     const { result } = renderHook(() => useBadgeWebSocket());
 
     act(() => {
-      result.current.subscribeToBadge("KB-063");
+      result.current.subscribeToBadge("FN-063");
     });
 
     expect(MockWebSocket.instances).toHaveLength(1);
@@ -75,21 +75,21 @@ describe("useBadgeWebSocket", () => {
     });
 
     expect(result.current.isConnected).toBe(true);
-    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "subscribe", taskId: "KB-063" }));
+    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "subscribe", taskId: "FN-063" }));
   });
 
   it("stores badge update snapshots from the server", async () => {
     const { result } = renderHook(() => useBadgeWebSocket());
 
     act(() => {
-      result.current.subscribeToBadge("KB-063");
+      result.current.subscribeToBadge("FN-063");
       MockWebSocket.instances[0].emitOpen();
     });
 
     act(() => {
       MockWebSocket.instances[0].emitMessage({
         type: "badge:updated",
-        taskId: "KB-063",
+        taskId: "FN-063",
         prInfo: null,
         issueInfo: {
           url: "https://github.com/owner/repo/issues/2",
@@ -102,7 +102,7 @@ describe("useBadgeWebSocket", () => {
       });
     });
 
-    const update = result.current.badgeUpdates.get("KB-063");
+    const update = result.current.badgeUpdates.get("FN-063");
     expect(update).toMatchObject({
       prInfo: null,
       issueInfo: {
@@ -116,11 +116,11 @@ describe("useBadgeWebSocket", () => {
     const { result } = renderHook(() => useBadgeWebSocket());
 
     act(() => {
-      result.current.subscribeToBadge("KB-063");
+      result.current.subscribeToBadge("FN-063");
       MockWebSocket.instances[0].emitOpen();
       MockWebSocket.instances[0].emitMessage({
         type: "badge:updated",
-        taskId: "KB-063",
+        taskId: "FN-063",
         prInfo: {
           url: "https://github.com/owner/repo/pull/1",
           number: 1,
@@ -134,7 +134,7 @@ describe("useBadgeWebSocket", () => {
       });
       MockWebSocket.instances[0].emitMessage({
         type: "badge:updated",
-        taskId: "KB-063",
+        taskId: "FN-063",
         issueInfo: {
           url: "https://github.com/owner/repo/issues/2",
           number: 2,
@@ -145,7 +145,7 @@ describe("useBadgeWebSocket", () => {
       });
     });
 
-    expect(result.current.badgeUpdates.get("KB-063")).toMatchObject({
+    expect(result.current.badgeUpdates.get("FN-063")).toMatchObject({
       prInfo: { number: 1 },
       issueInfo: { number: 2 },
     });
@@ -155,11 +155,11 @@ describe("useBadgeWebSocket", () => {
     const { result } = renderHook(() => useBadgeWebSocket());
 
     act(() => {
-      result.current.subscribeToBadge("KB-063");
+      result.current.subscribeToBadge("FN-063");
       MockWebSocket.instances[0].emitOpen();
       MockWebSocket.instances[0].emitMessage({
         type: "badge:updated",
-        taskId: "KB-063",
+        taskId: "FN-063",
         prInfo: {
           url: "https://github.com/owner/repo/pull/1",
           number: 1,
@@ -173,14 +173,14 @@ describe("useBadgeWebSocket", () => {
       });
     });
 
-    expect(result.current.badgeUpdates.has("KB-063")).toBe(true);
+    expect(result.current.badgeUpdates.has("FN-063")).toBe(true);
 
     act(() => {
       MockWebSocket.instances[0].emitClose(1006);
     });
 
     expect(result.current.isConnected).toBe(false);
-    expect(result.current.badgeUpdates.has("KB-063")).toBe(true);
+    expect(result.current.badgeUpdates.has("FN-063")).toBe(true);
 
     act(() => {
       vi.advanceTimersByTime(1_000);
@@ -193,18 +193,18 @@ describe("useBadgeWebSocket", () => {
     });
 
     expect(result.current.isConnected).toBe(true);
-    expect(MockWebSocket.instances[1].sent).toContain(JSON.stringify({ type: "subscribe", taskId: "KB-063" }));
+    expect(MockWebSocket.instances[1].sent).toContain(JSON.stringify({ type: "subscribe", taskId: "FN-063" }));
   });
 
   it("sends unsubscribe, clears cached state, and closes the socket when the final subscription is removed", () => {
     const { result } = renderHook(() => useBadgeWebSocket());
 
     act(() => {
-      result.current.subscribeToBadge("KB-063");
+      result.current.subscribeToBadge("FN-063");
       MockWebSocket.instances[0].emitOpen();
       MockWebSocket.instances[0].emitMessage({
         type: "badge:updated",
-        taskId: "KB-063",
+        taskId: "FN-063",
         prInfo: {
           url: "https://github.com/owner/repo/pull/1",
           number: 1,
@@ -219,12 +219,12 @@ describe("useBadgeWebSocket", () => {
     });
 
     act(() => {
-      result.current.unsubscribeFromBadge("KB-063");
+      result.current.unsubscribeFromBadge("FN-063");
     });
 
-    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "unsubscribe", taskId: "KB-063" }));
+    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "unsubscribe", taskId: "FN-063" }));
     expect(MockWebSocket.instances[0].close).toHaveBeenCalled();
-    expect(result.current.badgeUpdates.has("KB-063")).toBe(false);
+    expect(result.current.badgeUpdates.has("FN-063")).toBe(false);
   });
 
   it("shares a single websocket and ref-counted subscription across hook instances", () => {
@@ -232,39 +232,39 @@ describe("useBadgeWebSocket", () => {
     const second = renderHook(() => useBadgeWebSocket());
 
     act(() => {
-      first.result.current.subscribeToBadge("KB-063");
-      second.result.current.subscribeToBadge("KB-063");
+      first.result.current.subscribeToBadge("FN-063");
+      second.result.current.subscribeToBadge("FN-063");
       MockWebSocket.instances[0].emitOpen();
     });
 
     expect(MockWebSocket.instances).toHaveLength(1);
     expect(
-      MockWebSocket.instances[0].sent.filter((payload) => payload === JSON.stringify({ type: "subscribe", taskId: "KB-063" })),
+      MockWebSocket.instances[0].sent.filter((payload) => payload === JSON.stringify({ type: "subscribe", taskId: "FN-063" })),
     ).toHaveLength(1);
 
     act(() => {
-      first.result.current.unsubscribeFromBadge("KB-063");
+      first.result.current.unsubscribeFromBadge("FN-063");
     });
 
-    expect(MockWebSocket.instances[0].sent).not.toContain(JSON.stringify({ type: "unsubscribe", taskId: "KB-063" }));
+    expect(MockWebSocket.instances[0].sent).not.toContain(JSON.stringify({ type: "unsubscribe", taskId: "FN-063" }));
 
     act(() => {
-      second.result.current.unsubscribeFromBadge("KB-063");
+      second.result.current.unsubscribeFromBadge("FN-063");
     });
 
-    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "unsubscribe", taskId: "KB-063" }));
+    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "unsubscribe", taskId: "FN-063" }));
   });
 
   it("unsubscribes owned task subscriptions on unmount", () => {
     const { result, unmount } = renderHook(() => useBadgeWebSocket());
 
     act(() => {
-      result.current.subscribeToBadge("KB-063");
+      result.current.subscribeToBadge("FN-063");
       MockWebSocket.instances[0].emitOpen();
     });
 
     unmount();
 
-    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "unsubscribe", taskId: "KB-063" }));
+    expect(MockWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "unsubscribe", taskId: "FN-063" }));
   });
 });

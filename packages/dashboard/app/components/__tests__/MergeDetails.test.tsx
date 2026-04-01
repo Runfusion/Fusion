@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { MergeDetails } from "../MergeDetails";
 
 const makeTask = (overrides: any = {}) => ({
-  id: "KB-001",
+  id: "FN-001",
   description: "Task",
   column: "done",
   dependencies: [],

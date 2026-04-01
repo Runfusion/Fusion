@@ -15,7 +15,7 @@ import { fetchTaskDetail } from "../../api";
 const mockAddToast = vi.fn();
 
 const createMockTask = (overrides: Partial<Task> = {}): Task => ({
-  id: "KB-001",
+  id: "FN-001",
   description: "Test task description",
   title: "Test Task",
   column: "triage",
@@ -55,15 +55,15 @@ describe("ListView", () => {
 
   it("displays tasks in table format", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", title: "First Task" }),
-      createMockTask({ id: "KB-002", title: "Second Task" }),
+      createMockTask({ id: "FN-001", title: "First Task" }),
+      createMockTask({ id: "FN-002", title: "Second Task" }),
     ];
 
     renderListView({ tasks });
 
-    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
     expect(screen.getByText("First Task")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
     expect(screen.getByText("Second Task")).toBeDefined();
   });
 
@@ -73,7 +73,7 @@ describe("ListView", () => {
   });
 
   it("shows empty state when filter matches nothing", () => {
-    const tasks = [createMockTask({ id: "KB-001", title: "Test Task" })];
+    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
 
     renderListView({ tasks });
 
@@ -85,23 +85,23 @@ describe("ListView", () => {
 
   it("filters tasks by ID", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", title: "First Task" }),
-      createMockTask({ id: "KB-002", title: "Second Task" }),
+      createMockTask({ id: "FN-001", title: "First Task" }),
+      createMockTask({ id: "FN-002", title: "Second Task" }),
     ];
 
     renderListView({ tasks });
 
     const filterInput = screen.getByPlaceholderText("Filter by ID or title...");
-    fireEvent.change(filterInput, { target: { value: "KB-001" } });
+    fireEvent.change(filterInput, { target: { value: "FN-001" } });
 
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
   });
 
   it("filters tasks by title", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", title: "First Task" }),
-      createMockTask({ id: "KB-002", title: "Second Task" }),
+      createMockTask({ id: "FN-001", title: "First Task" }),
+      createMockTask({ id: "FN-002", title: "Second Task" }),
     ];
 
     renderListView({ tasks });
@@ -109,14 +109,14 @@ describe("ListView", () => {
     const filterInput = screen.getByPlaceholderText("Filter by ID or title...");
     fireEvent.change(filterInput, { target: { value: "Second" } });
 
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.getByText("FN-002")).toBeDefined();
   });
 
   it("filters tasks by description when no title", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", title: undefined, description: "Alpha description" }),
-      createMockTask({ id: "KB-002", title: undefined, description: "Beta description" }),
+      createMockTask({ id: "FN-001", title: undefined, description: "Alpha description" }),
+      createMockTask({ id: "FN-002", title: undefined, description: "Beta description" }),
     ];
 
     renderListView({ tasks });
@@ -124,35 +124,35 @@ describe("ListView", () => {
     const filterInput = screen.getByPlaceholderText("Filter by ID or title...");
     fireEvent.change(filterInput, { target: { value: "Alpha" } });
 
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
   });
 
   it("clears filter when clear button is clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", title: "First Task" }),
-      createMockTask({ id: "KB-002", title: "Second Task" }),
+      createMockTask({ id: "FN-001", title: "First Task" }),
+      createMockTask({ id: "FN-002", title: "Second Task" }),
     ];
 
     renderListView({ tasks });
 
     const filterInput = screen.getByPlaceholderText("Filter by ID or title...");
-    fireEvent.change(filterInput, { target: { value: "KB-001" } });
+    fireEvent.change(filterInput, { target: { value: "FN-001" } });
 
     // Wait for filter to apply
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.queryByText("FN-002")).toBeNull();
 
     // Click clear button (×)
     const clearButton = screen.getByText("×");
     fireEvent.click(clearButton);
 
     // Both tasks should be visible again
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
   });
 
   it("calls onOpenDetail when row is clicked", async () => {
-    const tasks = [createMockTask({ id: "KB-001", title: "Test Task" })];
+    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     const mockOnOpenDetail = vi.fn();
     const mockDetail: TaskDetail = {
       ...tasks[0],
@@ -163,25 +163,25 @@ describe("ListView", () => {
 
     renderListView({ tasks, onOpenDetail: mockOnOpenDetail });
 
-    const row = screen.getByText("KB-001").closest("tr");
+    const row = screen.getByText("FN-001").closest("tr");
     fireEvent.click(row!);
 
     await waitFor(() => {
-      expect(fetchTaskDetail).toHaveBeenCalledWith("KB-001");
+      expect(fetchTaskDetail).toHaveBeenCalledWith("FN-001");
     });
 
     expect(mockOnOpenDetail).toHaveBeenCalledWith(mockDetail);
   });
 
   it("shows error toast when fetchTaskDetail fails", async () => {
-    const tasks = [createMockTask({ id: "KB-001", title: "Test Task" })];
+    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     const mockOnOpenDetail = vi.fn();
 
     (fetchTaskDetail as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network error"));
 
     renderListView({ tasks, onOpenDetail: mockOnOpenDetail });
 
-    const row = screen.getByText("KB-001").closest("tr");
+    const row = screen.getByText("FN-001").closest("tr");
     fireEvent.click(row!);
 
     await waitFor(() => {
@@ -191,9 +191,9 @@ describe("ListView", () => {
 
   it("sorts tasks by ID when ID header is clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-003", title: "Third", column: "triage" }),
-      createMockTask({ id: "KB-001", title: "First", column: "triage" }),
-      createMockTask({ id: "KB-002", title: "Second", column: "triage" }),
+      createMockTask({ id: "FN-003", title: "Third", column: "triage" }),
+      createMockTask({ id: "FN-001", title: "First", column: "triage" }),
+      createMockTask({ id: "FN-002", title: "Second", column: "triage" }),
     ];
 
     renderListView({ tasks });
@@ -204,24 +204,24 @@ describe("ListView", () => {
 
     // Get all data rows (excluding section headers by using data-id attribute)
     const rows = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
-    expect(rows[0].textContent).toContain("KB-001");
-    expect(rows[1].textContent).toContain("KB-002");
-    expect(rows[2].textContent).toContain("KB-003");
+    expect(rows[0].textContent).toContain("FN-001");
+    expect(rows[1].textContent).toContain("FN-002");
+    expect(rows[2].textContent).toContain("FN-003");
 
     // Second click - descending
     fireEvent.click(idHeader);
 
     const rowsDesc = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
-    expect(rowsDesc[0].textContent).toContain("KB-003");
-    expect(rowsDesc[1].textContent).toContain("KB-002");
-    expect(rowsDesc[2].textContent).toContain("KB-001");
+    expect(rowsDesc[0].textContent).toContain("FN-003");
+    expect(rowsDesc[1].textContent).toContain("FN-002");
+    expect(rowsDesc[2].textContent).toContain("FN-001");
   });
 
   it("sorts tasks by column when Column header is clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done" }),
-      createMockTask({ id: "KB-002", column: "triage" }),
-      createMockTask({ id: "KB-003", column: "in-progress" }),
+      createMockTask({ id: "FN-001", column: "done" }),
+      createMockTask({ id: "FN-002", column: "triage" }),
+      createMockTask({ id: "FN-003", column: "in-progress" }),
     ];
 
     renderListView({ tasks });
@@ -231,16 +231,16 @@ describe("ListView", () => {
 
     // Get data rows - sorted by column alphabetically: done, in-progress, triage
     const rows = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
-    expect(rows[0].textContent).toContain("KB-002"); // triage (sorted first alphabetically)
-    expect(rows[1].textContent).toContain("KB-003"); // in-progress
-    expect(rows[2].textContent).toContain("KB-001"); // done
+    expect(rows[0].textContent).toContain("FN-002"); // triage (sorted first alphabetically)
+    expect(rows[1].textContent).toContain("FN-003"); // in-progress
+    expect(rows[2].textContent).toContain("FN-001"); // done
   });
 
   it("sorts tasks by status when Status header is clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", status: "executing", column: "triage" }),
-      createMockTask({ id: "KB-002", status: "pending", column: "triage" }),
-      createMockTask({ id: "KB-003", status: "failed", column: "triage" }),
+      createMockTask({ id: "FN-001", status: "executing", column: "triage" }),
+      createMockTask({ id: "FN-002", status: "pending", column: "triage" }),
+      createMockTask({ id: "FN-003", status: "failed", column: "triage" }),
     ];
 
     renderListView({ tasks });
@@ -256,11 +256,11 @@ describe("ListView", () => {
   });
 
   it("renders failed status with correct styling", () => {
-    const tasks = [createMockTask({ id: "KB-001", status: "failed" })];
+    const tasks = [createMockTask({ id: "FN-001", status: "failed" })];
 
     renderListView({ tasks });
 
-    const row = screen.getByText("KB-001").closest("tr");
+    const row = screen.getByText("FN-001").closest("tr");
     expect(row?.className).toContain("failed");
 
     const statusBadge = screen.getByText("failed");
@@ -268,18 +268,18 @@ describe("ListView", () => {
   });
 
   it("renders paused tasks with dimmed styling", () => {
-    const tasks = [createMockTask({ id: "KB-001", paused: true })];
+    const tasks = [createMockTask({ id: "FN-001", paused: true })];
 
     renderListView({ tasks });
 
-    const row = screen.getByText("KB-001").closest("tr");
+    const row = screen.getByText("FN-001").closest("tr");
     expect(row?.className).toContain("paused");
   });
 
   it("renders agent-active tasks with glow styling", () => {
     const tasks = [
       createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         status: "executing",
         column: "in-progress",
       }),
@@ -287,14 +287,14 @@ describe("ListView", () => {
 
     renderListView({ tasks, globalPaused: false });
 
-    const row = screen.getByText("KB-001").closest("tr");
+    const row = screen.getByText("FN-001").closest("tr");
     expect(row?.className).toContain("agent-active");
   });
 
   it("does not render agent-active when globalPaused is true", () => {
     const tasks = [
       createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         status: "executing",
         column: "in-progress",
       }),
@@ -302,7 +302,7 @@ describe("ListView", () => {
 
     renderListView({ tasks, globalPaused: true });
 
-    const row = screen.getByText("KB-001").closest("tr");
+    const row = screen.getByText("FN-001").closest("tr");
     expect(row?.className).not.toContain("agent-active");
   });
 
@@ -335,7 +335,7 @@ describe("ListView", () => {
   it("renders step progress bar", () => {
     const tasks = [
       createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         steps: [
           { name: "Step 1", status: "done" },
           { name: "Step 2", status: "done" },
@@ -350,12 +350,12 @@ describe("ListView", () => {
   });
 
   it("shows - for tasks with no steps", () => {
-    const tasks = [createMockTask({ id: "KB-001", steps: [] })];
+    const tasks = [createMockTask({ id: "FN-001", steps: [] })];
 
     renderListView({ tasks });
 
     // Find the task row and check its progress cell
-    const row = screen.getByText("KB-001").closest("tr")!;
+    const row = screen.getByText("FN-001").closest("tr")!;
     const progressCell = row.querySelector(".list-cell-progress");
     expect(progressCell?.textContent).toBe("-");
   });
@@ -363,8 +363,8 @@ describe("ListView", () => {
   it("renders dependency count with icon", () => {
     const tasks = [
       createMockTask({
-        id: "KB-001",
-        dependencies: ["KB-002", "KB-003"],
+        id: "FN-001",
+        dependencies: ["FN-002", "FN-003"],
       }),
     ];
 
@@ -374,7 +374,7 @@ describe("ListView", () => {
   });
 
   it("shows - for tasks with no dependencies", () => {
-    const tasks = [createMockTask({ id: "KB-001", dependencies: [] })];
+    const tasks = [createMockTask({ id: "FN-001", dependencies: [] })];
 
     renderListView({ tasks });
 
@@ -386,9 +386,9 @@ describe("ListView", () => {
 
   it("displays correct task count in stats", () => {
     const tasks = [
-      createMockTask({ id: "KB-001" }),
-      createMockTask({ id: "KB-002" }),
-      createMockTask({ id: "KB-003" }),
+      createMockTask({ id: "FN-001" }),
+      createMockTask({ id: "FN-002" }),
+      createMockTask({ id: "FN-003" }),
     ];
 
     renderListView({ tasks });
@@ -398,9 +398,9 @@ describe("ListView", () => {
 
   it("displays filtered task count in stats", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", title: "Alpha" }),
-      createMockTask({ id: "KB-002", title: "Beta" }),
-      createMockTask({ id: "KB-003", title: "Gamma" }),
+      createMockTask({ id: "FN-001", title: "Alpha" }),
+      createMockTask({ id: "FN-002", title: "Beta" }),
+      createMockTask({ id: "FN-003", title: "Gamma" }),
     ];
 
     renderListView({ tasks });
@@ -440,9 +440,9 @@ describe("ListView", () => {
 
   it("displays correct task counts in drop zones", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage" }),
-      createMockTask({ id: "KB-002", column: "triage" }),
-      createMockTask({ id: "KB-003", column: "todo" }),
+      createMockTask({ id: "FN-001", column: "triage" }),
+      createMockTask({ id: "FN-002", column: "triage" }),
+      createMockTask({ id: "FN-003", column: "todo" }),
     ];
 
     renderListView({ tasks });
@@ -456,12 +456,12 @@ describe("ListView", () => {
   });
 
   it("handles drag and drop to move tasks between columns", async () => {
-    const tasks = [createMockTask({ id: "KB-001", column: "triage" })];
+    const tasks = [createMockTask({ id: "FN-001", column: "triage" })];
     const mockOnMoveTask = vi.fn(() => Promise.resolve(tasks[0]));
 
     renderListView({ tasks, onMoveTask: mockOnMoveTask });
 
-    const row = screen.getByText("KB-001").closest("tr")!;
+    const row = screen.getByText("FN-001").closest("tr")!;
 
     // Simulate drag start
     fireEvent.dragStart(row, {
@@ -481,42 +481,42 @@ describe("ListView", () => {
     fireEvent.drop(todoZone, {
       preventDefault: vi.fn(),
       dataTransfer: {
-        getData: vi.fn(() => "KB-001"),
+        getData: vi.fn(() => "FN-001"),
       },
     });
 
     await waitFor(() => {
-      expect(mockOnMoveTask).toHaveBeenCalledWith("KB-001", "todo");
+      expect(mockOnMoveTask).toHaveBeenCalledWith("FN-001", "todo");
     });
   });
 
   it("does not set draggable for paused tasks", () => {
-    const tasks = [createMockTask({ id: "KB-001", paused: true })];
+    const tasks = [createMockTask({ id: "FN-001", paused: true })];
 
     renderListView({ tasks });
 
-    const row = screen.getByText("KB-001").closest("tr")!;
+    const row = screen.getByText("FN-001").closest("tr")!;
     // Paused tasks should have draggable="false"
     expect(row.getAttribute("draggable")).toBe("false");
   });
 
   it("sets draggable for non-paused tasks", () => {
-    const tasks = [createMockTask({ id: "KB-001", paused: false })];
+    const tasks = [createMockTask({ id: "FN-001", paused: false })];
 
     renderListView({ tasks });
 
-    const row = screen.getByText("KB-001").closest("tr")!;
+    const row = screen.getByText("FN-001").closest("tr")!;
     // Non-paused tasks should have draggable="true"
     expect(row.getAttribute("draggable")).toBe("true");
   });
 
   it("shows error toast when onMoveTask fails during drag and drop", async () => {
-    const tasks = [createMockTask({ id: "KB-001", column: "triage" })];
+    const tasks = [createMockTask({ id: "FN-001", column: "triage" })];
     const mockOnMoveTask = vi.fn(() => Promise.reject(new Error("Move failed")));
 
     renderListView({ tasks, onMoveTask: mockOnMoveTask });
 
-    const row = screen.getByText("KB-001").closest("tr")!;
+    const row = screen.getByText("FN-001").closest("tr")!;
 
     fireEvent.dragStart(row, {
       dataTransfer: {
@@ -530,7 +530,7 @@ describe("ListView", () => {
     fireEvent.drop(todoZone, {
       preventDefault: vi.fn(),
       dataTransfer: {
-        getData: vi.fn(() => "KB-001"),
+        getData: vi.fn(() => "FN-001"),
       },
     });
 
@@ -541,7 +541,7 @@ describe("ListView", () => {
 
   it("displays full description in title cell when no title exists", () => {
     const longDescription = "A".repeat(100);
-    const tasks = [createMockTask({ id: "KB-001", title: undefined, description: longDescription })];
+    const tasks = [createMockTask({ id: "FN-001", title: undefined, description: longDescription })];
 
     renderListView({ tasks });
 
@@ -554,8 +554,8 @@ describe("ListView", () => {
   // Grouped view tests
   it("renders section headers for each column", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage" }),
-      createMockTask({ id: "KB-002", column: "todo" }),
+      createMockTask({ id: "FN-001", column: "triage" }),
+      createMockTask({ id: "FN-002", column: "todo" }),
     ];
 
     renderListView({ tasks });
@@ -570,9 +570,9 @@ describe("ListView", () => {
 
   it("displays correct task count in section headers", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage" }),
-      createMockTask({ id: "KB-002", column: "triage" }),
-      createMockTask({ id: "KB-003", column: "todo" }),
+      createMockTask({ id: "FN-001", column: "triage" }),
+      createMockTask({ id: "FN-002", column: "triage" }),
+      createMockTask({ id: "FN-003", column: "todo" }),
     ];
 
     renderListView({ tasks });
@@ -591,7 +591,7 @@ describe("ListView", () => {
   });
 
   it("shows No tasks placeholder for empty columns", () => {
-    const tasks = [createMockTask({ id: "KB-001", column: "triage" })];
+    const tasks = [createMockTask({ id: "FN-001", column: "triage" })];
 
     renderListView({ tasks });
 
@@ -602,8 +602,8 @@ describe("ListView", () => {
 
   it("hides empty sections when filter is active", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", title: "Alpha Task", column: "triage" }),
-      createMockTask({ id: "KB-002", title: "Beta Task", column: "todo" }),
+      createMockTask({ id: "FN-001", title: "Alpha Task", column: "triage" }),
+      createMockTask({ id: "FN-002", title: "Beta Task", column: "todo" }),
     ];
 
     renderListView({ tasks });
@@ -618,15 +618,15 @@ describe("ListView", () => {
     expect(sectionHeaders[0].textContent).toContain("Triage");
 
     // Verify the filtered task is visible
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
   });
 
   it("maintains sort order within each section", () => {
     const tasks = [
-      createMockTask({ id: "KB-003", title: "Charlie", column: "triage" }),
-      createMockTask({ id: "KB-001", title: "Alpha", column: "triage" }),
-      createMockTask({ id: "KB-002", title: "Bravo", column: "triage" }),
+      createMockTask({ id: "FN-003", title: "Charlie", column: "triage" }),
+      createMockTask({ id: "FN-001", title: "Alpha", column: "triage" }),
+      createMockTask({ id: "FN-002", title: "Bravo", column: "triage" }),
     ];
 
     renderListView({ tasks });
@@ -642,9 +642,9 @@ describe("ListView", () => {
     // The next 3 rows after the section header should be the sorted tasks
     const dataRows = allRows.slice(triageSectionStart + 1, triageSectionStart + 4).filter(r => r.getAttribute("data-id"));
     
-    expect(dataRows[0].textContent).toContain("KB-001"); // Alpha
-    expect(dataRows[1].textContent).toContain("KB-002"); // Bravo
-    expect(dataRows[2].textContent).toContain("KB-003"); // Charlie
+    expect(dataRows[0].textContent).toContain("FN-001"); // Alpha
+    expect(dataRows[1].textContent).toContain("FN-002"); // Bravo
+    expect(dataRows[2].textContent).toContain("FN-003"); // Charlie
   });
 });
 
@@ -655,9 +655,9 @@ describe("ListView Column Filtering", () => {
 
   it("filters tasks by column when drop zone is clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
-      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
-      createMockTask({ id: "KB-003", column: "in-progress", title: "In Progress Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
+      createMockTask({ id: "FN-003", column: "in-progress", title: "In Progress Task" }),
     ];
 
     renderListView({ tasks });
@@ -667,9 +667,9 @@ describe("ListView Column Filtering", () => {
     fireEvent.click(triageZone);
 
     // Only triage task should be visible
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
-    expect(screen.queryByText("KB-003")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
+    expect(screen.queryByText("FN-003")).toBeNull();
 
     // Only triage section header should be visible
     const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
@@ -679,8 +679,8 @@ describe("ListView Column Filtering", () => {
 
   it("clears column filter when same drop zone is clicked again", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
-      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
     ];
 
     renderListView({ tasks });
@@ -690,15 +690,15 @@ describe("ListView Column Filtering", () => {
     fireEvent.click(triageZone);
 
     // Verify filter is active - only triage task visible
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
 
     // Click the same drop zone again to clear filter
     fireEvent.click(triageZone);
 
     // All tasks should be visible again
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
 
     // All 6 section headers should be visible (one for each column)
     const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
@@ -707,8 +707,8 @@ describe("ListView Column Filtering", () => {
 
   it("switches column filter when different drop zone is clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
-      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
     ];
 
     renderListView({ tasks });
@@ -718,16 +718,16 @@ describe("ListView Column Filtering", () => {
     fireEvent.click(triageZone);
 
     // Verify only triage task visible
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
 
     // Click on the todo drop zone to switch filter
     const todoZone = document.querySelector('[data-column="todo"].list-drop-zone')!;
     fireEvent.click(todoZone);
 
     // Only todo task should be visible now
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.getByText("FN-002")).toBeDefined();
 
     // Only todo section header should be visible
     const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
@@ -737,8 +737,8 @@ describe("ListView Column Filtering", () => {
 
   it("clears column filter when clear button is clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
-      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
     ];
 
     renderListView({ tasks });
@@ -748,22 +748,22 @@ describe("ListView Column Filtering", () => {
     fireEvent.click(triageZone);
 
     // Verify filter is active
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.queryByText("FN-002")).toBeNull();
 
     // Click the clear button
     const clearButton = screen.getByRole("button", { name: /clear column filter/i });
     fireEvent.click(clearButton);
 
     // All tasks should be visible again
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
   });
 
   it("shows correct filtered stats when column filter is active", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
-      createMockTask({ id: "KB-002", column: "triage", title: "Triage Task 2" }),
-      createMockTask({ id: "KB-003", column: "todo", title: "Todo Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Triage Task 2" }),
+      createMockTask({ id: "FN-003", column: "todo", title: "Todo Task" }),
     ];
 
     renderListView({ tasks });
@@ -778,9 +778,9 @@ describe("ListView Column Filtering", () => {
 
   it("applies text filter within column filter", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Alpha Triage Task" }),
-      createMockTask({ id: "KB-002", column: "triage", title: "Beta Triage Task" }),
-      createMockTask({ id: "KB-003", column: "todo", title: "Alpha Todo Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Alpha Triage Task" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Beta Triage Task" }),
+      createMockTask({ id: "FN-003", column: "todo", title: "Alpha Todo Task" }),
     ];
 
     renderListView({ tasks });
@@ -790,18 +790,18 @@ describe("ListView Column Filtering", () => {
     fireEvent.click(triageZone);
 
     // Both triage tasks should be visible
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
-    expect(screen.queryByText("KB-003")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
+    expect(screen.queryByText("FN-003")).toBeNull();
 
     // Apply text filter within the triage column
     const filterInput = screen.getByPlaceholderText("Filter by ID or title...");
     fireEvent.change(filterInput, { target: { value: "Alpha" } });
 
     // Only Alpha triage task should be visible
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
-    expect(screen.queryByText("KB-003")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
+    expect(screen.queryByText("FN-003")).toBeNull();
 
     // Stats should reflect combined filtering
     expect(screen.getByText("1 of 3 tasks in Triage")).toBeDefined();
@@ -809,7 +809,7 @@ describe("ListView Column Filtering", () => {
 
   it("applies active class to selected column drop zone", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
     ];
 
     renderListView({ tasks });
@@ -857,7 +857,7 @@ describe("ListView Column Visibility", () => {
   });
 
   it("hides column when unchecked in dropdown", () => {
-    const tasks = [createMockTask({ id: "KB-001", title: "Test Task" })];
+    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     renderListView({ tasks });
 
     // Open dropdown
@@ -878,7 +878,7 @@ describe("ListView Column Visibility", () => {
   });
 
   it("shows column when checked in dropdown", () => {
-    const tasks = [createMockTask({ id: "KB-001", title: "Test Task" })];
+    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     renderListView({ tasks });
 
     // Open dropdown
@@ -910,7 +910,7 @@ describe("ListView Column Visibility", () => {
   });
 
   it("persists column visibility to localStorage", () => {
-    const tasks = [createMockTask({ id: "KB-001", title: "Test Task" })];
+    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     renderListView({ tasks });
 
     // Open dropdown and uncheck Title
@@ -930,11 +930,11 @@ describe("ListView Column Visibility", () => {
     // Set up localStorage with only ID and Status visible
     localStorage.setItem("kb-dashboard-list-columns", JSON.stringify(["id", "status"]));
 
-    const tasks = [createMockTask({ id: "KB-001", title: "Test Task", status: "pending" })];
+    const tasks = [createMockTask({ id: "FN-001", title: "Test Task", status: "pending" })];
     renderListView({ tasks });
 
     // ID should be visible
-    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
 
     // Title should NOT be visible (hidden by localStorage)
     const table = document.querySelector(".list-table");
@@ -967,9 +967,9 @@ describe("ListView Column Visibility", () => {
 
   it("sorting still works when some columns are hidden", () => {
     const tasks = [
-      createMockTask({ id: "KB-003", column: "triage" }),
-      createMockTask({ id: "KB-001", column: "triage" }),
-      createMockTask({ id: "KB-002", column: "triage" }),
+      createMockTask({ id: "FN-003", column: "triage" }),
+      createMockTask({ id: "FN-001", column: "triage" }),
+      createMockTask({ id: "FN-002", column: "triage" }),
     ];
     renderListView({ tasks });
 
@@ -991,19 +991,19 @@ describe("ListView Column Visibility", () => {
 
     // Get sorted rows and verify sorting still works
     const rows = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
-    expect(rows[0].textContent).toContain("KB-001");
-    expect(rows[1].textContent).toContain("KB-002");
-    expect(rows[2].textContent).toContain("KB-003");
+    expect(rows[0].textContent).toContain("FN-001");
+    expect(rows[1].textContent).toContain("FN-002");
+    expect(rows[2].textContent).toContain("FN-003");
   });
 
   it("all columns visible by default when no localStorage", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", title: "Test Task", status: "pending", column: "triage" }),
+      createMockTask({ id: "FN-001", title: "Test Task", status: "pending", column: "triage" }),
     ];
     renderListView({ tasks });
 
     // All columns should be visible by default
-    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
     expect(screen.getByText("Test Task")).toBeDefined();
     expect(screen.getByText("pending")).toBeDefined();
     // Check for column badge specifically using the class
@@ -1028,75 +1028,75 @@ describe("ListView Hide Done Tasks", () => {
 
   it("hides done tasks when toggle is activated", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done" }),
-      createMockTask({ id: "KB-002", column: "triage" }),
+      createMockTask({ id: "FN-001", column: "done" }),
+      createMockTask({ id: "FN-002", column: "triage" }),
     ];
 
     renderListView({ tasks });
 
     // Both tasks should be visible initially
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
 
     // Click hide done button
     const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
     fireEvent.click(hideDoneButton);
 
     // Done task should be hidden, triage task should still be visible
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.getByText("FN-002")).toBeDefined();
   });
 
   it("hides archived tasks when toggle is activated", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "archived" }),
-      createMockTask({ id: "KB-002", column: "triage" }),
+      createMockTask({ id: "FN-001", column: "archived" }),
+      createMockTask({ id: "FN-002", column: "triage" }),
     ];
 
     renderListView({ tasks });
 
     // Both tasks should be visible initially
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
 
     // Click hide done button
     const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
     fireEvent.click(hideDoneButton);
 
     // Archived task should be hidden, triage task should still be visible
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.getByText("FN-002")).toBeDefined();
   });
 
   it("hides both done and archived tasks when toggle is activated", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done" }),
-      createMockTask({ id: "KB-002", column: "archived" }),
-      createMockTask({ id: "KB-003", column: "triage" }),
+      createMockTask({ id: "FN-001", column: "done" }),
+      createMockTask({ id: "FN-002", column: "archived" }),
+      createMockTask({ id: "FN-003", column: "triage" }),
     ];
 
     renderListView({ tasks });
 
     // All tasks should be visible initially
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
-    expect(screen.getByText("KB-003")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
+    expect(screen.getByText("FN-003")).toBeDefined();
 
     // Click hide done button
     const hideDoneButton = screen.getByRole("button", { name: /hide done/i });
     fireEvent.click(hideDoneButton);
 
     // Done and archived tasks should be hidden, triage task should remain visible
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.queryByText("KB-002")).toBeNull();
-    expect(screen.getByText("KB-003")).toBeDefined();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.queryByText("FN-002")).toBeNull();
+    expect(screen.getByText("FN-003")).toBeDefined();
   });
 
   it("shows done and archived tasks when toggle is deactivated", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done" }),
-      createMockTask({ id: "KB-002", column: "archived" }),
-      createMockTask({ id: "KB-003", column: "triage" }),
+      createMockTask({ id: "FN-001", column: "done" }),
+      createMockTask({ id: "FN-002", column: "archived" }),
+      createMockTask({ id: "FN-003", column: "triage" }),
     ];
 
     renderListView({ tasks });
@@ -1106,20 +1106,20 @@ describe("ListView Hide Done Tasks", () => {
     fireEvent.click(hideDoneButton);
 
     // Completed tasks should be hidden
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.queryByText("FN-002")).toBeNull();
 
     // Click again to show all tasks
     fireEvent.click(hideDoneButton);
 
     // All tasks should be visible again
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
-    expect(screen.getByText("KB-003")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
+    expect(screen.getByText("FN-003")).toBeDefined();
   });
 
   it("persists hide done preference to localStorage", () => {
-    const tasks = [createMockTask({ id: "KB-001", column: "done" })];
+    const tasks = [createMockTask({ id: "FN-001", column: "done" })];
     renderListView({ tasks });
 
     // Click hide done button
@@ -1135,9 +1135,9 @@ describe("ListView Hide Done Tasks", () => {
     localStorage.setItem("kb-dashboard-hide-done", "true");
 
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done" }),
-      createMockTask({ id: "KB-002", column: "archived" }),
-      createMockTask({ id: "KB-003", column: "triage" }),
+      createMockTask({ id: "FN-001", column: "done" }),
+      createMockTask({ id: "FN-002", column: "archived" }),
+      createMockTask({ id: "FN-003", column: "triage" }),
     ];
     renderListView({ tasks });
 
@@ -1145,16 +1145,16 @@ describe("ListView Hide Done Tasks", () => {
     expect(screen.getByRole("button", { name: /show done/i })).toBeDefined();
 
     // Completed tasks should be hidden initially
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.queryByText("KB-002")).toBeNull();
-    expect(screen.getByText("KB-003")).toBeDefined();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.queryByText("FN-002")).toBeNull();
+    expect(screen.getByText("FN-003")).toBeDefined();
   });
 
   it("updates stats text when done and archived tasks are hidden", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done" }),
-      createMockTask({ id: "KB-002", column: "archived" }),
-      createMockTask({ id: "KB-003", column: "triage" }),
+      createMockTask({ id: "FN-001", column: "done" }),
+      createMockTask({ id: "FN-002", column: "archived" }),
+      createMockTask({ id: "FN-003", column: "triage" }),
     ];
 
     renderListView({ tasks });
@@ -1173,9 +1173,9 @@ describe("ListView Hide Done Tasks", () => {
 
   it("hides done and archived column section headers when hide done is active", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done" }),
-      createMockTask({ id: "KB-002", column: "archived" }),
-      createMockTask({ id: "KB-003", column: "triage" }),
+      createMockTask({ id: "FN-001", column: "done" }),
+      createMockTask({ id: "FN-002", column: "archived" }),
+      createMockTask({ id: "FN-003", column: "triage" }),
     ];
 
     renderListView({ tasks });
@@ -1208,8 +1208,8 @@ describe("ListView Hide Done Tasks", () => {
 
   it("shows done drop zone with count when hide done is active", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done" }),
-      createMockTask({ id: "KB-002", column: "done" }),
+      createMockTask({ id: "FN-001", column: "done" }),
+      createMockTask({ id: "FN-002", column: "done" }),
     ];
 
     renderListView({ tasks });
@@ -1226,8 +1226,8 @@ describe("ListView Hide Done Tasks", () => {
 
   it("shows archived drop zone with count when hide done is active", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "archived" }),
-      createMockTask({ id: "KB-002", column: "archived" }),
+      createMockTask({ id: "FN-001", column: "archived" }),
+      createMockTask({ id: "FN-002", column: "archived" }),
     ];
 
     renderListView({ tasks });
@@ -1244,9 +1244,9 @@ describe("ListView Hide Done Tasks", () => {
 
   it("preserves hide done state through filter changes", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done", title: "Alpha" }),
-      createMockTask({ id: "KB-002", column: "archived", title: "Beta" }),
-      createMockTask({ id: "KB-003", column: "triage", title: "Gamma" }),
+      createMockTask({ id: "FN-001", column: "done", title: "Alpha" }),
+      createMockTask({ id: "FN-002", column: "archived", title: "Beta" }),
+      createMockTask({ id: "FN-003", column: "triage", title: "Gamma" }),
     ];
 
     renderListView({ tasks });
@@ -1260,16 +1260,16 @@ describe("ListView Hide Done Tasks", () => {
     fireEvent.change(filterInput, { target: { value: "Gamma" } });
 
     // Completed tasks should remain hidden
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.queryByText("FN-002")).toBeNull();
     // Filtered task should be visible
-    expect(screen.getByText("KB-003")).toBeDefined();
+    expect(screen.getByText("FN-003")).toBeDefined();
   });
 
   it("shows done section when selectedColumn is done even with hide done active", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "done", title: "Done Task" }),
-      createMockTask({ id: "KB-002", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "done", title: "Done Task" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Triage Task" }),
     ];
 
     renderListView({ tasks });
@@ -1279,21 +1279,21 @@ describe("ListView Hide Done Tasks", () => {
     fireEvent.click(hideDoneButton);
 
     // Done task should be hidden
-    expect(screen.queryByText("KB-001")).toBeNull();
+    expect(screen.queryByText("FN-001")).toBeNull();
 
     // Click on the done drop zone to select that column
     const doneZone = document.querySelector('[data-column="done"].list-drop-zone')!;
     fireEvent.click(doneZone);
 
     // Done task should now be visible because selectedColumn overrides hide
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
   });
 
   it("shows archived section when selectedColumn is archived even with hide done active", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "archived", title: "Archived Task" }),
-      createMockTask({ id: "KB-002", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "archived", title: "Archived Task" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Triage Task" }),
     ];
 
     renderListView({ tasks });
@@ -1303,15 +1303,15 @@ describe("ListView Hide Done Tasks", () => {
     fireEvent.click(hideDoneButton);
 
     // Archived task should be hidden
-    expect(screen.queryByText("KB-001")).toBeNull();
+    expect(screen.queryByText("FN-001")).toBeNull();
 
     // Click on the archived drop zone to select that column
     const archivedZone = document.querySelector('[data-column="archived"].list-drop-zone')!;
     fireEvent.click(archivedZone);
 
     // Archived task should now be visible because selectedColumn overrides hide
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
   });
 });
 
@@ -1463,15 +1463,15 @@ describe("ListView Collapsible Sections", () => {
 
   it("clicking section header toggles collapse and hides task rows", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task 1" }),
-      createMockTask({ id: "KB-002", column: "triage", title: "Triage Task 2" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task 1" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Triage Task 2" }),
     ];
 
     renderListView({ tasks });
 
     // Both tasks should be visible initially
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
 
     // Find and click the triage section header
     const triageHeader = screen.getAllByRole("row").find(r =>
@@ -1481,8 +1481,8 @@ describe("ListView Collapsible Sections", () => {
     fireEvent.click(triageHeader!);
 
     // Tasks should be hidden after collapse
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.queryByText("FN-002")).toBeNull();
 
     // Section header should have collapsed class
     expect(triageHeader?.className).toContain("list-section-header--collapsed");
@@ -1494,7 +1494,7 @@ describe("ListView Collapsible Sections", () => {
 
   it("clicking again expands section and shows task rows", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
     ];
 
     renderListView({ tasks });
@@ -1508,13 +1508,13 @@ describe("ListView Collapsible Sections", () => {
     fireEvent.click(triageHeader!);
 
     // Task should be hidden
-    expect(screen.queryByText("KB-001")).toBeNull();
+    expect(screen.queryByText("FN-001")).toBeNull();
 
     // Click again to expand
     fireEvent.click(triageHeader!);
 
     // Task should be visible again
-    expect(screen.getByText("KB-001")).toBeDefined();
+    expect(screen.getByText("FN-001")).toBeDefined();
 
     // Re-query for the header to get fresh DOM reference after re-render
     triageHeader = screen.getAllByRole("row").find(r =>
@@ -1530,7 +1530,7 @@ describe("ListView Collapsible Sections", () => {
 
   it("collapse state persists to localStorage", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
     ];
 
     renderListView({ tasks });
@@ -1553,17 +1553,17 @@ describe("ListView Collapsible Sections", () => {
     localStorage.setItem("kb-dashboard-list-collapsed", JSON.stringify(["triage"]));
 
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
-      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
     ];
 
     renderListView({ tasks });
 
     // Triage task should be hidden initially (collapsed from localStorage)
-    expect(screen.queryByText("KB-001")).toBeNull();
+    expect(screen.queryByText("FN-001")).toBeNull();
 
     // Todo task should be visible
-    expect(screen.getByText("KB-002")).toBeDefined();
+    expect(screen.getByText("FN-002")).toBeDefined();
 
     // Triage section header should have collapsed class
     const triageHeader = screen.getAllByRole("row").find(r =>
@@ -1574,9 +1574,9 @@ describe("ListView Collapsible Sections", () => {
 
   it("multiple sections can be collapsed independently", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
-      createMockTask({ id: "KB-002", column: "todo", title: "Todo Task" }),
-      createMockTask({ id: "KB-003", column: "in-progress", title: "In Progress Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
+      createMockTask({ id: "FN-003", column: "in-progress", title: "In Progress Task" }),
     ];
 
     renderListView({ tasks });
@@ -1595,11 +1595,11 @@ describe("ListView Collapsible Sections", () => {
     fireEvent.click(todoHeader!);
 
     // Triage and todo tasks should be hidden
-    expect(screen.queryByText("KB-001")).toBeNull();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.queryByText("FN-001")).toBeNull();
+    expect(screen.queryByText("FN-002")).toBeNull();
 
     // In Progress task should still be visible
-    expect(screen.getByText("KB-003")).toBeDefined();
+    expect(screen.getByText("FN-003")).toBeDefined();
 
     // Both sections should be marked as collapsed
     expect(triageHeader?.className).toContain("list-section-header--collapsed");
@@ -1615,9 +1615,9 @@ describe("ListView Collapsible Sections", () => {
 
   it("sorting still works with collapsed sections", () => {
     const tasks = [
-      createMockTask({ id: "KB-003", column: "triage", title: "Charlie" }),
-      createMockTask({ id: "KB-001", column: "triage", title: "Alpha" }),
-      createMockTask({ id: "KB-002", column: "triage", title: "Bravo" }),
+      createMockTask({ id: "FN-003", column: "triage", title: "Charlie" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Alpha" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Bravo" }),
     ];
 
     renderListView({ tasks });
@@ -1637,15 +1637,15 @@ describe("ListView Collapsible Sections", () => {
 
     // Get sorted rows and verify sorting still works
     const rows = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
-    expect(rows[0].textContent).toContain("KB-001"); // Alpha
-    expect(rows[1].textContent).toContain("KB-002"); // Bravo
-    expect(rows[2].textContent).toContain("KB-003"); // Charlie
+    expect(rows[0].textContent).toContain("FN-001"); // Alpha
+    expect(rows[1].textContent).toContain("FN-002"); // Bravo
+    expect(rows[2].textContent).toContain("FN-003"); // Charlie
   });
 
   it("filtering still works with collapsed sections", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Alpha Task" }),
-      createMockTask({ id: "KB-002", column: "triage", title: "Beta Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Alpha Task" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Beta Task" }),
     ];
 
     renderListView({ tasks });
@@ -1664,13 +1664,13 @@ describe("ListView Collapsible Sections", () => {
     fireEvent.click(triageHeader!);
 
     // Only Alpha task should be visible
-    expect(screen.getByText("KB-001")).toBeDefined();
-    expect(screen.queryByText("KB-002")).toBeNull();
+    expect(screen.getByText("FN-001")).toBeDefined();
+    expect(screen.queryByText("FN-002")).toBeNull();
   });
 
   it("section header has aria-expanded attribute for accessibility", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
     ];
 
     renderListView({ tasks });
@@ -1693,7 +1693,7 @@ describe("ListView Collapsible Sections", () => {
   it("collapsed section hides No tasks placeholder", () => {
     // Create tasks in one column, leave another column empty
     const tasks = [
-      createMockTask({ id: "KB-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
     ];
 
     renderListView({ tasks });
@@ -1725,7 +1725,7 @@ describe("ListView - Bulk Selection", () => {
   });
 
   const createMockTask = (overrides: Partial<Task> = {}): Task => ({
-    id: "KB-001",
+    id: "FN-001",
     description: "Test task description",
     title: "Test Task",
     column: "triage",
@@ -1741,7 +1741,7 @@ describe("ListView - Bulk Selection", () => {
   });
 
   it("shows selection checkbox in header", () => {
-    const tasks = [createMockTask({ id: "KB-001" })];
+    const tasks = [createMockTask({ id: "FN-001" })];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} />);
 
     const headerCheckbox = screen.getByLabelText("Select all visible tasks");
@@ -1750,8 +1750,8 @@ describe("ListView - Bulk Selection", () => {
 
   it("shows selection checkbox for each task row", () => {
     const tasks = [
-      createMockTask({ id: "KB-001" }),
-      createMockTask({ id: "KB-002" }),
+      createMockTask({ id: "FN-001" }),
+      createMockTask({ id: "FN-002" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} />);
 
@@ -1761,7 +1761,7 @@ describe("ListView - Bulk Selection", () => {
 
   it("disables checkbox for archived tasks", () => {
     const tasks = [
-      createMockTask({ id: "KB-001", column: "archived" }),
+      createMockTask({ id: "FN-001", column: "archived" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} />);
 
@@ -1771,8 +1771,8 @@ describe("ListView - Bulk Selection", () => {
 
   it("shows selection count when tasks are selected", () => {
     const tasks = [
-      createMockTask({ id: "KB-001" }),
-      createMockTask({ id: "KB-002" }),
+      createMockTask({ id: "FN-001" }),
+      createMockTask({ id: "FN-002" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} />);
 
@@ -1784,7 +1784,7 @@ describe("ListView - Bulk Selection", () => {
 
   it("clears selection when clear button clicked", () => {
     const tasks = [
-      createMockTask({ id: "KB-001" }),
+      createMockTask({ id: "FN-001" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} />);
 
@@ -1800,8 +1800,8 @@ describe("ListView - Bulk Selection", () => {
 
   it("toggles all visible tasks with select all checkbox", () => {
     const tasks = [
-      createMockTask({ id: "KB-001" }),
-      createMockTask({ id: "KB-002" }),
+      createMockTask({ id: "FN-001" }),
+      createMockTask({ id: "FN-002" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} />);
 
@@ -1815,7 +1815,7 @@ describe("ListView - Bulk Selection", () => {
     const availableModels = [
       { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
     ];
-    const tasks = [createMockTask({ id: "KB-001" })];
+    const tasks = [createMockTask({ id: "FN-001" })];
 
     render(
       <ListView
@@ -1837,7 +1837,7 @@ describe("ListView - Bulk Selection", () => {
     const availableModels = [
       { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
     ];
-    const tasks = [createMockTask({ id: "KB-001" })];
+    const tasks = [createMockTask({ id: "FN-001" })];
 
     render(
       <ListView
@@ -1857,19 +1857,19 @@ describe("ListView - Bulk Selection", () => {
   });
 
   it("persists selection to localStorage", () => {
-    const tasks = [createMockTask({ id: "KB-001" })];
+    const tasks = [createMockTask({ id: "FN-001" })];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} />);
 
     const checkbox = screen.getByLabelText("Select KB-001");
     fireEvent.click(checkbox);
 
-    expect(localStorage.getItem("kb-dashboard-selected-tasks")).toBe('["KB-001"]');
+    expect(localStorage.getItem("kb-dashboard-selected-tasks")).toBe('["FN-001"]');
   });
 
   it("shows header checkbox in indeterminate state when some tasks selected", () => {
     const tasks = [
-      createMockTask({ id: "KB-001" }),
-      createMockTask({ id: "KB-002" }),
+      createMockTask({ id: "FN-001" }),
+      createMockTask({ id: "FN-002" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} />);
 
@@ -1888,7 +1888,7 @@ describe("ListView - Bulk Selection", () => {
     const availableModels = [
       { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
     ];
-    const tasks = [createMockTask({ id: "KB-001" })];
+    const tasks = [createMockTask({ id: "FN-001" })];
 
     render(
       <ListView

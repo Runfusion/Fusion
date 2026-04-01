@@ -111,22 +111,22 @@ describe("board", () => {
     });
 
     it("returns single task ID when no dependencies", () => {
-      const task = createTask("KB-001");
-      expect(resolveDependencyOrder([task])).toEqual(["KB-001"]);
+      const task = createTask("FN-001");
+      expect(resolveDependencyOrder([task])).toEqual(["FN-001"]);
     });
 
     it("handles linear dependencies (A → B → C)", () => {
       // C depends on B, B depends on A
-      const taskC = createTask("KB-003", ["KB-002"]);
-      const taskB = createTask("KB-002", ["KB-001"]);
-      const taskA = createTask("KB-001");
+      const taskC = createTask("FN-003", ["FN-002"]);
+      const taskB = createTask("FN-002", ["FN-001"]);
+      const taskA = createTask("FN-001");
 
       const order = resolveDependencyOrder([taskC, taskB, taskA]);
 
       // A should come before B, B should come before C
-      const indexA = order.indexOf("KB-001");
-      const indexB = order.indexOf("KB-002");
-      const indexC = order.indexOf("KB-003");
+      const indexA = order.indexOf("FN-001");
+      const indexB = order.indexOf("FN-002");
+      const indexC = order.indexOf("FN-003");
 
       expect(indexA).toBeLessThan(indexB);
       expect(indexB).toBeLessThan(indexC);
@@ -138,17 +138,17 @@ describe("board", () => {
       //   B   C
       //    \ /
       //     D
-      const taskA = createTask("KB-A");
-      const taskB = createTask("KB-B", ["KB-A"]);
-      const taskC = createTask("KB-C", ["KB-A"]);
-      const taskD = createTask("KB-D", ["KB-B", "KB-C"]);
+      const taskA = createTask("FN-A");
+      const taskB = createTask("FN-B", ["FN-A"]);
+      const taskC = createTask("FN-C", ["FN-A"]);
+      const taskD = createTask("FN-D", ["FN-B", "FN-C"]);
 
       const order = resolveDependencyOrder([taskD, taskC, taskB, taskA]);
 
-      const indexA = order.indexOf("KB-A");
-      const indexB = order.indexOf("KB-B");
-      const indexC = order.indexOf("KB-C");
-      const indexD = order.indexOf("KB-D");
+      const indexA = order.indexOf("FN-A");
+      const indexB = order.indexOf("FN-B");
+      const indexC = order.indexOf("FN-C");
+      const indexD = order.indexOf("FN-D");
 
       // A should be first
       expect(indexA).toBeLessThan(indexB);
@@ -159,71 +159,71 @@ describe("board", () => {
     });
 
     it("handles disconnected components (independent tasks)", () => {
-      const taskA = createTask("KB-A");
-      const taskB = createTask("KB-B");
-      const taskC = createTask("KB-C");
+      const taskA = createTask("FN-A");
+      const taskB = createTask("FN-B");
+      const taskC = createTask("FN-C");
 
       const order = resolveDependencyOrder([taskB, taskC, taskA]);
 
       // All tasks should be in the output
-      expect(order).toContain("KB-A");
-      expect(order).toContain("KB-B");
-      expect(order).toContain("KB-C");
+      expect(order).toContain("FN-A");
+      expect(order).toContain("FN-B");
+      expect(order).toContain("FN-C");
       expect(order).toHaveLength(3);
     });
 
     it("handles circular dependencies gracefully (should not infinite loop)", () => {
       // A → B → C → A (circular)
-      const taskA = createTask("KB-A", ["KB-C"]);
-      const taskB = createTask("KB-B", ["KB-A"]);
-      const taskC = createTask("KB-C", ["KB-B"]);
+      const taskA = createTask("FN-A", ["FN-C"]);
+      const taskB = createTask("FN-B", ["FN-A"]);
+      const taskC = createTask("FN-C", ["FN-B"]);
 
       // Should complete without hanging
       const order = resolveDependencyOrder([taskA, taskB, taskC]);
 
       // All tasks should be in the output (order is not strictly defined for circular)
-      expect(order).toContain("KB-A");
-      expect(order).toContain("KB-B");
-      expect(order).toContain("KB-C");
+      expect(order).toContain("FN-A");
+      expect(order).toContain("FN-B");
+      expect(order).toContain("FN-C");
       expect(order).toHaveLength(3);
     });
 
     it("handles self-referential dependencies gracefully", () => {
-      const taskA = createTask("KB-A", ["KB-A"]);
-      const taskB = createTask("KB-B");
+      const taskA = createTask("FN-A", ["FN-A"]);
+      const taskB = createTask("FN-B");
 
       // Should complete without infinite recursion
       const order = resolveDependencyOrder([taskA, taskB]);
 
-      expect(order).toContain("KB-A");
-      expect(order).toContain("KB-B");
+      expect(order).toContain("FN-A");
+      expect(order).toContain("FN-B");
       expect(order).toHaveLength(2);
     });
 
     it("handles partial ordering correctly", () => {
       // A depends on B, C and D are independent
-      const taskA = createTask("KB-A", ["KB-B"]);
-      const taskB = createTask("KB-B");
-      const taskC = createTask("KB-C");
-      const taskD = createTask("KB-D");
+      const taskA = createTask("FN-A", ["FN-B"]);
+      const taskB = createTask("FN-B");
+      const taskC = createTask("FN-C");
+      const taskD = createTask("FN-D");
 
       const order = resolveDependencyOrder([taskA, taskB, taskC, taskD]);
 
       // B must come before A
-      expect(order.indexOf("KB-B")).toBeLessThan(order.indexOf("KB-A"));
+      expect(order.indexOf("FN-B")).toBeLessThan(order.indexOf("FN-A"));
 
       // All tasks should be present
       expect(order).toHaveLength(4);
     });
 
     it("handles empty dependencies array correctly", () => {
-      const taskA = createTask("KB-A", []);
-      const taskB = createTask("KB-B", []);
+      const taskA = createTask("FN-A", []);
+      const taskB = createTask("FN-B", []);
 
       const order = resolveDependencyOrder([taskA, taskB]);
 
-      expect(order).toContain("KB-A");
-      expect(order).toContain("KB-B");
+      expect(order).toContain("FN-A");
+      expect(order).toContain("FN-B");
       expect(order).toHaveLength(2);
     });
 
@@ -233,20 +233,20 @@ describe("board", () => {
       // B depends on A
       // C depends on A
       // A has no deps
-      const taskA = createTask("KB-A");
-      const taskB = createTask("KB-B", ["KB-A"]);
-      const taskC = createTask("KB-C", ["KB-A"]);
-      const taskD = createTask("KB-D", ["KB-B", "KB-C"]);
-      const taskE = createTask("KB-E", ["KB-D"]);
+      const taskA = createTask("FN-A");
+      const taskB = createTask("FN-B", ["FN-A"]);
+      const taskC = createTask("FN-C", ["FN-A"]);
+      const taskD = createTask("FN-D", ["FN-B", "FN-C"]);
+      const taskE = createTask("KB-E", ["FN-D"]);
 
       const order = resolveDependencyOrder([taskE, taskD, taskC, taskB, taskA]);
 
       // Validate partial ordering constraints
-      expect(order.indexOf("KB-A")).toBeLessThan(order.indexOf("KB-B"));
-      expect(order.indexOf("KB-A")).toBeLessThan(order.indexOf("KB-C"));
-      expect(order.indexOf("KB-B")).toBeLessThan(order.indexOf("KB-D"));
-      expect(order.indexOf("KB-C")).toBeLessThan(order.indexOf("KB-D"));
-      expect(order.indexOf("KB-D")).toBeLessThan(order.indexOf("KB-E"));
+      expect(order.indexOf("FN-A")).toBeLessThan(order.indexOf("FN-B"));
+      expect(order.indexOf("FN-A")).toBeLessThan(order.indexOf("FN-C"));
+      expect(order.indexOf("FN-B")).toBeLessThan(order.indexOf("FN-D"));
+      expect(order.indexOf("FN-C")).toBeLessThan(order.indexOf("FN-D"));
+      expect(order.indexOf("FN-D")).toBeLessThan(order.indexOf("KB-E"));
 
       expect(order).toHaveLength(5);
     });
@@ -265,9 +265,9 @@ describe("board", () => {
     });
 
     it("returns deterministic order for same input", () => {
-      const taskA = createTask("KB-A");
-      const taskB = createTask("KB-B", ["KB-A"]);
-      const taskC = createTask("KB-C", ["KB-A"]);
+      const taskA = createTask("FN-A");
+      const taskB = createTask("FN-B", ["FN-A"]);
+      const taskC = createTask("FN-C", ["FN-A"]);
 
       const order1 = resolveDependencyOrder([taskA, taskB, taskC]);
       const order2 = resolveDependencyOrder([taskA, taskB, taskC]);

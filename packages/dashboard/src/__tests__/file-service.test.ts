@@ -152,36 +152,36 @@ describe("path traversal protection", () => {
   describe("via listFiles (task)", () => {
     it("rejects path traversal in task context", async () => {
       mockGetRootDir.mockReturnValue("/project");
-      mockGetTask.mockResolvedValue({ id: "KB-123", worktree: undefined });
+      mockGetTask.mockResolvedValue({ id: "FN-123", worktree: undefined });
 
-      await expect(listFiles(mockStore, "KB-123", "../other-task")).rejects.toThrow(FileServiceError);
-      await expect(listFiles(mockStore, "KB-123", "../other-task")).rejects.toThrow("Path traversal detected");
+      await expect(listFiles(mockStore, "FN-123", "../other-task")).rejects.toThrow(FileServiceError);
+      await expect(listFiles(mockStore, "FN-123", "../other-task")).rejects.toThrow("Path traversal detected");
     });
 
     it("rejects absolute paths in task context", async () => {
       mockGetRootDir.mockReturnValue("/project");
-      mockGetTask.mockResolvedValue({ id: "KB-123", worktree: undefined });
+      mockGetTask.mockResolvedValue({ id: "FN-123", worktree: undefined });
 
-      await expect(listFiles(mockStore, "KB-123", "/etc/passwd")).rejects.toThrow(FileServiceError);
+      await expect(listFiles(mockStore, "FN-123", "/etc/passwd")).rejects.toThrow(FileServiceError);
     });
   });
 
   describe("via readFile (task)", () => {
     it("rejects path traversal when reading task files", async () => {
       mockGetRootDir.mockReturnValue("/project");
-      mockGetTask.mockResolvedValue({ id: "KB-123", worktree: undefined });
+      mockGetTask.mockResolvedValue({ id: "FN-123", worktree: undefined });
 
-      await expect(readFile(mockStore, "KB-123", "../../secret.txt")).rejects.toThrow(FileServiceError);
-      await expect(readFile(mockStore, "KB-123", "../../secret.txt")).rejects.toThrow("Path traversal detected");
+      await expect(readFile(mockStore, "FN-123", "../../secret.txt")).rejects.toThrow(FileServiceError);
+      await expect(readFile(mockStore, "FN-123", "../../secret.txt")).rejects.toThrow("Path traversal detected");
     });
   });
 
   describe("via writeFile (task)", () => {
     it("rejects path traversal when writing task files", async () => {
       mockGetRootDir.mockReturnValue("/project");
-      mockGetTask.mockResolvedValue({ id: "KB-123", worktree: undefined });
+      mockGetTask.mockResolvedValue({ id: "FN-123", worktree: undefined });
 
-      await expect(writeFile(mockStore, "KB-123", "../../outside.txt", "data")).rejects.toThrow(FileServiceError);
+      await expect(writeFile(mockStore, "FN-123", "../../outside.txt", "data")).rejects.toThrow(FileServiceError);
     });
   });
 
@@ -418,7 +418,7 @@ describe("task file operations", () => {
       const worktreePath = "/worktrees/kb-123";
 
       mockGetTask.mockResolvedValue({
-        id: "KB-123",
+        id: "FN-123",
         worktree: worktreePath,
       });
       mockExistsSync.mockReturnValue(true);
@@ -429,7 +429,7 @@ describe("task file operations", () => {
       });
       mockReadFile.mockResolvedValue("Task content");
 
-      const result = await readFile(mockStore, "KB-123", "PROMPT.md");
+      const result = await readFile(mockStore, "FN-123", "PROMPT.md");
 
       expect(mockReadFile).toHaveBeenCalledWith(
         "/worktrees/kb-123/PROMPT.md",
@@ -440,7 +440,7 @@ describe("task file operations", () => {
 
     it("falls back to task directory when worktree doesn't exist", async () => {
       mockGetTask.mockResolvedValue({
-        id: "KB-123",
+        id: "FN-123",
         worktree: "/missing/worktree",
       });
       mockGetRootDir.mockReturnValue("/project");
@@ -452,7 +452,7 @@ describe("task file operations", () => {
       });
       mockReadFile.mockResolvedValue("Task content");
 
-      await readFile(mockStore, "KB-123", "PROMPT.md");
+      await readFile(mockStore, "FN-123", "PROMPT.md");
 
       expect(mockReadFile).toHaveBeenCalledWith(
         "/project/.kb/tasks/KB-123/PROMPT.md",
@@ -462,7 +462,7 @@ describe("task file operations", () => {
 
     it("falls back to task directory when worktree is undefined", async () => {
       mockGetTask.mockResolvedValue({
-        id: "KB-123",
+        id: "FN-123",
         worktree: undefined,
       });
       mockGetRootDir.mockReturnValue("/project");
@@ -473,7 +473,7 @@ describe("task file operations", () => {
       });
       mockReadFile.mockResolvedValue("Task content");
 
-      await readFile(mockStore, "KB-123", "PROMPT.md");
+      await readFile(mockStore, "FN-123", "PROMPT.md");
 
       expect(mockReadFile).toHaveBeenCalledWith(
         "/project/.kb/tasks/KB-123/PROMPT.md",
@@ -539,7 +539,7 @@ describe("workspace operations", () => {
     });
 
     it("task ID workspace resolves to task path", async () => {
-      mockGetTask.mockResolvedValue({ id: "KB-456", worktree: undefined });
+      mockGetTask.mockResolvedValue({ id: "FN-456", worktree: undefined });
       mockGetRootDir.mockReturnValue("/project");
       mockStat.mockResolvedValue({
         isDirectory: () => true,
@@ -557,7 +557,7 @@ describe("workspace operations", () => {
         mtime: new Date(),
       });
 
-      const result = await listWorkspaceFiles(mockStore, "KB-456");
+      const result = await listWorkspaceFiles(mockStore, "FN-456");
 
       expect(result.entries).toHaveLength(1);
       expect(result.entries[0].name).toBe("PROMPT.md");
@@ -584,7 +584,7 @@ describe("workspace operations", () => {
     });
 
     it("reads file from task workspace", async () => {
-      mockGetTask.mockResolvedValue({ id: "KB-123", worktree: undefined });
+      mockGetTask.mockResolvedValue({ id: "FN-123", worktree: undefined });
       mockGetRootDir.mockReturnValue("/project");
       mockStat.mockResolvedValue({
         isFile: () => true,
@@ -593,7 +593,7 @@ describe("workspace operations", () => {
       });
       mockReadFile.mockResolvedValue("Task description");
 
-      const result = await readWorkspaceFile(mockStore, "KB-123", "PROMPT.md");
+      const result = await readWorkspaceFile(mockStore, "FN-123", "PROMPT.md");
 
       expect(result.content).toBe("Task description");
       expect(mockReadFile).toHaveBeenCalledWith(
@@ -626,7 +626,7 @@ describe("workspace operations", () => {
     });
 
     it("writes file to task workspace", async () => {
-      mockGetTask.mockResolvedValue({ id: "KB-123", worktree: undefined });
+      mockGetTask.mockResolvedValue({ id: "FN-123", worktree: undefined });
       mockGetRootDir.mockReturnValue("/project");
       mockStat
         .mockRejectedValueOnce({ code: "ENOENT" })
@@ -637,7 +637,7 @@ describe("workspace operations", () => {
         mtime: new Date("2024-04-01"),
       });
 
-      const result = await writeWorkspaceFile(mockStore, "KB-123", "output.txt", "Task output");
+      const result = await writeWorkspaceFile(mockStore, "FN-123", "output.txt", "Task output");
 
       expect(result.success).toBe(true);
       expect(mockWriteFile).toHaveBeenCalledWith(

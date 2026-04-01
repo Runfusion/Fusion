@@ -49,7 +49,7 @@ const MOCK_MODELS: ModelInfo[] = [
 
 function createMockTask(overrides: Partial<Task> = {}): Task {
   return {
-    id: "KB-001",
+    id: "FN-001",
     title: "Test task",
     description: "Task description",
     column: "todo" as Column,
@@ -69,7 +69,7 @@ function renderCard(
 ) {
   const props: ComponentProps<typeof InlineCreateCard> = {
     tasks,
-    onSubmit: vi.fn().mockResolvedValue({ id: "KB-001" } as Task),
+    onSubmit: vi.fn().mockResolvedValue({ id: "FN-001" } as Task),
     onCancel: vi.fn(),
     addToast: vi.fn(),
     availableModels: MOCK_MODELS,
@@ -144,7 +144,7 @@ describe("InlineCreateCard blur-to-cancel", () => {
 
 describe("InlineCreateCard dep-dropdown focus retention", () => {
   const testTasks: Task[] = [
-    createMockTask({ id: "KB-010", title: "Task A", description: "First task" }),
+    createMockTask({ id: "FN-010", title: "Task A", description: "First task" }),
   ];
 
   it("dep-dropdown-item mouseDown calls preventDefault to retain focus", () => {
@@ -386,9 +386,9 @@ describe("InlineCreateCard model selector", () => {
 
 describe("InlineCreateCard dependency dropdown sort order", () => {
   const scrambledTasks: Task[] = [
-    createMockTask({ id: "KB-001", title: "Oldest", description: "First", createdAt: "2026-01-01T00:00:00Z" }),
-    createMockTask({ id: "KB-003", title: "Newest", description: "Third", createdAt: "2026-03-01T00:00:00Z" }),
-    createMockTask({ id: "KB-002", title: "Middle", description: "Second", createdAt: "2026-02-01T00:00:00Z" }),
+    createMockTask({ id: "FN-001", title: "Oldest", description: "First", createdAt: "2026-01-01T00:00:00Z" }),
+    createMockTask({ id: "FN-003", title: "Newest", description: "Third", createdAt: "2026-03-01T00:00:00Z" }),
+    createMockTask({ id: "FN-002", title: "Middle", description: "Second", createdAt: "2026-02-01T00:00:00Z" }),
   ];
 
   it("renders dependency dropdown items sorted newest-first by createdAt", () => {
@@ -397,26 +397,26 @@ describe("InlineCreateCard dependency dropdown sort order", () => {
     const items = document.querySelectorAll(".dep-dropdown-item");
     expect(items).toHaveLength(3);
     const ids = Array.from(items).map((el) => el.querySelector(".dep-dropdown-id")?.textContent);
-    expect(ids).toEqual(["KB-003", "KB-002", "KB-001"]);
+    expect(ids).toEqual(["FN-003", "FN-002", "FN-001"]);
   });
 
   it("preserves newest-first sort order when a search filter is applied", () => {
     renderCard(scrambledTasks);
     fireEvent.click(screen.getByText(/Deps/));
     const input = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "KB-00" } });
+    fireEvent.change(input, { target: { value: "FN-00" } });
     const items = document.querySelectorAll(".dep-dropdown-item");
     expect(items).toHaveLength(3);
     const ids = Array.from(items).map((el) => el.querySelector(".dep-dropdown-id")?.textContent);
-    expect(ids).toEqual(["KB-003", "KB-002", "KB-001"]);
+    expect(ids).toEqual(["FN-003", "FN-002", "FN-001"]);
   });
 });
 
 describe("InlineCreateCard dependency dropdown sort with identical timestamps", () => {
   const sameTimeTasks: Task[] = [
-    createMockTask({ id: "KB-001", title: "First", description: "First task" }),
-    createMockTask({ id: "KB-002", title: "Second", description: "Second task" }),
-    createMockTask({ id: "KB-003", title: "Third", description: "Third task" }),
+    createMockTask({ id: "FN-001", title: "First", description: "First task" }),
+    createMockTask({ id: "FN-002", title: "Second", description: "Second task" }),
+    createMockTask({ id: "FN-003", title: "Third", description: "Third task" }),
   ];
 
   it("renders tasks with identical createdAt sorted newest-ID-first (descending numeric ID)", () => {
@@ -425,26 +425,26 @@ describe("InlineCreateCard dependency dropdown sort with identical timestamps", 
     const items = document.querySelectorAll(".dep-dropdown-item");
     expect(items).toHaveLength(3);
     const ids = Array.from(items).map((el) => el.querySelector(".dep-dropdown-id")?.textContent);
-    expect(ids).toEqual(["KB-003", "KB-002", "KB-001"]);
+    expect(ids).toEqual(["FN-003", "FN-002", "FN-001"]);
   });
 
   it("preserves newest-ID-first order when search filter is applied with identical timestamps", () => {
     renderCard(sameTimeTasks);
     fireEvent.click(screen.getByText(/Deps/));
     const input = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "KB-00" } });
+    fireEvent.change(input, { target: { value: "FN-00" } });
     const items = document.querySelectorAll(".dep-dropdown-item");
     expect(items).toHaveLength(3);
     const ids = Array.from(items).map((el) => el.querySelector(".dep-dropdown-id")?.textContent);
-    expect(ids).toEqual(["KB-003", "KB-002", "KB-001"]);
+    expect(ids).toEqual(["FN-003", "FN-002", "FN-001"]);
   });
 });
 
 describe("InlineCreateCard dependency dropdown search", () => {
   const testTasks: Task[] = [
-    createMockTask({ id: "KB-001", title: "Fix login", description: "Login page broken", createdAt: "2026-01-01T00:00:00Z" }),
-    createMockTask({ id: "KB-002", title: "Add dark mode", description: "Theme support", createdAt: "2026-02-01T00:00:00Z" }),
-    createMockTask({ id: "KB-003", title: "Refactor API", description: "Clean up endpoints", createdAt: "2026-03-01T00:00:00Z" }),
+    createMockTask({ id: "FN-001", title: "Fix login", description: "Login page broken", createdAt: "2026-01-01T00:00:00Z" }),
+    createMockTask({ id: "FN-002", title: "Add dark mode", description: "Theme support", createdAt: "2026-02-01T00:00:00Z" }),
+    createMockTask({ id: "FN-003", title: "Refactor API", description: "Clean up endpoints", createdAt: "2026-03-01T00:00:00Z" }),
   ];
 
   it("shows search input when dropdown is opened", () => {
@@ -463,7 +463,7 @@ describe("InlineCreateCard dependency dropdown search", () => {
 
     const items = document.querySelectorAll(".dep-dropdown-item");
     expect(items).toHaveLength(1);
-    expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("KB-002");
+    expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("FN-002");
   });
 });
 

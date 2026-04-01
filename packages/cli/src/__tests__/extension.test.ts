@@ -126,10 +126,10 @@ describe("kb pi extension", () => {
         makeCtx(tmpDir),
       );
 
-      expect(result.content[0].text).toContain("KB-001");
+      expect(result.content[0].text).toContain("FN-001");
       expect(result.content[0].text).toContain("Fix the login button");
       expect(result.content[0].text).toContain("triage");
-      expect(result.details.taskId).toBe("KB-001");
+      expect(result.details.taskId).toBe("FN-001");
       expect(result.details.column).toBe("triage");
     });
 
@@ -145,14 +145,14 @@ describe("kb pi extension", () => {
 
       const result = await tool.execute(
         "call-2",
-        { description: "Second task", depends: ["KB-001"] },
+        { description: "Second task", depends: ["FN-001"] },
         undefined,
         undefined,
         makeCtx(tmpDir),
       );
 
-      expect(result.details.taskId).toBe("KB-002");
-      expect(result.details.dependencies).toEqual(["KB-001"]);
+      expect(result.details.taskId).toBe("FN-002");
+      expect(result.details.dependencies).toEqual(["FN-001"]);
       expect(result.content[0].text).toContain("Dependencies: KB-001");
     });
   });
@@ -199,8 +199,8 @@ describe("kb pi extension", () => {
       );
 
       expect(result.content[0].text).toContain("Triage (2)");
-      expect(result.content[0].text).toContain("KB-001");
-      expect(result.content[0].text).toContain("KB-002");
+      expect(result.content[0].text).toContain("FN-001");
+      expect(result.content[0].text).toContain("FN-002");
       expect(result.details.count).toBe(2);
     });
 
@@ -223,7 +223,7 @@ describe("kb pi extension", () => {
         makeCtx(tmpDir),
       );
       expect(triageResult.content[0].text).toContain("Triage (1)");
-      expect(triageResult.content[0].text).toContain("KB-001");
+      expect(triageResult.content[0].text).toContain("FN-001");
 
       const todoResult = await listTool.execute(
         "call-2",
@@ -257,9 +257,9 @@ describe("kb pi extension", () => {
       );
 
       expect(result.content[0].text).toContain("Triage (5)");
-      expect(result.content[0].text).toContain("KB-001");
-      expect(result.content[0].text).toContain("KB-002");
-      expect(result.content[0].text).not.toContain("KB-003");
+      expect(result.content[0].text).toContain("FN-001");
+      expect(result.content[0].text).toContain("FN-002");
+      expect(result.content[0].text).not.toContain("FN-003");
       expect(result.content[0].text).toContain("... and 3 more");
     });
   });
@@ -278,17 +278,17 @@ describe("kb pi extension", () => {
       const showTool = api.tools.get("kb_task_show")!;
       const result = await showTool.execute(
         "call-1",
-        { id: "KB-001" },
+        { id: "FN-001" },
         undefined,
         undefined,
         makeCtx(tmpDir),
       );
 
-      expect(result.content[0].text).toContain("KB-001");
+      expect(result.content[0].text).toContain("FN-001");
       expect(result.content[0].text).toContain("Implement caching layer");
       expect(result.content[0].text).toContain("Triage");
       expect(result.details.task).toBeDefined();
-      expect(result.details.task.id).toBe("KB-001");
+      expect(result.details.task.id).toBe("FN-001");
     });
   });
 
@@ -309,7 +309,7 @@ describe("kb pi extension", () => {
       const attachTool = api.tools.get("kb_task_attach")!;
       const result = await attachTool.execute(
         "call-1",
-        { id: "KB-001", path: "test.txt" },
+        { id: "FN-001", path: "test.txt" },
         undefined,
         undefined,
         makeCtx(tmpDir),
@@ -338,7 +338,7 @@ describe("kb pi extension", () => {
       await expect(
         attachTool.execute(
           "call-1",
-          { id: "KB-001", path: "file.exe" },
+          { id: "FN-001", path: "file.exe" },
           undefined,
           undefined,
           makeCtx(tmpDir),
@@ -361,7 +361,7 @@ describe("kb pi extension", () => {
       const pauseTool = api.tools.get("kb_task_pause")!;
       const pauseResult = await pauseTool.execute(
         "call-1",
-        { id: "KB-001" },
+        { id: "FN-001" },
         undefined,
         undefined,
         makeCtx(tmpDir),
@@ -372,7 +372,7 @@ describe("kb pi extension", () => {
       const showTool = api.tools.get("kb_task_show")!;
       const show = await showTool.execute(
         "call-2",
-        { id: "KB-001" },
+        { id: "FN-001" },
         undefined,
         undefined,
         makeCtx(tmpDir),
@@ -383,7 +383,7 @@ describe("kb pi extension", () => {
       const unpauseTool = api.tools.get("kb_task_unpause")!;
       const unpauseResult = await unpauseTool.execute(
         "call-3",
-        { id: "KB-001" },
+        { id: "FN-001" },
         undefined,
         undefined,
         makeCtx(tmpDir),

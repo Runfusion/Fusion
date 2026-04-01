@@ -350,7 +350,7 @@ export class TaskExecutor {
    * than being named after the task ID. This decouples directory names from
    * tasks, enabling worktree reuse across dependency chains. When resuming
    * a task that already has `task.worktree` set, the existing path is used
-   * as-is. Branches remain task-scoped (`kb/{task-id}`).
+   * as-is. Branches remain task-scoped (`fusion/{task-id}`).
    */
   async execute(task: Task): Promise<void> {
     if (this.executing.has(task.id)) return;
@@ -399,7 +399,7 @@ export class TaskExecutor {
       }
 
       // Create or reuse worktree — try pool first when recycling is enabled
-      const branchName = `kb/${task.id.toLowerCase()}`;
+      const branchName = `fusion/${task.id.toLowerCase()}`;
       // Use generateWorktreeName for human-friendly directory names (adjective-noun pattern)
       // instead of task.id, so worktrees are named like ".worktrees/swift-falcon"
       let isResume = existsSync(worktreePath);
@@ -1049,7 +1049,7 @@ export class TaskExecutor {
     }
 
     // Delete the branch
-    const branch = `kb/${taskId.toLowerCase()}`;
+    const branch = `fusion/${taskId.toLowerCase()}`;
     try {
       execSync(`git branch -D "${branch}"`, { cwd: this.rootDir, stdio: "pipe" });
     } catch {
@@ -1070,9 +1070,9 @@ export class TaskExecutor {
   /**
    * Create a git worktree at `path` on a new branch.
    *
-   * @param branch — Branch name (e.g., `kb/kb-042`)
+   * @param branch — Branch name (e.g., `fusion/fn-042`)
    * @param path — Absolute worktree directory path
-   * @param startPoint — Optional git ref to branch from (e.g., `kb/kb-041`).
+   * @param startPoint — Optional git ref to branch from (e.g., `fusion/fn-041`).
    *   When provided, the worktree starts from that ref instead of HEAD.
    */
   /**
@@ -1268,7 +1268,7 @@ If issues are found that need attention, describe them clearly.`;
    * Create a git worktree with automatic recovery from conflicts.
    * Implements retry logic with exponential backoff for transient failures.
    * 
-   * @param branch - The branch name to create (e.g., "kb/kb-123")
+   * @param branch - The branch name to create (e.g., "fusion/fn-123")
    * @param path - The desired worktree path
    * @param taskId - The task ID for logging
    * @param startPoint - Optional base branch/commit for new branch

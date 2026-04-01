@@ -21,7 +21,7 @@ describe("useWorkspaces", () => {
   it("loads project and task workspaces", async () => {
     mockFetchWorkspaces.mockResolvedValueOnce({
       project: "/Users/test/repo",
-      tasks: [{ id: "KB-123", title: "Feature", worktree: "/Users/test/.worktrees/kb-123" }],
+      tasks: [{ id: "FN-123", title: "Feature", worktree: "/Users/test/.worktrees/kb-123" }],
     });
 
     const { result } = renderHook(() => useWorkspaces());
@@ -31,8 +31,8 @@ describe("useWorkspaces", () => {
     expect(result.current.projectName).toBe("repo");
     expect(result.current.workspaces).toEqual([
       {
-        id: "KB-123",
-        label: "KB-123",
+        id: "FN-123",
+        label: "FN-123",
         title: "Feature",
         worktree: "/Users/test/.worktrees/kb-123",
         kind: "task",
@@ -45,7 +45,7 @@ describe("useWorkspaces", () => {
       .mockResolvedValueOnce({ project: "/repo", tasks: [] })
       .mockResolvedValueOnce({
         project: "/repo",
-        tasks: [{ id: "KB-200", title: "Later", worktree: "/repo/.worktrees/kb-200" }],
+        tasks: [{ id: "FN-200", title: "Later", worktree: "/repo/.worktrees/kb-200" }],
       });
 
     const { result } = renderHook(() => useWorkspaces());

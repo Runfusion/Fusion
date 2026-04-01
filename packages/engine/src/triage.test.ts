@@ -41,7 +41,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
 }
 
 const mockTaskDetail: TaskDetail = {
-  id: "KB-001",
+  id: "FN-001",
   description: "Test task description",
   column: "triage",
   dependencies: [],
@@ -67,7 +67,7 @@ describe("buildSpecificationPrompt", () => {
     );
 
     expect(prompt).toContain("Specify this task");
-    expect(prompt).toContain("KB-001");
+    expect(prompt).toContain("FN-001");
     expect(prompt).toContain("Test Task");
     expect(prompt).toContain("Test task description");
     expect(prompt).toContain(".kb/tasks/KB-001/PROMPT.md");
@@ -147,7 +147,7 @@ describe("buildSpecificationPrompt", () => {
   it("includes dependencies when present", () => {
     const taskWithDeps: TaskDetail = {
       ...baseTask,
-      dependencies: ["KB-002", "KB-003"],
+      dependencies: ["FN-002", "FN-003"],
     };
 
     const prompt = buildSpecificationPrompt(
@@ -156,7 +156,7 @@ describe("buildSpecificationPrompt", () => {
     );
 
     expect(prompt).toContain("Dependencies");
-    expect(prompt).toContain("KB-002, KB-003");
+    expect(prompt).toContain("FN-002, FN-003");
   });
 
   it("handles task without title", () => {
@@ -216,7 +216,7 @@ describe("TRIAGE_SYSTEM_PROMPT", () => {
 
 describe("readAttachmentContents", () => {
   const testDir = join(__dirname, "test-attachments");
-  const taskId = "KB-TEST";
+  const taskId = "FN-TEST";
 
   beforeEach(async () => {
     // Clean up and create test directory
@@ -376,7 +376,7 @@ describe("TriageProcessor", () => {
 
 describe("Re-specification flow", () => {
   const taskWithRevisionRequest: Task = {
-    id: "KB-001",
+    id: "FN-001",
     description: "Test task",
     column: "triage",
     dependencies: [],
@@ -444,12 +444,12 @@ describe("requirePlanApproval setting", () => {
   });
 
   it("sets awaiting-approval status instead of moving to todo when requirePlanApproval is true", async () => {
-    const taskDir = join(rootDir, ".kb", "tasks", "KB-001");
+    const taskDir = join(rootDir, ".kb", "tasks", "FN-001");
     await mkdir(taskDir, { recursive: true });
     await writeFile(
       join(taskDir, "task.json"),
       JSON.stringify({
-        id: "KB-001",
+        id: "FN-001",
         description: "Test task",
         column: "triage",
         dependencies: [],
@@ -480,7 +480,7 @@ describe("requirePlanApproval setting", () => {
       }),
       listTasks: vi.fn().mockResolvedValue([
         {
-          id: "KB-001",
+          id: "FN-001",
           description: "Test task",
           column: "triage",
           dependencies: [],
@@ -539,7 +539,7 @@ describe("requirePlanApproval setting", () => {
 describe("taskCreate tool model inheritance", () => {
   it("inherits parent task model settings when creating subtasks", async () => {
     const parentTask: Task = {
-      id: "KB-001",
+      id: "FN-001",
       description: "Parent task",
       column: "triage",
       dependencies: [],
@@ -555,7 +555,7 @@ describe("taskCreate tool model inheritance", () => {
     };
 
     const createdSubtask: Task = {
-      id: "KB-002",
+      id: "FN-002",
       description: "Child task description",
       column: "triage",
       dependencies: [],
@@ -572,7 +572,7 @@ describe("taskCreate tool model inheritance", () => {
     });
 
     // Simulate the taskCreate tool behavior
-    const parentTaskId = "KB-001";
+    const parentTaskId = "FN-001";
     const parentTaskResult = await store.getTask(parentTaskId);
     
     await store.createTask({
@@ -586,7 +586,7 @@ describe("taskCreate tool model inheritance", () => {
       validatorModelId: parentTaskResult?.validatorModelId,
     });
 
-    expect(store.getTask).toHaveBeenCalledWith("KB-001");
+    expect(store.getTask).toHaveBeenCalledWith("FN-001");
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       title: "Child Task",
       modelProvider: "anthropic",
@@ -598,7 +598,7 @@ describe("taskCreate tool model inheritance", () => {
 
   it("handles missing parent task gracefully when creating subtasks", async () => {
     const createdSubtask: Task = {
-      id: "KB-002",
+      id: "FN-002",
       description: "Child task description",
       column: "triage",
       dependencies: [],
@@ -615,7 +615,7 @@ describe("taskCreate tool model inheritance", () => {
     });
 
     // Simulate the taskCreate tool behavior with missing parent
-    const parentTaskId = "KB-NONEXISTENT";
+    const parentTaskId = "FN-NONEXISTENT";
     let parentTask;
     try {
       parentTask = await store.getTask(parentTaskId);
@@ -634,7 +634,7 @@ describe("taskCreate tool model inheritance", () => {
       validatorModelId: parentTask?.validatorModelId,
     });
 
-    expect(store.getTask).toHaveBeenCalledWith("KB-NONEXISTENT");
+    expect(store.getTask).toHaveBeenCalledWith("FN-NONEXISTENT");
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       modelProvider: undefined,
       modelId: undefined,

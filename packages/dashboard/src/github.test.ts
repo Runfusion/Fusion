@@ -792,17 +792,17 @@ describe("GitHubClient", () => {
           title: "Existing PR",
           state: "OPEN",
           baseRefName: "main",
-          headRefName: "kb/kb-093",
+          headRefName: "fusion/fn-093",
           mergedAt: null,
         },
       ]);
 
-      const result = await client.findPrForBranch({ owner: "owner", repo: "repo", head: "kb/kb-093", state: "all" });
+      const result = await client.findPrForBranch({ owner: "owner", repo: "repo", head: "fusion/fn-093", state: "all" });
 
       expect(mockRunGhJsonAsync).toHaveBeenCalledWith([
         "pr", "list",
         "--repo", "owner/repo",
-        "--head", "kb/kb-093",
+        "--head", "fusion/fn-093",
         "--state", "all",
         "--json", "number,url,title,state,baseRefName,headRefName,mergedAt",
       ]);
@@ -821,7 +821,7 @@ describe("GitHubClient", () => {
             title: "API PR",
             state: "open",
             merged_at: null,
-            head: { ref: "kb/kb-093" },
+            head: { ref: "fusion/fn-093" },
             base: { ref: "main" },
             comments: 2,
           },
@@ -829,7 +829,7 @@ describe("GitHubClient", () => {
       });
       global.fetch = mockFetch as any;
 
-      const result = await clientWithToken.findPrForBranch({ owner: "owner", repo: "repo", head: "kb/kb-093" });
+      const result = await clientWithToken.findPrForBranch({ owner: "owner", repo: "repo", head: "fusion/fn-093" });
 
       expect(mockFetch).toHaveBeenCalled();
       expect(result).toEqual(expect.objectContaining({ number: 5, commentCount: 2 }));
@@ -847,7 +847,7 @@ describe("GitHubClient", () => {
           state: "OPEN",
           reviewDecision: "APPROVED",
           baseRefName: "main",
-          headRefName: "kb/kb-093",
+          headRefName: "fusion/fn-093",
         })
         .mockResolvedValueOnce([
           { name: "ci", state: "SUCCESS" },
@@ -879,7 +879,7 @@ describe("GitHubClient", () => {
                 state: "OPEN",
                 reviewDecision: null,
                 baseRefName: "main",
-                headRefName: "kb/kb-093",
+                headRefName: "fusion/fn-093",
                 comments: { totalCount: 0 },
                 commits: {
                   nodes: [
@@ -933,7 +933,7 @@ describe("GitHubClient", () => {
         title: "Merged PR",
         state: "MERGED",
         baseRefName: "main",
-        headRefName: "kb/kb-093",
+        headRefName: "fusion/fn-093",
       });
 
       const result = await client.mergePr({ owner: "owner", repo: "repo", number: 42, method: "squash" });
@@ -962,7 +962,7 @@ describe("GitHubClient", () => {
             title: "Merged PR",
             state: "closed",
             merged: true,
-            head: { ref: "kb/kb-093" },
+            head: { ref: "fusion/fn-093" },
             base: { ref: "main" },
             comments: 0,
             updated_at: "2024-01-01T00:00:00Z",

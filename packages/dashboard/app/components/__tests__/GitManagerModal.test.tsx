@@ -69,7 +69,7 @@ const mockAddToast = vi.fn();
 
 const mockTasks: Task[] = [
   {
-    id: "KB-001",
+    id: "FN-001",
     description: "Test task 1",
     column: "in-progress",
     dependencies: [],
@@ -81,7 +81,7 @@ const mockTasks: Task[] = [
     updatedAt: new Date().toISOString(),
   },
   {
-    id: "KB-002",
+    id: "FN-002",
     description: "Test task 2",
     column: "todo",
     dependencies: [],
@@ -126,10 +126,10 @@ describe("GitManagerModal", () => {
     (fetchGitWorktrees as any).mockResolvedValue([
       {
         path: "/worktrees/kb-001",
-        branch: "kb/kb-001",
+        branch: "fusion/fn-001",
         isMain: false,
         isBare: false,
-        taskId: "KB-001",
+        taskId: "FN-001",
       },
       { path: "/repo", branch: "main", isMain: true, isBare: false },
     ]);
@@ -634,7 +634,7 @@ describe("GitManagerModal", () => {
     fireEvent.click(screen.getByRole("tab", { name: /worktrees/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("KB-001")).toBeInTheDocument();
+      expect(screen.getByText("FN-001")).toBeInTheDocument();
       expect(screen.getByText("2 total")).toBeInTheDocument();
       expect(screen.getByText("1 in use")).toBeInTheDocument();
     });
@@ -647,7 +647,7 @@ describe("GitManagerModal", () => {
     fireEvent.click(screen.getByRole("tab", { name: /worktrees/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("kb/kb-001")).toBeInTheDocument();
+      expect(screen.getByText("fusion/fn-001")).toBeInTheDocument();
     });
   });
 

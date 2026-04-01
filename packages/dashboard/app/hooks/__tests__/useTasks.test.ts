@@ -101,7 +101,7 @@ afterEach(() => {
 
 function createMockTask(overrides: Partial<Task> = {}): Task {
   return {
-    id: "KB-001",
+    id: "FN-001",
     description: "Test task",
     column: "triage",
     dependencies: [],
@@ -126,7 +126,7 @@ describe("useTasks", () => {
       expect(result.current.tasks).toHaveLength(1);
     });
 
-    expect(result.current.tasks[0].id).toBe("KB-001");
+    expect(result.current.tasks[0].id).toBe("FN-001");
   });
 
   describe("SSE event: task:created", () => {
@@ -138,20 +138,20 @@ describe("useTasks", () => {
         expect(MockEventSource.instances).toHaveLength(1);
       });
 
-      const newTask = createMockTask({ id: "KB-002", column: "triage" });
+      const newTask = createMockTask({ id: "FN-002", column: "triage" });
 
       act(() => {
         MockEventSource.instances[0]._emit("task:created", newTask);
       });
 
       expect(result.current.tasks).toHaveLength(1);
-      expect(result.current.tasks[0].id).toBe("KB-002");
+      expect(result.current.tasks[0].id).toBe("FN-002");
     });
   });
 
   describe("SSE event: task:moved", () => {
     it("updates task column using the 'to' field", async () => {
-      const initialTask = createMockTask({ id: "KB-001", column: "in-progress" as Column });
+      const initialTask = createMockTask({ id: "FN-001", column: "in-progress" as Column });
       mockFetchTasks.mockResolvedValueOnce([initialTask]);
 
       const { result } = renderHook(() => useTasks());
@@ -162,7 +162,7 @@ describe("useTasks", () => {
 
       const movedTaskData = {
         task: createMockTask({
-          id: "KB-001",
+          id: "FN-001",
           column: "in-progress", // task object may have stale column
           columnMovedAt: "2026-01-02T00:00:00Z",
         }),
@@ -180,8 +180,8 @@ describe("useTasks", () => {
 
     it("task moved from in-progress to done appears only in done column", async () => {
       const tasks = [
-        createMockTask({ id: "KB-001", column: "in-progress" as Column }),
-        createMockTask({ id: "KB-002", column: "in-progress" as Column }),
+        createMockTask({ id: "FN-001", column: "in-progress" as Column }),
+        createMockTask({ id: "FN-002", column: "in-progress" as Column }),
       ];
       mockFetchTasks.mockResolvedValueOnce(tasks);
 
@@ -194,7 +194,7 @@ describe("useTasks", () => {
       // Move KB-001 to done
       const movedTaskData = {
         task: createMockTask({
-          id: "KB-001",
+          id: "FN-001",
           column: "in-progress",
           columnMovedAt: "2026-01-02T00:00:00Z",
         }),
@@ -210,9 +210,9 @@ describe("useTasks", () => {
       const doneTasks = result.current.tasks.filter((t) => t.column === "done");
 
       expect(inProgressTasks).toHaveLength(1);
-      expect(inProgressTasks[0].id).toBe("KB-002");
+      expect(inProgressTasks[0].id).toBe("FN-002");
       expect(doneTasks).toHaveLength(1);
-      expect(doneTasks[0].id).toBe("KB-001");
+      expect(doneTasks[0].id).toBe("FN-001");
     });
   });
 
@@ -261,7 +261,7 @@ describe("useTasks", () => {
   describe("SSE event: task:updated", () => {
     it("updates task fields", async () => {
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         title: "Old Title",
         column: "in-progress" as Column,
       });
@@ -274,7 +274,7 @@ describe("useTasks", () => {
       });
 
       const updatedTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         title: "New Title",
         column: "in-progress" as Column,
         updatedAt: "2026-01-02T00:00:00Z",
@@ -291,7 +291,7 @@ describe("useTasks", () => {
     it("does not overwrite newer column with stale data (timestamp comparison)", async () => {
       // Start with task in in-progress
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "in-progress" as Column,
         columnMovedAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
@@ -307,7 +307,7 @@ describe("useTasks", () => {
       // First, move to done (newer timestamp)
       const movedTaskData = {
         task: createMockTask({
-          id: "KB-001",
+          id: "FN-001",
           column: "in-progress",
           columnMovedAt: "2026-01-02T00:00:00Z",
           updatedAt: "2026-01-02T00:00:00Z",
@@ -325,7 +325,7 @@ describe("useTasks", () => {
 
       // Then, stale update arrives with old column and older timestamp
       const staleUpdate = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "in-progress" as Column, // stale column
         columnMovedAt: "2026-01-01T00:00:00Z", // older timestamp
         updatedAt: "2026-01-01T00:00:00Z", // older overall
@@ -346,7 +346,7 @@ describe("useTasks", () => {
     it("status updates are applied when updatedAt is newer even if columnMovedAt is older", async () => {
       // Task was moved to in-progress (columnMovedAt is newer)
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "in-progress" as Column,
         status: "planning",
         columnMovedAt: "2026-01-02T00:00:00Z",
@@ -363,7 +363,7 @@ describe("useTasks", () => {
       // Status update arrives with older columnMovedAt but newer updatedAt
       // This simulates an executor status change after a column move
       const statusUpdate = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "in-progress" as Column, // same column
         status: "executing", // status changed
         columnMovedAt: "2026-01-01T00:00:00Z", // older (from before move)
@@ -382,7 +382,7 @@ describe("useTasks", () => {
     it("rapid status updates after column move are not rejected", async () => {
       // Task starts in todo
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "todo" as Column,
         status: "pending",
         columnMovedAt: "2026-01-01T00:00:00Z",
@@ -399,7 +399,7 @@ describe("useTasks", () => {
       // Column move happens
       const movedTaskData = {
         task: createMockTask({
-          id: "KB-001",
+          id: "FN-001",
           column: "todo",
           status: "pending",
           columnMovedAt: "2026-01-02T00:00:00Z",
@@ -417,7 +417,7 @@ describe("useTasks", () => {
 
       // Rapid status updates arrive (newer updatedAt, older columnMovedAt)
       const statusUpdate1 = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "in-progress" as Column,
         status: "planning",
         columnMovedAt: "2026-01-01T00:00:00Z", // older (from before move)
@@ -432,7 +432,7 @@ describe("useTasks", () => {
 
       // Another rapid status update
       const statusUpdate2 = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "in-progress" as Column,
         status: "executing",
         columnMovedAt: "2026-01-01T00:00:00Z", // still older
@@ -449,7 +449,7 @@ describe("useTasks", () => {
 
     it("preserves current column when incoming has no columnMovedAt (legacy data)", async () => {
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "done" as Column,
         columnMovedAt: "2026-01-02T00:00:00Z",
         updatedAt: "2026-01-02T00:00:00Z",
@@ -465,7 +465,7 @@ describe("useTasks", () => {
       // Incoming update has no columnMovedAt (legacy) and different column
       const legacyUpdate = {
         ...createMockTask({
-          id: "KB-001",
+          id: "FN-001",
           column: "in-progress" as Column,
           updatedAt: "2026-01-03T00:00:00Z", // newer updatedAt
         }),
@@ -484,8 +484,8 @@ describe("useTasks", () => {
   describe("SSE event: task:deleted", () => {
     it("removes task from the list", async () => {
       const tasks = [
-        createMockTask({ id: "KB-001" }),
-        createMockTask({ id: "KB-002" }),
+        createMockTask({ id: "FN-001" }),
+        createMockTask({ id: "FN-002" }),
       ];
       mockFetchTasks.mockResolvedValueOnce(tasks);
 
@@ -496,18 +496,18 @@ describe("useTasks", () => {
       });
 
       act(() => {
-        MockEventSource.instances[0]._emit("task:deleted", { id: "KB-001" });
+        MockEventSource.instances[0]._emit("task:deleted", { id: "FN-001" });
       });
 
       expect(result.current.tasks).toHaveLength(1);
-      expect(result.current.tasks[0].id).toBe("KB-002");
+      expect(result.current.tasks[0].id).toBe("FN-002");
     });
   });
 
   describe("SSE event: task:merged", () => {
     it("ensures column is always done after merge", async () => {
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "in-review" as Column,
       });
       mockFetchTasks.mockResolvedValueOnce([initialTask]);
@@ -520,10 +520,10 @@ describe("useTasks", () => {
 
       const mergeResult = {
         task: createMockTask({
-          id: "KB-001",
+          id: "FN-001",
           column: "in-review" as Column, // might have stale column
         }),
-        branch: "kb/kb-001",
+        branch: "fusion/fn-001",
         merged: true,
         worktreeRemoved: true,
         branchDeleted: true,
@@ -540,7 +540,7 @@ describe("useTasks", () => {
   describe("Race condition scenarios", () => {
     it("rapid task:moved + task:updated events maintain correct column state", async () => {
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "todo" as Column,
         columnMovedAt: "2026-01-01T00:00:00Z",
       });
@@ -555,7 +555,7 @@ describe("useTasks", () => {
       // Simulate rapid succession: moved then stale update
       const movedData = {
         task: createMockTask({
-          id: "KB-001",
+          id: "FN-001",
           column: "todo",
           columnMovedAt: "2026-01-02T00:00:00Z",
           title: "Original Title",
@@ -565,7 +565,7 @@ describe("useTasks", () => {
       };
 
       const staleUpdate = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         column: "todo" as Column, // stale
         columnMovedAt: "2026-01-01T00:00:00Z", // older
         title: "Updated Title", // fresh
@@ -602,7 +602,7 @@ describe("useTasks", () => {
   describe("updateTask", () => {
     it("updates task optimistically and returns server response", async () => {
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         title: "Old Title",
         description: "Old Description",
       });
@@ -615,7 +615,7 @@ describe("useTasks", () => {
       });
 
       const updatedTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         title: "New Title",
         description: "New Description",
         updatedAt: "2026-01-02T00:00:00Z",
@@ -624,13 +624,13 @@ describe("useTasks", () => {
 
       let returnedTask: Task | undefined;
       await act(async () => {
-        returnedTask = await result.current.updateTask("KB-001", {
+        returnedTask = await result.current.updateTask("FN-001", {
           title: "New Title",
           description: "New Description",
         });
       });
 
-      expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
         title: "New Title",
         description: "New Description",
       });
@@ -641,7 +641,7 @@ describe("useTasks", () => {
 
     it("rolls back on error and rethrows", async () => {
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         title: "Original Title",
         description: "Original Description",
       });
@@ -657,7 +657,7 @@ describe("useTasks", () => {
 
       await expect(
         act(async () => {
-          await result.current.updateTask("KB-001", {
+          await result.current.updateTask("FN-001", {
             title: "New Title",
             description: "New Description",
           });
@@ -671,7 +671,7 @@ describe("useTasks", () => {
 
     it("supports updating only title", async () => {
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         title: "Old Title",
         description: "Description",
       });
@@ -684,7 +684,7 @@ describe("useTasks", () => {
       });
 
       const updatedTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         title: "New Title",
         description: "Description",
         updatedAt: "2026-01-02T00:00:00Z",
@@ -692,7 +692,7 @@ describe("useTasks", () => {
       mockUpdateTask.mockResolvedValueOnce(updatedTask);
 
       await act(async () => {
-        await result.current.updateTask("KB-001", { title: "New Title" });
+        await result.current.updateTask("FN-001", { title: "New Title" });
       });
 
       expect(result.current.tasks[0].title).toBe("New Title");
@@ -701,7 +701,7 @@ describe("useTasks", () => {
 
     it("supports updating only description", async () => {
       const initialTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         title: "Title",
         description: "Old Description",
       });
@@ -714,7 +714,7 @@ describe("useTasks", () => {
       });
 
       const updatedTask = createMockTask({
-        id: "KB-001",
+        id: "FN-001",
         title: "Title",
         description: "New Description",
         updatedAt: "2026-01-02T00:00:00Z",
@@ -722,7 +722,7 @@ describe("useTasks", () => {
       mockUpdateTask.mockResolvedValueOnce(updatedTask);
 
       await act(async () => {
-        await result.current.updateTask("KB-001", { description: "New Description" });
+        await result.current.updateTask("FN-001", { description: "New Description" });
       });
 
       expect(result.current.tasks[0].title).toBe("Title");
@@ -731,8 +731,8 @@ describe("useTasks", () => {
 
     it("supports updating dependencies", async () => {
       const initialTask = createMockTask({
-        id: "KB-001",
-        dependencies: ["KB-002"],
+        id: "FN-001",
+        dependencies: ["FN-002"],
       });
       mockFetchTasks.mockResolvedValueOnce([initialTask]);
 
@@ -743,32 +743,32 @@ describe("useTasks", () => {
       });
 
       const updatedTask = createMockTask({
-        id: "KB-001",
-        dependencies: ["KB-002", "KB-003"],
+        id: "FN-001",
+        dependencies: ["FN-002", "FN-003"],
         updatedAt: "2026-01-02T00:00:00Z",
       });
       mockUpdateTask.mockResolvedValueOnce(updatedTask);
 
       await act(async () => {
-        await result.current.updateTask("KB-001", { dependencies: ["KB-002", "KB-003"] });
+        await result.current.updateTask("FN-001", { dependencies: ["FN-002", "FN-003"] });
       });
 
-      expect(result.current.tasks[0].dependencies).toEqual(["KB-002", "KB-003"]);
+      expect(result.current.tasks[0].dependencies).toEqual(["FN-002", "FN-003"]);
     });
   });
 
   describe("archiveAllDone", () => {
     it("archives all done tasks and updates local state", async () => {
       const doneTasks = [
-        createMockTask({ id: "KB-001", column: "done" as Column }),
-        createMockTask({ id: "KB-002", column: "done" as Column }),
+        createMockTask({ id: "FN-001", column: "done" as Column }),
+        createMockTask({ id: "FN-002", column: "done" as Column }),
       ];
-      const todoTask = createMockTask({ id: "KB-003", column: "todo" as Column });
+      const todoTask = createMockTask({ id: "FN-003", column: "todo" as Column });
       mockFetchTasks.mockResolvedValueOnce([...doneTasks, todoTask]);
 
       const archivedTasks = [
-        createMockTask({ id: "KB-001", column: "archived" as Column }),
-        createMockTask({ id: "KB-002", column: "archived" as Column }),
+        createMockTask({ id: "FN-001", column: "archived" as Column }),
+        createMockTask({ id: "FN-002", column: "archived" as Column }),
       ];
       mockArchiveAllDone.mockResolvedValueOnce(archivedTasks);
 
@@ -784,14 +784,14 @@ describe("useTasks", () => {
 
       expect(mockArchiveAllDone).toHaveBeenCalled();
       // Done tasks should be archived
-      expect(result.current.tasks.find((t) => t.id === "KB-001")?.column).toBe("archived");
-      expect(result.current.tasks.find((t) => t.id === "KB-002")?.column).toBe("archived");
+      expect(result.current.tasks.find((t) => t.id === "FN-001")?.column).toBe("archived");
+      expect(result.current.tasks.find((t) => t.id === "FN-002")?.column).toBe("archived");
       // Todo task should remain unchanged
-      expect(result.current.tasks.find((t) => t.id === "KB-003")?.column).toBe("todo");
+      expect(result.current.tasks.find((t) => t.id === "FN-003")?.column).toBe("todo");
     });
 
     it("returns empty array when no done tasks exist", async () => {
-      const todoTask = createMockTask({ id: "KB-001", column: "todo" as Column });
+      const todoTask = createMockTask({ id: "FN-001", column: "todo" as Column });
       mockFetchTasks.mockResolvedValueOnce([todoTask]);
       mockArchiveAllDone.mockResolvedValueOnce([]);
 

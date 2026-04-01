@@ -64,7 +64,7 @@ function createMockStore(overrides: Record<string, any> = {}) {
     }),
     emit: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
-    getTask: vi.fn().mockResolvedValue(makeTaskDetail("KB-001", "in-progress")),
+    getTask: vi.fn().mockResolvedValue(makeTaskDetail("FN-001", "in-progress")),
     updateTask: vi.fn().mockResolvedValue({}),
     moveTask: vi.fn().mockImplementation(async (id: string, col: Column) => {
       return makeTask(id, col);
@@ -77,7 +77,7 @@ function createMockStore(overrides: Record<string, any> = {}) {
       return makeTaskDetail(id, "in-progress");
     }),
     createTask: vi.fn().mockImplementation(async (input: any) => {
-      return makeTask("KB-NEW", "triage");
+      return makeTask("FN-NEW", "triage");
     }),
     deleteTask: vi.fn().mockResolvedValue(undefined),
     _trigger(event: string, ...args: any[]) {
@@ -145,9 +145,9 @@ beforeEach(() => {
 describe("In-progress task resume after restart", () => {
   it("resumeOrphaned() calls execute() for each in-progress task not already executing", async () => {
     const store = createMockStore();
-    const task1 = makeTask("KB-001", "in-progress");
-    const task2 = makeTask("KB-002", "in-progress");
-    const taskDone = makeTask("KB-003", "done");
+    const task1 = makeTask("FN-001", "in-progress");
+    const task2 = makeTask("FN-002", "in-progress");
+    const taskDone = makeTask("FN-003", "done");
     store.listTasks.mockResolvedValue([task1, task2, taskDone]);
 
     mockAgentSuccess();
@@ -164,11 +164,11 @@ describe("In-progress task resume after restart", () => {
 
   it("resumed task reuses existing worktree — no git worktree add called", async () => {
     const store = createMockStore();
-    const task = makeTask("KB-010", "in-progress", {
+    const task = makeTask("FN-010", "in-progress", {
       worktree: "/tmp/wt/KB-010",
     });
     store.listTasks.mockResolvedValue([task]);
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-010", "in-progress", {
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-010", "in-progress", {
       worktree: "/tmp/wt/KB-010",
     }));
 
@@ -190,9 +190,9 @@ describe("In-progress task resume after restart", () => {
   it("resumed task with step progress includes RESUMING section in agent prompt", async () => {
     const store = createMockStore();
     const steps = makeSteps("done", "done", "done", "in-progress", "pending");
-    const task = makeTask("KB-020", "in-progress", { steps, currentStep: 3 });
+    const task = makeTask("FN-020", "in-progress", { steps, currentStep: 3 });
     store.listTasks.mockResolvedValue([task]);
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-020", "in-progress", {
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-020", "in-progress", {
       steps,
       currentStep: 3,
     }));
@@ -223,9 +223,9 @@ describe("In-progress task resume after restart", () => {
       ...DEFAULT_SETTINGS,
       worktreeInitCommand: "pnpm install",
     });
-    const task = makeTask("KB-030", "in-progress");
+    const task = makeTask("FN-030", "in-progress");
     store.listTasks.mockResolvedValue([task]);
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-030", "in-progress"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-030", "in-progress"));
 
     mockedExistsSync.mockReturnValue(true); // worktree exists
     mockAgentSuccess();
@@ -246,8 +246,8 @@ describe("In-progress task resume after restart", () => {
 
   it("resumeOrphaned() logs 'Resumed after engine restart' for each orphaned task", async () => {
     const store = createMockStore();
-    const task1 = makeTask("KB-040", "in-progress");
-    const task2 = makeTask("KB-041", "in-progress");
+    const task1 = makeTask("FN-040", "in-progress");
+    const task2 = makeTask("FN-041", "in-progress");
     store.listTasks.mockResolvedValue([task1, task2]);
     store.getTask.mockImplementation(async (id: string) =>
       makeTaskDetail(id, "in-progress"),
@@ -259,8 +259,8 @@ describe("In-progress task resume after restart", () => {
     await executor.resumeOrphaned();
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(store.logEntry).toHaveBeenCalledWith("KB-040", "Resumed after engine restart");
-    expect(store.logEntry).toHaveBeenCalledWith("KB-041", "Resumed after engine restart");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-040", "Resumed after engine restart");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-041", "Resumed after engine restart");
   });
 });
 
@@ -274,9 +274,9 @@ describe("In-progress task resume after restart", () => {
 describe("In-review merge handling after restart", () => {
   it("aiMergeTask validates task is in 'in-review' before merging", async () => {
     const store = createMockStore();
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-050", "in-progress"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-050", "in-progress"));
 
-    await expect(aiMergeTask(store, "/tmp/root", "KB-050")).rejects.toThrow(
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
       "Cannot merge KB-050: task is in 'in-progress', must be in 'in-review'",
     );
 
@@ -286,8 +286,8 @@ describe("In-review merge handling after restart", () => {
 
   it("aiMergeTask sets status to 'merging' during execution and clears on success", async () => {
     const store = createMockStore();
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-051", "in-review"));
-    store.moveTask.mockResolvedValue(makeTask("KB-051", "done"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-051", "in-review"));
+    store.moveTask.mockResolvedValue(makeTask("FN-051", "done"));
 
     // Branch exists, merge succeeds, no conflicts
     mockedExecSync.mockImplementation((cmd: any) => {
@@ -301,16 +301,16 @@ describe("In-review merge handling after restart", () => {
 
     mockAgentSuccess();
 
-    await aiMergeTask(store, "/tmp/root", "KB-051");
+    await aiMergeTask(store, "/tmp/root", "FN-051");
 
     // Should have set status to "merging"
-    expect(store.updateTask).toHaveBeenCalledWith("KB-051", { status: "merging" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-051", { status: "merging" });
     // Should have cleared status via completeTask (status: null before moveTask)
-    expect(store.updateTask).toHaveBeenCalledWith("KB-051", { status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-051", { status: null });
   });
 
   it("sequential aiMergeTask calls for multiple in-review tasks all succeed", async () => {
-    const taskIds = ["KB-052", "KB-053", "KB-054"];
+    const taskIds = ["FN-052", "FN-053", "FN-054"];
 
     for (const taskId of taskIds) {
       const store = createMockStore();
@@ -333,7 +333,7 @@ describe("In-review merge handling after restart", () => {
 
   it("aiMergeTask throws on agent failure during session.prompt and calls git reset --merge", async () => {
     const store = createMockStore();
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-055", "in-review"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-055", "in-review"));
 
     // Branch exists, merge starts, agent creates but prompt fails
     mockedExecSync.mockImplementation((cmd: any) => {
@@ -350,7 +350,7 @@ describe("In-review merge handling after restart", () => {
       },
     } as any);
 
-    await expect(aiMergeTask(store, "/tmp/root", "KB-055")).rejects.toThrow(
+    await expect(aiMergeTask(store, "/tmp/root", "FN-055")).rejects.toThrow(
       "AI merge failed for KB-055: all 3 attempts exhausted",
     );
 
@@ -361,13 +361,13 @@ describe("In-review merge handling after restart", () => {
     expect(resetCalls.length).toBeGreaterThan(0);
 
     // Status was set to "merging" but NOT cleared by aiMergeTask (that's the dashboard's job)
-    expect(store.updateTask).toHaveBeenCalledWith("KB-055", { status: "merging" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-055", { status: "merging" });
   });
 
   it("aiMergeTask moves task to done when branch does not exist", async () => {
     const store = createMockStore();
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-056", "in-review"));
-    store.moveTask.mockResolvedValue(makeTask("KB-056", "done"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-056", "in-review"));
+    store.moveTask.mockResolvedValue(makeTask("FN-056", "done"));
 
     // git rev-parse --verify throws (branch not found)
     mockedExecSync.mockImplementation((cmd: any) => {
@@ -377,11 +377,11 @@ describe("In-review merge handling after restart", () => {
       return Buffer.from("");
     });
 
-    const result = await aiMergeTask(store, "/tmp/root", "KB-056");
+    const result = await aiMergeTask(store, "/tmp/root", "FN-056");
 
     expect(result.merged).toBe(false);
     expect(result.error).toContain("Branch");
-    expect(store.moveTask).toHaveBeenCalledWith("KB-056", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-056", "done");
   });
 });
 
@@ -390,8 +390,8 @@ describe("In-review merge handling after restart", () => {
 describe("Triage re-pick after restart", () => {
   it("TriageProcessor.start() after restart picks up triage tasks (processing set is fresh)", async () => {
     const store = createMockStore();
-    const triageTask1 = makeTask("KB-060", "triage");
-    const triageTask2 = makeTask("KB-061", "triage");
+    const triageTask1 = makeTask("FN-060", "triage");
+    const triageTask2 = makeTask("FN-061", "triage");
     store.listTasks.mockResolvedValue([triageTask1, triageTask2]);
     store.getTask.mockImplementation(async (id: string) =>
       makeTaskDetail(id, "triage"),
@@ -409,15 +409,15 @@ describe("Triage re-pick after restart", () => {
     triage.stop();
 
     // Both triage tasks should have been picked up for specification
-    expect(store.updateTask).toHaveBeenCalledWith("KB-060", { status: "specifying" });
-    expect(store.updateTask).toHaveBeenCalledWith("KB-061", { status: "specifying" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-060", { status: "specifying" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-061", { status: "specifying" });
     expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(2);
   });
 
   it("specifyTask() skips task already in processing set (no double-specification)", async () => {
     const store = createMockStore();
-    const task = makeTask("KB-062", "triage");
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-062", "triage"));
+    const task = makeTask("FN-062", "triage");
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-062", "triage"));
 
     // Slow agent to keep task in processing
     let resolvePrompt: Function;
@@ -451,7 +451,7 @@ describe("Triage re-pick after restart", () => {
 describe("Scheduler after restart", () => {
   it("schedule() moves todo tasks to in-progress when deps are satisfied", async () => {
     const store = createMockStore();
-    const todoTask = makeTask("KB-070", "todo");
+    const todoTask = makeTask("FN-070", "todo");
     store.listTasks.mockResolvedValue([todoTask]);
     store.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS });
 
@@ -470,16 +470,16 @@ describe("Scheduler after restart", () => {
     await new Promise((r) => setTimeout(r, 50));
     scheduler.stop();
 
-    expect(store.moveTask).toHaveBeenCalledWith("KB-070", "in-progress");
-    expect(store.updateTask).toHaveBeenCalledWith("KB-070", { status: null, blockedBy: null });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-070", "in-progress");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-070", { status: null, blockedBy: null });
     expect(onSchedule).toHaveBeenCalledWith(todoTask);
   });
 
   it("schedule() respects dependency ordering — blocked tasks stay in todo", async () => {
     const store = createMockStore();
-    const depTask = makeTask("KB-071", "in-progress");
-    const blockedTask = makeTask("KB-072", "todo", {
-      dependencies: ["KB-071"],
+    const depTask = makeTask("FN-071", "in-progress");
+    const blockedTask = makeTask("FN-072", "todo", {
+      dependencies: ["FN-071"],
     });
     store.listTasks.mockResolvedValue([depTask, blockedTask]);
     store.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS });
@@ -496,19 +496,19 @@ describe("Scheduler after restart", () => {
     scheduler.stop();
 
     // Task should NOT have been moved
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-072", "in-progress");
-    expect(onBlocked).toHaveBeenCalledWith(blockedTask, ["KB-071"]);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-072", "in-progress");
+    expect(onBlocked).toHaveBeenCalledWith(blockedTask, ["FN-071"]);
   });
 
   it("full column coverage: restart with tasks in every column", async () => {
     const store = createMockStore();
 
     // Tasks across all columns
-    const triageTask = makeTask("KB-080", "triage");
-    const todoTask = makeTask("KB-081", "todo");
-    const inProgressTask = makeTask("KB-082", "in-progress");
-    const inReviewTask = makeTask("KB-083", "in-review");
-    const doneTask = makeTask("KB-084", "done");
+    const triageTask = makeTask("FN-080", "triage");
+    const todoTask = makeTask("FN-081", "todo");
+    const inProgressTask = makeTask("FN-082", "in-progress");
+    const inReviewTask = makeTask("FN-083", "in-review");
+    const doneTask = makeTask("FN-084", "done");
 
     const allTasks = [triageTask, todoTask, inProgressTask, inReviewTask, doneTask];
     store.listTasks.mockResolvedValue(allTasks);
@@ -528,7 +528,7 @@ describe("Scheduler after restart", () => {
     await new Promise((r) => setTimeout(r, 100));
     triage.stop();
 
-    expect(store.updateTask).toHaveBeenCalledWith("KB-080", { status: "specifying" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-080", { status: "specifying" });
 
     // 2. Scheduler moves todo → in-progress
     vi.clearAllMocks();
@@ -540,7 +540,7 @@ describe("Scheduler after restart", () => {
     await new Promise((r) => setTimeout(r, 50));
     scheduler.stop();
 
-    expect(store.moveTask).toHaveBeenCalledWith("KB-081", "in-progress");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-081", "in-progress");
 
     // 3. Executor resumes in-progress tasks
     vi.clearAllMocks();
@@ -555,13 +555,13 @@ describe("Scheduler after restart", () => {
     await executor.resumeOrphaned();
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(store.logEntry).toHaveBeenCalledWith("KB-082", "Resumed after engine restart");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-082", "Resumed after engine restart");
 
     // 4. Done tasks are untouched (no operations on KB-084)
     const doneCalls = [
       ...store.updateTask.mock.calls,
       ...store.moveTask.mock.calls,
-    ].filter((call) => call[0] === "KB-084");
+    ].filter((call) => call[0] === "FN-084");
     expect(doneCalls).toHaveLength(0);
   });
 });
@@ -572,9 +572,9 @@ describe("Crash scenario edge cases", () => {
   it("agent dies mid-step — onError is called, semaphore slot released, task eligible for resume", async () => {
     const sem = new AgentSemaphore(2);
     const store = createMockStore();
-    const task = makeTask("KB-090", "in-progress");
+    const task = makeTask("FN-090", "in-progress");
     store.listTasks.mockResolvedValue([task]);
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-090", "in-progress"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-090", "in-progress"));
 
     // Agent session.prompt rejects (simulating crash mid-step)
     mockedCreateHaiAgent.mockResolvedValue({
@@ -603,7 +603,7 @@ describe("Crash scenario edge cases", () => {
     // Verify by calling resumeOrphaned again — it should try to execute again
     vi.clearAllMocks();
     store.listTasks.mockResolvedValue([task]);
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-090", "in-progress"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-090", "in-progress"));
     mockAgentSuccess();
 
     await executor.resumeOrphaned();
@@ -615,7 +615,7 @@ describe("Crash scenario edge cases", () => {
 
   it("engine killed during merge — git reset --merge cleanup, task stays in-review", async () => {
     const store = createMockStore();
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-091", "in-review"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-091", "in-review"));
 
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
@@ -632,7 +632,7 @@ describe("Crash scenario edge cases", () => {
       },
     } as any);
 
-    await expect(aiMergeTask(store, "/tmp/root", "KB-091")).rejects.toThrow();
+    await expect(aiMergeTask(store, "/tmp/root", "FN-091")).rejects.toThrow();
 
     // git reset --merge should have been called
     const resetCalls = mockedExecSync.mock.calls.filter(
@@ -641,17 +641,17 @@ describe("Crash scenario edge cases", () => {
     expect(resetCalls.length).toBeGreaterThan(0);
 
     // Task should NOT have been moved to done
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-091", "done");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-091", "done");
 
     // Status was set to "merging" during execution
-    expect(store.updateTask).toHaveBeenCalledWith("KB-091", { status: "merging" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-091", { status: "merging" });
   });
 
   it("concurrent resumeOrphaned() calls don't double-execute the same task", async () => {
     const store = createMockStore();
-    const task = makeTask("KB-092", "in-progress");
+    const task = makeTask("FN-092", "in-progress");
     store.listTasks.mockResolvedValue([task]);
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-092", "in-progress"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-092", "in-progress"));
 
     let resolvePrompt: Function;
     mockedCreateHaiAgent.mockResolvedValue({
@@ -688,9 +688,9 @@ describe("Crash scenario edge cases", () => {
     await sem.acquire();
     expect(sem.activeCount).toBe(1);
 
-    const task = makeTask("KB-093", "in-progress");
+    const task = makeTask("FN-093", "in-progress");
     store.listTasks.mockResolvedValue([task]);
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-093", "in-progress"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-093", "in-progress"));
 
     // Agent creation itself fails
     mockedCreateHaiAgent.mockRejectedValue(new Error("cannot create agent"));
@@ -731,8 +731,8 @@ describe("Worktree pool restart with recycleWorktrees=true", () => {
 
     const store = createMockStore();
     store.listTasks.mockResolvedValue([
-      makeTask("KB-100", "in-progress", { worktree: "/root/.worktrees/swift-falcon" }),
-      makeTask("KB-101", "done", { worktree: "/root/.worktrees/calm-river" }),
+      makeTask("FN-100", "in-progress", { worktree: "/root/.worktrees/swift-falcon" }),
+      makeTask("FN-101", "done", { worktree: "/root/.worktrees/calm-river" }),
     ]);
 
     // Simulate startup rehydration
@@ -761,7 +761,7 @@ describe("Worktree pool restart with recycleWorktrees=true", () => {
       ...DEFAULT_SETTINGS,
       recycleWorktrees: true,
     });
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-110", "in-progress"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-110", "in-progress"));
 
     const pool = new WorktreePool();
     const idlePaths = await scanIdleWorktrees("/root", store);
@@ -777,7 +777,7 @@ describe("Worktree pool restart with recycleWorktrees=true", () => {
     mockAgentSuccess();
 
     const executor = new TaskExecutor(store, "/root", { pool });
-    await executor.execute(makeTask("KB-110", "in-progress"));
+    await executor.execute(makeTask("FN-110", "in-progress"));
     await new Promise((r) => setTimeout(r, 50));
 
     // Pool should be empty (worktree acquired)
@@ -791,7 +791,7 @@ describe("Worktree pool restart with recycleWorktrees=true", () => {
 
     // Should log pool acquisition
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-110",
+      "FN-110",
       expect.stringContaining("Acquired worktree from pool"),
     );
   });
@@ -925,8 +925,8 @@ describe("Edge case: worktree deleted between scan and acquire", () => {
 describe("Engine pause/unpause cycle", () => {
   it("executor: agents continue running on enginePaused (soft pause), complete normally", async () => {
     const store = createMockStore();
-    const task = makeTask("KB-EP1", "in-progress");
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-EP1", "in-progress"));
+    const task = makeTask("FN-EP1", "in-progress");
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-EP1", "in-progress"));
 
     // Agent triggers engine pause mid-flight but continues normally (soft pause)
     mockedCreateHaiAgent.mockImplementation(async () => ({
@@ -947,9 +947,9 @@ describe("Engine pause/unpause cycle", () => {
     await executor.execute(task);
 
     // Task should complete normally (in-review), NOT moved to todo
-    expect(store.moveTask).toHaveBeenCalledWith("KB-EP1", "in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-EP1", "todo");
-    expect(store.updateTask).not.toHaveBeenCalledWith("KB-EP1", { status: "failed" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-EP1", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-EP1", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-EP1", { status: "failed" });
   });
 
   it("triage: agents NOT terminated on enginePaused (soft pause), session continues", async () => {
@@ -977,7 +977,7 @@ describe("Engine pause/unpause cycle", () => {
     } as any));
 
     const triage = new TriageProcessor(store, "/tmp/test");
-    await triage.specifyTask(makeTask("KB-EP2", "triage"));
+    await triage.specifyTask(makeTask("FN-EP2", "triage"));
 
     // Session should have continued past the enginePaused event
     expect(sessionContinued).toBe(true);
@@ -987,7 +987,7 @@ describe("Engine pause/unpause cycle", () => {
 
   it("scheduler resumes on unpause: schedule() runs when enginePaused goes true→false", async () => {
     const store = createMockStore();
-    const todoTask = makeTask("KB-EP3", "todo");
+    const todoTask = makeTask("FN-EP3", "todo");
     store.listTasks.mockResolvedValue([todoTask]);
     store.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS, enginePaused: false });
     store.parseFileScopeFromPrompt.mockResolvedValue([]);
@@ -1003,7 +1003,7 @@ describe("Engine pause/unpause cycle", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Scheduler should have moved todo task to in-progress
-    expect(store.moveTask).toHaveBeenCalledWith("KB-EP3", "in-progress");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-EP3", "in-progress");
 
     // Now simulate engine pause then unpause
     store.moveTask.mockClear();
@@ -1013,7 +1013,7 @@ describe("Engine pause/unpause cycle", () => {
     store.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS, enginePaused: true });
 
     // Add a new todo task
-    const newTask = makeTask("KB-EP4", "todo");
+    const newTask = makeTask("FN-EP4", "todo");
     store.listTasks.mockResolvedValue([newTask]);
 
     // Unpause — trigger settings:updated to wake the scheduler
@@ -1027,13 +1027,13 @@ describe("Engine pause/unpause cycle", () => {
     scheduler.stop();
 
     // The new task should have been scheduled after unpause
-    expect(store.moveTask).toHaveBeenCalledWith("KB-EP4", "in-progress");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-EP4", "in-progress");
   });
 
   it("concurrency slots freed after agent completes during enginePaused (soft pause)", async () => {
     const sem = new AgentSemaphore(1); // Only 1 concurrent slot
     const store = createMockStore();
-    store.getTask.mockResolvedValue(makeTaskDetail("KB-EP5", "in-progress"));
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-EP5", "in-progress"));
 
     mockedCreateHaiAgent.mockImplementation(async () => ({
       session: {
@@ -1052,7 +1052,7 @@ describe("Engine pause/unpause cycle", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { semaphore: sem });
 
     // Execute — agent runs to completion despite engine pause
-    await executor.execute(makeTask("KB-EP5", "in-progress"));
+    await executor.execute(makeTask("FN-EP5", "in-progress"));
 
     // After completion, the semaphore slot should be freed.
     // Verify by running a new task through the semaphore — it should not block.

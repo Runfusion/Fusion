@@ -8,7 +8,7 @@ export interface WorktreeGroupData {
 
 /**
  * Extract a clean display name from a worktree path.
- * e.g. ".worktrees/KB-001" → "KB-001", "/path/to/kb/kb-001" → "kb-001"
+ * e.g. ".worktrees/FN-001" → "FN-001", "/path/to/fusion/fn-001" → "fn-001"
  */
 export function getWorktreeLabel(worktreePath: string): string {
   // Take the last segment of the path

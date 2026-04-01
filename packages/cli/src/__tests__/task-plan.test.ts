@@ -78,11 +78,11 @@ describe("runTaskPlan", () => {
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn().mockResolvedValue(undefined),
       createTask: vi.fn().mockResolvedValue({
-        id: "KB-042",
+        id: "FN-042",
         title: "Test Task Title",
         description: "Test description",
         column: "triage",
-        dependencies: ["KB-001"],
+        dependencies: ["FN-001"],
         ...overrides,
       }),
     }));
@@ -370,11 +370,11 @@ describe("runTaskPlan", () => {
 
   it("creates task after planning completes with --yes flag", async () => {
     const mockCreateTask = vi.fn().mockResolvedValue({
-      id: "KB-042",
+      id: "FN-042",
       title: "Planned Task",
       description: "A well-planned task",
       column: "triage",
-      dependencies: ["KB-001"],
+      dependencies: ["FN-001"],
     });
 
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
@@ -398,7 +398,7 @@ describe("runTaskPlan", () => {
         title: "Planned Task",
         description: "A well-planned task",
         suggestedSize: "M",
-        suggestedDependencies: ["KB-001"],
+        suggestedDependencies: ["FN-001"],
         keyDeliverables: ["Code", "Tests"],
       },
     });
@@ -419,7 +419,7 @@ describe("runTaskPlan", () => {
       title: "Planned Task",
       description: "A well-planned task",
       column: "triage",
-      dependencies: ["KB-001"],
+      dependencies: ["FN-001"],
     });
 
     exitSpy.mockRestore();
@@ -543,7 +543,7 @@ describe("runTaskPlan", () => {
   });
 
   it("skips task creation when user declines confirmation", async () => {
-    const mockCreateTask = vi.fn().mockResolvedValue({ id: "KB-042" });
+    const mockCreateTask = vi.fn().mockResolvedValue({ id: "FN-042" });
 
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn().mockResolvedValue(undefined),
@@ -824,7 +824,7 @@ describe("runTaskPlan", () => {
         title: "Complete Auth System",
         description: "Build a comprehensive authentication system with login, logout, and password reset functionality. Includes email verification and 2FA support.",
         suggestedSize: "L",
-        suggestedDependencies: ["KB-001", "KB-002"],
+        suggestedDependencies: ["FN-001", "FN-002"],
         keyDeliverables: [
           "User login with email/password",
           "Password reset via email",

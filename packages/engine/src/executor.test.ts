@@ -59,7 +59,7 @@ function createMockStore() {
     emit: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
     getTask: vi.fn().mockResolvedValue({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -113,7 +113,7 @@ describe("TaskExecutor with semaphore", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { semaphore: sem });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -143,7 +143,7 @@ describe("TaskExecutor with semaphore", () => {
     });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -168,7 +168,7 @@ describe("TaskExecutor with semaphore", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -180,7 +180,7 @@ describe("TaskExecutor with semaphore", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: "failed", error: expect.any(String) });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "failed", error: expect.any(String) });
     expect(onError).toHaveBeenCalled();
   });
 
@@ -220,9 +220,9 @@ describe("TaskExecutor with semaphore", () => {
     });
 
     await Promise.all([
-      executor.execute(task("KB-001")),
-      executor.execute(task("KB-002")),
-      executor.execute(task("KB-003")),
+      executor.execute(task("FN-001")),
+      executor.execute(task("FN-002")),
+      executor.execute(task("FN-003")),
     ]);
 
     expect(maxConcurrent).toBe(1);
@@ -235,7 +235,7 @@ const { existsSync: mockedExistsSyncRaw } = await import("node:fs");
 const mockedExistsSync = vi.mocked(mockedExistsSyncRaw);
 
 describe("TaskExecutor worktreeInitCommand", () => {
-  const makeTask = (id = "KB-010") => ({
+  const makeTask = (id = "FN-010") => ({
     id,
     title: "Test",
     description: "Test",
@@ -286,7 +286,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
 
     // Should log success
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-010",
+      "FN-010",
       "Worktree init command completed",
       "pnpm install",
     );
@@ -333,7 +333,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
 
     // Should log the failure
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-010",
+      "FN-010",
       expect.stringContaining("Worktree init command failed"),
     );
 
@@ -367,7 +367,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
 });
 
 describe("TaskExecutor worktree naming", () => {
-  const makeTask = (id = "KB-030", worktree?: string) => ({
+  const makeTask = (id = "FN-030", worktree?: string) => ({
     id,
     title: "Test Task Title",
     description: "Test description for task",
@@ -400,7 +400,7 @@ describe("TaskExecutor worktree naming", () => {
     await executor.execute(makeTask());
 
     // The worktree path stored should use the generated name, not the task ID
-    expect(store.updateTask).toHaveBeenCalledWith("KB-030", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-030", {
       worktree: "/tmp/test/.worktrees/swift-falcon",
     });
     expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
@@ -410,7 +410,7 @@ describe("TaskExecutor worktree naming", () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
 
-    await executor.execute(makeTask("KB-099"));
+    await executor.execute(makeTask("FN-099"));
 
     // Verify the worktree path does NOT contain the task ID
     const updateCalls = store.updateTask.mock.calls;
@@ -418,7 +418,7 @@ describe("TaskExecutor worktree naming", () => {
       (call: any[]) => call[1]?.worktree !== undefined,
     );
     expect(worktreeUpdate).toBeDefined();
-    expect(worktreeUpdate![1].worktree).not.toContain("KB-099");
+    expect(worktreeUpdate![1].worktree).not.toContain("FN-099");
     expect(worktreeUpdate![1].worktree).toContain("swift-falcon");
   });
 
@@ -429,7 +429,7 @@ describe("TaskExecutor worktree naming", () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
 
-    await executor.execute(makeTask("KB-031", existingPath));
+    await executor.execute(makeTask("FN-031", existingPath));
 
     // Should NOT generate a new name — reuse the stored path
     expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
@@ -448,10 +448,10 @@ describe("TaskExecutor worktree naming", () => {
       });
 
       const executor = new TaskExecutor(store, "/tmp/test");
-      await executor.execute(makeTask("KB-042"));
+      await executor.execute(makeTask("FN-042"));
 
       // Should use task ID (lowercase) as worktree name
-      expect(store.updateTask).toHaveBeenCalledWith("KB-042", {
+      expect(store.updateTask).toHaveBeenCalledWith("FN-042", {
         worktree: "/tmp/test/.worktrees/kb-042",
       });
       // Should NOT call generateWorktreeName when using task-id
@@ -471,13 +471,13 @@ describe("TaskExecutor worktree naming", () => {
 
       const executor = new TaskExecutor(store, "/tmp/test");
       await executor.execute({
-        ...makeTask("KB-043"),
+        ...makeTask("FN-043"),
         title: "Fix login bug with OAuth",
       });
 
       // Should use slugified title as worktree name
       const expectedSlug = slugify("Fix login bug with OAuth");
-      expect(store.updateTask).toHaveBeenCalledWith("KB-043", {
+      expect(store.updateTask).toHaveBeenCalledWith("FN-043", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
       });
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
@@ -497,14 +497,14 @@ describe("TaskExecutor worktree naming", () => {
       const executor = new TaskExecutor(store, "/tmp/test");
       const taskDescription = "Implement user authentication flow";
       await executor.execute({
-        ...makeTask("KB-044"),
+        ...makeTask("FN-044"),
         title: "",
         description: taskDescription,
       });
 
       // Should slugify the first 60 chars of description when title is empty
       const expectedSlug = slugify(taskDescription.slice(0, 60));
-      expect(store.updateTask).toHaveBeenCalledWith("KB-044", {
+      expect(store.updateTask).toHaveBeenCalledWith("FN-044", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
       });
     });
@@ -521,10 +521,10 @@ describe("TaskExecutor worktree naming", () => {
       });
 
       const executor = new TaskExecutor(store, "/tmp/test");
-      await executor.execute(makeTask("KB-045"));
+      await executor.execute(makeTask("FN-045"));
 
       // Should use generateWorktreeName for random mode
-      expect(store.updateTask).toHaveBeenCalledWith("KB-045", {
+      expect(store.updateTask).toHaveBeenCalledWith("FN-045", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
       });
       expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
@@ -542,10 +542,10 @@ describe("TaskExecutor worktree naming", () => {
       });
 
       const executor = new TaskExecutor(store, "/tmp/test");
-      await executor.execute(makeTask("KB-046"));
+      await executor.execute(makeTask("FN-046"));
 
       // Should default to random naming
-      expect(store.updateTask).toHaveBeenCalledWith("KB-046", {
+      expect(store.updateTask).toHaveBeenCalledWith("FN-046", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
       });
       expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
@@ -571,17 +571,17 @@ describe("TaskExecutor worktree naming", () => {
       });
 
       const executor = new TaskExecutor(store, "/tmp/test", { pool });
-      await executor.execute(makeTask("KB-047"));
+      await executor.execute(makeTask("FN-047"));
 
       // Should acquire from pool, ignoring the task-id naming preference
-      expect(store.updateTask).toHaveBeenCalledWith("KB-047", {
+      expect(store.updateTask).toHaveBeenCalledWith("FN-047", {
         worktree: "/tmp/test/.worktrees/pooled-warm-wt",
       });
       // Should NOT call generateWorktreeName when using pooled worktree
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
       // Should log pool acquisition
       expect(store.logEntry).toHaveBeenCalledWith(
-        "KB-047",
+        "FN-047",
         expect.stringContaining("Acquired worktree from pool"),
       );
     });
@@ -589,7 +589,7 @@ describe("TaskExecutor worktree naming", () => {
 });
 
 describe("TaskExecutor worktree recovery", () => {
-  const makeTask = (id = "KB-050") => ({
+  const makeTask = (id = "FN-050") => ({
     id,
     title: "Test Task",
     description: "Test description",
@@ -622,7 +622,7 @@ describe("TaskExecutor worktree recovery", () => {
 
     // Should have logged worktree creation
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-050",
+      "FN-050",
       expect.stringContaining("Worktree created"),
       expect.stringContaining(".worktrees/"),
     );
@@ -642,10 +642,10 @@ describe("TaskExecutor worktree recovery", () => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
       if (command.includes("git worktree add") && callCount++ === 0) {
         const error: any = new Error(
-          "fatal: 'kb/kb-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
         );
         error.stderr = Buffer.from(
-          "fatal: 'kb/kb-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
         );
         throw error;
       }
@@ -657,13 +657,13 @@ describe("TaskExecutor worktree recovery", () => {
 
     // Should have logged cleanup and retry
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-050",
+      "FN-050",
       expect.stringContaining("Cleaned up conflicting worktree"),
       "/tmp/test/.worktrees/green-sage",
     );
     // Should eventually succeed
     expect(store.updateTask).toHaveBeenCalledWith(
-      "KB-050",
+      "FN-050",
       expect.objectContaining({ worktree: expect.any(String) }),
     );
   });
@@ -676,10 +676,10 @@ describe("TaskExecutor worktree recovery", () => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
       if (command.includes("git worktree add")) {
         const error: any = new Error(
-          "fatal: 'kb/kb-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
         );
         error.stderr = Buffer.from(
-          "fatal: 'kb/kb-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
         );
         throw error;
       }
@@ -697,13 +697,13 @@ describe("TaskExecutor worktree recovery", () => {
 
     // Should log final failure
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-050",
+      "FN-050",
       expect.stringContaining("Worktree creation failed after 3 attempts"),
       expect.any(String),
     );
     // Should update task as failed
     expect(store.updateTask).toHaveBeenCalledWith(
-      "KB-050",
+      "FN-050",
       expect.objectContaining({ status: "failed" }),
     );
     expect(onError).toHaveBeenCalled();
@@ -713,7 +713,7 @@ describe("TaskExecutor worktree recovery", () => {
     const store = createMockStore();
     store.listTasks.mockResolvedValue([
       {
-        id: "KB-049",
+        id: "FN-049",
         title: "Other Task",
         description: "Other task",
         column: "in-progress",
@@ -727,7 +727,7 @@ describe("TaskExecutor worktree recovery", () => {
       },
     ]);
 
-    mockedFindWorktreeUser.mockResolvedValue("KB-049");
+    mockedFindWorktreeUser.mockResolvedValue("FN-049");
 
     let callCount = 0;
     mockedExecSync.mockImplementation((cmd: string | string[]) => {
@@ -735,10 +735,10 @@ describe("TaskExecutor worktree recovery", () => {
       // First attempt fails with conflict
       if (command.includes("git worktree add") && callCount++ === 0) {
         const error: any = new Error(
-          "fatal: 'kb/kb-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
         );
         error.stderr = Buffer.from(
-          "fatal: 'kb/kb-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
         );
         throw error;
       }
@@ -753,7 +753,7 @@ describe("TaskExecutor worktree recovery", () => {
 
     // Should log that we're trying a new path
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-050",
+      "FN-050",
       expect.stringContaining("Conflicting worktree in use by active task, trying new path"),
       expect.any(String),
     );
@@ -769,8 +769,8 @@ describe("TaskExecutor worktree recovery", () => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
       if (command.includes("git worktree add")) {
         if (callCount++ === 0) {
-          const error: any = new Error("fatal: invalid reference: 'kb/kb-050'");
-          error.stderr = Buffer.from("fatal: invalid reference: 'kb/kb-050'");
+          const error: any = new Error("fatal: invalid reference: 'fusion/fn-050'");
+          error.stderr = Buffer.from("fatal: invalid reference: 'fusion/fn-050'");
           throw error;
         }
       }
@@ -786,9 +786,9 @@ describe("TaskExecutor worktree recovery", () => {
       expect.any(Object),
     );
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-050",
+      "FN-050",
       expect.stringContaining("Removed stale branch"),
-      "kb/kb-050",
+      "fusion/fn-050",
     );
   });
 
@@ -820,7 +820,7 @@ describe("TaskExecutor worktree recovery", () => {
       expect.any(Object),
     );
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-050",
+      "FN-050",
       expect.stringContaining("Removing existing directory (not a registered worktree)"),
       expect.any(String),
     );
@@ -834,10 +834,10 @@ describe("TaskExecutor worktree recovery", () => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
       if (command.includes("git worktree add") && callCount++ === 0) {
         const error: any = new Error(
-          "fatal: 'kb/kb-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
         );
         error.stderr = Buffer.from(
-          "fatal: 'kb/kb-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
         );
         throw error;
       }
@@ -857,7 +857,7 @@ describe("TaskExecutor worktree recovery", () => {
 
 describe("TaskExecutor dependency-based worktree creation", () => {
   const makeTask = (overrides: Partial<Task> = {}) => ({
-    id: "KB-060",
+    id: "FN-060",
     title: "Test",
     description: "Test",
     column: "in-progress" as const,
@@ -886,8 +886,8 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask({
-      id: "KB-060",
-      baseBranch: "kb/kb-059",
+      id: "FN-060",
+      baseBranch: "fusion/fn-059",
     }));
 
     // The git worktree add command should include the startPoint
@@ -895,7 +895,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree add"),
     );
     expect(worktreeAddCalls.length).toBeGreaterThan(0);
-    expect(worktreeAddCalls[0][0]).toContain("kb/kb-059");
+    expect(worktreeAddCalls[0][0]).toContain("fusion/fn-059");
   });
 
   it("creates worktree from HEAD when baseBranch is not set", async () => {
@@ -903,7 +903,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask({
-      id: "KB-061",
+      id: "FN-061",
       // no baseBranch
     }));
 
@@ -924,13 +924,13 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask({
-      id: "KB-062",
-      baseBranch: "kb/kb-061",
+      id: "FN-062",
+      baseBranch: "fusion/fn-061",
     }));
 
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-062",
-      expect.stringContaining("based on kb/kb-061"),
+      "FN-062",
+      expect.stringContaining("based on fusion/fn-061"),
     );
   });
 
@@ -939,7 +939,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
 
     await executor.execute(makeTask({
-      id: "KB-063",
+      id: "FN-063",
     }));
 
     // Check that log entry does NOT mention "based on"
@@ -957,36 +957,36 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     let firstAttempt = true;
     mockedExecSync.mockImplementation((cmd: any) => {
-      if (cmd === 'git worktree add -b "kb/kb-064" "/tmp/test/.worktrees/swift-falcon"' && firstAttempt) {
+      if (cmd === 'git worktree add -b "fusion/fn-064" "/tmp/test/.worktrees/swift-falcon"' && firstAttempt) {
         firstAttempt = false;
         const err: any = new Error(
-          `fatal: 'kb/kb-064' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-064' is already used by worktree at '${conflictingPath}'`,
         );
         err.stderr = Buffer.from(
-          `fatal: 'kb/kb-064' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-064' is already used by worktree at '${conflictingPath}'`,
         );
         throw err;
       }
       return Buffer.from("");
     });
 
-    await executor.execute(makeTask({ id: "KB-064" }));
+    await executor.execute(makeTask({ id: "FN-064" }));
 
     expect(mockedExecSync).toHaveBeenCalledWith(
       `git worktree remove "${conflictingPath}" --force`,
       expect.objectContaining({ cwd: "/tmp/test", stdio: "pipe" }),
     );
     expect(mockedExecSync).toHaveBeenCalledWith(
-      'git branch -D "kb/kb-064"',
+      'git branch -D "fusion/fn-064"',
       expect.objectContaining({ cwd: "/tmp/test", stdio: "pipe" }),
     );
 
     const worktreeCreateCalls = mockedExecSync.mock.calls.filter(
-      (call) => call[0] === 'git worktree add -b "kb/kb-064" "/tmp/test/.worktrees/swift-falcon"',
+      (call) => call[0] === 'git worktree add -b "fusion/fn-064" "/tmp/test/.worktrees/swift-falcon"',
     );
     expect(worktreeCreateCalls).toHaveLength(2);
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-064",
+      "FN-064",
       expect.stringContaining("Worktree created at /tmp/test/.worktrees/swift-falcon"),
     );
   });
@@ -997,12 +997,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const conflictingPath = "/tmp/test/.worktrees/sharp-stone";
 
     mockedExecSync.mockImplementation((cmd: any) => {
-      if (cmd === 'git worktree add -b "kb/kb-065" "/tmp/test/.worktrees/swift-falcon"') {
+      if (cmd === 'git worktree add -b "fusion/fn-065" "/tmp/test/.worktrees/swift-falcon"') {
         const err: any = new Error(
-          `fatal: 'kb/kb-065' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-065' is already used by worktree at '${conflictingPath}'`,
         );
         err.stderr = Buffer.from(
-          `fatal: 'kb/kb-065' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-065' is already used by worktree at '${conflictingPath}'`,
         );
         throw err;
       }
@@ -1012,13 +1012,13 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       return Buffer.from("");
     });
 
-    await executor.execute(makeTask({ id: "KB-065" }));
+    await executor.execute(makeTask({ id: "FN-065" }));
 
-    expect(store.updateTask).toHaveBeenCalledWith("KB-065", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-065", {
       status: "failed",
       error: expect.stringContaining("already used by worktree"),
     });
-    expect(store.updateTask).toHaveBeenCalledWith("KB-065", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-065", {
       status: "failed",
       error: expect.stringContaining("automatic cleanup failed: remove failed"),
     });
@@ -1046,14 +1046,14 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { pool });
 
     await executor.execute(makeTask({
-      id: "KB-064",
-      baseBranch: "kb/kb-063",
+      id: "FN-064",
+      baseBranch: "fusion/fn-063",
     }));
 
     expect(prepareSpy).toHaveBeenCalledWith(
       "/tmp/test/.worktrees/idle-wt",
-      "kb/kb-064",
-      "kb/kb-063",
+      "fusion/fn-064",
+      "fusion/fn-063",
     );
   });
 
@@ -1079,19 +1079,19 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { pool });
 
     await executor.execute(makeTask({
-      id: "KB-065",
+      id: "FN-065",
     }));
 
     expect(prepareSpy).toHaveBeenCalledWith(
       "/tmp/test/.worktrees/idle-wt",
-      "kb/kb-065",
+      "fusion/fn-065",
       undefined,
     );
   });
 });
 
 describe("TaskExecutor worktree pool integration", () => {
-  const makeTask = (id = "KB-020") => ({
+  const makeTask = (id = "FN-020") => ({
     id,
     title: "Test",
     description: "Test",
@@ -1145,7 +1145,7 @@ describe("TaskExecutor worktree pool integration", () => {
 
     // Should log pool acquisition
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-020",
+      "FN-020",
       expect.stringContaining("Acquired worktree from pool"),
     );
 
@@ -1178,7 +1178,7 @@ describe("TaskExecutor worktree pool integration", () => {
 
     // Should log worktree creation, NOT pool acquisition
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-020",
+      "FN-020",
       expect.stringContaining("Worktree created at"),
     );
   });
@@ -1260,7 +1260,7 @@ describe("Merger worktree pool integration", () => {
       }),
       emit: vi.fn(),
       getTask: vi.fn().mockResolvedValue({
-        id: "KB-050",
+        id: "FN-050",
         title: "Test merge",
         description: "Test",
         column: "in-review",
@@ -1275,7 +1275,7 @@ describe("Merger worktree pool integration", () => {
       }),
       updateTask: vi.fn().mockResolvedValue({}),
       moveTask: vi.fn().mockResolvedValue({
-        id: "KB-050",
+        id: "FN-050",
         column: "done",
         dependencies: [],
         steps: [],
@@ -1322,7 +1322,7 @@ describe("Merger worktree pool integration", () => {
       },
     } as any);
 
-    const result = await aiMergeTask(store, "/tmp/test", "KB-050", { pool });
+    const result = await aiMergeTask(store, "/tmp/test", "FN-050", { pool });
 
     // Worktree should be in the pool, NOT removed
     expect(pool.has("/tmp/test/.worktrees/KB-050")).toBe(true);
@@ -1349,7 +1349,7 @@ describe("Merger worktree pool integration", () => {
       },
     } as any);
 
-    const result = await aiMergeTask(store, "/tmp/test", "KB-050", { pool });
+    const result = await aiMergeTask(store, "/tmp/test", "FN-050", { pool });
 
     // Worktree should NOT be in the pool
     expect(pool.size).toBe(0);
@@ -1365,7 +1365,7 @@ describe("Merger worktree pool integration", () => {
 
 function createMockTaskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
-    id: "KB-001",
+    id: "FN-001",
     title: "Test Task",
     description: "A test task",
     column: "in-progress",
@@ -1574,7 +1574,7 @@ describe("buildExecutionPrompt", () => {
   it("end-to-end: steering comments are fully injected into execution prompt with correct format", () => {
     const now = new Date();
     const task = createMockTaskDetail({
-      id: "KB-123",
+      id: "FN-123",
       title: "Verify Steering Feature",
       steeringComments: [
         {
@@ -1649,7 +1649,7 @@ describe("buildExecutionPrompt", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -1725,7 +1725,7 @@ describe("TaskExecutor pause behavior", () => {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
             // Simulate pause happening during agent execution
-            store._trigger("task:updated", { id: "KB-001", paused: true, column: "in-progress" });
+            store._trigger("task:updated", { id: "FN-001", paused: true, column: "in-progress" });
             // Simulate the dispose causing an error (session terminated)
             throw new Error("Session terminated");
           }),
@@ -1736,7 +1736,7 @@ describe("TaskExecutor pause behavior", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -1749,8 +1749,8 @@ describe("TaskExecutor pause behavior", () => {
     });
 
     // Should move to todo, NOT mark as failed
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
-    expect(store.updateTask).not.toHaveBeenCalledWith("KB-001", { status: "failed" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
   it("does not move to in-review when paused during execution (graceful session end)", async () => {
@@ -1761,7 +1761,7 @@ describe("TaskExecutor pause behavior", () => {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
             // Simulate pause — session ends gracefully (no throw)
-            store._trigger("task:updated", { id: "KB-001", paused: true, column: "in-progress" });
+            store._trigger("task:updated", { id: "FN-001", paused: true, column: "in-progress" });
           }),
           dispose: vi.fn(),
         },
@@ -1770,7 +1770,7 @@ describe("TaskExecutor pause behavior", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -1783,14 +1783,14 @@ describe("TaskExecutor pause behavior", () => {
     });
 
     // Should NOT move to in-review (paused tasks skip that logic)
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
   });
 
   it("skips paused tasks during resumeOrphaned", async () => {
     const store = createMockStore();
     store.listTasks.mockResolvedValue([
-      { id: "KB-001", column: "in-progress", paused: true, title: "Paused task" },
-      { id: "KB-002", column: "in-progress", paused: false, title: "Active task" },
+      { id: "FN-001", column: "in-progress", paused: true, title: "Paused task" },
+      { id: "FN-002", column: "in-progress", paused: false, title: "Active task" },
     ]);
 
     mockedCreateHaiAgent.mockResolvedValue({
@@ -1804,8 +1804,8 @@ describe("TaskExecutor pause behavior", () => {
     await executor.resumeOrphaned();
 
     // Only KB-002 should be resumed (KB-001 is paused)
-    expect(store.logEntry).toHaveBeenCalledWith("KB-002", "Resumed after engine restart");
-    expect(store.logEntry).not.toHaveBeenCalledWith("KB-001", expect.anything());
+    expect(store.logEntry).toHaveBeenCalledWith("FN-002", "Resumed after engine restart");
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", expect.anything());
   });
 });
 
@@ -1846,22 +1846,22 @@ describe("TaskExecutor global pause behavior", () => {
     // Execute two tasks concurrently
     await Promise.all([
       executor.execute({
-        id: "KB-001", title: "T1", description: "T", column: "in-progress",
+        id: "FN-001", title: "T1", description: "T", column: "in-progress",
         dependencies: [], steps: [], currentStep: 0, log: [],
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       }),
       executor.execute({
-        id: "KB-002", title: "T2", description: "T", column: "in-progress",
+        id: "FN-002", title: "T2", description: "T", column: "in-progress",
         dependencies: [], steps: [], currentStep: 0, log: [],
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       }),
     ]);
 
     // Both tasks should be moved to todo (not marked as failed)
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
-    expect(store.moveTask).toHaveBeenCalledWith("KB-002", "todo");
-    expect(store.updateTask).not.toHaveBeenCalledWith("KB-001", { status: "failed" });
-    expect(store.updateTask).not.toHaveBeenCalledWith("KB-002", { status: "failed" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-002", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", { status: "failed" });
   });
 
   it("moves paused tasks to todo (not marked as failed)", async () => {
@@ -1882,13 +1882,13 @@ describe("TaskExecutor global pause behavior", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
-    expect(store.updateTask).not.toHaveBeenCalledWith("KB-001", { status: "failed" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
   it("takes no action when globalPause remains false", async () => {
@@ -1910,14 +1910,14 @@ describe("TaskExecutor global pause behavior", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
     // Should move to in-review (normal completion), not todo
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
   });
 
   it("takes no action when globalPause transitions from true to true", async () => {
@@ -1938,14 +1938,14 @@ describe("TaskExecutor global pause behavior", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
     // Should move to in-review (normal completion), not todo
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
   });
 });
 
@@ -1975,7 +1975,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
@@ -1984,9 +1984,9 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
     // NOT by an engine pause listener
     expect(disposeFn).toHaveBeenCalledTimes(1);
     // Task should complete normally and move to in-review, not todo
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
-    expect(store.updateTask).not.toHaveBeenCalledWith("KB-001", { status: "failed" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
   it("does NOT move tasks to todo when enginePaused transitions false→true", async () => {
@@ -2007,14 +2007,14 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
     // Task should complete normally (in-review), not be moved to todo
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
   });
 
   it("takes no action when enginePaused stays false (false→false)", async () => {
@@ -2034,14 +2034,14 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
     // Should move to in-review (normal completion), not todo
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
   });
 
   it("takes no action when enginePaused stays true (true→true)", async () => {
@@ -2061,14 +2061,14 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001", title: "Test", description: "T", column: "in-progress",
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
       dependencies: [], steps: [], currentStep: 0, log: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
     // Should move to in-review (normal completion), not todo
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
   });
 });
 
@@ -2109,7 +2109,7 @@ async function captureTools(): Promise<Record<string, (id: string, params: any) 
 
   const executor = new TaskExecutor(store, "/tmp/test");
   await executor.execute({
-    id: "KB-TEST",
+    id: "FN-TEST",
     title: "Test",
     description: "Test",
     column: "in-progress",
@@ -2324,7 +2324,7 @@ describe("Code review verdict enforcement - task_update blocking", () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-SYS",
+      id: "FN-SYS",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -2358,7 +2358,7 @@ describe("Code review verdict enforcement - task_update blocking", () => {
 // ── RETHINK verdict handling tests ───────────────────────────────────
 
 describe("RETHINK verdict handling", () => {
-  const makeTask = (id = "KB-040") => ({
+  const makeTask = (id = "FN-040") => ({
     id,
     title: "Test",
     description: "Test",
@@ -2507,7 +2507,7 @@ describe("RETHINK verdict handling", () => {
     });
 
     // updateStep should be called: once for in-progress, once for pending (reset)
-    expect(store.updateStep).toHaveBeenCalledWith("KB-040", 1, "pending");
+    expect(store.updateStep).toHaveBeenCalledWith("FN-040", 1, "pending");
   });
 
   it("RETHINK re-prompt includes reviewer feedback", async () => {
@@ -2682,7 +2682,7 @@ describe("RETHINK verdict handling", () => {
 // ── Plan RETHINK verdict handling tests ──────────────────────────────
 
 describe("Plan RETHINK verdict handling", () => {
-  const makeTask = (id = "KB-050") => ({
+  const makeTask = (id = "FN-050") => ({
     id,
     title: "Test",
     description: "Test",
@@ -2819,7 +2819,7 @@ describe("Plan RETHINK verdict handling", () => {
     });
 
     // updateStep should be called with "pending" to reset the step
-    expect(store.updateStep).toHaveBeenCalledWith("KB-050", 1, "pending");
+    expect(store.updateStep).toHaveBeenCalledWith("FN-050", 1, "pending");
   });
 
   it("plan RETHINK re-prompt includes reviewer feedback and plan-specific language", async () => {
@@ -2907,7 +2907,7 @@ describe("Plan RETHINK verdict handling", () => {
 
     // Verify log entry uses plan-specific message (no git reset reference)
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-050",
+      "FN-050",
       expect.stringContaining("plan rewound"),
       "Plan rejected",
     );
@@ -2930,9 +2930,9 @@ describe("task_add_dep tool", () => {
 
     const store = createMockStore();
     store.getTask.mockImplementation(async (id: string) => {
-      if (id === "KB-TEST") {
+      if (id === "FN-TEST") {
         return {
-          id: "KB-TEST",
+          id: "FN-TEST",
           title: "Test",
           description: "Test task",
           column: "in-progress",
@@ -2945,9 +2945,9 @@ describe("task_add_dep tool", () => {
           updatedAt: new Date().toISOString(),
         };
       }
-      if (id === "KB-OTHER" && targetExists) {
+      if (id === "FN-OTHER" && targetExists) {
         return {
-          id: "KB-OTHER",
+          id: "FN-OTHER",
           title: "Other task",
           description: "Another task",
           column: "todo",
@@ -2990,7 +2990,7 @@ describe("task_add_dep tool", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-TEST",
+      id: "FN-TEST",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -3017,22 +3017,22 @@ describe("task_add_dep tool", () => {
   it("adds a valid dependency via store.updateTask when confirm=true", async () => {
     const { tools, store } = await captureAddDepTools();
 
-    const result = await tools.task_add_dep("call1", { task_id: "KB-OTHER", confirm: true });
+    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
 
     expect(result.content[0].text).toContain("Added dependency");
     expect(result.content[0].text).toContain("triage");
-    expect(store.updateTask).toHaveBeenCalledWith("KB-TEST", {
-      dependencies: ["KB-OTHER"],
+    expect(store.updateTask).toHaveBeenCalledWith("FN-TEST", {
+      dependencies: ["FN-OTHER"],
     });
   });
 
   it("returns error for self-dependency", async () => {
     const { tools, store } = await captureAddDepTools();
 
-    const result = await tools.task_add_dep("call1", { task_id: "KB-TEST" });
+    const result = await tools.task_add_dep("call1", { task_id: "FN-TEST" });
 
     expect(result.content[0].text).toContain("Cannot add self-dependency");
-    expect(result.content[0].text).toContain("KB-TEST cannot depend on itself");
+    expect(result.content[0].text).toContain("FN-TEST cannot depend on itself");
     // store.updateTask should NOT have been called for dependency update
     // (it may be called for worktree path updates, so we check specifically for dependencies)
     const depUpdateCalls = store.updateTask.mock.calls.filter(
@@ -3044,9 +3044,9 @@ describe("task_add_dep tool", () => {
   it("returns error for non-existent target task", async () => {
     const { tools, store } = await captureAddDepTools({ targetExists: false });
 
-    const result = await tools.task_add_dep("call1", { task_id: "KB-OTHER" });
+    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER" });
 
-    expect(result.content[0].text).toContain("KB-OTHER not found");
+    expect(result.content[0].text).toContain("FN-OTHER not found");
     expect(result.content[0].text).toContain("Cannot add dependency on a non-existent task");
     const depUpdateCalls = store.updateTask.mock.calls.filter(
       (call: any[]) => call[1]?.dependencies !== undefined,
@@ -3055,9 +3055,9 @@ describe("task_add_dep tool", () => {
   });
 
   it("returns informational message for duplicate dependency without duplicating", async () => {
-    const { tools, store } = await captureAddDepTools({ existingDeps: ["KB-OTHER"] });
+    const { tools, store } = await captureAddDepTools({ existingDeps: ["FN-OTHER"] });
 
-    const result = await tools.task_add_dep("call1", { task_id: "KB-OTHER" });
+    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER" });
 
     expect(result.content[0].text).toContain("already a dependency");
     expect(result.content[0].text).toContain("No changes made");
@@ -3070,19 +3070,19 @@ describe("task_add_dep tool", () => {
   it("logs the dependency addition via store.logEntry when confirm=true", async () => {
     const { tools, store } = await captureAddDepTools();
 
-    await tools.task_add_dep("call1", { task_id: "KB-OTHER", confirm: true });
+    await tools.task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
 
-    expect(store.logEntry).toHaveBeenCalledWith("KB-TEST", "Added dependency on KB-OTHER — stopping execution for re-specification");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-TEST", "Added dependency on KB-OTHER — stopping execution for re-specification");
   });
 
   it("appends to existing dependencies without overwriting when confirm=true", async () => {
-    const { tools, store } = await captureAddDepTools({ existingDeps: ["KB-001"] });
+    const { tools, store } = await captureAddDepTools({ existingDeps: ["FN-001"] });
 
-    const result = await tools.task_add_dep("call1", { task_id: "KB-OTHER", confirm: true });
+    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
 
     expect(result.content[0].text).toContain("Added dependency");
-    expect(store.updateTask).toHaveBeenCalledWith("KB-TEST", {
-      dependencies: ["KB-001", "KB-OTHER"],
+    expect(store.updateTask).toHaveBeenCalledWith("FN-TEST", {
+      dependencies: ["FN-001", "FN-OTHER"],
     });
   });
 
@@ -3096,7 +3096,7 @@ describe("task_add_dep tool", () => {
   it("returns warning without confirm=true and does NOT add dependency", async () => {
     const { tools, store } = await captureAddDepTools();
 
-    const result = await tools.task_add_dep("call1", { task_id: "KB-OTHER" });
+    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER" });
 
     expect(result.content[0].text).toContain("stop execution and discard current work");
     expect(result.content[0].text).toContain("confirm=true");
@@ -3115,26 +3115,26 @@ describe("task_add_dep tool", () => {
   it("validation errors (self-dep, not-found, dedup) return immediately without requiring confirm", async () => {
     // Self-dep — no confirm needed
     const { tools: tools1 } = await captureAddDepTools();
-    const selfResult = await tools1.task_add_dep("call1", { task_id: "KB-TEST" });
+    const selfResult = await tools1.task_add_dep("call1", { task_id: "FN-TEST" });
     expect(selfResult.content[0].text).toContain("Cannot add self-dependency");
 
     // Not found — no confirm needed
     const { tools: tools2 } = await captureAddDepTools({ targetExists: false });
-    const notFoundResult = await tools2.task_add_dep("call1", { task_id: "KB-OTHER" });
+    const notFoundResult = await tools2.task_add_dep("call1", { task_id: "FN-OTHER" });
     expect(notFoundResult.content[0].text).toContain("not found");
 
     // Dedup — no confirm needed
-    const { tools: tools3 } = await captureAddDepTools({ existingDeps: ["KB-OTHER"] });
-    const dedupResult = await tools3.task_add_dep("call1", { task_id: "KB-OTHER" });
+    const { tools: tools3 } = await captureAddDepTools({ existingDeps: ["FN-OTHER"] });
+    const dedupResult = await tools3.task_add_dep("call1", { task_id: "FN-OTHER" });
     expect(dedupResult.content[0].text).toContain("already a dependency");
   });
 
   it("with confirm=true triggers depAborted and disposes session", async () => {
     const store = createMockStore();
     store.getTask.mockImplementation(async (id: string) => {
-      if (id === "KB-DEP") {
+      if (id === "FN-DEP") {
         return {
-          id: "KB-DEP",
+          id: "FN-DEP",
           title: "Test",
           description: "Test task",
           column: "in-progress",
@@ -3147,9 +3147,9 @@ describe("task_add_dep tool", () => {
           updatedAt: new Date().toISOString(),
         };
       }
-      if (id === "KB-TARGET") {
+      if (id === "FN-TARGET") {
         return {
-          id: "KB-TARGET",
+          id: "FN-TARGET",
           title: "Target",
           description: "Target task",
           column: "todo",
@@ -3177,7 +3177,7 @@ describe("task_add_dep tool", () => {
           prompt: vi.fn().mockImplementation(async () => {
             // The agent calls task_add_dep with confirm=true during execution
             const addDepTool = capturedTools.find((t: any) => t.name === "task_add_dep");
-            await addDepTool.execute("call1", { task_id: "KB-TARGET", confirm: true });
+            await addDepTool.execute("call1", { task_id: "FN-TARGET", confirm: true });
             // After dispose is called, session.prompt throws
             throw new Error("Session terminated");
           }),
@@ -3193,7 +3193,7 @@ describe("task_add_dep tool", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-DEP",
+      id: "FN-DEP",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -3213,18 +3213,18 @@ describe("task_add_dep tool", () => {
 
     // Branch deletion should have been attempted
     const branchDeleteCalls = mockedExecSync.mock.calls.filter(
-      (c) => typeof c[0] === "string" && (c[0] as string).includes("branch -D") && (c[0] as string).includes("kb/kb-dep"),
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("branch -D") && (c[0] as string).includes("fusion/fn-dep"),
     );
     expect(branchDeleteCalls.length).toBeGreaterThan(0);
 
     // Task should be moved to triage
-    expect(store.moveTask).toHaveBeenCalledWith("KB-DEP", "triage");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-DEP", "triage");
 
     // Worktree and status should be cleared
-    expect(store.updateTask).toHaveBeenCalledWith("KB-DEP", { worktree: undefined, status: undefined });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-DEP", { worktree: undefined, status: undefined });
 
     // Task should NOT be marked as failed
-    expect(store.updateTask).not.toHaveBeenCalledWith("KB-DEP", { status: "failed" });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-DEP", { status: "failed" });
   });
 });
 
@@ -3252,7 +3252,7 @@ describe("TaskExecutor usage limit detection", () => {
     });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -3266,12 +3266,12 @@ describe("TaskExecutor usage limit detection", () => {
 
     expect(onUsageLimitHitSpy).toHaveBeenCalledWith(
       "executor",
-      "KB-001",
+      "FN-001",
       "rate_limit_error: Rate limit exceeded",
     );
     expect(store.updateSettings).toHaveBeenCalledWith({ globalPause: true });
     // Task should still be marked as failed
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: "failed", error: "rate_limit_error: Rate limit exceeded" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "failed", error: "rate_limit_error: Rate limit exceeded" });
     expect(onError).toHaveBeenCalled();
   });
 
@@ -3289,7 +3289,7 @@ describe("TaskExecutor usage limit detection", () => {
     });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -3303,7 +3303,7 @@ describe("TaskExecutor usage limit detection", () => {
 
     expect(onUsageLimitHitSpy).not.toHaveBeenCalled();
     // Task should still be marked as failed
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: "failed", error: "connection refused" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "failed", error: "connection refused" });
   });
 
   it("works without usageLimitPauser (backward compatible)", async () => {
@@ -3315,7 +3315,7 @@ describe("TaskExecutor usage limit detection", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -3328,7 +3328,7 @@ describe("TaskExecutor usage limit detection", () => {
     });
 
     // Should not crash — just mark as failed
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: "failed", error: "rate_limit_error: Rate limit exceeded" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "failed", error: "rate_limit_error: Rate limit exceeded" });
     expect(onError).toHaveBeenCalled();
   });
 
@@ -3353,7 +3353,7 @@ describe("TaskExecutor usage limit detection", () => {
     });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -3368,11 +3368,11 @@ describe("TaskExecutor usage limit detection", () => {
     // UsageLimitPauser should be called
     expect(onUsageLimitHitSpy).toHaveBeenCalledWith(
       "executor",
-      "KB-001",
+      "FN-001",
       "rate_limit_error: Rate limit exceeded",
     );
     // Task should be marked as failed
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: "failed", error: "rate_limit_error: Rate limit exceeded" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "failed", error: "rate_limit_error: Rate limit exceeded" });
     // onError callback should fire
     expect(onError).toHaveBeenCalled();
   });
@@ -3389,7 +3389,7 @@ describe("TaskExecutor usage limit detection", () => {
     });
 
     await executor.execute({
-      id: "KB-002",
+      id: "FN-002",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -3403,7 +3403,7 @@ describe("TaskExecutor usage limit detection", () => {
 
     expect(onUsageLimitHitSpy).toHaveBeenCalledWith(
       "executor",
-      "KB-002",
+      "FN-002",
       "overloaded_error: Overloaded",
     );
   });
@@ -3434,7 +3434,7 @@ describe("Per-task model overrides", () => {
 
     // Override getTask to return task with model overrides
     store.getTask.mockResolvedValue({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3450,7 +3450,7 @@ describe("Per-task model overrides", () => {
     });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3498,7 +3498,7 @@ describe("Per-task model overrides", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3546,7 +3546,7 @@ describe("Per-task model overrides", () => {
 
     // Override getTask to return task with only modelProvider set
     store.getTask.mockResolvedValue({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3562,7 +3562,7 @@ describe("Per-task model overrides", () => {
     });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3617,7 +3617,7 @@ describe("Invalid transition error handling", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -3630,11 +3630,11 @@ describe("Invalid transition error handling", () => {
     });
 
     // Should NOT mark task as failed
-    expect(store.updateTask).not.toHaveBeenCalledWith("KB-001", { status: "failed", error: expect.any(String) });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed", error: expect.any(String) });
 
     // Should log informative message
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-001",
+      "FN-001",
       "Task already moved from 'done' — skipping transition to 'in-review'",
       expect.stringContaining("Invalid transition"),
     );
@@ -3665,7 +3665,7 @@ describe("Invalid transition error handling", () => {
 
     const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
     await executor.execute({
-      id: "KB-002",
+      id: "FN-002",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -3679,7 +3679,7 @@ describe("Invalid transition error handling", () => {
 
     // onComplete should be called even when invalid transition occurs
     expect(onComplete).toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ id: "KB-002" }));
+    expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }));
   });
 });
 
@@ -3708,7 +3708,7 @@ describe("TaskExecutor task_done with summary", () => {
     
     // Execute a task
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3731,7 +3731,7 @@ describe("TaskExecutor task_done with summary", () => {
     const result = await capturedTool.execute("tool-1", { summary: "Test summary of changes" });
     
     // Verify the task was updated with the summary
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { summary: "Test summary of changes" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { summary: "Test summary of changes" });
     
     // Verify success message includes summary mention
     expect(result.content[0].text).toContain("summary");
@@ -3754,7 +3754,7 @@ describe("TaskExecutor task_done with summary", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     
     await executor.execute({
-      id: "KB-002",
+      id: "FN-002",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3817,7 +3817,7 @@ describe("Workflow Steps Execution", () => {
 
     // Task has workflow steps enabled
     store.getTask.mockResolvedValue({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3878,7 +3878,7 @@ describe("Workflow Steps Execution", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3901,14 +3901,14 @@ describe("Workflow Steps Execution", () => {
     expect(secondCall[0].systemPrompt).toContain("Review all docs and verify they are complete.");
 
     // Task should move to in-review
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
 
   it("skips workflow steps with no prompt", async () => {
     const store = createMockStore();
 
     store.getTask.mockResolvedValue({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3938,7 +3938,7 @@ describe("Workflow Steps Execution", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3956,19 +3956,19 @@ describe("Workflow Steps Execution", () => {
 
     // Should log that it was skipped
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-001",
+      "FN-001",
       expect.stringContaining("has no prompt"),
     );
 
     // Task should still move to in-review
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
 
   it("handles tasks with no workflow steps", async () => {
     const store = createMockStore();
 
     store.getTask.mockResolvedValue({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -3987,7 +3987,7 @@ describe("Workflow Steps Execution", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test task",
       column: "in-progress",
@@ -4002,7 +4002,7 @@ describe("Workflow Steps Execution", () => {
     // Only main agent call
     expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
     // Task should still move to in-review
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "in-review");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
 });
 
@@ -4036,7 +4036,7 @@ describe("Real-time steering injection", () => {
     };
 
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4077,7 +4077,7 @@ describe("Real-time steering injection", () => {
 
     // Start execution
     const executePromise = executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4101,7 +4101,7 @@ describe("Real-time steering injection", () => {
     };
 
     store._trigger("task:updated", {
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4124,7 +4124,7 @@ describe("Real-time steering injection", () => {
 
     // Verify log entry was created
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-001",
+      "FN-001",
       expect.stringContaining("Steering comment received mid-execution"),
       "by user"
     );
@@ -4151,7 +4151,7 @@ describe("Real-time steering injection", () => {
 
     // Start execution with one comment
     await executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4174,7 +4174,7 @@ describe("Real-time steering injection", () => {
 
     // Trigger task:updated with the SAME comment (simulating a non-steering update)
     store._trigger("task:updated", {
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4216,7 +4216,7 @@ describe("Real-time steering injection", () => {
 
     // Start execution (don't await yet)
     const executePromise = executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4234,7 +4234,7 @@ describe("Real-time steering injection", () => {
 
     // Add a new comment that will fail to inject
     store._trigger("task:updated", {
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4260,7 +4260,7 @@ describe("Real-time steering injection", () => {
 
     // Trigger task:updated again with the same comment
     store._trigger("task:updated", {
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4303,7 +4303,7 @@ describe("Real-time steering injection", () => {
 
     // Trigger task:updated for a task that is not in activeSessions
     store._trigger("task:updated", {
-      id: "KB-NOT-EXECUTING",
+      id: "FN-NOT-EXECUTING",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4334,7 +4334,7 @@ describe("Real-time steering injection", () => {
 
     // Set up getTask to return the task with existing steering comment
     store.getTask.mockResolvedValue({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4365,7 +4365,7 @@ describe("Real-time steering injection", () => {
 
     // Start execution (don't await yet)
     const executePromise = executor.execute({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",
@@ -4382,7 +4382,7 @@ describe("Real-time steering injection", () => {
 
     // Add two new comments at once
     store._trigger("task:updated", {
-      id: "KB-001",
+      id: "FN-001",
       title: "Test",
       description: "Test",
       column: "in-progress",

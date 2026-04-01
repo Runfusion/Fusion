@@ -123,7 +123,7 @@ describe("WorktreePool", () => {
 
   describe("prepareForTask", () => {
     it("cleans dirty working tree before checkout", () => {
-      pool.prepareForTask("/tmp/wt", "kb/kb-042");
+      pool.prepareForTask("/tmp/wt", "fusion/fn-042");
 
       const calls = mockedExecSync.mock.calls.map((c) => c[0]);
       expect(calls).toContain("git checkout -- .");
@@ -131,18 +131,18 @@ describe("WorktreePool", () => {
     });
 
     it("creates branch from main with force-reset", () => {
-      pool.prepareForTask("/tmp/wt", "kb/kb-042");
+      pool.prepareForTask("/tmp/wt", "fusion/fn-042");
 
       const checkoutCall = mockedExecSync.mock.calls.find(
         (c) => typeof c[0] === "string" && (c[0] as string).includes("checkout -B"),
       );
       expect(checkoutCall).toBeDefined();
-      expect(checkoutCall![0]).toBe('git checkout -B "kb/kb-042" main');
+      expect(checkoutCall![0]).toBe('git checkout -B "fusion/fn-042" main');
       expect(checkoutCall![1]).toMatchObject({ cwd: "/tmp/wt" });
     });
 
     it("runs all commands in the correct worktree directory", () => {
-      pool.prepareForTask("/tmp/my-worktree", "kb/kb-099");
+      pool.prepareForTask("/tmp/my-worktree", "fusion/fn-099");
 
       for (const call of mockedExecSync.mock.calls) {
         expect(call[1]).toMatchObject({ cwd: "/tmp/my-worktree" });
@@ -150,13 +150,13 @@ describe("WorktreePool", () => {
     });
 
     it("creates branch from custom startPoint when provided", () => {
-      pool.prepareForTask("/tmp/wt", "kb/kb-042", "kb/kb-041");
+      pool.prepareForTask("/tmp/wt", "fusion/fn-042", "fusion/fn-041");
 
       const checkoutCall = mockedExecSync.mock.calls.find(
         (c) => typeof c[0] === "string" && (c[0] as string).includes("checkout -B"),
       );
       expect(checkoutCall).toBeDefined();
-      expect(checkoutCall![0]).toBe('git checkout -B "kb/kb-042" kb/kb-041');
+      expect(checkoutCall![0]).toBe('git checkout -B "fusion/fn-042" kb/kb-041');
     });
 
     it("tolerates git checkout -- . failure (already clean)", () => {
@@ -166,12 +166,12 @@ describe("WorktreePool", () => {
       });
 
       // Should not throw
-      expect(() => pool.prepareForTask("/tmp/wt", "kb/kb-001")).not.toThrow();
+      expect(() => pool.prepareForTask("/tmp/wt", "fusion/fn-001")).not.toThrow();
 
       // Should still run clean and branch creation
       const calls = mockedExecSync.mock.calls.map((c) => c[0]);
       expect(calls).toContain("git clean -fd");
-      expect(calls).toContain('git checkout -B "kb/kb-001" main');
+      expect(calls).toContain('git checkout -B "fusion/fn-001" main');
     });
   });
 
@@ -251,8 +251,8 @@ describe("scanIdleWorktrees", () => {
     ] as any);
 
     const store = createMockStore([
-      makeTask("KB-001", "in-progress", "/root/.worktrees/swift-falcon"),
-      makeTask("KB-002", "done", "/root/.worktrees/calm-river"),
+      makeTask("FN-001", "in-progress", "/root/.worktrees/swift-falcon"),
+      makeTask("FN-002", "done", "/root/.worktrees/calm-river"),
     ]);
 
     const idle = await scanIdleWorktrees("/root", store);
@@ -287,7 +287,7 @@ describe("scanIdleWorktrees", () => {
     ] as any);
 
     const store = createMockStore([
-      makeTask("KB-010", "in-review", "/root/.worktrees/review-wt"),
+      makeTask("FN-010", "in-review", "/root/.worktrees/review-wt"),
     ]);
 
     const idle = await scanIdleWorktrees("/root", store);
@@ -354,7 +354,7 @@ describe("cleanupOrphanedWorktrees", () => {
     ] as any);
 
     const store = createMockStore([
-      makeTask("KB-001", "in-progress", "/root/.worktrees/active-wt"),
+      makeTask("FN-001", "in-progress", "/root/.worktrees/active-wt"),
     ]);
 
     const cleaned = await cleanupOrphanedWorktrees("/root", store);
@@ -405,8 +405,8 @@ describe("cleanupOrphanedWorktrees", () => {
     ] as any);
 
     const store = createMockStore([
-      makeTask("KB-001", "in-progress", "/root/.worktrees/active-1"),
-      makeTask("KB-002", "in-review", "/root/.worktrees/active-2"),
+      makeTask("FN-001", "in-progress", "/root/.worktrees/active-1"),
+      makeTask("FN-002", "in-review", "/root/.worktrees/active-2"),
     ]);
 
     const cleaned = await cleanupOrphanedWorktrees("/root", store);

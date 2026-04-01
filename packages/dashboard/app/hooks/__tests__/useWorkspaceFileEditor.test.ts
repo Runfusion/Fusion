@@ -30,13 +30,13 @@ describe("useWorkspaceFileEditor", () => {
     };
     mockFetchWorkspaceFileContent.mockResolvedValueOnce(response);
 
-    const { result } = renderHook(() => useWorkspaceFileEditor("KB-123", "src/index.ts", true));
+    const { result } = renderHook(() => useWorkspaceFileEditor("FN-123", "src/index.ts", true));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.content).toBe("hello");
     expect(result.current.originalContent).toBe("hello");
-    expect(mockFetchWorkspaceFileContent).toHaveBeenCalledWith("KB-123", "src/index.ts");
+    expect(mockFetchWorkspaceFileContent).toHaveBeenCalledWith("FN-123", "src/index.ts");
   });
 
   it("saves workspace file changes", async () => {
@@ -81,13 +81,13 @@ describe("useWorkspaceFileEditor", () => {
 
     const { result, rerender } = renderHook(
       ({ workspace, filePath, enabled }) => useWorkspaceFileEditor(workspace, filePath, enabled),
-      { initialProps: { workspace: "KB-123", filePath: "src/index.ts", enabled: true } },
+      { initialProps: { workspace: "FN-123", filePath: "src/index.ts", enabled: true } },
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.content).toBe("hello");
 
-    rerender({ workspace: "KB-123", filePath: null, enabled: true });
+    rerender({ workspace: "FN-123", filePath: null, enabled: true });
 
     expect(result.current.content).toBe("");
     expect(result.current.originalContent).toBe("");

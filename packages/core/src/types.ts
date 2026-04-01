@@ -580,8 +580,8 @@ export interface ProjectSettings {
    *  - "task-title": Use a slugified version of the task title (e.g., fix-login-bug)
    *  Default: "random". */
   worktreeNaming?: "random" | "task-id" | "task-title";
-  /** Prefix for generated task IDs (e.g. `"KB"` produces `KB-001`).
-   *  Defaults to `"KB"`. Only affects new tasks — existing tasks retain
+  /** Prefix for generated task IDs (e.g. `"FN"` produces `FN-001`).
+   *  Defaults to `"FN"`. Only affects new tasks — existing tasks retain
    *  their original IDs. */
   taskPrefix?: string;
   /** When true, merge commit messages include the task ID as the conventional

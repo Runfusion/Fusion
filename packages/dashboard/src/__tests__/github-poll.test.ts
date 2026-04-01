@@ -145,7 +145,7 @@ describe("GitHubPollingService", () => {
     });
 
     it("restarts timer when interval changes while running", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       service.start();
       
       expect(service["timer"]).not.toBeNull();
@@ -166,7 +166,7 @@ describe("GitHubPollingService", () => {
 
   describe("start/stop", () => {
     it("begins polling when watches exist", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       
       service.start();
       
@@ -181,7 +181,7 @@ describe("GitHubPollingService", () => {
     });
 
     it("clears timer on stop", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       service.start();
       
       expect(service["timer"]).not.toBeNull();
@@ -193,7 +193,7 @@ describe("GitHubPollingService", () => {
     });
 
     it("multiple start calls are safe", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       service.start();
       const timer1 = service["timer"];
       
@@ -210,12 +210,12 @@ describe("GitHubPollingService", () => {
 
   describe("watchTask", () => {
     it("adds watch for task", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       
-      const watch = service.getWatch("KB-001");
+      const watch = service.getWatch("FN-001");
       expect(watch).toBeDefined();
       expect(watch?.pr).toEqual({
-        taskId: "KB-001",
+        taskId: "FN-001",
         type: "pr",
         owner: "owner",
         repo: "repo",
@@ -224,18 +224,18 @@ describe("GitHubPollingService", () => {
     });
 
     it("replaces existing watch of same type", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
-      service.watchTask("KB-001", "pr", "owner", "repo", 2);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 2);
       
-      const watch = service.getWatch("KB-001");
+      const watch = service.getWatch("FN-001");
       expect(watch?.pr?.number).toBe(2);
     });
 
     it("keeps other watch type when replacing", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
-      service.watchTask("KB-001", "issue", "owner", "repo", 10);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "issue", "owner", "repo", 10);
       
-      const watch = service.getWatch("KB-001");
+      const watch = service.getWatch("FN-001");
       expect(watch?.pr?.number).toBe(1);
       expect(watch?.issue?.number).toBe(10);
     });
@@ -243,31 +243,31 @@ describe("GitHubPollingService", () => {
 
   describe("replaceTaskWatches", () => {
     it("handles multiple watch types", () => {
-      service.replaceTaskWatches("KB-001", [
-        { taskId: "KB-001", type: "pr", owner: "owner", repo: "repo", number: 1 },
-        { taskId: "KB-001", type: "issue", owner: "owner", repo: "repo", number: 10 },
+      service.replaceTaskWatches("FN-001", [
+        { taskId: "FN-001", type: "pr", owner: "owner", repo: "repo", number: 1 },
+        { taskId: "FN-001", type: "issue", owner: "owner", repo: "repo", number: 10 },
       ]);
       
-      const watch = service.getWatch("KB-001");
+      const watch = service.getWatch("FN-001");
       expect(watch?.pr?.number).toBe(1);
       expect(watch?.issue?.number).toBe(10);
     });
 
     it("unwatches when empty array", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       
-      service.replaceTaskWatches("KB-001", []);
+      service.replaceTaskWatches("FN-001", []);
       
-      expect(service.getWatch("KB-001")).toBeUndefined();
+      expect(service.getWatch("FN-001")).toBeUndefined();
     });
 
     it("filters invalid watches", () => {
-      service.replaceTaskWatches("KB-001", [
-        { taskId: "KB-001", type: "pr", owner: "", repo: "repo", number: 1 }, // invalid - empty owner
-        { taskId: "KB-001", type: "issue", owner: "owner", repo: "repo", number: 10 }, // valid
+      service.replaceTaskWatches("FN-001", [
+        { taskId: "FN-001", type: "pr", owner: "", repo: "repo", number: 1 }, // invalid - empty owner
+        { taskId: "FN-001", type: "issue", owner: "owner", repo: "repo", number: 10 }, // valid
       ]);
       
-      const watch = service.getWatch("KB-001");
+      const watch = service.getWatch("FN-001");
       expect(watch?.pr).toBeUndefined();
       expect(watch?.issue?.number).toBe(10);
     });
@@ -275,21 +275,21 @@ describe("GitHubPollingService", () => {
 
   describe("unwatchTask", () => {
     it("removes all watches for task", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
-      service.watchTask("KB-001", "issue", "owner", "repo", 10);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "issue", "owner", "repo", 10);
       
-      service.unwatchTask("KB-001");
+      service.unwatchTask("FN-001");
       
-      expect(service.getWatch("KB-001")).toBeUndefined();
+      expect(service.getWatch("FN-001")).toBeUndefined();
     });
 
     it("stops polling when no watches remain", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       service.start();
       
       expect(service["timer"]).not.toBeNull();
       
-      service.unwatchTask("KB-001");
+      service.unwatchTask("FN-001");
       
       expect(service["timer"]).toBeNull();
     });
@@ -297,29 +297,29 @@ describe("GitHubPollingService", () => {
 
   describe("unwatchTaskType", () => {
     it("removes specific type only", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
-      service.watchTask("KB-001", "issue", "owner", "repo", 10);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "issue", "owner", "repo", 10);
       
-      service.unwatchTaskType("KB-001", "pr");
+      service.unwatchTaskType("FN-001", "pr");
       
-      const watch = service.getWatch("KB-001");
+      const watch = service.getWatch("FN-001");
       expect(watch?.pr).toBeUndefined();
       expect(watch?.issue?.number).toBe(10);
     });
 
     it("unwatches task if no types remain", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       
-      service.unwatchTaskType("KB-001", "pr");
+      service.unwatchTaskType("FN-001", "pr");
       
-      expect(service.getWatch("KB-001")).toBeUndefined();
+      expect(service.getWatch("FN-001")).toBeUndefined();
     });
   });
 
   describe("reset", () => {
     it("clears all watches and stops", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
-      service.watchTask("KB-002", "issue", "owner", "repo", 10);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-002", "issue", "owner", "repo", 10);
       service.start();
       
       service.reset();
@@ -331,21 +331,21 @@ describe("GitHubPollingService", () => {
 
   describe("getWatchedTaskIds", () => {
     it("returns all watched task IDs", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
-      service.watchTask("KB-002", "issue", "owner", "repo", 10);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-002", "issue", "owner", "repo", 10);
       
       const ids = service.getWatchedTaskIds();
-      expect(ids).toContain("KB-001");
-      expect(ids).toContain("KB-002");
+      expect(ids).toContain("FN-001");
+      expect(ids).toContain("FN-002");
       expect(ids).toHaveLength(2);
     });
   });
 
   describe("getWatch", () => {
     it("returns watch set for task", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       
-      const watch = service.getWatch("KB-001");
+      const watch = service.getWatch("FN-001");
       expect(watch?.pr?.owner).toBe("owner");
     });
 
@@ -358,7 +358,7 @@ describe("GitHubPollingService", () => {
     it("returns timestamp for type", async () => {
       // Setup task with PR badge
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         prInfo: { url: "https://github.com/owner/repo/pull/1", number: 1, status: "open", title: "Test", headBranch: "feat", baseBranch: "main", commentCount: 0 },
       });
 
@@ -369,25 +369,25 @@ describe("GitHubPollingService", () => {
         },
       });
 
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       await service.pollOnce();
 
-      const checkedAt = service.getLastCheckedAt("KB-001", "pr");
+      const checkedAt = service.getLastCheckedAt("FN-001", "pr");
       expect(checkedAt).toBeDefined();
       expect(new Date(checkedAt!).getTime()).toBeGreaterThan(0);
     });
 
     it("returns undefined for unwatched type", () => {
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       
-      expect(service.getLastCheckedAt("KB-001", "issue")).toBeUndefined();
+      expect(service.getLastCheckedAt("FN-001", "issue")).toBeUndefined();
     });
   });
 
   describe("pollOnce", () => {
     it("batches requests by repo", async () => {
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         prInfo: { url: "https://github.com/owner/repo/pull/1", number: 1, status: "open", title: "Test", headBranch: "feat", baseBranch: "main", commentCount: 0 },
       });
 
@@ -398,7 +398,7 @@ describe("GitHubPollingService", () => {
         },
       });
 
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       await service.pollOnce();
 
       // Should batch by repo
@@ -420,7 +420,7 @@ describe("GitHubPollingService", () => {
       });
 
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         prInfo: { url: "https://github.com/owner/repo/pull/1", number: 1, status: "open", title: "Test", headBranch: "feat", baseBranch: "main", commentCount: 0 },
       });
 
@@ -431,7 +431,7 @@ describe("GitHubPollingService", () => {
       },
       });
 
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       
       // First poll should work
       await service.pollOnce();
@@ -446,17 +446,17 @@ describe("GitHubPollingService", () => {
     it("handles missing tasks (ENOENT unwatches)", async () => {
       mockGetTask.mockRejectedValue({ code: "ENOENT" });
 
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       
       await service.pollOnce();
 
       // Task should be unwatched after ENOENT
-      expect(service.getWatch("KB-001")).toBeUndefined();
+      expect(service.getWatch("FN-001")).toBeUndefined();
     });
 
     it("updates store when badge fields changed", async () => {
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         prInfo: { url: "https://github.com/owner/repo/pull/1", number: 1, status: "open", title: "Old Title", headBranch: "feat", baseBranch: "main", commentCount: 0 },
       });
 
@@ -467,11 +467,11 @@ describe("GitHubPollingService", () => {
         },
       });
 
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       await service.pollOnce();
 
       expect(mockUpdatePrInfo).toHaveBeenCalledWith(
-        "KB-001",
+        "FN-001",
         expect.objectContaining({ title: "New Title", commentCount: 1 })
       );
     });
@@ -480,7 +480,7 @@ describe("GitHubPollingService", () => {
       const prInfo = { url: "https://github.com/owner/repo/pull/1", number: 1, status: "open", title: "Same Title", headBranch: "feat", baseBranch: "main", commentCount: 0 };
       
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         prInfo,
       });
 
@@ -491,7 +491,7 @@ describe("GitHubPollingService", () => {
         },
       });
 
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       await service.pollOnce();
 
       expect(mockUpdatePrInfo).not.toHaveBeenCalled();
@@ -499,7 +499,7 @@ describe("GitHubPollingService", () => {
 
     it("handles PR status normalization", async () => {
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         prInfo: { url: "https://github.com/owner/repo/pull/1", number: 1, status: "open", title: "Test", headBranch: "feat", baseBranch: "main", commentCount: 0 },
       });
 
@@ -511,11 +511,11 @@ describe("GitHubPollingService", () => {
         },
       });
 
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       await service.pollOnce();
 
       expect(mockUpdatePrInfo).toHaveBeenCalledWith(
-        "KB-001",
+        "FN-001",
         expect.objectContaining({ status: "merged" })
       );
     });
@@ -523,7 +523,7 @@ describe("GitHubPollingService", () => {
     it("does nothing when store is not configured", async () => {
       service = new GitHubPollingService({ token: "test-token" });
       
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       
       await expect(service.pollOnce()).resolves.toBeUndefined();
     });
@@ -542,7 +542,7 @@ describe("GitHubPollingService", () => {
   describe("badge field comparison", () => {
     it("detects PR badge changes (url, number, status, title, headBranch, baseBranch, commentCount, lastCommentAt)", async () => {
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         prInfo: { 
           url: "https://github.com/owner/repo/pull/1", 
           number: 1, 
@@ -585,7 +585,7 @@ describe("GitHubPollingService", () => {
           },
         });
 
-        service.watchTask("KB-001", "pr", "owner", "repo", 1);
+        service.watchTask("FN-001", "pr", "owner", "repo", 1);
         await service.pollOnce();
 
         expect(mockUpdatePrInfo).toHaveBeenCalled();
@@ -594,7 +594,7 @@ describe("GitHubPollingService", () => {
 
     it("detects issue badge changes (url, number, state, title, stateReason)", async () => {
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         issueInfo: { 
           url: "https://github.com/owner/repo/issues/1", 
           number: 1, 
@@ -627,7 +627,7 @@ describe("GitHubPollingService", () => {
           },
         });
 
-        service.watchTask("KB-001", "issue", "owner", "repo", 1);
+        service.watchTask("FN-001", "issue", "owner", "repo", 1);
         await service.pollOnce();
 
         expect(mockUpdateIssueInfo).toHaveBeenCalled();
@@ -638,7 +638,7 @@ describe("GitHubPollingService", () => {
   describe("unwatch when badge removed", () => {
     it("unwatches PR when task has no prInfo", async () => {
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         // No prInfo
       });
 
@@ -646,15 +646,15 @@ describe("GitHubPollingService", () => {
         pr_1: null,
       });
 
-      service.watchTask("KB-001", "pr", "owner", "repo", 1);
+      service.watchTask("FN-001", "pr", "owner", "repo", 1);
       await service.pollOnce();
 
-      expect(service.getWatch("KB-001")?.pr).toBeUndefined();
+      expect(service.getWatch("FN-001")?.pr).toBeUndefined();
     });
 
     it("unwatches issue when task has no issueInfo", async () => {
       mockGetTask.mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         // No issueInfo
       });
 
@@ -662,10 +662,10 @@ describe("GitHubPollingService", () => {
         issue_1: null,
       });
 
-      service.watchTask("KB-001", "issue", "owner", "repo", 1);
+      service.watchTask("FN-001", "issue", "owner", "repo", 1);
       await service.pollOnce();
 
-      expect(service.getWatch("KB-001")?.issue).toBeUndefined();
+      expect(service.getWatch("FN-001")?.issue).toBeUndefined();
     });
   });
 });

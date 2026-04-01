@@ -109,17 +109,17 @@ describe("Board", () => {
 
     it("filters tasks by ID when search query is provided", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-001", description: "First task", column: "todo" }),
-        createTask({ id: "KB-002", description: "Second task", column: "todo" }),
-        createTask({ id: "KB-003", description: "Third task", column: "in-progress" }),
+        createTask({ id: "FN-001", description: "First task", column: "todo" }),
+        createTask({ id: "FN-002", description: "Second task", column: "todo" }),
+        createTask({ id: "FN-003", description: "Third task", column: "in-progress" }),
       ];
 
-      renderBoard({ tasks, searchQuery: "KB-002" });
+      renderBoard({ tasks, searchQuery: "FN-002" });
 
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
       expect(todoTasks).toHaveLength(1);
-      expect(todoTasks[0].id).toBe("KB-002");
+      expect(todoTasks[0].id).toBe("FN-002");
 
       const inProgressColumn = screen.getByTestId("column-in-progress");
       const inProgressTasks = JSON.parse(inProgressColumn.getAttribute("data-tasks") || "[]");
@@ -128,9 +128,9 @@ describe("Board", () => {
 
     it("filters tasks by title when search query is provided", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-001", title: "Fix login bug", description: "First task", column: "todo" }),
-        createTask({ id: "KB-002", title: "Add dashboard feature", description: "Second task", column: "todo" }),
-        createTask({ id: "KB-003", title: "Update documentation", description: "Third task", column: "todo" }),
+        createTask({ id: "FN-001", title: "Fix login bug", description: "First task", column: "todo" }),
+        createTask({ id: "FN-002", title: "Add dashboard feature", description: "Second task", column: "todo" }),
+        createTask({ id: "FN-003", title: "Update documentation", description: "Third task", column: "todo" }),
       ];
 
       renderBoard({ tasks, searchQuery: "dashboard" });
@@ -138,14 +138,14 @@ describe("Board", () => {
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
       expect(todoTasks).toHaveLength(1);
-      expect(todoTasks[0].id).toBe("KB-002");
+      expect(todoTasks[0].id).toBe("FN-002");
     });
 
     it("filters tasks by description when search query is provided", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-001", description: "Implement user authentication", column: "todo" }),
-        createTask({ id: "KB-002", description: "Fix database connection issue", column: "todo" }),
-        createTask({ id: "KB-003", description: "Add caching layer", column: "todo" }),
+        createTask({ id: "FN-001", description: "Implement user authentication", column: "todo" }),
+        createTask({ id: "FN-002", description: "Fix database connection issue", column: "todo" }),
+        createTask({ id: "FN-003", description: "Add caching layer", column: "todo" }),
       ];
 
       renderBoard({ tasks, searchQuery: "database" });
@@ -153,13 +153,13 @@ describe("Board", () => {
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
       expect(todoTasks).toHaveLength(1);
-      expect(todoTasks[0].id).toBe("KB-002");
+      expect(todoTasks[0].id).toBe("FN-002");
     });
 
     it("search is case-insensitive", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-001", title: "Fix Login Bug", description: "First task", column: "todo" }),
-        createTask({ id: "KB-002", title: "Add Dashboard Feature", description: "Second task", column: "todo" }),
+        createTask({ id: "FN-001", title: "Fix Login Bug", description: "First task", column: "todo" }),
+        createTask({ id: "FN-002", title: "Add Dashboard Feature", description: "Second task", column: "todo" }),
       ];
 
       renderBoard({ tasks, searchQuery: "login" });
@@ -167,12 +167,12 @@ describe("Board", () => {
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
       expect(todoTasks).toHaveLength(1);
-      expect(todoTasks[0].id).toBe("KB-001");
+      expect(todoTasks[0].id).toBe("FN-001");
     });
 
     it("search is case-insensitive for lowercase query matching uppercase content", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-UPPER", title: "UPPERCASE TITLE", description: "DESC", column: "todo" }),
+        createTask({ id: "FN-UPPER", title: "UPPERCASE TITLE", description: "DESC", column: "todo" }),
       ];
 
       renderBoard({ tasks, searchQuery: "upper" });
@@ -180,14 +180,14 @@ describe("Board", () => {
       const todoColumn = screen.getByTestId("column-todo");
       const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]");
       expect(todoTasks).toHaveLength(1);
-      expect(todoTasks[0].id).toBe("KB-UPPER");
+      expect(todoTasks[0].id).toBe("FN-UPPER");
     });
 
     it("shows all tasks when search query is empty", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-001", description: "First task", column: "todo" }),
-        createTask({ id: "KB-002", description: "Second task", column: "todo" }),
-        createTask({ id: "KB-003", description: "Third task", column: "in-progress" }),
+        createTask({ id: "FN-001", description: "First task", column: "todo" }),
+        createTask({ id: "FN-002", description: "Second task", column: "todo" }),
+        createTask({ id: "FN-003", description: "Third task", column: "in-progress" }),
       ];
 
       renderBoard({ tasks, searchQuery: "" });
@@ -203,8 +203,8 @@ describe("Board", () => {
 
     it("shows no tasks when search query matches nothing", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-001", description: "First task", column: "todo" }),
-        createTask({ id: "KB-002", description: "Second task", column: "todo" }),
+        createTask({ id: "FN-001", description: "First task", column: "todo" }),
+        createTask({ id: "FN-002", description: "Second task", column: "todo" }),
       ];
 
       renderBoard({ tasks, searchQuery: "nonexistent" });
@@ -216,8 +216,8 @@ describe("Board", () => {
 
     it("keeps unaffected columns stable when archived collapse toggles", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-001", description: "Todo task", column: "todo" }),
-        createTask({ id: "KB-002", description: "Archived task", column: "archived" }),
+        createTask({ id: "FN-001", description: "Todo task", column: "todo" }),
+        createTask({ id: "FN-002", description: "Archived task", column: "archived" }),
       ];
 
       renderBoard({ tasks });
@@ -233,8 +233,8 @@ describe("Board", () => {
 
     it("only re-renders the affected column when a task updates", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-001", description: "Todo task", column: "todo", title: "Original" }),
-        createTask({ id: "KB-002", description: "Done task", column: "done", title: "Done" }),
+        createTask({ id: "FN-001", description: "Todo task", column: "todo", title: "Original" }),
+        createTask({ id: "FN-002", description: "Done task", column: "done", title: "Done" }),
       ];
 
       const { rerender } = renderBoard({ tasks });
@@ -262,21 +262,21 @@ describe("Board", () => {
     it("filtered tasks are sorted correctly (columnMovedAt, createdAt)", () => {
       const tasks: Task[] = [
         createTask({
-          id: "KB-001",
+          id: "FN-001",
           description: "Old task with move time",
           column: "todo",
           columnMovedAt: "2024-01-01T10:00:00.000Z",
           createdAt: "2024-01-01T08:00:00.000Z",
         }),
         createTask({
-          id: "KB-002",
+          id: "FN-002",
           description: "Newer task with move time",
           column: "todo",
           columnMovedAt: "2024-01-01T12:00:00.000Z",
           createdAt: "2024-01-01T08:00:00.000Z",
         }),
         createTask({
-          id: "KB-003",
+          id: "FN-003",
           description: "Legacy task no move time",
           column: "todo",
           createdAt: "2024-01-01T09:00:00.000Z",
@@ -294,16 +294,16 @@ describe("Board", () => {
       // Tasks with columnMovedAt should come first, sorted by columnMovedAt descending (newest first)
       // So KB-002 (12:00) should be first, KB-001 (10:00) second
       // Legacy tasks (no columnMovedAt) come last, sorted by createdAt ascending
-      expect(todoTasks[0].id).toBe("KB-002");
-      expect(todoTasks[1].id).toBe("KB-001");
-      expect(todoTasks[2].id).toBe("KB-003");
+      expect(todoTasks[0].id).toBe("FN-002");
+      expect(todoTasks[1].id).toBe("FN-001");
+      expect(todoTasks[2].id).toBe("FN-003");
     });
 
     it("matches tasks across multiple fields simultaneously", () => {
       const tasks: Task[] = [
         createTask({ id: "SEARCH-123", title: "Searchable title", description: "Normal description", column: "todo" }),
         createTask({ id: "KB-999", title: "Other task", description: "This has searchable content", column: "todo" }),
-        createTask({ id: "KB-888", title: "Unrelated", description: "No match here", column: "todo" }),
+        createTask({ id: "FN-888", title: "Unrelated", description: "No match here", column: "todo" }),
       ];
 
       renderBoard({ tasks, searchQuery: "search" });
@@ -318,7 +318,7 @@ describe("Board", () => {
 
     it("trims whitespace from search query", () => {
       const tasks: Task[] = [
-        createTask({ id: "KB-001", description: "First task", column: "todo" }),
+        createTask({ id: "FN-001", description: "First task", column: "todo" }),
       ];
 
       renderBoard({ tasks, searchQuery: "  " });

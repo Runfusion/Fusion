@@ -36,7 +36,7 @@ describe("reviewStep — model settings threading", () => {
     );
 
     await reviewStep(
-      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
       undefined,
       {
         defaultProvider: "anthropic",
@@ -56,7 +56,7 @@ describe("reviewStep — model settings threading", () => {
     );
 
     await reviewStep(
-      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
       undefined,
       {},
     );
@@ -73,7 +73,7 @@ describe("reviewStep — model settings threading", () => {
     );
 
     const result = await reviewStep(
-      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
     );
 
     expect(result.verdict).toBe("APPROVE");
@@ -91,7 +91,7 @@ describe("reviewStep — spec review type", () => {
     );
 
     const result = await reviewStep(
-      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec", "# Task: KB-050\n\n## Mission\nDo something",
+      "/tmp/worktree", "FN-050", 0, "Spec Review", "spec", "# Task: KB-050\n\n## Mission\nDo something",
     );
 
     expect(result.verdict).toBe("APPROVE");
@@ -104,7 +104,7 @@ describe("reviewStep — spec review type", () => {
     );
 
     const result = await reviewStep(
-      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec", "# Task: KB-050",
+      "/tmp/worktree", "FN-050", 0, "Spec Review", "spec", "# Task: KB-050",
     );
 
     expect(result.verdict).toBe("REVISE");
@@ -116,7 +116,7 @@ describe("reviewStep — spec review type", () => {
     );
 
     const result = await reviewStep(
-      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec", "# Task: KB-050",
+      "/tmp/worktree", "FN-050", 0, "Spec Review", "spec", "# Task: KB-050",
     );
 
     expect(result.verdict).toBe("RETHINK");
@@ -128,7 +128,7 @@ describe("reviewStep — spec review type", () => {
     );
 
     await reviewStep(
-      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec", "# Task: KB-050",
+      "/tmp/worktree", "FN-050", 0, "Spec Review", "spec", "# Task: KB-050",
     );
 
     expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
@@ -156,7 +156,7 @@ describe("reviewStep — spec review type", () => {
     } as any);
 
     await reviewStep(
-      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec",
+      "/tmp/worktree", "FN-050", 0, "Spec Review", "spec",
       "# Task: KB-050\n\n## Mission\nDo something great",
     );
 
@@ -186,7 +186,7 @@ describe("reviewStep — spec review type", () => {
 
     // Pass a baseline — should be ignored for spec reviews
     await reviewStep(
-      "/tmp/worktree", "KB-050", 0, "Spec Review", "spec",
+      "/tmp/worktree", "FN-050", 0, "Spec Review", "spec",
       "# Task: KB-050", "abc123",
     );
 
@@ -211,7 +211,7 @@ describe("reviewStep — exhausted-retry error detection", () => {
     mockedCreateHaiAgent.mockResolvedValue({ session: mockSession } as any);
 
     await expect(
-      reviewStep("/tmp/worktree", "KB-100", 1, "Test Step", "code", "# prompt"),
+      reviewStep("/tmp/worktree", "FN-100", 1, "Test Step", "code", "# prompt"),
     ).rejects.toThrow("rate_limit_error: Rate limit exceeded");
   });
 
@@ -226,7 +226,7 @@ describe("reviewStep — exhausted-retry error detection", () => {
     mockedCreateHaiAgent.mockResolvedValue({ session: mockSession } as any);
 
     await expect(
-      reviewStep("/tmp/worktree", "KB-100", 1, "Test Step", "code", "# prompt"),
+      reviewStep("/tmp/worktree", "FN-100", 1, "Test Step", "code", "# prompt"),
     ).rejects.toThrow();
 
     // Session should be disposed in the finally block
@@ -239,7 +239,7 @@ describe("reviewStep — exhausted-retry error detection", () => {
     );
 
     const result = await reviewStep(
-      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
     );
 
     expect(result.verdict).toBe("APPROVE");
@@ -257,7 +257,7 @@ describe("reviewStep — validator model overrides", () => {
     );
 
     await reviewStep(
-      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
       undefined,
       {
         defaultProvider: "openai",
@@ -279,7 +279,7 @@ describe("reviewStep — validator model overrides", () => {
     );
 
     await reviewStep(
-      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
       undefined,
       {
         defaultProvider: "openai",
@@ -301,7 +301,7 @@ describe("reviewStep — validator model overrides", () => {
     );
 
     await reviewStep(
-      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
       undefined,
       {
         defaultProvider: "openai",
@@ -323,7 +323,7 @@ describe("reviewStep — validator model overrides", () => {
     );
 
     await reviewStep(
-      "/tmp/worktree", "KB-100", 1, "Test Step", "plan", "# prompt",
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
       undefined,
       {
         defaultProvider: "openai",

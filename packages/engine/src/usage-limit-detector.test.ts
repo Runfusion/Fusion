@@ -145,7 +145,7 @@ describe("UsageLimitPauser", () => {
     const store = createMockStore();
     const pauser = new UsageLimitPauser(store);
 
-    await pauser.onUsageLimitHit("executor", "KB-001", "rate_limit_error: Rate limit exceeded");
+    await pauser.onUsageLimitHit("executor", "FN-001", "rate_limit_error: Rate limit exceeded");
 
     expect(store.updateSettings).toHaveBeenCalledWith({ globalPause: true });
   });
@@ -154,10 +154,10 @@ describe("UsageLimitPauser", () => {
     const store = createMockStore();
     const pauser = new UsageLimitPauser(store);
 
-    await pauser.onUsageLimitHit("triage", "KB-002", "overloaded_error");
+    await pauser.onUsageLimitHit("triage", "FN-002", "overloaded_error");
 
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-002",
+      "FN-002",
       "Usage limit detected (triage): overloaded_error",
     );
   });
@@ -169,9 +169,9 @@ describe("UsageLimitPauser", () => {
 
     const pauser = new UsageLimitPauser(store);
 
-    await pauser.onUsageLimitHit("executor", "KB-001", "rate limit");
-    await pauser.onUsageLimitHit("triage", "KB-002", "rate limit");
-    await pauser.onUsageLimitHit("merger", "KB-003", "rate limit");
+    await pauser.onUsageLimitHit("executor", "FN-001", "rate limit");
+    await pauser.onUsageLimitHit("triage", "FN-002", "rate limit");
+    await pauser.onUsageLimitHit("merger", "FN-003", "rate limit");
 
     // updateSettings should only be called once
     expect(store.updateSettings).toHaveBeenCalledTimes(1);
@@ -183,14 +183,14 @@ describe("UsageLimitPauser", () => {
 
     // First hit — triggers pause
     store.getSettings.mockResolvedValue({ globalPause: true });
-    await pauser.onUsageLimitHit("executor", "KB-001", "rate limit");
+    await pauser.onUsageLimitHit("executor", "FN-001", "rate limit");
     expect(store.updateSettings).toHaveBeenCalledTimes(1);
 
     // External reset: globalPause set to false
     store.getSettings.mockResolvedValue({ globalPause: false });
 
     // Second hit — should trigger again since it was reset
-    await pauser.onUsageLimitHit("executor", "KB-004", "rate limit again");
+    await pauser.onUsageLimitHit("executor", "FN-004", "rate limit again");
     expect(store.updateSettings).toHaveBeenCalledTimes(2);
   });
 
@@ -198,10 +198,10 @@ describe("UsageLimitPauser", () => {
     const store = createMockStore();
     const pauser = new UsageLimitPauser(store);
 
-    await pauser.onUsageLimitHit("merger", "KB-005", "quota exceeded");
+    await pauser.onUsageLimitHit("merger", "FN-005", "quota exceeded");
 
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-005",
+      "FN-005",
       expect.stringContaining("merger"),
     );
   });

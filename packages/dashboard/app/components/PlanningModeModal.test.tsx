@@ -43,7 +43,7 @@ vi.mock("../api", () => ({
 
 const mockTasks: Task[] = [
   {
-    id: "KB-001",
+    id: "FN-001",
     description: "Existing task 1",
     column: "todo",
     dependencies: [],
@@ -414,7 +414,7 @@ describe("PlanningModeModal", () => {
 
     it("creates task from summary", async () => {
       const createdTask: Task = {
-        id: "KB-042",
+        id: "FN-042",
         title: "Build authentication system",
         description: "Implement user auth with login and signup",
         column: "triage",
@@ -472,7 +472,7 @@ describe("PlanningModeModal", () => {
       const onDeleteTask = vi.fn<(_: string) => Promise<Task>>().mockResolvedValue(mockTasks[0]);
       const onMergeTask = vi
         .fn<(_: string) => Promise<MergeResult>>()
-        .mockResolvedValue({ merged: true, branch: "kb/kb-999", task: mockTasks[0], worktreeRemoved: true, branchDeleted: true });
+        .mockResolvedValue({ merged: true, branch: "fusion/fn-999", task: mockTasks[0], worktreeRemoved: true, branchDeleted: true });
 
       const { container } = render(
         <TaskDetailModal

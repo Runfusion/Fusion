@@ -19,7 +19,7 @@ const mockPrInfo = {
   number: 42,
   status: "open" as const,
   title: "Fix the bug",
-  headBranch: "kb/kb-001",
+  headBranch: "fusion/fn-001",
   baseBranch: "main",
   commentCount: 3,
   lastCommentAt: "2026-01-01T00:00:00.000Z",
@@ -34,7 +34,7 @@ describe("PrSection", () => {
     it("shows create PR button when GitHub token is available", () => {
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
@@ -48,7 +48,7 @@ describe("PrSection", () => {
     it("shows disabled button and hint when GitHub token is missing", () => {
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           hasGitHubToken={false}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
@@ -64,7 +64,7 @@ describe("PrSection", () => {
     it("shows create form when clicking create button", () => {
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
@@ -82,7 +82,7 @@ describe("PrSection", () => {
     it("hides form when clicking cancel", () => {
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
@@ -101,7 +101,7 @@ describe("PrSection", () => {
 
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
@@ -116,7 +116,7 @@ describe("PrSection", () => {
       fireEvent.click(screen.getByText("Create PR"));
 
       await waitFor(() => {
-        expect(createPr).toHaveBeenCalledWith("KB-001", {
+        expect(createPr).toHaveBeenCalledWith("FN-001", {
           title: "My PR Title",
           body: undefined,
         });
@@ -131,7 +131,7 @@ describe("PrSection", () => {
 
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
@@ -155,7 +155,7 @@ describe("PrSection", () => {
     it("displays PR info for open PR", () => {
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           prInfo={mockPrInfo}
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
@@ -173,7 +173,7 @@ describe("PrSection", () => {
     it("shows correct status badge for merged PR", () => {
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           prInfo={{ ...mockPrInfo, status: "merged" }}
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
@@ -189,7 +189,7 @@ describe("PrSection", () => {
     it("shows correct status badge for closed PR", () => {
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           prInfo={{ ...mockPrInfo, status: "closed" }}
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
@@ -204,7 +204,7 @@ describe("PrSection", () => {
     it("displays comment count when PR has comments", () => {
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           prInfo={{ ...mockPrInfo, commentCount: 5 }}
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
@@ -230,7 +230,7 @@ describe("PrSection", () => {
 
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           prInfo={mockPrInfo}
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
@@ -243,7 +243,7 @@ describe("PrSection", () => {
       fireEvent.click(refreshButton);
 
       await waitFor(() => {
-        expect(refreshPrStatus).toHaveBeenCalledWith("KB-001");
+        expect(refreshPrStatus).toHaveBeenCalledWith("FN-001");
       });
 
       expect(mockOnPrUpdated).toHaveBeenCalledWith(updatedPr);
@@ -255,7 +255,7 @@ describe("PrSection", () => {
 
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           prInfo={mockPrInfo}
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
@@ -275,7 +275,7 @@ describe("PrSection", () => {
     it("shows automatic PR creation message while PR-first automation is creating a PR", () => {
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           automationStatus="creating-pr"
           hasGitHubToken={true}
           onPrCreated={mockOnPrCreated}
@@ -300,7 +300,7 @@ describe("PrSection", () => {
 
       render(
         <PrSection
-          taskId="KB-001"
+          taskId="FN-001"
           prInfo={mockPrInfo}
           automationStatus="awaiting-pr-checks"
           hasGitHubToken={true}

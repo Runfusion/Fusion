@@ -165,15 +165,15 @@ describe("migrateFromLegacy", () => {
   describe("task migration", () => {
     it("migrates task.json files to tasks table", async () => {
       const tasksDir = join(kbDir, "tasks");
-      const taskDir = join(tasksDir, "KB-001");
+      const taskDir = join(tasksDir, "FN-001");
       await mkdir(taskDir, { recursive: true });
 
       const task = {
-        id: "KB-001",
+        id: "FN-001",
         title: "Test task",
         description: "A test task",
         column: "todo",
-        dependencies: ["KB-000"],
+        dependencies: ["FN-000"],
         steps: [{ name: "Step 1", status: "done" }],
         currentStep: 1,
         log: [{ timestamp: "2025-01-01", action: "Created" }],
@@ -189,28 +189,28 @@ describe("migrateFromLegacy", () => {
 
       await migrateFromLegacy(kbDir, db);
 
-      const row = db.prepare("SELECT * FROM tasks WHERE id = 'KB-001'").get() as any;
+      const row = db.prepare("SELECT * FROM tasks WHERE id = 'FN-001'").get() as any;
       expect(row).toBeDefined();
       expect(row.title).toBe("Test task");
       expect(row.column).toBe("todo");
       expect(row.size).toBe("M");
       expect(row.reviewLevel).toBe(2);
-      expect(JSON.parse(row.dependencies)).toEqual(["KB-000"]);
+      expect(JSON.parse(row.dependencies)).toEqual(["FN-000"]);
       expect(JSON.parse(row.steps)).toHaveLength(1);
       expect(JSON.parse(row.prInfo).number).toBe(1);
     });
 
     it("skips invalid task.json files", async () => {
       const tasksDir = join(kbDir, "tasks");
-      const validDir = join(tasksDir, "KB-001");
-      const invalidDir = join(tasksDir, "KB-002");
+      const validDir = join(tasksDir, "FN-001");
+      const invalidDir = join(tasksDir, "FN-002");
       await mkdir(validDir, { recursive: true });
       await mkdir(invalidDir, { recursive: true });
 
       await writeFile(
         join(validDir, "task.json"),
         JSON.stringify({
-          id: "KB-001",
+          id: "FN-001",
           description: "Valid",
           column: "triage",
           dependencies: [],
@@ -225,22 +225,22 @@ describe("migrateFromLegacy", () => {
 
       await migrateFromLegacy(kbDir, db);
 
-      const valid = db.prepare("SELECT * FROM tasks WHERE id = 'KB-001'").get();
-      const invalid = db.prepare("SELECT * FROM tasks WHERE id = 'KB-002'").get();
+      const valid = db.prepare("SELECT * FROM tasks WHERE id = 'FN-001'").get();
+      const invalid = db.prepare("SELECT * FROM tasks WHERE id = 'FN-002'").get();
       expect(valid).toBeDefined();
       expect(invalid).toBeUndefined();
     });
 
     it("preserves blob files (PROMPT.md, agent.log, attachments)", async () => {
       const tasksDir = join(kbDir, "tasks");
-      const taskDir = join(tasksDir, "KB-001");
+      const taskDir = join(tasksDir, "FN-001");
       const attachDir = join(taskDir, "attachments");
       await mkdir(attachDir, { recursive: true });
 
       await writeFile(
         join(taskDir, "task.json"),
         JSON.stringify({
-          id: "KB-001",
+          id: "FN-001",
           description: "Test",
           column: "triage",
           dependencies: [],
@@ -271,8 +271,8 @@ describe("migrateFromLegacy", () => {
   describe("activity log migration", () => {
     it("migrates activity-log.jsonl to activityLog table", async () => {
       const entries = [
-        { id: "1", timestamp: "2025-01-01T00:00:00.000Z", type: "task:created", taskId: "KB-001", taskTitle: "Test", details: "Created KB-001" },
-        { id: "2", timestamp: "2025-01-02T00:00:00.000Z", type: "task:moved", taskId: "KB-001", details: "Moved to todo", metadata: { from: "triage", to: "todo" } },
+        { id: "1", timestamp: "2025-01-01T00:00:00.000Z", type: "task:created", taskId: "FN-001", taskTitle: "Test", details: "Created KB-001" },
+        { id: "2", timestamp: "2025-01-02T00:00:00.000Z", type: "task:moved", taskId: "FN-001", details: "Moved to todo", metadata: { from: "triage", to: "todo" } },
       ];
       await writeFile(
         join(kbDir, "activity-log.jsonl"),
@@ -283,7 +283,7 @@ describe("migrateFromLegacy", () => {
 
       const rows = db.prepare("SELECT * FROM activityLog ORDER BY timestamp").all() as any[];
       expect(rows).toHaveLength(2);
-      expect(rows[0].taskId).toBe("KB-001");
+      expect(rows[0].taskId).toBe("FN-001");
       expect(rows[1].type).toBe("task:moved");
       expect(JSON.parse(rows[1].metadata).from).toBe("triage");
     });
@@ -304,7 +304,7 @@ describe("migrateFromLegacy", () => {
   describe("archive migration", () => {
     it("migrates archive.jsonl to archivedTasks table", async () => {
       const entry = {
-        id: "KB-001",
+        id: "FN-001",
         title: "Archived task",
         description: "Was done",
         column: "archived",
@@ -320,7 +320,7 @@ describe("migrateFromLegacy", () => {
 
       await migrateFromLegacy(kbDir, db);
 
-      const row = db.prepare("SELECT * FROM archivedTasks WHERE id = 'KB-001'").get() as any;
+      const row = db.prepare("SELECT * FROM archivedTasks WHERE id = 'FN-001'").get() as any;
       expect(row).toBeDefined();
       expect(row.archivedAt).toBe("2025-01-15T00:00:00.000Z");
       expect(JSON.parse(row.data).title).toBe("Archived task");
@@ -428,13 +428,13 @@ describe("migrateFromLegacy", () => {
 
     it("backs up individual task.json files, preserving blob files", async () => {
       const tasksDir = join(kbDir, "tasks");
-      const taskDir = join(tasksDir, "KB-001");
+      const taskDir = join(tasksDir, "FN-001");
       await mkdir(taskDir, { recursive: true });
 
       await writeFile(
         join(taskDir, "task.json"),
         JSON.stringify({
-          id: "KB-001",
+          id: "FN-001",
           description: "Test",
           column: "triage",
           dependencies: [],
@@ -469,11 +469,11 @@ describe("migrateFromLegacy", () => {
   describe("data integrity", () => {
     it("preserves all task fields through migration", async () => {
       const tasksDir = join(kbDir, "tasks");
-      const taskDir = join(tasksDir, "KB-001");
+      const taskDir = join(tasksDir, "FN-001");
       await mkdir(taskDir, { recursive: true });
 
       const fullTask = {
-        id: "KB-001",
+        id: "FN-001",
         title: "Full task",
         description: "All fields populated",
         column: "in-progress",
@@ -482,7 +482,7 @@ describe("migrateFromLegacy", () => {
         reviewLevel: 3,
         currentStep: 2,
         worktree: "/tmp/wt",
-        blockedBy: "KB-000",
+        blockedBy: "FN-000",
         paused: true,
         baseBranch: "main",
         modelPresetId: "complex",
@@ -497,7 +497,7 @@ describe("migrateFromLegacy", () => {
         createdAt: "2025-01-01T00:00:00.000Z",
         updatedAt: "2025-01-02T00:00:00.000Z",
         columnMovedAt: "2025-01-02T00:00:00.000Z",
-        dependencies: ["KB-000"],
+        dependencies: ["FN-000"],
         steps: [{ name: "Step 1", status: "done" }, { name: "Step 2", status: "in-progress" }],
         log: [{ timestamp: "2025-01-01", action: "Created" }],
         attachments: [{ filename: "test.png", originalName: "test.png", mimeType: "image/png", size: 1024, createdAt: "2025-01-01" }],
@@ -513,8 +513,8 @@ describe("migrateFromLegacy", () => {
 
       await migrateFromLegacy(kbDir, db);
 
-      const row = db.prepare("SELECT * FROM tasks WHERE id = 'KB-001'").get() as any;
-      expect(row.id).toBe("KB-001");
+      const row = db.prepare("SELECT * FROM tasks WHERE id = 'FN-001'").get() as any;
+      expect(row.id).toBe("FN-001");
       expect(row.title).toBe("Full task");
       expect(row.column).toBe("in-progress");
       expect(row.status).toBe("running");
@@ -522,7 +522,7 @@ describe("migrateFromLegacy", () => {
       expect(row.reviewLevel).toBe(3);
       expect(row.currentStep).toBe(2);
       expect(row.worktree).toBe("/tmp/wt");
-      expect(row.blockedBy).toBe("KB-000");
+      expect(row.blockedBy).toBe("FN-000");
       expect(row.paused).toBe(1);
       expect(row.baseBranch).toBe("main");
       expect(row.modelPresetId).toBe("complex");
@@ -537,7 +537,7 @@ describe("migrateFromLegacy", () => {
       expect(row.createdAt).toBe("2025-01-01T00:00:00.000Z");
       expect(row.updatedAt).toBe("2025-01-02T00:00:00.000Z");
       expect(row.columnMovedAt).toBe("2025-01-02T00:00:00.000Z");
-      expect(JSON.parse(row.dependencies)).toEqual(["KB-000"]);
+      expect(JSON.parse(row.dependencies)).toEqual(["FN-000"]);
       expect(JSON.parse(row.steps)).toHaveLength(2);
       expect(JSON.parse(row.log)).toHaveLength(1);
       expect(JSON.parse(row.attachments)).toHaveLength(1);

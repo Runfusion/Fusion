@@ -6,7 +6,7 @@ import type { AgentLogEntry } from "@fusion/core";
 function makeEntry(overrides: Partial<AgentLogEntry> = {}): AgentLogEntry {
   return {
     timestamp: "2026-01-01T00:00:00Z",
-    taskId: "KB-001",
+    taskId: "FN-001",
     text: "Hello world",
     type: "text",
     ...overrides,

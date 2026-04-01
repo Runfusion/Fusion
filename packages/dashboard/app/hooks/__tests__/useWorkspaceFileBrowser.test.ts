@@ -26,13 +26,13 @@ describe("useWorkspaceFileBrowser", () => {
     };
     mockFetchWorkspaceFileList.mockResolvedValueOnce(mockResponse);
 
-    const { result } = renderHook(() => useWorkspaceFileBrowser("KB-123", true));
+    const { result } = renderHook(() => useWorkspaceFileBrowser("FN-123", true));
 
     expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.entries).toEqual(mockResponse.entries);
-    expect(mockFetchWorkspaceFileList).toHaveBeenCalledWith("KB-123", undefined);
+    expect(mockFetchWorkspaceFileList).toHaveBeenCalledWith("FN-123", undefined);
   });
 
   it("resets path when workspace changes", async () => {
@@ -43,7 +43,7 @@ describe("useWorkspaceFileBrowser", () => {
 
     const { result, rerender } = renderHook(
       ({ workspace }) => useWorkspaceFileBrowser(workspace, true),
-      { initialProps: { workspace: "KB-123" } },
+      { initialProps: { workspace: "FN-123" } },
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -53,7 +53,7 @@ describe("useWorkspaceFileBrowser", () => {
     });
 
     await waitFor(() => expect(result.current.currentPath).toBe("src"));
-    await waitFor(() => expect(mockFetchWorkspaceFileList).toHaveBeenLastCalledWith("KB-123", "src"));
+    await waitFor(() => expect(mockFetchWorkspaceFileList).toHaveBeenLastCalledWith("FN-123", "src"));
 
     rerender({ workspace: "project" });
 
@@ -64,7 +64,7 @@ describe("useWorkspaceFileBrowser", () => {
   it("handles fetch errors", async () => {
     mockFetchWorkspaceFileList.mockRejectedValueOnce(new Error("Failed to load files"));
 
-    const { result } = renderHook(() => useWorkspaceFileBrowser("KB-404", true));
+    const { result } = renderHook(() => useWorkspaceFileBrowser("FN-404", true));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 

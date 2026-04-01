@@ -18,7 +18,7 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
 
 describe("getWorktreeLabel", () => {
   it("extracts last path segment", () => {
-    expect(getWorktreeLabel(".worktrees/KB-001")).toBe("KB-001");
+    expect(getWorktreeLabel(".worktrees/FN-001")).toBe("FN-001");
     expect(getWorktreeLabel("/path/to/kb/kb-001")).toBe("kb-001");
   });
 
@@ -31,8 +31,8 @@ describe("getWorktreeLabel", () => {
 
 describe("groupByWorktree", () => {
   it("groups active in-progress tasks by worktree", () => {
-    const t1 = makeTask({ id: "KB-001", worktree: ".worktrees/swift-falcon" });
-    const t2 = makeTask({ id: "KB-002", worktree: ".worktrees/quiet-robin" });
+    const t1 = makeTask({ id: "FN-001", worktree: ".worktrees/swift-falcon" });
+    const t2 = makeTask({ id: "FN-002", worktree: ".worktrees/quiet-robin" });
 
     const groups = groupByWorktree([t1, t2], [t1, t2], 2);
 
@@ -44,9 +44,9 @@ describe("groupByWorktree", () => {
   });
 
   it("places queued tasks only in the Up Next group, never in worktree groups", () => {
-    const active = makeTask({ id: "KB-001", worktree: ".worktrees/swift-falcon" });
+    const active = makeTask({ id: "FN-001", worktree: ".worktrees/swift-falcon" });
     const queued = makeTask({
-      id: "KB-002",
+      id: "FN-002",
       column: "todo",
       dependencies: [],
     });
@@ -66,7 +66,7 @@ describe("groupByWorktree", () => {
   });
 
   it("does not create Up Next group when there are no eligible queued tasks", () => {
-    const active = makeTask({ id: "KB-001", worktree: ".worktrees/swift-falcon" });
+    const active = makeTask({ id: "FN-001", worktree: ".worktrees/swift-falcon" });
 
     const groups = groupByWorktree([active], [active], 2);
 
@@ -74,11 +74,11 @@ describe("groupByWorktree", () => {
   });
 
   it("does not create Up Next when queued tasks have unsatisfied dependencies", () => {
-    const active = makeTask({ id: "KB-001", worktree: ".worktrees/swift-falcon" });
+    const active = makeTask({ id: "FN-001", worktree: ".worktrees/swift-falcon" });
     const blocked = makeTask({
-      id: "KB-002",
+      id: "FN-002",
       column: "todo",
-      dependencies: ["KB-003"], // KB-003 doesn't exist or isn't done
+      dependencies: ["FN-003"], // KB-003 doesn't exist or isn't done
     });
 
     const groups = groupByWorktree([active], [active, blocked], 2);
@@ -87,10 +87,10 @@ describe("groupByWorktree", () => {
   });
 
   it("respects maxConcurrent limit on queued tasks shown", () => {
-    const active = makeTask({ id: "KB-001", worktree: ".worktrees/swift-falcon" });
-    const q1 = makeTask({ id: "KB-010", column: "todo" });
-    const q2 = makeTask({ id: "KB-011", column: "todo" });
-    const q3 = makeTask({ id: "KB-012", column: "todo" });
+    const active = makeTask({ id: "FN-001", worktree: ".worktrees/swift-falcon" });
+    const q1 = makeTask({ id: "FN-010", column: "todo" });
+    const q2 = makeTask({ id: "FN-011", column: "todo" });
+    const q3 = makeTask({ id: "FN-012", column: "todo" });
 
     const groups = groupByWorktree([active], [active, q1, q2, q3], 2);
 
@@ -100,7 +100,7 @@ describe("groupByWorktree", () => {
   });
 
   it("places unassigned in-progress tasks in Unassigned group", () => {
-    const unassigned = makeTask({ id: "KB-001" }); // no worktree
+    const unassigned = makeTask({ id: "FN-001" }); // no worktree
 
     const groups = groupByWorktree([unassigned], [unassigned], 2);
 
@@ -110,15 +110,15 @@ describe("groupByWorktree", () => {
   });
 
   it("excludes paused todo tasks from Up Next", () => {
-    const active = makeTask({ id: "KB-001", worktree: ".worktrees/swift-falcon" });
+    const active = makeTask({ id: "FN-001", worktree: ".worktrees/swift-falcon" });
     const paused = makeTask({
-      id: "KB-002",
+      id: "FN-002",
       column: "todo",
       dependencies: [],
       paused: true,
     });
     const normal = makeTask({
-      id: "KB-003",
+      id: "FN-003",
       column: "todo",
       dependencies: [],
     });
@@ -127,16 +127,16 @@ describe("groupByWorktree", () => {
 
     const upNext = groups.find((g) => g.label === "Up Next");
     expect(upNext).toBeDefined();
-    expect(upNext!.queuedTasks.map((t) => t.id)).toEqual(["KB-003"]);
-    expect(upNext!.queuedTasks.map((t) => t.id)).not.toContain("KB-002");
+    expect(upNext!.queuedTasks.map((t) => t.id)).toEqual(["FN-003"]);
+    expect(upNext!.queuedTasks.map((t) => t.id)).not.toContain("FN-002");
   });
 
   it("queued tasks with satisfied deps appear in Up Next", () => {
-    const done = makeTask({ id: "KB-001", column: "done" });
+    const done = makeTask({ id: "FN-001", column: "done" });
     const queued = makeTask({
-      id: "KB-002",
+      id: "FN-002",
       column: "todo",
-      dependencies: ["KB-001"],
+      dependencies: ["FN-001"],
     });
 
     const groups = groupByWorktree([], [done, queued], 2);

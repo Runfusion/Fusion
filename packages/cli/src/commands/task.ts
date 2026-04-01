@@ -1056,7 +1056,7 @@ export async function runTaskPrCreate(id: string, options: PrCreateOptions = {})
   }
 
   // Build branch name
-  const branchName = `kb/${id.toLowerCase()}`;
+  const branchName = `fusion/${id.toLowerCase()}`;
 
   // Build PR title
   let title: string;

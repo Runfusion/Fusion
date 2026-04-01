@@ -40,7 +40,7 @@ describe("WorkflowResultsTab", () => {
   ];
 
   it("renders list of workflow step results", () => {
-    render(<WorkflowResultsTab taskId="KB-001" results={mockResults} />);
+    render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
 
     expect(screen.getByTestId("workflow-results-list")).toBeInTheDocument();
     expect(screen.getByText("QA Check")).toBeInTheDocument();
@@ -50,7 +50,7 @@ describe("WorkflowResultsTab", () => {
   });
 
   it("renders correct status badges for each result", () => {
-    render(<WorkflowResultsTab taskId="KB-001" results={mockResults} />);
+    render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
 
     // Passed badge
     const passedBadge = screen.getByTestId("workflow-result-badge-WS-001");
@@ -73,7 +73,7 @@ describe("WorkflowResultsTab", () => {
   });
 
   it("shows output content for each result", () => {
-    render(<WorkflowResultsTab taskId="KB-001" results={mockResults} />);
+    render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
 
     expect(screen.getByTestId("workflow-result-output-WS-001")).toHaveTextContent(
       "All tests passed successfully."
@@ -84,7 +84,7 @@ describe("WorkflowResultsTab", () => {
   });
 
   it("handles results without output gracefully", () => {
-    render(<WorkflowResultsTab taskId="KB-001" results={mockResults} />);
+    render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
 
     // WS-003 and WS-004 have no output, so output elements should not be rendered
     expect(screen.queryByTestId("workflow-result-output-WS-003")).not.toBeInTheDocument();
@@ -92,21 +92,21 @@ describe("WorkflowResultsTab", () => {
   });
 
   it("shows empty state when no results", () => {
-    render(<WorkflowResultsTab taskId="KB-001" results={[]} />);
+    render(<WorkflowResultsTab taskId="FN-001" results={[]} />);
 
     expect(screen.getByTestId("workflow-results-empty")).toBeInTheDocument();
     expect(screen.getByText("No workflow steps have run yet.")).toBeInTheDocument();
   });
 
   it("shows loading state when loading prop is true", () => {
-    render(<WorkflowResultsTab taskId="KB-001" results={[]} loading={true} />);
+    render(<WorkflowResultsTab taskId="FN-001" results={[]} loading={true} />);
 
     expect(screen.getByTestId("workflow-results-loading")).toBeInTheDocument();
     expect(screen.getByText("Loading workflow results…")).toBeInTheDocument();
   });
 
   it("displays execution timestamps when available", () => {
-    render(<WorkflowResultsTab taskId="KB-001" results={mockResults} />);
+    render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
 
     // Check that timestamps are displayed for results that have them
     const timestamps = screen.getAllByText(/Started:/);
@@ -114,7 +114,7 @@ describe("WorkflowResultsTab", () => {
   });
 
   it("displays duration when start and end times are available", () => {
-    render(<WorkflowResultsTab taskId="KB-001" results={mockResults} />);
+    render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
 
     // The first result has a 2m 30s duration
     expect(screen.getByText("2m 30s")).toBeInTheDocument();
@@ -130,7 +130,7 @@ describe("WorkflowResultsTab", () => {
       },
     ];
 
-    render(<WorkflowResultsTab taskId="KB-001" results={resultsWithoutTimestamps} />);
+    render(<WorkflowResultsTab taskId="FN-001" results={resultsWithoutTimestamps} />);
 
     expect(screen.getByText("Simple Check")).toBeInTheDocument();
     // Should not crash without timestamps

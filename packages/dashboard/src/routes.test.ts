@@ -68,7 +68,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
 }
 
 const FAKE_TASK_DETAIL: TaskDetail = {
-  id: "KB-001",
+  id: "FN-001",
   description: "Test task",
   column: "in-progress",
   dependencies: [],
@@ -196,7 +196,7 @@ describe("GET /tasks/:id", () => {
     const res = await GET(buildApp(), "/api/tasks/KB-001");
 
     expect(res.status).toBe(200);
-    expect(res.body.id).toBe("KB-001");
+    expect(res.body.id).toBe("FN-001");
     expect(res.body.prompt).toBe("# KB-001\n\nTest task");
   });
 
@@ -414,12 +414,12 @@ describe("POST /subtasks/*", () => {
 
   it("creates tasks from a breakdown and resolves dependencies", async () => {
     (store.createTask as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-101", title: "First", column: "triage" })
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-102", title: "Second", column: "triage" });
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-101", title: "First", column: "triage" })
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-102", title: "Second", column: "triage" });
     (store.updateTask as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-101", title: "First", column: "triage", size: "S" })
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-102", title: "Second", column: "triage", size: "M" })
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-102", title: "Second", column: "triage", dependencies: ["KB-101"] });
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-101", title: "First", column: "triage", size: "S" })
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-102", title: "Second", column: "triage", size: "M" })
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-102", title: "Second", column: "triage", dependencies: ["FN-101"] });
 
     const start = await REQUEST(
       buildApp(),
@@ -447,7 +447,7 @@ describe("POST /subtasks/*", () => {
     expect(createRes.body.tasks).toHaveLength(2);
     expect(store.createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({ title: "First", dependencies: undefined }));
     expect(store.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ title: "Second", dependencies: undefined }));
-    expect(store.updateTask).toHaveBeenCalledWith("KB-102", { dependencies: ["KB-101"] });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-102", { dependencies: ["FN-101"] });
   });
 
   it("returns 404 for invalid subtask session during batch creation", async () => {
@@ -469,7 +469,7 @@ describe("POST /subtasks/*", () => {
   it("inherits parent task model settings when creating subtasks", async () => {
     const parentTask = {
       ...FAKE_TASK_DETAIL,
-      id: "KB-100",
+      id: "FN-100",
       title: "Parent Task",
       column: "triage",
       modelProvider: "anthropic",
@@ -480,11 +480,11 @@ describe("POST /subtasks/*", () => {
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(parentTask);
     (store.createTask as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-101", title: "First", column: "triage" })
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-102", title: "Second", column: "triage" });
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-101", title: "First", column: "triage" })
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-102", title: "Second", column: "triage" });
     (store.updateTask as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-101", title: "First", column: "triage", size: "S" })
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-102", title: "Second", column: "triage", size: "M" });
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-101", title: "First", column: "triage", size: "S" })
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-102", title: "Second", column: "triage", size: "M" });
 
     const start = await REQUEST(
       buildApp(),
@@ -500,7 +500,7 @@ describe("POST /subtasks/*", () => {
       "/api/subtasks/create-tasks",
       JSON.stringify({
         sessionId: start.body.sessionId,
-        parentTaskId: "KB-100",
+        parentTaskId: "FN-100",
         subtasks: [
           { tempId: "subtask-1", title: "First", description: "Do first", size: "S", dependsOn: [] },
           { tempId: "subtask-2", title: "Second", description: "Do second", size: "M", dependsOn: ["subtask-1"] },
@@ -510,7 +510,7 @@ describe("POST /subtasks/*", () => {
     );
 
     expect(createRes.status).toBe(201);
-    expect(store.getTask).toHaveBeenCalledWith("KB-100");
+    expect(store.getTask).toHaveBeenCalledWith("FN-100");
     expect(store.createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({
       title: "First",
       modelProvider: "anthropic",
@@ -530,9 +530,9 @@ describe("POST /subtasks/*", () => {
   it("handles missing parent task gracefully when creating subtasks", async () => {
     (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Task not found"));
     (store.createTask as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-101", title: "First", column: "triage" });
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-101", title: "First", column: "triage" });
     (store.updateTask as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "KB-101", title: "First", column: "triage", size: "S" });
+      .mockResolvedValueOnce({ ...FAKE_TASK_DETAIL, id: "FN-101", title: "First", column: "triage", size: "S" });
 
     const start = await REQUEST(
       buildApp(),
@@ -548,7 +548,7 @@ describe("POST /subtasks/*", () => {
       "/api/subtasks/create-tasks",
       JSON.stringify({
         sessionId: start.body.sessionId,
-        parentTaskId: "KB-NONEXISTENT",
+        parentTaskId: "FN-NONEXISTENT",
         subtasks: [
           { tempId: "subtask-1", title: "First", description: "Do first", size: "S", dependsOn: [] },
         ],
@@ -557,7 +557,7 @@ describe("POST /subtasks/*", () => {
     );
 
     expect(createRes.status).toBe(201);
-    expect(store.getTask).toHaveBeenCalledWith("KB-NONEXISTENT");
+    expect(store.getTask).toHaveBeenCalledWith("FN-NONEXISTENT");
     // Subtask created without model inheritance (undefined values)
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       title: "First",
@@ -595,8 +595,8 @@ describe("POST /tasks/:id/retry", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined });
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
   it("returns 400 when task is not in failed state", async () => {
@@ -623,8 +623,8 @@ describe("POST /tasks/:id/retry", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined });
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 });
 
@@ -645,7 +645,7 @@ describe("POST /tasks/:id/duplicate", () => {
   }
 
   it("duplicates a task and returns 201 with new task", async () => {
-    const newTask = { ...FAKE_TASK_DETAIL, id: "KB-002", column: "triage" };
+    const newTask = { ...FAKE_TASK_DETAIL, id: "FN-002", column: "triage" };
     (store.duplicateTask as ReturnType<typeof vi.fn>).mockResolvedValue(newTask);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/duplicate", JSON.stringify({}), {
@@ -653,9 +653,9 @@ describe("POST /tasks/:id/duplicate", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.id).toBe("KB-002");
+    expect(res.body.id).toBe("FN-002");
     expect(res.body.column).toBe("triage");
-    expect(store.duplicateTask).toHaveBeenCalledWith("KB-001");
+    expect(store.duplicateTask).toHaveBeenCalledWith("FN-001");
   });
 
   it("returns 404 when source task not found", async () => {
@@ -701,7 +701,7 @@ describe("POST /tasks/:id/refine", () => {
   }
 
   it("creates refinement task from done task and returns 201", async () => {
-    const refinedTask = { ...FAKE_TASK_DETAIL, id: "KB-002", column: "triage", title: "Refinement: KB-001" };
+    const refinedTask = { ...FAKE_TASK_DETAIL, id: "FN-002", column: "triage", title: "Refinement: KB-001" };
     (store.refineTask as ReturnType<typeof vi.fn>).mockResolvedValue(refinedTask);
     (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_TASK_DETAIL);
 
@@ -710,14 +710,14 @@ describe("POST /tasks/:id/refine", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.id).toBe("KB-002");
+    expect(res.body.id).toBe("FN-002");
     expect(res.body.column).toBe("triage");
-    expect(store.refineTask).toHaveBeenCalledWith("KB-001", "Need improvements");
-    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Refinement requested", "Need improvements");
+    expect(store.refineTask).toHaveBeenCalledWith("FN-001", "Need improvements");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Refinement requested", "Need improvements");
   });
 
   it("creates refinement task from in-review task and returns 201", async () => {
-    const refinedTask = { ...FAKE_TASK_DETAIL, id: "KB-002", column: "triage", title: "Refinement: My Feature" };
+    const refinedTask = { ...FAKE_TASK_DETAIL, id: "FN-002", column: "triage", title: "Refinement: My Feature" };
     (store.refineTask as ReturnType<typeof vi.fn>).mockResolvedValue(refinedTask);
     (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_TASK_DETAIL);
 
@@ -727,11 +727,11 @@ describe("POST /tasks/:id/refine", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.column).toBe("triage");
-    expect(store.refineTask).toHaveBeenCalledWith("KB-001", "Fix edge cases");
+    expect(store.refineTask).toHaveBeenCalledWith("FN-001", "Fix edge cases");
   });
 
   it("returns 400 when task is not in done or in-review column", async () => {
-    (store.refineTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Cannot refine KB-001: task is in 'triage', must be in 'done' or 'in-review'"));
+    (store.refineTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Cannot refine FN-001: task is in 'triage', must be in 'done' or 'in-review'"));
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/refine", JSON.stringify({ feedback: "Need improvements" }), {
       "Content-Type": "application/json",
@@ -834,11 +834,11 @@ describe("POST /tasks/:id/archive", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.column).toBe("archived");
-    expect(store.archiveTask).toHaveBeenCalledWith("KB-001");
+    expect(store.archiveTask).toHaveBeenCalledWith("FN-001");
   });
 
   it("returns 400 when task is not in done column", async () => {
-    (store.archiveTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Cannot archive KB-001: task is in 'triage', must be in 'done'"));
+    (store.archiveTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Cannot archive FN-001: task is in 'triage', must be in 'done'"));
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/archive", JSON.stringify({}), {
       "Content-Type": "application/json",
@@ -886,11 +886,11 @@ describe("POST /tasks/:id/unarchive", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.column).toBe("done");
-    expect(store.unarchiveTask).toHaveBeenCalledWith("KB-001");
+    expect(store.unarchiveTask).toHaveBeenCalledWith("FN-001");
   });
 
   it("returns 400 when task is not in archived column", async () => {
-    (store.unarchiveTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Cannot unarchive KB-001: task is in 'done', must be in 'archived'"));
+    (store.unarchiveTask as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Cannot unarchive FN-001: task is in 'done', must be in 'archived'"));
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/unarchive", JSON.stringify({}), {
       "Content-Type": "application/json",
@@ -930,8 +930,8 @@ describe("POST /tasks/archive-all-done", () => {
 
   it("archives all done tasks and returns the archived array", async () => {
     const archivedTasks = [
-      { ...FAKE_TASK_DETAIL, id: "KB-001", column: "archived" },
-      { ...FAKE_TASK_DETAIL, id: "KB-002", column: "archived" },
+      { ...FAKE_TASK_DETAIL, id: "FN-001", column: "archived" },
+      { ...FAKE_TASK_DETAIL, id: "FN-002", column: "archived" },
     ];
     (store.archiveAllDone as ReturnType<typeof vi.fn>).mockResolvedValue(archivedTasks);
 
@@ -984,8 +984,8 @@ describe("POST /tasks/batch-update-models", () => {
   }
 
   it("updates multiple tasks with executor and validator models", async () => {
-    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001" };
-    const task2 = { ...FAKE_TASK_DETAIL, id: "KB-002" };
+    const task1 = { ...FAKE_TASK_DETAIL, id: "FN-001" };
+    const task2 = { ...FAKE_TASK_DETAIL, id: "FN-002" };
     const updated1 = { ...task1, modelProvider: "openai", modelId: "gpt-4o", validatorModelProvider: "anthropic", validatorModelId: "claude-sonnet-4-5" };
     const updated2 = { ...task2, modelProvider: "openai", modelId: "gpt-4o", validatorModelProvider: "anthropic", validatorModelId: "claude-sonnet-4-5" };
 
@@ -997,7 +997,7 @@ describe("POST /tasks/batch-update-models", () => {
       .mockResolvedValueOnce(updated2);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001", "KB-002"],
+      taskIds: ["FN-001", "FN-002"],
       modelProvider: "openai",
       modelId: "gpt-4o",
       validatorModelProvider: "anthropic",
@@ -1009,13 +1009,13 @@ describe("POST /tasks/batch-update-models", () => {
     expect(res.status).toBe(200);
     expect(res.body.count).toBe(2);
     expect(res.body.updated).toHaveLength(2);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       modelProvider: "openai",
       modelId: "gpt-4o",
       validatorModelProvider: "anthropic",
       validatorModelId: "claude-sonnet-4-5",
     });
-    expect(store.updateTask).toHaveBeenCalledWith("KB-002", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-002", {
       modelProvider: "openai",
       modelId: "gpt-4o",
       validatorModelProvider: "anthropic",
@@ -1024,14 +1024,14 @@ describe("POST /tasks/batch-update-models", () => {
   });
 
   it("updates only executor model when only executor fields provided", async () => {
-    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    const task1 = { ...FAKE_TASK_DETAIL, id: "FN-001" };
     const updated1 = { ...task1, modelProvider: "openai", modelId: "gpt-4o" };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task1);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated1);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001"],
+      taskIds: ["FN-001"],
       modelProvider: "openai",
       modelId: "gpt-4o",
     }), {
@@ -1040,21 +1040,21 @@ describe("POST /tasks/batch-update-models", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.count).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       modelProvider: "openai",
       modelId: "gpt-4o",
     });
   });
 
   it("updates only validator model when only validator fields provided", async () => {
-    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    const task1 = { ...FAKE_TASK_DETAIL, id: "FN-001" };
     const updated1 = { ...task1, validatorModelProvider: "anthropic", validatorModelId: "claude-sonnet-4-5" };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task1);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated1);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001"],
+      taskIds: ["FN-001"],
       validatorModelProvider: "anthropic",
       validatorModelId: "claude-sonnet-4-5",
     }), {
@@ -1063,21 +1063,21 @@ describe("POST /tasks/batch-update-models", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.count).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       validatorModelProvider: "anthropic",
       validatorModelId: "claude-sonnet-4-5",
     });
   });
 
   it("clears models when null values provided", async () => {
-    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001", modelProvider: "openai", modelId: "gpt-4o" };
+    const task1 = { ...FAKE_TASK_DETAIL, id: "FN-001", modelProvider: "openai", modelId: "gpt-4o" };
     const updated1 = { ...task1, modelProvider: undefined, modelId: undefined };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task1);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated1);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001"],
+      taskIds: ["FN-001"],
       modelProvider: null,
       modelId: null,
     }), {
@@ -1085,7 +1085,7 @@ describe("POST /tasks/batch-update-models", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       modelProvider: null,
       modelId: null,
     });
@@ -1093,7 +1093,7 @@ describe("POST /tasks/batch-update-models", () => {
 
   it("returns 400 when taskIds is not an array", async () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: "KB-001",
+      taskIds: "FN-001",
       modelProvider: "openai",
       modelId: "gpt-4o",
     }), {
@@ -1119,7 +1119,7 @@ describe("POST /tasks/batch-update-models", () => {
 
   it("returns 400 when taskIds contains non-string values", async () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001", 123],
+      taskIds: ["FN-001", 123],
       modelProvider: "openai",
       modelId: "gpt-4o",
     }), {
@@ -1132,7 +1132,7 @@ describe("POST /tasks/batch-update-models", () => {
 
   it("returns 400 when no model fields provided", async () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001"],
+      taskIds: ["FN-001"],
     }), {
       "Content-Type": "application/json",
     });
@@ -1143,7 +1143,7 @@ describe("POST /tasks/batch-update-models", () => {
 
   it("returns 400 when only executor provider provided (missing modelId)", async () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001"],
+      taskIds: ["FN-001"],
       modelProvider: "openai",
     }), {
       "Content-Type": "application/json",
@@ -1155,7 +1155,7 @@ describe("POST /tasks/batch-update-models", () => {
 
   it("returns 400 when only executor modelId provided (missing provider)", async () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001"],
+      taskIds: ["FN-001"],
       modelId: "gpt-4o",
     }), {
       "Content-Type": "application/json",
@@ -1167,7 +1167,7 @@ describe("POST /tasks/batch-update-models", () => {
 
   it("returns 400 when only validator provider provided (missing modelId)", async () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001"],
+      taskIds: ["FN-001"],
       validatorModelProvider: "anthropic",
     }), {
       "Content-Type": "application/json",
@@ -1179,7 +1179,7 @@ describe("POST /tasks/batch-update-models", () => {
 
   it("returns 400 when only validator modelId provided (missing provider)", async () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001"],
+      taskIds: ["FN-001"],
       validatorModelId: "claude-sonnet-4-5",
     }), {
       "Content-Type": "application/json",
@@ -1207,8 +1207,8 @@ describe("POST /tasks/batch-update-models", () => {
   });
 
   it("continues with other tasks when individual update fails", async () => {
-    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001" };
-    const task2 = { ...FAKE_TASK_DETAIL, id: "KB-002" };
+    const task1 = { ...FAKE_TASK_DETAIL, id: "FN-001" };
+    const task2 = { ...FAKE_TASK_DETAIL, id: "FN-002" };
     const updated1 = { ...task1, modelProvider: "openai", modelId: "gpt-4o" };
 
     (store.getTask as ReturnType<typeof vi.fn>)
@@ -1221,7 +1221,7 @@ describe("POST /tasks/batch-update-models", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
-      taskIds: ["KB-001", "KB-002"],
+      taskIds: ["FN-001", "FN-002"],
       modelProvider: "openai",
       modelId: "gpt-4o",
     }), {
@@ -1252,25 +1252,25 @@ describe("PATCH /tasks/:id", () => {
   }
 
   it("forwards dependencies to store.updateTask", async () => {
-    const updatedTask = { ...FAKE_TASK_DETAIL, dependencies: ["KB-002"] };
+    const updatedTask = { ...FAKE_TASK_DETAIL, dependencies: ["FN-002"] };
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
 
-    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ dependencies: ["KB-002"] }), {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ dependencies: ["FN-002"] }), {
       "Content-Type": "application/json",
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       title: undefined,
       description: undefined,
       prompt: undefined,
-      dependencies: ["KB-002"],
+      dependencies: ["FN-002"],
       modelProvider: null,
       modelId: null,
       validatorModelProvider: null,
       validatorModelId: null,
     });
-    expect(res.body.dependencies).toEqual(["KB-002"]);
+    expect(res.body.dependencies).toEqual(["FN-002"]);
   });
 
   it("forwards title and description without dependencies", async () => {
@@ -1281,7 +1281,7 @@ describe("PATCH /tasks/:id", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       title: "New",
       description: undefined,
       prompt: undefined,
@@ -1312,7 +1312,7 @@ describe("PATCH /tasks/:id", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       title: undefined,
       description: undefined,
       prompt: undefined,
@@ -1361,7 +1361,7 @@ describe("PATCH /tasks/:id", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       title: undefined,
       description: undefined,
       prompt: undefined,
@@ -1411,7 +1411,7 @@ describe("Attachment routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.filename).toBe("1234-screenshot.png");
     expect((store.addAttachment as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
-      "KB-001",
+      "FN-001",
       "screenshot.png",
       expect.any(Buffer),
       "image/png",
@@ -1454,7 +1454,7 @@ describe("Attachment routes", () => {
     const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001/attachments/1234-screenshot.png");
 
     expect(res.status).toBe(200);
-    expect((store.deleteAttachment as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("KB-001", "1234-screenshot.png");
+    expect((store.deleteAttachment as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("FN-001", "1234-screenshot.png");
   });
 
   it("DELETE /tasks/:id/attachments/:filename — returns 404 for missing", async () => {
@@ -1469,8 +1469,8 @@ describe("Attachment routes", () => {
 
   it("GET /tasks/:id/logs — returns agent logs", async () => {
     const fakeLogs = [
-      { timestamp: "2026-01-01T00:00:00Z", taskId: "KB-001", text: "Hello", type: "text" },
-      { timestamp: "2026-01-01T00:00:01Z", taskId: "KB-001", text: "Read", type: "tool" },
+      { timestamp: "2026-01-01T00:00:00Z", taskId: "FN-001", text: "Hello", type: "text" },
+      { timestamp: "2026-01-01T00:00:01Z", taskId: "FN-001", text: "Read", type: "tool" },
     ];
     (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue(fakeLogs);
 
@@ -1478,7 +1478,7 @@ describe("Attachment routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeLogs);
-    expect(store.getAgentLogs).toHaveBeenCalledWith("KB-001");
+    expect(store.getAgentLogs).toHaveBeenCalledWith("FN-001");
   });
 
   it("GET /tasks/:id/logs — returns empty array when no logs", async () => {
@@ -1755,22 +1755,22 @@ describe("Pause/Unpause endpoints", () => {
 
   beforeEach(() => {
     store = createMockStore({
-      pauseTask: vi.fn().mockResolvedValue({ id: "KB-001", paused: true }),
+      pauseTask: vi.fn().mockResolvedValue({ id: "FN-001", paused: true }),
     });
   });
 
   it("POST /tasks/:id/pause — pauses a task", async () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/pause");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: "KB-001", paused: true });
-    expect(store.pauseTask).toHaveBeenCalledWith("KB-001", true);
+    expect(res.body).toEqual({ id: "FN-001", paused: true });
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", true);
   });
 
   it("POST /tasks/:id/unpause — unpauses a task", async () => {
-    (store.pauseTask as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "KB-001" });
+    (store.pauseTask as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "FN-001" });
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/unpause");
     expect(res.status).toBe(200);
-    expect(store.pauseTask).toHaveBeenCalledWith("KB-001", false);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", false);
   });
 
   it("POST /tasks/:id/pause — returns 500 on error", async () => {
@@ -1807,7 +1807,7 @@ describe("Pause/Unpause endpoints", () => {
         "Content-Type": "application/json",
       });
       expect(res.status).toBe(200);
-      expect(store.addTaskComment).toHaveBeenCalledWith("KB-001", "Hello", "user");
+      expect(store.addTaskComment).toHaveBeenCalledWith("FN-001", "Hello", "user");
     });
 
     it("PATCH /tasks/:id/comments/:commentId — updates a task comment", async () => {
@@ -1821,7 +1821,7 @@ describe("Pause/Unpause endpoints", () => {
         "Content-Type": "application/json",
       });
       expect(res.status).toBe(200);
-      expect(store.updateTaskComment).toHaveBeenCalledWith("KB-001", "c1", "Updated");
+      expect(store.updateTaskComment).toHaveBeenCalledWith("FN-001", "c1", "Updated");
     });
 
     it("DELETE /tasks/:id/comments/:commentId — deletes a task comment", async () => {
@@ -1833,14 +1833,14 @@ describe("Pause/Unpause endpoints", () => {
 
       const res = await REQUEST(app, "DELETE", "/api/tasks/KB-001/comments/c1");
       expect(res.status).toBe(200);
-      expect(store.deleteTaskComment).toHaveBeenCalledWith("KB-001", "c1");
+      expect(store.deleteTaskComment).toHaveBeenCalledWith("FN-001", "c1");
     });
   });
 
   describe("POST /tasks/:id/steer", () => {
     it("adds a steering comment to a task", async () => {
       const mockComment = {
-        id: "KB-001",
+        id: "FN-001",
         steeringComments: [
           {
             id: "1234567890-abc123",
@@ -1863,7 +1863,7 @@ describe("Pause/Unpause endpoints", () => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual(mockComment);
       expect(store.addSteeringComment).toHaveBeenCalledWith(
-        "KB-001",
+        "FN-001",
         "Please handle the edge case",
         "user"
       );
@@ -1966,7 +1966,7 @@ describe("Pause/Unpause endpoints", () => {
       number: 42,
       status: "open" as const,
       title: "Test PR",
-      headBranch: "kb/kb-001",
+      headBranch: "fusion/fn-001",
       baseBranch: "main",
       commentCount: 0,
     };
@@ -2121,7 +2121,7 @@ describe("Pause/Unpause endpoints", () => {
       number: 42,
       status: "open" as const,
       title: "Test PR",
-      headBranch: "kb/kb-001",
+      headBranch: "fusion/fn-001",
       baseBranch: "main",
       commentCount: 3,
     };
@@ -2243,7 +2243,7 @@ describe("Pause/Unpause endpoints", () => {
       number: 42,
       status: "open" as const,
       title: "Test PR",
-      headBranch: "kb/kb-001",
+      headBranch: "fusion/fn-001",
       baseBranch: "main",
       commentCount: 3,
     };
@@ -2465,7 +2465,7 @@ describe("Pause/Unpause endpoints", () => {
       (store.getTask as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({
           ...FAKE_TASK_DETAIL,
-          id: "KB-001",
+          id: "FN-001",
           updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
           issueInfo: {
             url: "https://github.com/owner/repo/issues/101",
@@ -2476,7 +2476,7 @@ describe("Pause/Unpause endpoints", () => {
         })
         .mockResolvedValueOnce({
           ...FAKE_TASK_DETAIL,
-          id: "KB-002",
+          id: "FN-002",
           updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
           prInfo: {
             url: "https://github.com/owner/repo/pull/42",
@@ -2514,21 +2514,21 @@ describe("Pause/Unpause endpoints", () => {
         buildApp(),
         "POST",
         "/api/github/batch/status",
-        JSON.stringify({ taskIds: ["KB-001", "KB-002"] }),
+        JSON.stringify({ taskIds: ["FN-001", "FN-002"] }),
         { "Content-Type": "application/json" },
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.results["KB-001"].issueInfo.state).toBe("closed");
-      expect(res.body.results["KB-001"].stale).toBe(false);
-      expect(res.body.results["KB-002"].prInfo.status).toBe("merged");
-      expect(res.body.results["KB-002"].stale).toBe(false);
+      expect(res.body.results["FN-001"].issueInfo.state).toBe("closed");
+      expect(res.body.results["FN-001"].stale).toBe(false);
+      expect(res.body.results["FN-002"].prInfo.status).toBe("merged");
+      expect(res.body.results["FN-002"].stale).toBe(false);
       expect(store.updateIssueInfo).toHaveBeenCalledWith(
-        "KB-001",
+        "FN-001",
         expect.objectContaining({ number: 101, state: "closed", lastCheckedAt: expect.any(String) }),
       );
       expect(store.updatePrInfo).toHaveBeenCalledWith(
-        "KB-002",
+        "FN-002",
         expect.objectContaining({ number: 42, status: "merged", lastCheckedAt: expect.any(String) }),
       );
     });
@@ -2537,7 +2537,7 @@ describe("Pause/Unpause endpoints", () => {
       (store.getTask as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({
           ...FAKE_TASK_DETAIL,
-          id: "KB-001",
+          id: "FN-001",
           updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
           issueInfo: {
             url: "https://github.com/owner/repo/issues/101",
@@ -2548,7 +2548,7 @@ describe("Pause/Unpause endpoints", () => {
         })
         .mockResolvedValueOnce({
           ...FAKE_TASK_DETAIL,
-          id: "KB-002",
+          id: "FN-002",
           updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
           issueInfo: {
             url: "https://github.com/owner/repo/issues/404",
@@ -2572,14 +2572,14 @@ describe("Pause/Unpause endpoints", () => {
         buildApp(),
         "POST",
         "/api/github/batch/status",
-        JSON.stringify({ taskIds: ["KB-001", "KB-002"] }),
+        JSON.stringify({ taskIds: ["FN-001", "FN-002"] }),
         { "Content-Type": "application/json" },
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.results["KB-001"].issueInfo.state).toBe("closed");
-      expect(res.body.results["KB-002"].error).toContain("Issue #404 not found");
-      expect(res.body.results["KB-002"].stale).toBe(true);
+      expect(res.body.results["FN-001"].issueInfo.state).toBe("closed");
+      expect(res.body.results["FN-002"].error).toContain("Issue #404 not found");
+      expect(res.body.results["FN-002"].stale).toBe(true);
     });
 
     it("returns 429 when rate limit is exceeded", async () => {
@@ -2587,7 +2587,7 @@ describe("Pause/Unpause endpoints", () => {
       process.env.GITHUB_REPOSITORY = "owner/repo";
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...FAKE_TASK_DETAIL,
-        id: "KB-001",
+        id: "FN-001",
         issueInfo: {
           url: "https://github.com/owner/repo/issues/101",
           number: 101,
@@ -2603,7 +2603,7 @@ describe("Pause/Unpause endpoints", () => {
         buildApp(),
         "POST",
         "/api/github/batch/status",
-        JSON.stringify({ taskIds: ["KB-001"] }),
+        JSON.stringify({ taskIds: ["FN-001"] }),
         { "Content-Type": "application/json" },
       );
 
@@ -2623,7 +2623,7 @@ describe("Pause/Unpause endpoints", () => {
     it("calculates stale per task based on refresh success and existing cached data", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...FAKE_TASK_DETAIL,
-        id: "KB-001",
+        id: "FN-001",
         updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
         issueInfo: {
           url: "https://github.com/owner/repo/issues/101",
@@ -2639,13 +2639,13 @@ describe("Pause/Unpause endpoints", () => {
         buildApp(),
         "POST",
         "/api/github/batch/status",
-        JSON.stringify({ taskIds: ["KB-001"] }),
+        JSON.stringify({ taskIds: ["FN-001"] }),
         { "Content-Type": "application/json" },
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.results["KB-001"].stale).toBe(true);
-      expect(res.body.results["KB-001"].error).toContain("Issue #101 not found");
+      expect(res.body.results["FN-001"].stale).toBe(true);
+      expect(res.body.results["FN-001"].error).toContain("Issue #101 not found");
     });
 
     it("returns empty results for empty taskIds", async () => {
@@ -2798,7 +2798,7 @@ describe("POST /github/issues/import", () => {
 
     store = createMockStore({
       createTask: vi.fn().mockResolvedValue({
-        id: "KB-001",
+        id: "FN-001",
         title: "Test Issue",
         description: "Test body\n\nSource: https://github.com/owner/repo/issues/1",
         column: "triage",
@@ -2834,7 +2834,7 @@ describe("POST /github/issues/import", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.id).toBe("KB-001");
+    expect(res.body.id).toBe("FN-001");
     expect(store.createTask).toHaveBeenCalledWith({
       title: "Test Issue",
       description: "Test body\n\nSource: https://github.com/owner/repo/issues/1",
@@ -2850,7 +2850,7 @@ describe("POST /github/issues/import", () => {
       "Content-Type": "application/json",
     });
 
-    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Imported from GitHub", "https://github.com/owner/repo/issues/1");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Imported from GitHub", "https://github.com/owner/repo/issues/1");
   });
 
   it("returns 400 when issueNumber is missing", async () => {
@@ -2900,7 +2900,7 @@ describe("POST /github/issues/import", () => {
   it("returns 409 when issue already imported", async () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
       {
-        id: "KB-002",
+        id: "FN-002",
         description: "Existing\n\nSource: https://github.com/owner/repo/issues/1",
         column: "triage",
       },
@@ -2914,7 +2914,7 @@ describe("POST /github/issues/import", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toContain("already imported");
-    expect(res.body.existingTaskId).toBe("KB-002");
+    expect(res.body.existingTaskId).toBe("FN-002");
     expect(store.createTask).not.toHaveBeenCalled();
   });
 
@@ -3331,12 +3331,12 @@ describe("POST /tasks/:id/spec/revise", () => {
 
     expect(res.status).toBe(200);
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-001",
+      "FN-001",
       "AI spec revision requested",
       "Please add more details about error handling"
     );
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "triage");
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: "needs-respecify" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-respecify" });
   });
 
   it("requests spec revision and moves task from in-progress to triage", async () => {
@@ -3356,7 +3356,7 @@ describe("POST /tasks/:id/spec/revise", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "triage");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
   });
 
   it("returns 400 when task is already in triage", async () => {
@@ -3494,8 +3494,8 @@ describe("POST /tasks/:id/spec/revise", () => {
     );
 
     expect(store.logEntry).toHaveBeenCalledTimes(2);
-    expect(store.logEntry).toHaveBeenNthCalledWith(1, "KB-001", "AI spec revision requested", "First feedback");
-    expect(store.logEntry).toHaveBeenNthCalledWith(2, "KB-001", "AI spec revision requested", "Second feedback");
+    expect(store.logEntry).toHaveBeenNthCalledWith(1, "FN-001", "AI spec revision requested", "First feedback");
+    expect(store.logEntry).toHaveBeenNthCalledWith(2, "FN-001", "AI spec revision requested", "Second feedback");
   });
 });
 
@@ -3533,9 +3533,9 @@ describe("POST /tasks/:id/approve-plan", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
 
     expect(res.status).toBe(200);
-    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Plan approved by user");
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined });
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Plan approved by user");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined });
     expect(res.body.column).toBe("todo");
     expect(res.body.status).toBeUndefined();
   });
@@ -3611,8 +3611,8 @@ describe("POST /tasks/:id/reject-plan", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
 
     expect(res.status).toBe(200);
-    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Plan rejected by user", "Specification will be regenerated");
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined });
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Plan rejected by user", "Specification will be regenerated");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined });
     expect(res.body.column).toBe("triage");
   });
 
@@ -3787,7 +3787,7 @@ describe("Git Management endpoints", () => {
 
     it("correlates worktrees with tasks", async () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        { id: "KB-TEST", worktree: "/some/worktree/path" },
+        { id: "FN-TEST", worktree: "/some/worktree/path" },
       ]);
 
       const res = await GET(buildApp(), "/api/git/worktrees");
@@ -4179,7 +4179,7 @@ describe("Git Management endpoints", () => {
 
       it("returns 404 when task directory does not exist", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4190,7 +4190,7 @@ describe("Git Management endpoints", () => {
 
       it("accepts path query parameter", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4203,7 +4203,7 @@ describe("Git Management endpoints", () => {
     describe("GET /tasks/:id/files/:filepath", () => {
       it("returns 404 for non-existent file", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4213,7 +4213,7 @@ describe("Git Management endpoints", () => {
 
       it("returns 400 for empty filepath", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4224,7 +4224,7 @@ describe("Git Management endpoints", () => {
 
       it("allows reading binary files (returns 404 if not found)", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4235,7 +4235,7 @@ describe("Git Management endpoints", () => {
 
       it("rejects path traversal attempts", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4250,7 +4250,7 @@ describe("Git Management endpoints", () => {
     describe("POST /tasks/:id/files/:filepath", () => {
       it("requires content in body", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4268,7 +4268,7 @@ describe("Git Management endpoints", () => {
 
       it("rejects non-string content", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4285,7 +4285,7 @@ describe("Git Management endpoints", () => {
 
       it("returns 404 for non-existent parent directory", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4302,7 +4302,7 @@ describe("Git Management endpoints", () => {
 
       it("rejects path traversal in write", async () => {
         (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-001",
+          id: "FN-001",
           worktree: null,
         });
 
@@ -4563,7 +4563,7 @@ describe("Git Management endpoints", () => {
       it("creates a task from completed planning session", async () => {
         // Setup mock store for task creation
         (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
-          id: "KB-042",
+          id: "FN-042",
           description: "Build a user auth system",
           column: "triage",
           dependencies: [],

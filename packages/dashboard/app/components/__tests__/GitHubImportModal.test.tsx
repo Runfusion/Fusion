@@ -25,7 +25,7 @@ vi.mock("../../api", async (importOriginal) => {
 });
 
 const mockTask: Task = {
-  id: "KB-001",
+  id: "FN-001",
   title: "Test Issue",
   description: "Test body\n\nSource: https://github.com/owner/repo/issues/1",
   column: "triage",
@@ -38,7 +38,7 @@ const mockTask: Task = {
 };
 
 const mockPRTask: Task = {
-  id: "KB-002",
+  id: "FN-002",
   title: "Review PR #1: Test PR",
   description: "Review and address any issues in this pull request.\n\nPR: https://github.com/owner/repo/pull/1\nBranch: feature → main\n\nPR body",
   column: "triage",

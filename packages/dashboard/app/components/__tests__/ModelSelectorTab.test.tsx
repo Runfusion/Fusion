@@ -22,7 +22,7 @@ const mockFetchModels = api.fetchModels as ReturnType<typeof vi.fn>;
 const mockUpdateTask = api.updateTask as ReturnType<typeof vi.fn>;
 
 const FAKE_TASK: Task = {
-  id: "KB-001",
+  id: "FN-001",
   description: "Test task",
   column: "todo",
   dependencies: [],
@@ -202,7 +202,7 @@ describe("ModelSelectorTab", () => {
     await selectOption("Executor Model", "Claude Sonnet 4.5");
 
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenNthCalledWith(1, "KB-001", {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(1, "FN-001", {
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
         validatorModelProvider: null,
@@ -213,7 +213,7 @@ describe("ModelSelectorTab", () => {
     await selectOption("Validator Model", "GPT-4o");
 
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenNthCalledWith(2, "KB-001", {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(2, "FN-001", {
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
         validatorModelProvider: "openai",
@@ -239,7 +239,7 @@ describe("ModelSelectorTab", () => {
     await selectOption("Executor Model", "Claude Sonnet 4.5");
 
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
         validatorModelProvider: "openai",
@@ -268,7 +268,7 @@ describe("ModelSelectorTab", () => {
     await user.click(getUseDefaultOption());
 
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
         modelProvider: null,
         modelId: null,
         validatorModelProvider: null,
@@ -294,7 +294,7 @@ describe("ModelSelectorTab", () => {
     await selectOption("Validator Model", "GPT-4o");
 
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
         validatorModelProvider: "openai",
@@ -323,7 +323,7 @@ describe("ModelSelectorTab", () => {
     await user.click(getUseDefaultOption());
 
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
         modelProvider: null,
         modelId: null,
         validatorModelProvider: null,
@@ -646,7 +646,7 @@ describe("ModelSelectorTab", () => {
         expect(screen.queryByPlaceholderText("Filter models…")).not.toBeInTheDocument();
       });
 
-      expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
         validatorModelProvider: null,
@@ -696,7 +696,7 @@ describe("ModelSelectorTab", () => {
       await user.click(screen.getByText("GPT-4o"));
 
       await waitFor(() => {
-        expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", {
+        expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
           modelProvider: "openai",
           modelId: "gpt-4o",
           validatorModelProvider: null,

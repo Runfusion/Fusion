@@ -4,7 +4,7 @@ import type { TaskStore, Task } from "@fusion/core";
 
 const mockStore = {
   addSteeringComment: vi.fn<(id: string, text: string, author?: "user" | "agent") => Promise<Task>>(),
-  createTask: vi.fn<(input: Parameters<TaskStore["createTask"]>[0]) => Promise<Task>>().mockResolvedValue({ id: "KB-123" } as Task),
+  createTask: vi.fn<(input: Parameters<TaskStore["createTask"]>[0]) => Promise<Task>>().mockResolvedValue({ id: "FN-123" } as Task),
 } as unknown as TaskStore;
 
 describe("PrCommentHandler", () => {
@@ -20,7 +20,7 @@ describe("PrCommentHandler", () => {
     number: 42,
     status: "open" as const,
     title: "Test PR",
-    headBranch: "kb/kb-001",
+    headBranch: "fusion/fn-001",
     baseBranch: "main",
     commentCount: 0,
   };
@@ -38,7 +38,7 @@ describe("PrCommentHandler", () => {
       "👍",
       "✅",
     ])("filters out non-actionable comment: %s", async (body) => {
-      await handler.handleNewComments("KB-001", mockPrInfo, [
+      await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
           body,
@@ -66,7 +66,7 @@ describe("PrCommentHandler", () => {
       { body: "I suggest renaming this", keyword: "suggest" },
       { body: "Recommend adding tests", keyword: "recommend" },
     ])("creates steering comment for actionable feedback containing '$keyword': $body", async ({ body }) => {
-      await handler.handleNewComments("KB-001", mockPrInfo, [
+      await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
           body,
@@ -83,7 +83,7 @@ describe("PrCommentHandler", () => {
 
   describe("code suggestions", () => {
     it("creates steering comment for comments with code blocks", async () => {
-      await handler.handleNewComments("KB-001", mockPrInfo, [
+      await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
           body: "```typescript\nconst x = 1;\n```",
@@ -98,7 +98,7 @@ describe("PrCommentHandler", () => {
     });
 
     it("creates steering comment for inline code suggestions", async () => {
-      await handler.handleNewComments("KB-001", mockPrInfo, [
+      await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
           body: "Use `const` instead of `let`",
@@ -115,7 +115,7 @@ describe("PrCommentHandler", () => {
 
   describe("steering comment content", () => {
     it("includes PR info and comment details", async () => {
-      await handler.handleNewComments("KB-001", mockPrInfo, [
+      await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
           body: "Please fix the bug",
@@ -140,7 +140,7 @@ describe("PrCommentHandler", () => {
     it("truncates long comments", async () => {
       const longBody = "Please fix this issue: " + "a".repeat(1000);
 
-      await handler.handleNewComments("KB-001", mockPrInfo, [
+      await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
           body: longBody,
@@ -159,7 +159,7 @@ describe("PrCommentHandler", () => {
     });
 
     it("marks as agent-authored", async () => {
-      await handler.handleNewComments("KB-001", mockPrInfo, [
+      await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
           body: "Please fix this",
@@ -171,14 +171,14 @@ describe("PrCommentHandler", () => {
       ]);
 
       expect(mockStore.addSteeringComment).toHaveBeenCalledWith(
-        "KB-001",
+        "FN-001",
         expect.any(String),
         "agent"
       );
     });
 
     it("calls out follow-up context when feedback arrives after PR is merged", async () => {
-      await handler.handleNewComments("KB-001", { ...mockPrInfo, status: "merged" }, [
+      await handler.handleNewComments("FN-001", { ...mockPrInfo, status: "merged" }, [
         {
           id: 1,
           body: "Please add one more regression test",
@@ -197,7 +197,7 @@ describe("PrCommentHandler", () => {
 
   describe("createFollowUpTask", () => {
     it("creates follow-up task for unaddressed feedback", async () => {
-      await handler.createFollowUpTask("KB-001", mockPrInfo, [
+      await handler.createFollowUpTask("FN-001", mockPrInfo, [
         {
           id: 1,
           body: "This needs fixing",
@@ -210,20 +210,20 @@ describe("PrCommentHandler", () => {
 
       expect(mockStore.createTask).toHaveBeenCalledWith({
         title: "Follow-up: Address PR #42 feedback",
-        description: expect.stringContaining("KB-001"),
+        description: expect.stringContaining("FN-001"),
         column: "triage",
-        dependencies: ["KB-001"],
+        dependencies: ["FN-001"],
       });
     });
 
     it("does nothing when no unaddressed comments", async () => {
-      await handler.createFollowUpTask("KB-001", mockPrInfo, []);
+      await handler.createFollowUpTask("FN-001", mockPrInfo, []);
 
       expect(mockStore.createTask).not.toHaveBeenCalled();
     });
 
     it("summarizes multiple comments", async () => {
-      await handler.createFollowUpTask("KB-001", mockPrInfo, [
+      await handler.createFollowUpTask("FN-001", mockPrInfo, [
         {
           id: 1,
           body: "First issue to fix",

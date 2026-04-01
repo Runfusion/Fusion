@@ -25,7 +25,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 // Helper to create mock tasks
 function createMockTask(overrides: Partial<Task> = {}): Task {
   return {
-    id: "KB-001",
+    id: "FN-001",
     description: "Test task",
     column: "todo",
     dependencies: [],
@@ -152,10 +152,10 @@ describe("Scheduler", () => {
   describe("schedule() concurrency limits", () => {
     it("respects maxConcurrent limit", async () => {
       const tasks = [
-        createMockTask({ id: "KB-001", column: "in-progress" }),
-        createMockTask({ id: "KB-002", column: "in-progress" }),
-        createMockTask({ id: "KB-003", column: "todo" }),
-        createMockTask({ id: "KB-004", column: "todo" }),
+        createMockTask({ id: "FN-001", column: "in-progress" }),
+        createMockTask({ id: "FN-002", column: "in-progress" }),
+        createMockTask({ id: "FN-003", column: "todo" }),
+        createMockTask({ id: "FN-004", column: "todo" }),
       ];
       
       const store = createMockStore({
@@ -175,11 +175,11 @@ describe("Scheduler", () => {
 
     it("respects maxWorktrees limit", async () => {
       const tasks = [
-        createMockTask({ id: "KB-001", column: "in-progress" }),
-        createMockTask({ id: "KB-002", column: "in-progress" }),
-        createMockTask({ id: "KB-003", column: "in-progress" }),
-        createMockTask({ id: "KB-004", column: "in-progress" }),
-        createMockTask({ id: "KB-005", column: "todo" }),
+        createMockTask({ id: "FN-001", column: "in-progress" }),
+        createMockTask({ id: "FN-002", column: "in-progress" }),
+        createMockTask({ id: "FN-003", column: "in-progress" }),
+        createMockTask({ id: "FN-004", column: "in-progress" }),
+        createMockTask({ id: "FN-005", column: "todo" }),
       ];
       
       const store = createMockStore({
@@ -206,9 +206,9 @@ describe("Scheduler", () => {
       } as unknown as AgentSemaphore;
       
       const tasks = [
-        createMockTask({ id: "KB-001", column: "in-progress" }),
-        createMockTask({ id: "KB-002", column: "in-progress" }),
-        createMockTask({ id: "KB-003", column: "todo" }),
+        createMockTask({ id: "FN-001", column: "in-progress" }),
+        createMockTask({ id: "FN-002", column: "in-progress" }),
+        createMockTask({ id: "FN-003", column: "todo" }),
       ];
       
       const store = createMockStore({
@@ -227,7 +227,7 @@ describe("Scheduler", () => {
   describe("global pause", () => {
     it("halts scheduling when globalPause is active", async () => {
       const store = createMockStore({
-        listTasks: vi.fn().mockResolvedValue([createMockTask({ id: "KB-001", column: "todo" })]),
+        listTasks: vi.fn().mockResolvedValue([createMockTask({ id: "FN-001", column: "todo" })]),
         getSettings: vi.fn().mockResolvedValue({ 
           maxConcurrent: 2, 
           maxWorktrees: 4,
@@ -246,7 +246,7 @@ describe("Scheduler", () => {
   describe("engine pause", () => {
     it("halts new scheduling when enginePaused is active", async () => {
       const store = createMockStore({
-        listTasks: vi.fn().mockResolvedValue([createMockTask({ id: "KB-001", column: "todo" })]),
+        listTasks: vi.fn().mockResolvedValue([createMockTask({ id: "FN-001", column: "todo" })]),
         getSettings: vi.fn().mockResolvedValue({ 
           maxConcurrent: 2, 
           maxWorktrees: 4,
@@ -265,7 +265,7 @@ describe("Scheduler", () => {
   describe("filesystem validation", () => {
     it("moves task to triage when task directory is missing", async () => {
       const tasks = [
-        createMockTask({ id: "KB-001", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-001", column: "todo", dependencies: [] }),
       ];
       
       const store = createMockStore({
@@ -292,20 +292,20 @@ describe("Scheduler", () => {
       await new Promise(resolve => setTimeout(resolve, 0));
 
       // Task should be moved to triage
-      expect(moveTask).toHaveBeenCalledWith("KB-001", "triage");
+      expect(moveTask).toHaveBeenCalledWith("FN-001", "triage");
       // Log entry should be written with reason
       expect(logEntry).toHaveBeenCalledWith(
-        "KB-001",
+        "FN-001",
         "Task moved to triage — filesystem validation failed",
         "missing directory"
       );
       // Task should not be moved to in-progress
-      expect(moveTask).not.toHaveBeenCalledWith("KB-001", "in-progress");
+      expect(moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress");
     });
 
     it("moves task to triage when PROMPT.md is missing", async () => {
       const tasks = [
-        createMockTask({ id: "KB-002", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-002", column: "todo", dependencies: [] }),
       ];
       
       const store = createMockStore({
@@ -322,7 +322,7 @@ describe("Scheduler", () => {
 
       // Mock directory exists but PROMPT.md doesn't
       vi.mocked(existsSync).mockImplementation((path) => {
-        if (typeof path === "string" && path.includes("KB-002") && !path.endsWith("PROMPT.md")) {
+        if (typeof path === "string" && path.includes("FN-002") && !path.endsWith("PROMPT.md")) {
           return true; // Directory exists
         }
         return false; // PROMPT.md missing
@@ -335,9 +335,9 @@ describe("Scheduler", () => {
       // Flush any remaining microtasks
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      expect(moveTask).toHaveBeenCalledWith("KB-002", "triage");
+      expect(moveTask).toHaveBeenCalledWith("FN-002", "triage");
       expect(logEntry).toHaveBeenCalledWith(
-        "KB-002",
+        "FN-002",
         "Task moved to triage — filesystem validation failed",
         "missing or empty PROMPT.md"
       );
@@ -345,7 +345,7 @@ describe("Scheduler", () => {
 
     it("moves task to triage when PROMPT.md is empty", async () => {
       const tasks = [
-        createMockTask({ id: "KB-003", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-003", column: "todo", dependencies: [] }),
       ];
       
       const store = createMockStore({
@@ -372,9 +372,9 @@ describe("Scheduler", () => {
       // Flush any remaining microtasks
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      expect(moveTask).toHaveBeenCalledWith("KB-003", "triage");
+      expect(moveTask).toHaveBeenCalledWith("FN-003", "triage");
       expect(logEntry).toHaveBeenCalledWith(
-        "KB-003",
+        "FN-003",
         "Task moved to triage — filesystem validation failed",
         "missing or empty PROMPT.md"
       );
@@ -382,7 +382,7 @@ describe("Scheduler", () => {
 
     it("proceeds with scheduling when filesystem is valid", async () => {
       const tasks = [
-        createMockTask({ id: "KB-004", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-004", column: "todo", dependencies: [] }),
       ];
       
       const store = createMockStore({
@@ -409,21 +409,21 @@ describe("Scheduler", () => {
       await new Promise(resolve => setTimeout(resolve, 0));
 
       // Should NOT move to triage
-      expect(moveTask).not.toHaveBeenCalledWith("KB-004", "triage");
+      expect(moveTask).not.toHaveBeenCalledWith("FN-004", "triage");
       // Should NOT log validation failure
       expect(logEntry).not.toHaveBeenCalledWith(
-        "KB-004",
+        "FN-004",
         "Task moved to triage — filesystem validation failed",
         expect.any(String)
       );
       // Should move to in-progress (since deps are satisfied and concurrency allows)
-      expect(moveTask).toHaveBeenCalledWith("KB-004", "in-progress");
+      expect(moveTask).toHaveBeenCalledWith("FN-004", "in-progress");
     });
 
     it("does not validate filesystem for tasks with unmet dependencies", async () => {
       const tasks = [
-        createMockTask({ id: "KB-005", column: "todo", dependencies: ["KB-006"] }),
-        createMockTask({ id: "KB-006", column: "todo", dependencies: [] }), // Unsatisfied dep
+        createMockTask({ id: "FN-005", column: "todo", dependencies: ["FN-006"] }),
+        createMockTask({ id: "FN-006", column: "todo", dependencies: [] }), // Unsatisfied dep
       ];
       
       const store = createMockStore({
@@ -450,9 +450,9 @@ describe("Scheduler", () => {
 
       // Task with unmet deps should be queued, not validated
       // Since KB-006 is not done, KB-005 should not be validated
-      expect(updateTask).toHaveBeenCalledWith("KB-005", { status: "queued" });
+      expect(updateTask).toHaveBeenCalledWith("FN-005", { status: "queued" });
       // No filesystem validation should occur (no move to triage)
-      expect(moveTask).not.toHaveBeenCalledWith("KB-005", "triage");
+      expect(moveTask).not.toHaveBeenCalledWith("FN-005", "triage");
     });
   });
 });

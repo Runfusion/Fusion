@@ -54,8 +54,8 @@ describe("FileBrowserModal", () => {
     mockUseWorkspaces.mockReturnValue({
       projectName: "kb",
       workspaces: [
-        { id: "KB-001", label: "KB-001", title: "Task One", worktree: "/repo/.worktrees/kb-001", kind: "task" },
-        { id: "KB-002", label: "KB-002", title: "Task Two", worktree: "/repo/.worktrees/kb-002", kind: "task" },
+        { id: "FN-001", label: "FN-001", title: "Task One", worktree: "/repo/.worktrees/kb-001", kind: "task" },
+        { id: "FN-002", label: "FN-002", title: "Task Two", worktree: "/repo/.worktrees/kb-002", kind: "task" },
       ],
       loading: false,
       error: null,
@@ -119,7 +119,7 @@ describe("FileBrowserModal", () => {
     await user.click(screen.getByRole("button", { name: /kb/i }));
     await user.click(screen.getByRole("button", { name: /KB-002 Task Two/i }));
 
-    expect(mockOnWorkspaceChange).toHaveBeenCalledWith("KB-002");
+    expect(mockOnWorkspaceChange).toHaveBeenCalledWith("FN-002");
   });
 
   it("shows back button in mobile editor view", async () => {

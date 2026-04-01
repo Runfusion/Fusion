@@ -58,13 +58,13 @@ describe("runTaskSteer", () => {
   it("adds steering comment with message argument", async () => {
     setupTaskStoreMock();
     mockAddSteeringComment.mockResolvedValueOnce({
-      id: "KB-001",
+      id: "FN-001",
       title: "Test Task",
     });
 
-    await runTaskSteer("KB-001", "Focus on error handling");
+    await runTaskSteer("FN-001", "Focus on error handling");
 
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("KB-001", "Focus on error handling", "user");
+    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-001", "Focus on error handling", "user");
     expect(mockConsoleLog).toHaveBeenCalledWith(
       expect.stringContaining("Steering comment added to KB-001")
     );
@@ -73,16 +73,16 @@ describe("runTaskSteer", () => {
   it("reads message from stdin when not provided as argument", async () => {
     setupTaskStoreMock();
     mockAddSteeringComment.mockResolvedValueOnce({
-      id: "KB-002",
+      id: "FN-002",
       title: "Another Task",
     });
 
     mockQuestion.mockResolvedValueOnce("This is a steering comment from stdin");
 
-    await runTaskSteer("KB-002", undefined);
+    await runTaskSteer("FN-002", undefined);
 
     expect(mockQuestion).toHaveBeenCalledWith("Message: ");
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("KB-002", "This is a steering comment from stdin", "user");
+    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-002", "This is a steering comment from stdin", "user");
     expect(mockClose).toHaveBeenCalled();
   });
 
@@ -94,7 +94,7 @@ describe("runTaskSteer", () => {
 
     const longMessage = "a".repeat(2001);
 
-    await expect(runTaskSteer("KB-003", longMessage)).rejects.toThrow();
+    await expect(runTaskSteer("FN-003", longMessage)).rejects.toThrow();
 
     expect(mockConsoleError).toHaveBeenCalledWith(
       expect.stringContaining("Message must be between 1 and 2000 characters")
@@ -110,7 +110,7 @@ describe("runTaskSteer", () => {
       throw new Error(`Process.exit called with ${code}`);
     });
 
-    await expect(runTaskSteer("KB-004", "")).rejects.toThrow();
+    await expect(runTaskSteer("FN-004", "")).rejects.toThrow();
 
     expect(mockConsoleError).toHaveBeenCalledWith(
       expect.stringContaining("Message is required")
@@ -126,7 +126,7 @@ describe("runTaskSteer", () => {
       throw new Error(`Process.exit called with ${code}`);
     });
 
-    await expect(runTaskSteer("KB-005", "   ")).rejects.toThrow();
+    await expect(runTaskSteer("FN-005", "   ")).rejects.toThrow();
 
     expect(mockConsoleError).toHaveBeenCalledWith(
       expect.stringContaining("Message is required")
@@ -158,11 +158,11 @@ describe("runTaskSteer", () => {
   it("shows success output with preview for short messages", async () => {
     setupTaskStoreMock();
     mockAddSteeringComment.mockResolvedValueOnce({
-      id: "KB-006",
+      id: "FN-006",
       title: "Short Message Task",
     });
 
-    await runTaskSteer("KB-006", "Short comment");
+    await runTaskSteer("FN-006", "Short comment");
 
     expect(mockConsoleLog).toHaveBeenCalledWith(
       expect.stringContaining("Short comment")
@@ -172,12 +172,12 @@ describe("runTaskSteer", () => {
   it("truncates long messages in success preview", async () => {
     setupTaskStoreMock();
     mockAddSteeringComment.mockResolvedValueOnce({
-      id: "KB-007",
+      id: "FN-007",
       title: "Long Message Task",
     });
 
     const longMessage = "a".repeat(100);
-    await runTaskSteer("KB-007", longMessage);
+    await runTaskSteer("FN-007", longMessage);
 
     // Should show first 60 chars + ellipsis
     const expectedPreview = "a".repeat(60) + "…";
@@ -189,38 +189,38 @@ describe("runTaskSteer", () => {
   it("trims whitespace from messages", async () => {
     setupTaskStoreMock();
     mockAddSteeringComment.mockResolvedValueOnce({
-      id: "KB-008",
+      id: "FN-008",
       title: "Trim Test Task",
     });
 
-    await runTaskSteer("KB-008", "  Some message with whitespace  ");
+    await runTaskSteer("FN-008", "  Some message with whitespace  ");
 
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("KB-008", "Some message with whitespace", "user");
+    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-008", "Some message with whitespace", "user");
   });
 
   it("accepts messages at boundary lengths (1 and 2000 chars)", async () => {
     setupTaskStoreMock();
     mockAddSteeringComment.mockResolvedValueOnce({
-      id: "KB-009",
+      id: "FN-009",
       title: "Boundary Test",
     });
 
     // Test 1 character
-    await runTaskSteer("KB-009", "x");
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("KB-009", "x", "user");
+    await runTaskSteer("FN-009", "x");
+    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-009", "x", "user");
 
     // Reset mock for next test
     vi.clearAllMocks();
     setupTaskStoreMock();
     mockAddSteeringComment.mockResolvedValueOnce({
-      id: "KB-010",
+      id: "FN-010",
       title: "Boundary Test 2",
     });
 
     // Test exactly 2000 characters
     const exact2000 = "b".repeat(2000);
-    await runTaskSteer("KB-010", exact2000);
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("KB-010", exact2000, "user");
+    await runTaskSteer("FN-010", exact2000);
+    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-010", exact2000, "user");
   });
 
   it("rethrows non-ENOENT errors", async () => {
@@ -229,7 +229,7 @@ describe("runTaskSteer", () => {
     const error = new Error("Database error");
     mockAddSteeringComment.mockRejectedValueOnce(error);
 
-    await expect(runTaskSteer("KB-011", "Message")).rejects.toThrow("Database error");
+    await expect(runTaskSteer("FN-011", "Message")).rejects.toThrow("Database error");
   });
 
   it("treats empty string as validation error, not prompt trigger", async () => {
@@ -239,7 +239,7 @@ describe("runTaskSteer", () => {
     });
 
     // Empty string as argument is a validation error, not a prompt trigger
-    await expect(runTaskSteer("KB-012", "")).rejects.toThrow();
+    await expect(runTaskSteer("FN-012", "")).rejects.toThrow();
 
     // Should NOT prompt, should error instead
     expect(mockQuestion).not.toHaveBeenCalled();

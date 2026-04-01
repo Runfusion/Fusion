@@ -23,7 +23,7 @@ describe("useBatchBadgeFetch", () => {
 
   it("calls API with correct task IDs", async () => {
     const mockResult: BatchStatusResult = {
-      "KB-001": {
+      "FN-001": {
         issueInfo: {
           url: "https://github.com/owner/repo/issues/1",
           number: 1,
@@ -38,16 +38,16 @@ describe("useBatchBadgeFetch", () => {
     const { result } = renderHook(() => useBatchBadgeFetch());
 
     await act(async () => {
-      await result.current.fetchBatch(["KB-001"]);
+      await result.current.fetchBatch(["FN-001"]);
     });
 
-    expect(mockFetchBatchStatus).toHaveBeenCalledWith(["KB-001"]);
+    expect(mockFetchBatchStatus).toHaveBeenCalledWith(["FN-001"]);
     expect(mockFetchBatchStatus).toHaveBeenCalledTimes(1);
   });
 
   it("shares pending promise for concurrent calls with same IDs", async () => {
     const mockResult: BatchStatusResult = {
-      "KB-001": { issueInfo: undefined, prInfo: undefined, stale: true },
+      "FN-001": { issueInfo: undefined, prInfo: undefined, stale: true },
     };
     // Create a delayed promise so we can verify deduplication
     let resolvePromise: (value: BatchStatusResult) => void;
@@ -60,8 +60,8 @@ describe("useBatchBadgeFetch", () => {
     const hook2 = renderHook(() => useBatchBadgeFetch());
 
     // Start both fetches concurrently (but don't await yet)
-    const fetchPromise1 = hook1.result.current.fetchBatch(["KB-001"]);
-    const fetchPromise2 = hook2.result.current.fetchBatch(["KB-001"]);
+    const fetchPromise1 = hook1.result.current.fetchBatch(["FN-001"]);
+    const fetchPromise2 = hook2.result.current.fetchBatch(["FN-001"]);
 
     // Resolve the shared promise
     resolvePromise!(mockResult);
@@ -77,7 +77,7 @@ describe("useBatchBadgeFetch", () => {
 
   it("uses cached data for calls within 5 seconds (no API call)", async () => {
     const mockResult: BatchStatusResult = {
-      "KB-001": {
+      "FN-001": {
         issueInfo: {
           url: "https://github.com/owner/repo/issues/1",
           number: 1,
@@ -93,14 +93,14 @@ describe("useBatchBadgeFetch", () => {
 
     // First fetch
     await act(async () => {
-      await result.current.fetchBatch(["KB-001"]);
+      await result.current.fetchBatch(["FN-001"]);
     });
 
     expect(mockFetchBatchStatus).toHaveBeenCalledTimes(1);
 
     // Second fetch within 5 seconds - should use cache
     await act(async () => {
-      await result.current.fetchBatch(["KB-001"]);
+      await result.current.fetchBatch(["FN-001"]);
     });
 
     // Should not make another API call
@@ -109,7 +109,7 @@ describe("useBatchBadgeFetch", () => {
 
   it("makes new API call after 5 second cache expires", async () => {
     const mockResult: BatchStatusResult = {
-      "KB-001": { issueInfo: undefined, prInfo: undefined, stale: true },
+      "FN-001": { issueInfo: undefined, prInfo: undefined, stale: true },
     };
     mockFetchBatchStatus.mockResolvedValue(mockResult);
 
@@ -117,7 +117,7 @@ describe("useBatchBadgeFetch", () => {
 
     // First fetch
     await act(async () => {
-      await result.current.fetchBatch(["KB-001"]);
+      await result.current.fetchBatch(["FN-001"]);
     });
 
     expect(mockFetchBatchStatus).toHaveBeenCalledTimes(1);
@@ -127,7 +127,7 @@ describe("useBatchBadgeFetch", () => {
 
     // Second fetch after cache expired
     await act(async () => {
-      await result.current.fetchBatch(["KB-001"]);
+      await result.current.fetchBatch(["FN-001"]);
     });
 
     // Should make a new API call
@@ -137,7 +137,7 @@ describe("useBatchBadgeFetch", () => {
   it("retries 429 errors with exponential backoff", async () => {
     const rateLimitError = new Error("429 Rate limit exceeded");
     const mockResult: BatchStatusResult = {
-      "KB-001": { issueInfo: undefined, prInfo: undefined, stale: true },
+      "FN-001": { issueInfo: undefined, prInfo: undefined, stale: true },
     };
 
     // First calls fail with 429, eventually succeeds
@@ -150,7 +150,7 @@ describe("useBatchBadgeFetch", () => {
 
     // Start the fetch
     await act(async () => {
-      await result.current.fetchBatch(["KB-001"]);
+      await result.current.fetchBatch(["FN-001"]);
     });
 
     // Wait for retries (exponential backoff: 1s + 2s = 3s total)
@@ -167,7 +167,7 @@ describe("useBatchBadgeFetch", () => {
     const { result } = renderHook(() => useBatchBadgeFetch());
 
     await act(async () => {
-      await result.current.fetchBatch(["KB-001"]);
+      await result.current.fetchBatch(["FN-001"]);
     });
 
     // Should only make one call (no retries for non-429 errors)
@@ -177,7 +177,7 @@ describe("useBatchBadgeFetch", () => {
   it("returns undefined for uncached task IDs", () => {
     const { result } = renderHook(() => useBatchBadgeFetch());
 
-    const data = result.current.getBatchData("KB-UNKNOWN");
+    const data = result.current.getBatchData("FN-UNKNOWN");
     expect(data).toBeUndefined();
   });
 
@@ -193,7 +193,7 @@ describe("useBatchBadgeFetch", () => {
 
   it("stores data and makes it available via getBatchData", async () => {
     const mockResult: BatchStatusResult = {
-      "KB-001": {
+      "FN-001": {
         prInfo: {
           url: "https://github.com/owner/repo/pull/1",
           number: 1,
@@ -213,13 +213,13 @@ describe("useBatchBadgeFetch", () => {
 
     // Fetch the data
     await act(async () => {
-      await result.current.fetchBatch(["KB-001"]);
+      await result.current.fetchBatch(["FN-001"]);
     });
 
     // Verify data was stored - access result in the same act block
     let storedData;
     act(() => {
-      storedData = result.current.getBatchData("KB-001");
+      storedData = result.current.getBatchData("FN-001");
     });
 
     expect(storedData).toBeDefined();
@@ -229,7 +229,7 @@ describe("useBatchBadgeFetch", () => {
 
   it("module-level store shares data across hooks", async () => {
     const mockResult: BatchStatusResult = {
-      "KB-001": {
+      "FN-001": {
         prInfo: {
           url: "https://github.com/owner/repo/pull/1",
           number: 1,
@@ -250,13 +250,13 @@ describe("useBatchBadgeFetch", () => {
 
     // Fetch from first hook
     await act(async () => {
-      await hook1.result.current.fetchBatch(["KB-001"]);
+      await hook1.result.current.fetchBatch(["FN-001"]);
     });
 
     // Second hook should see the data via getBatchData
     let sharedData;
     act(() => {
-      sharedData = hook2.result.current.getBatchData("KB-001");
+      sharedData = hook2.result.current.getBatchData("FN-001");
     });
 
     expect(sharedData).toBeDefined();

@@ -18,8 +18,8 @@ describe("ActivityLogModal", () => {
   const mockOnOpenTaskDetail = vi.fn();
 
   const mockTasks = [
-    { id: "KB-001", title: "Test Task 1", column: "todo" as const },
-    { id: "KB-002", title: "Test Task 2", column: "in-progress" as const },
+    { id: "FN-001", title: "Test Task 1", column: "todo" as const },
+    { id: "FN-002", title: "Test Task 2", column: "in-progress" as const },
   ];
 
   const mockActivityEntries: ActivityLogEntry[] = [
@@ -27,7 +27,7 @@ describe("ActivityLogModal", () => {
       id: "1",
       timestamp: new Date().toISOString(),
       type: "task:created",
-      taskId: "KB-001",
+      taskId: "FN-001",
       taskTitle: "Test Task 1",
       details: "Task KB-001 created",
     },
@@ -35,7 +35,7 @@ describe("ActivityLogModal", () => {
       id: "2",
       timestamp: new Date(Date.now() - 60000).toISOString(),
       type: "task:moved",
-      taskId: "KB-001",
+      taskId: "FN-001",
       taskTitle: "Test Task 1",
       details: "Task KB-001 moved: todo → in-progress",
       metadata: { from: "todo", to: "in-progress" },
@@ -44,7 +44,7 @@ describe("ActivityLogModal", () => {
       id: "3",
       timestamp: new Date(Date.now() - 120000).toISOString(),
       type: "task:failed",
-      taskId: "KB-002",
+      taskId: "FN-002",
       taskTitle: "Test Task 2",
       details: "Task KB-002 failed: Something went wrong",
       metadata: { error: "Something went wrong" },

@@ -14,7 +14,7 @@ const mockAddToast = vi.fn();
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
-    id: "KB-001",
+    id: "FN-001",
     description: "Test task",
     column: "in-progress",
     dependencies: [],
@@ -141,7 +141,7 @@ describe("SteeringTab", () => {
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(mockApi).toHaveBeenCalledWith("KB-001", "New comment");
+      expect(mockApi).toHaveBeenCalledWith("FN-001", "New comment");
     });
   });
 
@@ -168,7 +168,7 @@ describe("SteeringTab", () => {
     fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
 
     await waitFor(() => {
-      expect(mockApi).toHaveBeenCalledWith("KB-001", "Keyboard comment");
+      expect(mockApi).toHaveBeenCalledWith("FN-001", "Keyboard comment");
     });
   });
 
@@ -195,7 +195,7 @@ describe("SteeringTab", () => {
     fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
 
     await waitFor(() => {
-      expect(mockApi).toHaveBeenCalledWith("KB-001", "Mac keyboard comment");
+      expect(mockApi).toHaveBeenCalledWith("FN-001", "Mac keyboard comment");
     });
   });
 

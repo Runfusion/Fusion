@@ -11,7 +11,7 @@ vi.mock("../../api", () => ({
 import { addTaskComment, updateTaskComment, deleteTaskComment } from "../../api";
 
 const makeTask = (overrides: any = {}) => ({
-  id: "KB-001",
+  id: "FN-001",
   description: "Task",
   column: "todo",
   dependencies: [],
@@ -37,7 +37,7 @@ describe("TaskComments", () => {
     fireEvent.change(screen.getByPlaceholderText("Add a comment"), { target: { value: "Hello" } });
     fireEvent.click(screen.getByText("Add Comment"));
 
-    await waitFor(() => expect(addTaskComment).toHaveBeenCalledWith("KB-001", "Hello", "user"));
+    await waitFor(() => expect(addTaskComment).toHaveBeenCalledWith("FN-001", "Hello", "user"));
     expect(onTaskUpdated).toHaveBeenCalled();
   });
 
@@ -50,7 +50,7 @@ describe("TaskComments", () => {
     fireEvent.change(screen.getByDisplayValue("Original"), { target: { value: "Updated" } });
     fireEvent.click(screen.getByText("Save"));
 
-    await waitFor(() => expect(updateTaskComment).toHaveBeenCalledWith("KB-001", "c1", "Updated"));
+    await waitFor(() => expect(updateTaskComment).toHaveBeenCalledWith("FN-001", "c1", "Updated"));
     expect(onTaskUpdated).toHaveBeenCalled();
   });
 
@@ -61,7 +61,7 @@ describe("TaskComments", () => {
     render(<TaskComments task={makeTask({ comments: [{ id: "c1", text: "Original", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }] })} addToast={vi.fn()} onTaskUpdated={onTaskUpdated} />);
     fireEvent.click(screen.getByText("Delete"));
 
-    await waitFor(() => expect(deleteTaskComment).toHaveBeenCalledWith("KB-001", "c1"));
+    await waitFor(() => expect(deleteTaskComment).toHaveBeenCalledWith("FN-001", "c1"));
     expect(onTaskUpdated).toHaveBeenCalled();
   });
 });

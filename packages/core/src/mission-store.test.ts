@@ -495,21 +495,21 @@ describe("MissionStore", () => {
     });
 
     it("links a feature to a task", () => {
-      createTaskInDb(db, "KB-001");
+      createTaskInDb(db, "FN-001");
 
       const mission = store.createMission({ title: "Mission" });
       const milestone = store.addMilestone(mission.id, { title: "Milestone" });
       const slice = store.addSlice(milestone.id, { title: "Slice" });
       const feature = store.addFeature(slice.id, { title: "Linkable" });
 
-      const linked = store.linkFeatureToTask(feature.id, "KB-001");
+      const linked = store.linkFeatureToTask(feature.id, "FN-001");
 
-      expect(linked.taskId).toBe("KB-001");
+      expect(linked.taskId).toBe("FN-001");
       expect(linked.status).toBe("triaged");
     });
 
     it("emits feature:linked event", () => {
-      createTaskInDb(db, "KB-001");
+      createTaskInDb(db, "FN-001");
 
       const handler = vi.fn();
       store.on("feature:linked", handler);
@@ -518,20 +518,20 @@ describe("MissionStore", () => {
       const milestone = store.addMilestone(mission.id, { title: "Milestone" });
       const slice = store.addSlice(milestone.id, { title: "Slice" });
       const feature = store.addFeature(slice.id, { title: "Test" });
-      const linked = store.linkFeatureToTask(feature.id, "KB-001");
+      const linked = store.linkFeatureToTask(feature.id, "FN-001");
 
       expect(handler).toHaveBeenCalledTimes(1);
-      expect(handler).toHaveBeenCalledWith({ feature: linked, taskId: "KB-001" });
+      expect(handler).toHaveBeenCalledWith({ feature: linked, taskId: "FN-001" });
     });
 
     it("unlinks a feature from a task", () => {
-      createTaskInDb(db, "KB-001");
+      createTaskInDb(db, "FN-001");
 
       const mission = store.createMission({ title: "Mission" });
       const milestone = store.addMilestone(mission.id, { title: "Milestone" });
       const slice = store.addSlice(milestone.id, { title: "Slice" });
       const feature = store.addFeature(slice.id, { title: "Linkable" });
-      store.linkFeatureToTask(feature.id, "KB-001");
+      store.linkFeatureToTask(feature.id, "FN-001");
 
       const unlinked = store.unlinkFeatureFromTask(feature.id);
 
@@ -555,7 +555,7 @@ describe("MissionStore", () => {
     });
 
     it("returns undefined when no feature linked to task", () => {
-      const result = store.getFeatureByTaskId("KB-NONEXISTENT");
+      const result = store.getFeatureByTaskId("FN-NONEXISTENT");
       expect(result).toBeUndefined();
     });
 
@@ -651,14 +651,14 @@ describe("MissionStore", () => {
       });
 
       it("returns active when any feature has task linked", () => {
-        createTaskInDb(db, "KB-001");
+        createTaskInDb(db, "FN-001");
 
         const mission = store.createMission({ title: "Mission" });
         const milestone = store.addMilestone(mission.id, { title: "Milestone" });
         const slice = store.addSlice(milestone.id, { title: "Active Slice" });
         const feature = store.addFeature(slice.id, { title: "Linked" });
 
-        store.linkFeatureToTask(feature.id, "KB-001");
+        store.linkFeatureToTask(feature.id, "FN-001");
 
         const status = store.computeSliceStatus(slice.id);
         expect(status).toBe("active");
@@ -695,14 +695,14 @@ describe("MissionStore", () => {
       });
 
       it("returns active when any slice is active", () => {
-        createTaskInDb(db, "KB-001");
+        createTaskInDb(db, "FN-001");
 
         const mission = store.createMission({ title: "Mission" });
         const milestone = store.addMilestone(mission.id, { title: "Active Milestone" });
         const slice = store.addSlice(milestone.id, { title: "Active Slice" });
         const feature = store.addFeature(slice.id, { title: "Linked" });
 
-        store.linkFeatureToTask(feature.id, "KB-001");
+        store.linkFeatureToTask(feature.id, "FN-001");
 
         const status = store.computeMilestoneStatus(milestone.id);
         expect(status).toBe("active");
@@ -875,7 +875,7 @@ describe("MissionStore", () => {
     });
 
     it("emits all feature lifecycle events", () => {
-      createTaskInDb(db, "KB-001");
+      createTaskInDb(db, "FN-001");
 
       const created = vi.fn();
       const updated = vi.fn();
@@ -891,7 +891,7 @@ describe("MissionStore", () => {
       const milestone = store.addMilestone(mission.id, { title: "Milestone" });
       const slice = store.addSlice(milestone.id, { title: "Slice" });
       const feature = store.addFeature(slice.id, { title: "Test" });
-      store.linkFeatureToTask(feature.id, "KB-001");
+      store.linkFeatureToTask(feature.id, "FN-001");
       store.deleteFeature(feature.id);
 
       expect(created).toHaveBeenCalledTimes(1);
@@ -902,7 +902,7 @@ describe("MissionStore", () => {
     });
 
     it("includes correct data in event payloads", () => {
-      createTaskInDb(db, "KB-123");
+      createTaskInDb(db, "FN-123");
 
       const createdHandler = vi.fn();
       const linkedHandler = vi.fn();
@@ -923,12 +923,12 @@ describe("MissionStore", () => {
         })
       );
 
-      store.linkFeatureToTask(feature.id, "KB-123");
+      store.linkFeatureToTask(feature.id, "FN-123");
 
       expect(linkedHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           feature: expect.objectContaining({ id: feature.id }),
-          taskId: "KB-123",
+          taskId: "FN-123",
         })
       );
     });

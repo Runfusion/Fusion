@@ -21,7 +21,7 @@ function makeMockStore() {
       pollIntervalMs: 60_000,
     }),
     listTasks: vi.fn().mockResolvedValue([]),
-    getTask: vi.fn().mockResolvedValue({ id: "KB-TEST", column: "in-review", paused: false, description: "Test task", log: [] }),
+    getTask: vi.fn().mockResolvedValue({ id: "FN-TEST", column: "in-review", paused: false, description: "Test task", log: [] }),
     moveTask: vi.fn().mockResolvedValue({}),
     updatePrInfo: vi.fn().mockResolvedValue({}),
     logEntry: vi.fn().mockResolvedValue(undefined),
@@ -203,8 +203,8 @@ function resetGitHubMocks() {
     url: "https://github.com/owner/repo/pull/42",
     number: 42,
     status: "open",
-    title: "KB-TEST",
-    headBranch: "kb/kb-test",
+    title: "FN-TEST",
+    headBranch: "fusion/fn-test",
     baseBranch: "main",
     commentCount: 0,
   });
@@ -213,8 +213,8 @@ function resetGitHubMocks() {
       url: "https://github.com/owner/repo/pull/42",
       number: 42,
       status: "open",
-      title: "KB-TEST",
-      headBranch: "kb/kb-test",
+      title: "FN-TEST",
+      headBranch: "fusion/fn-test",
       baseBranch: "main",
       commentCount: 0,
     },
@@ -227,8 +227,8 @@ function resetGitHubMocks() {
     url: "https://github.com/owner/repo/pull/42",
     number: 42,
     status: "merged",
-    title: "KB-TEST",
-    headBranch: "kb/kb-test",
+    title: "FN-TEST",
+    headBranch: "fusion/fn-test",
     baseBranch: "main",
     commentCount: 0,
   });
@@ -250,8 +250,8 @@ describe("PR merge helpers", () => {
     expect(getMergeStrategy({ mergeStrategy: "pull-request" })).toBe("pull-request");
   });
 
-  it("uses kb/{task-id-lower} branch naming for pull requests", () => {
-    expect(getTaskBranchName("KB-093")).toBe("kb/kb-093");
+  it("uses fusion/{task-id-lower} branch naming for pull requests", () => {
+    expect(getTaskBranchName("FN-093")).toBe("fusion/fn-093");
   });
 });
 
@@ -259,7 +259,7 @@ describe("processPullRequestMergeTask", () => {
   it("creates and links a PR when task.prInfo is missing", async () => {
     const store = makeMockStore();
     store.getTask.mockResolvedValue({
-      id: "KB-093",
+      id: "FN-093",
       title: "Add support for creating pull requests",
       description: "Implement PR automation",
       column: "in-review",
@@ -268,7 +268,7 @@ describe("processPullRequestMergeTask", () => {
       log: [],
     });
 
-    const result = await processPullRequestMergeTask(store as any, "/repo", "KB-093", {
+    const result = await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
       findPrForBranch: mockFindPrForBranch,
       createPr: mockCreatePr,
       getPrMergeStatus: mockGetPrMergeStatus,
@@ -276,17 +276,17 @@ describe("processPullRequestMergeTask", () => {
     } as any);
 
     expect(result).toBe("waiting");
-    expect(mockFindPrForBranch).toHaveBeenCalledWith({ head: "kb/kb-093", state: "all" });
+    expect(mockFindPrForBranch).toHaveBeenCalledWith({ head: "fusion/fn-093", state: "all" });
     expect(mockCreatePr).toHaveBeenCalledWith({
-      title: "KB-093: Add support for creating pull requests",
+      title: "FN-093: Add support for creating pull requests",
       body: "Automated PR for KB-093.\n\nImplement PR automation",
-      head: "kb/kb-093",
+      head: "fusion/fn-093",
     });
     expect(store.updatePrInfo).toHaveBeenCalledWith(
-      "KB-093",
+      "FN-093",
       expect.objectContaining({ number: 42, status: "open" }),
     );
-    expect(store.updateTask).toHaveBeenCalledWith("KB-093", { status: "awaiting-pr-checks" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-093", { status: "awaiting-pr-checks" });
   });
 
   it("links an existing PR instead of creating a duplicate", async () => {
@@ -296,13 +296,13 @@ describe("processPullRequestMergeTask", () => {
       number: 7,
       status: "open" as const,
       title: "Existing PR",
-      headBranch: "kb/kb-093",
+      headBranch: "fusion/fn-093",
       baseBranch: "main",
       commentCount: 0,
     };
     mockFindPrForBranch.mockResolvedValue(existingPr);
     store.getTask.mockResolvedValue({
-      id: "KB-093",
+      id: "FN-093",
       title: "Task",
       description: "Description",
       column: "in-review",
@@ -310,7 +310,7 @@ describe("processPullRequestMergeTask", () => {
       log: [],
     });
 
-    await processPullRequestMergeTask(store as any, "/repo", "KB-093", {
+    await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
       findPrForBranch: mockFindPrForBranch,
       createPr: mockCreatePr,
       getPrMergeStatus: mockGetPrMergeStatus,
@@ -319,7 +319,7 @@ describe("processPullRequestMergeTask", () => {
 
     expect(mockCreatePr).not.toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(
-      "KB-093",
+      "FN-093",
       "Linked existing PR",
       "PR #7: https://github.com/owner/repo/pull/7",
     );
@@ -328,7 +328,7 @@ describe("processPullRequestMergeTask", () => {
   it("merges a ready PR and finalizes task cleanup", async () => {
     const store = makeMockStore();
     store.getTask.mockResolvedValue({
-      id: "KB-093",
+      id: "FN-093",
       title: "Task",
       description: "Description",
       column: "in-review",
@@ -339,7 +339,7 @@ describe("processPullRequestMergeTask", () => {
         number: 42,
         status: "open",
         title: "Task",
-        headBranch: "kb/kb-093",
+        headBranch: "fusion/fn-093",
         baseBranch: "main",
         commentCount: 0,
       },
@@ -351,7 +351,7 @@ describe("processPullRequestMergeTask", () => {
         number: 42,
         status: "open",
         title: "Task",
-        headBranch: "kb/kb-093",
+        headBranch: "fusion/fn-093",
         baseBranch: "main",
         commentCount: 0,
       },
@@ -361,7 +361,7 @@ describe("processPullRequestMergeTask", () => {
       blockingReasons: [],
     });
 
-    const result = await processPullRequestMergeTask(store as any, "/repo", "KB-093", {
+    const result = await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
       findPrForBranch: mockFindPrForBranch,
       createPr: mockCreatePr,
       getPrMergeStatus: mockGetPrMergeStatus,
@@ -370,15 +370,15 @@ describe("processPullRequestMergeTask", () => {
 
     expect(result).toBe("merged");
     expect(mockMergePr).toHaveBeenCalledWith({ number: 42, method: "squash" });
-    expect(store.moveTask).toHaveBeenCalledWith("KB-093", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-093", "done");
     expect(mockExecSync).toHaveBeenCalledWith('git worktree remove "/tmp/kb-093" --force', expect.any(Object));
-    expect(mockExecSync).toHaveBeenCalledWith('git branch -d "kb/kb-093"', expect.any(Object));
+    expect(mockExecSync).toHaveBeenCalledWith('git branch -d "fusion/fn-093"', expect.any(Object));
   });
 
   it("does not merge when required checks or reviews are blocking", async () => {
     const store = makeMockStore();
     store.getTask.mockResolvedValue({
-      id: "KB-093",
+      id: "FN-093",
       title: "Task",
       description: "Description",
       column: "in-review",
@@ -388,7 +388,7 @@ describe("processPullRequestMergeTask", () => {
         number: 42,
         status: "open",
         title: "Task",
-        headBranch: "kb/kb-093",
+        headBranch: "fusion/fn-093",
         baseBranch: "main",
         commentCount: 0,
       },
@@ -400,7 +400,7 @@ describe("processPullRequestMergeTask", () => {
         number: 42,
         status: "open",
         title: "Task",
-        headBranch: "kb/kb-093",
+        headBranch: "fusion/fn-093",
         baseBranch: "main",
         commentCount: 0,
       },
@@ -410,7 +410,7 @@ describe("processPullRequestMergeTask", () => {
       blockingReasons: ["changes requested review is active", "required checks not successful: ci (pending)"],
     });
 
-    const result = await processPullRequestMergeTask(store as any, "/repo", "KB-093", {
+    const result = await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
       findPrForBranch: mockFindPrForBranch,
       createPr: mockCreatePr,
       getPrMergeStatus: mockGetPrMergeStatus,
@@ -420,7 +420,7 @@ describe("processPullRequestMergeTask", () => {
     expect(result).toBe("waiting");
     expect(mockMergePr).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("KB-093", { status: "awaiting-pr-checks" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-093", { status: "awaiting-pr-checks" });
   });
 });
 
@@ -441,10 +441,10 @@ describe("runDashboard — PR-first auto-merge queue", () => {
       globalPause: false,
     });
     mockStore.listTasks.mockResolvedValue([
-      { id: "KB-093", column: "in-review", paused: false },
+      { id: "FN-093", column: "in-review", paused: false },
     ]);
     mockStore.getTask.mockResolvedValue({
-      id: "KB-093",
+      id: "FN-093",
       title: "Task",
       description: "Description",
       column: "in-review",
@@ -463,9 +463,9 @@ describe("runDashboard — PR-first auto-merge queue", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     expect(mockCreatePr).toHaveBeenCalledWith({
-      title: "KB-093: Task",
+      title: "FN-093: Task",
       body: "Automated PR for KB-093.\n\nDescription",
-      head: "kb/kb-093",
+      head: "fusion/fn-093",
     });
     expect(aiMergeTask).not.toHaveBeenCalled();
   });
@@ -510,7 +510,7 @@ describe("runDashboard — WorktreePool wiring", () => {
     const serverOpts = createServerCall[1] as { onMerge: (taskId: string) => Promise<unknown> };
 
     // Invoke the merge handler
-    await serverOpts.onMerge("KB-TEST");
+    await serverOpts.onMerge("FN-TEST");
 
     expect(aiMergeTask).toHaveBeenCalled();
     const mergeCallOpts = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls[0][3];
@@ -526,7 +526,7 @@ describe("runDashboard — WorktreePool wiring", () => {
     // Trigger merger via onMerge
     const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls[0];
     const serverOpts = createServerCall[1] as { onMerge: (taskId: string) => Promise<unknown> };
-    await serverOpts.onMerge("KB-TEST");
+    await serverOpts.onMerge("FN-TEST");
 
     const executorPool = capturedExecutorOpts!.pool;
     const mergerPool = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls[0][3].pool;
@@ -573,7 +573,7 @@ describe("runDashboard — auto-merge pause exclusion", () => {
 
     // Emit task:moved with a paused task
     mockStore.emit("task:moved", {
-      task: { id: "KB-PAUSED", column: "in-review", paused: true },
+      task: { id: "FN-PAUSED", column: "in-review", paused: true },
       from: "in-progress",
       to: "in-review",
     });
@@ -592,8 +592,8 @@ describe("runDashboard — auto-merge pause exclusion", () => {
       pollIntervalMs: 60_000,
     });
     mockStore.listTasks.mockResolvedValue([
-      { id: "KB-PAUSED", column: "in-review", paused: true },
-      { id: "KB-ACTIVE", column: "in-review", paused: false },
+      { id: "FN-PAUSED", column: "in-review", paused: true },
+      { id: "FN-ACTIVE", column: "in-review", paused: false },
     ]);
 
     const { aiMergeTask } = await import("@fusion/engine");
@@ -611,7 +611,7 @@ describe("runDashboard — auto-merge pause exclusion", () => {
     const mergedIds = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls.map(
       (call: any[]) => call[2],
     );
-    expect(mergedIds).not.toContain("KB-PAUSED");
+    expect(mergedIds).not.toContain("FN-PAUSED");
   });
 });
 
@@ -684,8 +684,8 @@ describe("runDashboard — immediate resume on unpause", () => {
       globalPause: false,
     });
     mockStore.listTasks.mockResolvedValue([
-      { id: "KB-MQ1", column: "in-review", paused: false },
-      { id: "KB-MQ2", column: "in-review", paused: false },
+      { id: "FN-MQ1", column: "in-review", paused: false },
+      { id: "FN-MQ2", column: "in-review", paused: false },
     ]);
     // getTask is called inside drainMergeQueue to verify the task
     mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
@@ -716,8 +716,8 @@ describe("runDashboard — immediate resume on unpause", () => {
     const mergedIds = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls.map(
       (call: any[]) => call[2],
     );
-    expect(mergedIds).toContain("KB-MQ1");
-    expect(mergedIds).toContain("KB-MQ2");
+    expect(mergedIds).toContain("FN-MQ1");
+    expect(mergedIds).toContain("FN-MQ2");
   });
 });
 
@@ -917,7 +917,7 @@ describe("runDashboard — enginePaused (soft pause)", () => {
 
     // Emit task:moved
     mockStore.emit("task:moved", {
-      task: { id: "KB-EP1", column: "in-review", paused: false },
+      task: { id: "FN-EP1", column: "in-review", paused: false },
       from: "in-progress",
       to: "in-review",
     });
@@ -963,7 +963,7 @@ describe("runDashboard — enginePaused (soft pause)", () => {
       globalPause: false,
     });
     mockStore.listTasks.mockResolvedValue([
-      { id: "KB-EP2", column: "in-review", paused: false },
+      { id: "FN-EP2", column: "in-review", paused: false },
     ]);
     mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
       id,
@@ -990,7 +990,7 @@ describe("runDashboard — enginePaused (soft pause)", () => {
     const mergedIds = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls.map(
       (call: any[]) => call[2],
     );
-    expect(mergedIds).toContain("KB-EP2");
+    expect(mergedIds).toContain("FN-EP2");
   });
 });
 
@@ -1278,7 +1278,7 @@ describe("runDashboard — merge conflict retry logic", () => {
     });
 
     mockStore.listTasks.mockResolvedValue([
-      { id: "KB-RETRY", column: "in-review", paused: false },
+      { id: "FN-RETRY", column: "in-review", paused: false },
     ]);
 
     await runDashboard(0, { open: false });
@@ -1288,7 +1288,7 @@ describe("runDashboard — merge conflict retry logic", () => {
 
     // Should have incremented mergeRetries
     expect(mockStore.updateTask).toHaveBeenCalledWith(
-      "KB-RETRY",
+      "FN-RETRY",
       expect.objectContaining({ mergeRetries: 1 }),
     );
 
@@ -1325,7 +1325,7 @@ describe("runDashboard — merge conflict retry logic", () => {
     }));
 
     mockStore.listTasks.mockResolvedValue([
-      { id: "KB-MAX", column: "in-review", paused: false, mergeRetries: 3 },
+      { id: "FN-MAX", column: "in-review", paused: false, mergeRetries: 3 },
     ]);
 
     await runDashboard(0, { open: false });
@@ -1341,7 +1341,7 @@ describe("runDashboard — merge conflict retry logic", () => {
 
     // Should reset mergeRetries on the task
     expect(mockStore.updateTask).toHaveBeenCalledWith(
-      "KB-MAX",
+      "FN-MAX",
       expect.objectContaining({ status: null }),
     );
   });
@@ -1364,7 +1364,7 @@ describe("runDashboard — merge conflict retry logic", () => {
     });
 
     mockStore.listTasks.mockResolvedValue([
-      { id: "KB-NO-AUTO", column: "in-review", paused: false },
+      { id: "FN-NO-AUTO", column: "in-review", paused: false },
     ]);
 
     await runDashboard(0, { open: false });
@@ -1404,7 +1404,7 @@ describe("runDashboard — merge conflict retry logic", () => {
     }));
 
     mockStore.listTasks.mockResolvedValue([
-      { id: "KB-SUCCESS", column: "in-review", paused: false, mergeRetries: 2 },
+      { id: "FN-SUCCESS", column: "in-review", paused: false, mergeRetries: 2 },
     ]);
 
     await runDashboard(0, { open: false });
@@ -1413,7 +1413,7 @@ describe("runDashboard — merge conflict retry logic", () => {
 
     // Should clear mergeRetries on success
     expect(mockStore.updateTask).toHaveBeenCalledWith(
-      "KB-SUCCESS",
+      "FN-SUCCESS",
       expect.objectContaining({ mergeRetries: 0 }),
     );
   });

@@ -38,7 +38,7 @@ describe("SubtaskBreakdownModal", () => {
       streamHandlers = handlers;
       return { close: vi.fn(), isConnected: () => true };
     });
-    mockCreateTasksFromBreakdown.mockResolvedValue({ tasks: [{ id: "KB-101" }, { id: "KB-102" }] });
+    mockCreateTasksFromBreakdown.mockResolvedValue({ tasks: [{ id: "FN-101" }, { id: "FN-102" }] });
     mockCancelSubtaskBreakdown.mockResolvedValue(undefined);
     vi.stubGlobal("confirm", vi.fn(() => true));
   });

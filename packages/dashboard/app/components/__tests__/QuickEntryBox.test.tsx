@@ -22,7 +22,7 @@ const MOCK_MODELS = [
 
 const mockTasks: Task[] = [
   {
-    id: "KB-001",
+    id: "FN-001",
     title: "Test task 1",
     description: "First test task",
     column: "todo",
@@ -34,7 +34,7 @@ const mockTasks: Task[] = [
     updatedAt: "2026-01-01T00:00:00Z",
   },
   {
-    id: "KB-002",
+    id: "FN-002",
     title: "Test task 2",
     description: "Second test task",
     column: "todo",
@@ -529,7 +529,7 @@ describe("QuickEntryBox", () => {
         expect(props.onCreate).toHaveBeenCalledWith(
           expect.objectContaining({
             description: "Task with deps",
-            dependencies: expect.arrayContaining(["KB-002"]), // Most recent task
+            dependencies: expect.arrayContaining(["FN-002"]), // Most recent task
           }),
         );
       });

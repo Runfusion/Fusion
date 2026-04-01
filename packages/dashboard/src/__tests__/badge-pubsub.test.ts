@@ -10,7 +10,7 @@ import {
 function createValidMessage(overrides: Partial<BadgePubSubMessage> = {}): BadgePubSubMessage {
   return {
     sourceId: "server-a",
-    taskId: "KB-001",
+    taskId: "FN-001",
     timestamp: new Date().toISOString(),
     ...overrides,
   };
@@ -39,7 +39,7 @@ describe("InMemoryBadgePubSub", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(messages).toHaveLength(1);
-    expect(messages[0].taskId).toBe("KB-001");
+    expect(messages[0].taskId).toBe("FN-001");
   });
 
   it("handles multiple subscribers", async () => {
@@ -146,7 +146,7 @@ describe("parseBadgePubSubMessage validation", () => {
     
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.taskId).toBe("KB-001");
+      expect(result.value.taskId).toBe("FN-001");
       expect(result.value.sourceId).toBe("server-remote");
     }
   });
@@ -161,7 +161,7 @@ describe("parseBadgePubSubMessage validation", () => {
   });
 
   it("rejects messages without sourceId", () => {
-    const json = JSON.stringify({ taskId: "KB-001", timestamp: new Date().toISOString() });
+    const json = JSON.stringify({ taskId: "FN-001", timestamp: new Date().toISOString() });
     
     const result = parseBadgePubSubMessage(json, localSourceId);
     
@@ -169,7 +169,7 @@ describe("parseBadgePubSubMessage validation", () => {
   });
 
   it("rejects messages with empty sourceId", () => {
-    const json = JSON.stringify({ sourceId: "", taskId: "KB-001", timestamp: new Date().toISOString() });
+    const json = JSON.stringify({ sourceId: "", taskId: "FN-001", timestamp: new Date().toISOString() });
     
     const result = parseBadgePubSubMessage(json, localSourceId);
     
@@ -193,7 +193,7 @@ describe("parseBadgePubSubMessage validation", () => {
   });
 
   it("rejects messages without timestamp", () => {
-    const json = JSON.stringify({ sourceId: "server-remote", taskId: "KB-001" });
+    const json = JSON.stringify({ sourceId: "server-remote", taskId: "FN-001" });
     
     const result = parseBadgePubSubMessage(json, localSourceId);
     
@@ -201,7 +201,7 @@ describe("parseBadgePubSubMessage validation", () => {
   });
 
   it("rejects messages with empty timestamp", () => {
-    const json = JSON.stringify({ sourceId: "server-remote", taskId: "KB-001", timestamp: "" });
+    const json = JSON.stringify({ sourceId: "server-remote", taskId: "FN-001", timestamp: "" });
     
     const result = parseBadgePubSubMessage(json, localSourceId);
     
@@ -252,7 +252,7 @@ describe("parseBadgePubSubMessage validation", () => {
   it("rejects messages with non-object prInfo", () => {
     const json = JSON.stringify({
       sourceId: "server-remote",
-      taskId: "KB-001",
+      taskId: "FN-001",
       timestamp: new Date().toISOString(),
       prInfo: "invalid",
     });
@@ -265,7 +265,7 @@ describe("parseBadgePubSubMessage validation", () => {
   it("rejects messages with prInfo missing required fields", () => {
     const json = JSON.stringify({
       sourceId: "server-remote",
-      taskId: "KB-001",
+      taskId: "FN-001",
       timestamp: new Date().toISOString(),
       prInfo: { number: 1 }, // missing url
     });
@@ -310,7 +310,7 @@ describe("parseBadgePubSubMessage validation", () => {
   it("rejects messages with non-object issueInfo", () => {
     const json = JSON.stringify({
       sourceId: "server-remote",
-      taskId: "KB-001",
+      taskId: "FN-001",
       timestamp: new Date().toISOString(),
       issueInfo: 123,
     });
@@ -323,7 +323,7 @@ describe("parseBadgePubSubMessage validation", () => {
   it("rejects messages with issueInfo missing required fields", () => {
     const json = JSON.stringify({
       sourceId: "server-remote",
-      taskId: "KB-001",
+      taskId: "FN-001",
       timestamp: new Date().toISOString(),
       issueInfo: { state: "open" }, // missing url and number
     });

@@ -62,7 +62,7 @@ describe("AgentLogger", () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-001",
+      taskId: "FN-001",
       flushSizeBytes: 10,
       flushIntervalMs: 500,
     });
@@ -75,14 +75,14 @@ describe("AgentLogger", () => {
     logger.onText("worldextra");
     // Allow async flush
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-001", "helloworldextra", "text", undefined, undefined);
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-001", "helloworldextra", "text", undefined, undefined);
   });
 
   it("flushes on timer when under size threshold", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-002",
+      taskId: "FN-002",
       flushSizeBytes: 1024,
       flushIntervalMs: 500,
     });
@@ -91,14 +91,14 @@ describe("AgentLogger", () => {
     expect(store.appendAgentLog).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(500);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-002", "small", "text", undefined, undefined);
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-002", "small", "text", undefined, undefined);
   });
 
   it("flushes text before logging tool start", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-003",
+      taskId: "FN-003",
       flushSizeBytes: 1024,
     });
 
@@ -110,36 +110,36 @@ describe("AgentLogger", () => {
     const calls = (store.appendAgentLog as ReturnType<typeof vi.fn>).mock.calls;
     expect(calls.length).toBe(2);
     // Text flushed first
-    expect(calls[0]).toEqual(["KB-003", "pending text", "text", undefined, undefined]);
+    expect(calls[0]).toEqual(["FN-003", "pending text", "text", undefined, undefined]);
     // Tool logged second with detail
-    expect(calls[1]).toEqual(["KB-003", "Bash", "tool", "ls", undefined]);
+    expect(calls[1]).toEqual(["FN-003", "Bash", "tool", "ls", undefined]);
   });
 
   it("logs tool detail using summarizeToolArgs", async () => {
     const store = createMockStore();
-    const logger = new AgentLogger({ store, taskId: "KB-004" });
+    const logger = new AgentLogger({ store, taskId: "FN-004" });
 
     logger.onToolStart("Read", { path: "src/index.ts" });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-004", "Read", "tool", "src/index.ts", undefined);
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-004", "Read", "tool", "src/index.ts", undefined);
   });
 
   it("logs tool with undefined detail for unknown args", async () => {
     const store = createMockStore();
-    const logger = new AgentLogger({ store, taskId: "KB-005" });
+    const logger = new AgentLogger({ store, taskId: "FN-005" });
 
     logger.onToolStart("task_done", { count: 42 });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-005", "task_done", "tool", undefined, undefined);
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-005", "task_done", "tool", undefined, undefined);
   });
 
   it("flush() clears timer and writes remaining text", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-006",
+      taskId: "FN-006",
       flushSizeBytes: 1024,
       flushIntervalMs: 500,
     });
@@ -147,12 +147,12 @@ describe("AgentLogger", () => {
     logger.onText("remaining");
     await logger.flush();
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-006", "remaining", "text", undefined, undefined);
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-006", "remaining", "text", undefined, undefined);
   });
 
   it("flush() is safe to call when buffer is empty", async () => {
     const store = createMockStore();
-    const logger = new AgentLogger({ store, taskId: "KB-007" });
+    const logger = new AgentLogger({ store, taskId: "FN-007" });
 
     await logger.flush();
     expect(store.appendAgentLog).not.toHaveBeenCalled();
@@ -164,23 +164,23 @@ describe("AgentLogger", () => {
     const onAgentTool = vi.fn();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-008",
+      taskId: "FN-008",
       onAgentText,
       onAgentTool,
     });
 
     logger.onText("delta");
-    expect(onAgentText).toHaveBeenCalledWith("KB-008", "delta");
+    expect(onAgentText).toHaveBeenCalledWith("FN-008", "delta");
 
     logger.onToolStart("Bash", { command: "echo hi" });
-    expect(onAgentTool).toHaveBeenCalledWith("KB-008", "Bash");
+    expect(onAgentTool).toHaveBeenCalledWith("FN-008", "Bash");
   });
 
   it("does not schedule multiple timers for consecutive small writes", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-009",
+      taskId: "FN-009",
       flushSizeBytes: 1024,
       flushIntervalMs: 500,
     });
@@ -193,7 +193,7 @@ describe("AgentLogger", () => {
 
     // All text should be flushed in a single call
     expect(store.appendAgentLog).toHaveBeenCalledTimes(1);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-009", "abc", "text", undefined, undefined);
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-009", "abc", "text", undefined, undefined);
   });
 
   // ── Agent field propagation ──────────────────────────────────────
@@ -202,7 +202,7 @@ describe("AgentLogger", () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-010",
+      taskId: "FN-010",
       agent: "executor",
       flushSizeBytes: 5,
     });
@@ -210,13 +210,13 @@ describe("AgentLogger", () => {
     // Text flush
     logger.onText("hello world");
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-010", "hello world", "text", undefined, "executor");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-010", "hello world", "text", undefined, "executor");
 
     // Tool start
     (store.appendAgentLog as ReturnType<typeof vi.fn>).mockClear();
     logger.onToolStart("Bash", { command: "ls" });
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-010", "Bash", "tool", "ls", "executor");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-010", "Bash", "tool", "ls", "executor");
   });
 
   // ── Thinking buffer/flush ────────────────────────────────────────
@@ -225,7 +225,7 @@ describe("AgentLogger", () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-011",
+      taskId: "FN-011",
       agent: "executor",
       flushSizeBytes: 1024,
       flushIntervalMs: 500,
@@ -236,14 +236,14 @@ describe("AgentLogger", () => {
     expect(store.appendAgentLog).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(500);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-011", "thought 1 thought 2", "thinking", undefined, "executor");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-011", "thought 1 thought 2", "thinking", undefined, "executor");
   });
 
   it("flushes thinking on size threshold", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-012",
+      taskId: "FN-012",
       agent: "triage",
       flushSizeBytes: 10,
     });
@@ -253,28 +253,28 @@ describe("AgentLogger", () => {
 
     logger.onThinking("enough to flush");
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-012", "shortenough to flush", "thinking", undefined, "triage");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-012", "shortenough to flush", "thinking", undefined, "triage");
   });
 
   it("flushes thinking buffer on flush()", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-013",
+      taskId: "FN-013",
       agent: "reviewer",
       flushSizeBytes: 1024,
     });
 
     logger.onThinking("remaining thinking");
     await logger.flush();
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-013", "remaining thinking", "thinking", undefined, "reviewer");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-013", "remaining thinking", "thinking", undefined, "reviewer");
   });
 
   it("flushes thinking buffer before tool start", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-014",
+      taskId: "FN-014",
       agent: "executor",
       flushSizeBytes: 1024,
     });
@@ -284,8 +284,8 @@ describe("AgentLogger", () => {
 
     await vi.advanceTimersByTimeAsync(0);
     const calls = (store.appendAgentLog as ReturnType<typeof vi.fn>).mock.calls;
-    expect(calls[0]).toEqual(["KB-014", "pre-tool thought", "thinking", undefined, "executor"]);
-    expect(calls[1]).toEqual(["KB-014", "Read", "tool", "file.ts", "executor"]);
+    expect(calls[0]).toEqual(["FN-014", "pre-tool thought", "thinking", undefined, "executor"]);
+    expect(calls[1]).toEqual(["FN-014", "Read", "tool", "file.ts", "executor"]);
   });
 
   // ── onToolEnd ────────────────────────────────────────────────────
@@ -294,33 +294,33 @@ describe("AgentLogger", () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-015",
+      taskId: "FN-015",
       agent: "executor",
     });
 
     logger.onToolEnd("Bash", false, "command output");
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-015", "Bash", "tool_result", "command output", "executor");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-015", "Bash", "tool_result", "command output", "executor");
   });
 
   it("logs tool_error on failed tool end", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-016",
+      taskId: "FN-016",
       agent: "executor",
     });
 
     logger.onToolEnd("Read", true, "file not found");
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-016", "Read", "tool_error", "file not found", "executor");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-016", "Read", "tool_error", "file not found", "executor");
   });
 
   it("truncates long tool results to 500 chars", async () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-017",
+      taskId: "FN-017",
       agent: "executor",
     });
 
@@ -336,12 +336,12 @@ describe("AgentLogger", () => {
     const store = createMockStore();
     const logger = new AgentLogger({
       store,
-      taskId: "KB-018",
+      taskId: "FN-018",
       agent: "merger",
     });
 
     logger.onToolEnd("Bash", false);
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.appendAgentLog).toHaveBeenCalledWith("KB-018", "Bash", "tool_result", undefined, "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-018", "Bash", "tool_result", undefined, "merger");
   });
 });

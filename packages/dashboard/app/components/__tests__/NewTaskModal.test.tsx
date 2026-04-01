@@ -41,7 +41,7 @@ function renderNewTaskModal(props = {}) {
     isOpen: true,
     onClose: vi.fn(),
     tasks: [] as Task[],
-    onCreateTask: vi.fn().mockResolvedValue({ id: "KB-001" }),
+    onCreateTask: vi.fn().mockResolvedValue({ id: "FN-001" }),
     addToast: vi.fn(),
   };
   const mergedProps = { ...defaultProps, ...props };
@@ -119,7 +119,7 @@ describe("NewTaskModal", () => {
 
   it("shows success toast after creation", async () => {
     const { props } = renderNewTaskModal({
-      onCreateTask: vi.fn().mockResolvedValue({ id: "KB-042" }),
+      onCreateTask: vi.fn().mockResolvedValue({ id: "FN-042" }),
     });
     
     const descTextarea = screen.getByLabelText(/Description/i);

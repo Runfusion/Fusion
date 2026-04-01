@@ -556,7 +556,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const id = this.db.transaction(() => {
         const row = this.db.prepare("SELECT nextId, settings FROM config WHERE id = 1").get() as any;
         const settings = fromJson<Settings>(row.settings);
-        const prefix = settings?.taskPrefix || "KB";
+        const prefix = settings?.taskPrefix || "FN";
         const nextId = row.nextId || 1;
         const taskId = `${prefix}-${String(nextId).padStart(3, "0")}`;
         this.db.prepare("UPDATE config SET nextId = ? WHERE id = 1").run(nextId + 1);
@@ -1284,7 +1284,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         );
       }
 
-      const branch = `kb/${id.toLowerCase()}`;
+      const branch = `fusion/${id.toLowerCase()}`;
       const worktreePath = task.worktree;
       const result: MergeResult = {
         task,

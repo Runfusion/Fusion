@@ -27,7 +27,7 @@ import {
 import type { Task, TaskDetail, BatchStatusResponse } from "@fusion/core";
 
 const FAKE_DETAIL: TaskDetail = {
-  id: "KB-001",
+  id: "FN-001",
   description: "Test",
   column: "in-progress",
   dependencies: [],
@@ -74,9 +74,9 @@ describe("fetchTaskDetail", () => {
   it("returns data on first success", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_DETAIL));
 
-    const result = await fetchTaskDetail("KB-001");
+    const result = await fetchTaskDetail("FN-001");
 
-    expect(result.id).toBe("KB-001");
+    expect(result.id).toBe("FN-001");
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -85,9 +85,9 @@ describe("fetchTaskDetail", () => {
       .mockReturnValueOnce(mockFetchResponse(false, { error: "Transient error" }))
       .mockReturnValueOnce(mockFetchResponse(true, FAKE_DETAIL));
 
-    const result = await fetchTaskDetail("KB-001");
+    const result = await fetchTaskDetail("FN-001");
 
-    expect(result.id).toBe("KB-001");
+    expect(result.id).toBe("FN-001");
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -95,7 +95,7 @@ describe("fetchTaskDetail", () => {
     globalThis.fetch = vi.fn()
       .mockReturnValue(mockFetchResponse(false, { error: "Server error" }));
 
-    await expect(fetchTaskDetail("KB-001")).rejects.toThrow("Server error");
+    await expect(fetchTaskDetail("FN-001")).rejects.toThrow("Server error");
     expect(globalThis.fetch).toHaveBeenCalledTimes(2); // initial + 1 retry
   });
 });
@@ -108,10 +108,10 @@ describe("updateTask", () => {
   });
 
   const FAKE_TASK: Task = {
-    id: "KB-001",
+    id: "FN-001",
     description: "Test",
     column: "in-progress",
-    dependencies: ["KB-002"],
+    dependencies: ["FN-002"],
     steps: [],
     currentStep: 0,
     log: [],
@@ -122,20 +122,20 @@ describe("updateTask", () => {
   it("sends PATCH with dependencies and returns updated task", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_TASK));
 
-    const result = await updateTask("KB-001", { dependencies: ["KB-002"] });
+    const result = await updateTask("FN-001", { dependencies: ["FN-002"] });
 
-    expect(result.dependencies).toEqual(["KB-002"]);
+    expect(result.dependencies).toEqual(["FN-002"]);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001", {
       headers: { "Content-Type": "application/json" },
       method: "PATCH",
-      body: JSON.stringify({ dependencies: ["KB-002"] }),
+      body: JSON.stringify({ dependencies: ["FN-002"] }),
     });
   });
 
   it("throws on error response", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Not found" }));
 
-    await expect(updateTask("KB-001", { dependencies: [] })).rejects.toThrow("Not found");
+    await expect(updateTask("FN-001", { dependencies: [] })).rejects.toThrow("Not found");
   });
 });
 
@@ -147,7 +147,7 @@ describe("task comments api", () => {
   });
 
   const FAKE_TASK: Task = {
-    id: "KB-001",
+    id: "FN-001",
     description: "Test",
     column: "todo",
     dependencies: [],
@@ -163,7 +163,7 @@ describe("task comments api", () => {
     const comments = FAKE_TASK.comments!;
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, comments));
 
-    const result = await fetchTaskComments("KB-001");
+    const result = await fetchTaskComments("FN-001");
 
     expect(result).toEqual(comments);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/comments", {
@@ -174,7 +174,7 @@ describe("task comments api", () => {
   it("adds a task comment", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_TASK));
 
-    const result = await addTaskComment("KB-001", "Hello", "user");
+    const result = await addTaskComment("FN-001", "Hello", "user");
 
     expect(result).toEqual(FAKE_TASK);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/comments", {
@@ -187,7 +187,7 @@ describe("task comments api", () => {
   it("updates a task comment", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_TASK));
 
-    await updateTaskComment("KB-001", "c1", "Updated");
+    await updateTaskComment("FN-001", "c1", "Updated");
 
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/comments/c1", {
       headers: { "Content-Type": "application/json" },
@@ -199,7 +199,7 @@ describe("task comments api", () => {
   it("deletes a task comment", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_TASK));
 
-    await deleteTaskComment("KB-001", "c1");
+    await deleteTaskComment("FN-001", "c1");
 
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/comments/c1", {
       headers: { "Content-Type": "application/json" },
@@ -246,7 +246,7 @@ describe("fetchBatchStatus", () => {
   it("posts task ids and unwraps the results envelope", async () => {
     const response: BatchStatusResponse = {
       results: {
-        "KB-001": {
+        "FN-001": {
           issueInfo: {
             url: "https://github.com/owner/repo/issues/101",
             number: 101,
@@ -261,20 +261,20 @@ describe("fetchBatchStatus", () => {
     };
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, response));
 
-    const result = await fetchBatchStatus(["KB-001"]);
+    const result = await fetchBatchStatus(["FN-001"]);
 
     expect(result).toEqual(response.results);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/github/batch/status", {
       headers: { "Content-Type": "application/json" },
       method: "POST",
-      body: JSON.stringify({ taskIds: ["KB-001"] }),
+      body: JSON.stringify({ taskIds: ["FN-001"] }),
     });
   });
 
   it("propagates API errors", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "rate limit exceeded" }, 429));
 
-    await expect(fetchBatchStatus(["KB-001"])).rejects.toThrow("rate limit exceeded");
+    await expect(fetchBatchStatus(["FN-001"])).rejects.toThrow("rate limit exceeded");
   });
 });
 
@@ -291,7 +291,7 @@ describe("batchUpdateTaskModels", () => {
 
   it("calls API with correct parameters for executor model update", async () => {
     const mockResponse = {
-      updated: [{ id: "KB-001", modelProvider: "openai", modelId: "gpt-4o" }],
+      updated: [{ id: "FN-001", modelProvider: "openai", modelId: "gpt-4o" }],
       count: 1,
     };
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -299,7 +299,7 @@ describe("batchUpdateTaskModels", () => {
     );
 
     const { batchUpdateTaskModels } = await import("./api");
-    const result = await batchUpdateTaskModels(["KB-001"], "openai", "gpt-4o");
+    const result = await batchUpdateTaskModels(["FN-001"], "openai", "gpt-4o");
 
     expect(result.count).toBe(1);
     expect(result.updated).toHaveLength(1);
@@ -309,7 +309,7 @@ describe("batchUpdateTaskModels", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          taskIds: ["KB-001"],
+          taskIds: ["FN-001"],
           modelProvider: "openai",
           modelId: "gpt-4o",
         }),
@@ -325,7 +325,7 @@ describe("batchUpdateTaskModels", () => {
 
     const { batchUpdateTaskModels } = await import("./api");
     await batchUpdateTaskModels(
-      ["KB-001", "KB-002"],
+      ["FN-001", "FN-002"],
       undefined,
       undefined,
       "anthropic",
@@ -336,7 +336,7 @@ describe("batchUpdateTaskModels", () => {
       "/api/tasks/batch-update-models",
       expect.objectContaining({
         body: JSON.stringify({
-          taskIds: ["KB-001", "KB-002"],
+          taskIds: ["FN-001", "FN-002"],
           validatorModelProvider: "anthropic",
           validatorModelId: "claude-sonnet-4-5",
         }),
@@ -345,19 +345,19 @@ describe("batchUpdateTaskModels", () => {
   });
 
   it("calls API with null values to clear models", async () => {
-    const mockResponse = { updated: [{ id: "KB-001" }], count: 1 };
+    const mockResponse = { updated: [{ id: "FN-001" }], count: 1 };
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
       mockFetchResponse(true, mockResponse)
     );
 
     const { batchUpdateTaskModels } = await import("./api");
-    await batchUpdateTaskModels(["KB-001"], null, null);
+    await batchUpdateTaskModels(["FN-001"], null, null);
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/tasks/batch-update-models",
       expect.objectContaining({
         body: JSON.stringify({
-          taskIds: ["KB-001"],
+          taskIds: ["FN-001"],
           modelProvider: null,
           modelId: null,
         }),
@@ -391,7 +391,7 @@ describe("batchUpdateTaskModels", () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network failed"));
 
     const { batchUpdateTaskModels } = await import("./api");
-    await expect(batchUpdateTaskModels(["KB-001"], "openai", "gpt-4o")).rejects.toThrow(
+    await expect(batchUpdateTaskModels(["FN-001"], "openai", "gpt-4o")).rejects.toThrow(
       "Network failed"
     );
   });
@@ -486,7 +486,7 @@ describe("addSteeringComment", () => {
   });
 
   const FAKE_TASK: Task = {
-    id: "KB-001",
+    id: "FN-001",
     description: "Test",
     column: "in-progress",
     dependencies: [],
@@ -508,9 +508,9 @@ describe("addSteeringComment", () => {
   it("sends POST with text and returns updated task", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_TASK));
 
-    const result = await addSteeringComment("KB-001", "Please handle the edge case");
+    const result = await addSteeringComment("FN-001", "Please handle the edge case");
 
-    expect(result.id).toBe("KB-001");
+    expect(result.id).toBe("FN-001");
     expect(result.steeringComments).toHaveLength(1);
     expect(result.steeringComments![0].text).toBe("Please handle the edge case");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/steer", {
@@ -525,7 +525,7 @@ describe("addSteeringComment", () => {
       mockFetchResponse(false, { error: "Task not found" })
     );
 
-    await expect(addSteeringComment("KB-001", "Test comment")).rejects.toThrow("Task not found");
+    await expect(addSteeringComment("FN-001", "Test comment")).rejects.toThrow("Task not found");
   });
 });
 
@@ -774,7 +774,7 @@ describe("approvePlan", () => {
     };
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, approvedTask));
 
-    const result = await approvePlan("KB-001");
+    const result = await approvePlan("FN-001");
 
     expect(result.column).toBe("todo");
     expect(result.status).toBeUndefined();
@@ -789,7 +789,7 @@ describe("approvePlan", () => {
       mockFetchResponse(false, { error: "Task must be in 'triage' column to approve plan" }, 400)
     );
 
-    await expect(approvePlan("KB-001")).rejects.toThrow("triage");
+    await expect(approvePlan("FN-001")).rejects.toThrow("triage");
   });
 });
 
@@ -808,7 +808,7 @@ describe("rejectPlan", () => {
     };
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, rejectedTask));
 
-    const result = await rejectPlan("KB-001");
+    const result = await rejectPlan("FN-001");
 
     expect(result.column).toBe("triage");
     expect(result.status).toBeUndefined();
@@ -823,7 +823,7 @@ describe("rejectPlan", () => {
       mockFetchResponse(false, { error: "Task must have status 'awaiting-approval' to reject plan" }, 400)
     );
 
-    await expect(rejectPlan("KB-001")).rejects.toThrow("awaiting-approval");
+    await expect(rejectPlan("FN-001")).rejects.toThrow("awaiting-approval");
   });
 });
 
@@ -837,10 +837,10 @@ describe("refineTask", () => {
   });
 
   const FAKE_REFINED_TASK: Task = {
-    id: "KB-002",
+    id: "FN-002",
     description: "Refinement of KB-001",
     column: "triage",
-    dependencies: ["KB-001"],
+    dependencies: ["FN-001"],
     steps: [],
     currentStep: 0,
     log: [],
@@ -851,11 +851,11 @@ describe("refineTask", () => {
   it("sends POST with feedback and returns new refinement task", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_REFINED_TASK));
 
-    const result = await refineTask("KB-001", "Need to add more tests and improve error handling");
+    const result = await refineTask("FN-001", "Need to add more tests and improve error handling");
 
-    expect(result.id).toBe("KB-002");
+    expect(result.id).toBe("FN-002");
     expect(result.column).toBe("triage");
-    expect(result.dependencies).toContain("KB-001");
+    expect(result.dependencies).toContain("FN-001");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/refine", {
       headers: { "Content-Type": "application/json" },
       method: "POST",
@@ -876,7 +876,7 @@ describe("refineTask", () => {
       mockFetchResponse(false, { error: "Task must be in 'done' or 'in-review' column to refine" }, 400)
     );
 
-    await expect(refineTask("KB-001", "feedback")).rejects.toThrow("done' or 'in-review'");
+    await expect(refineTask("FN-001", "feedback")).rejects.toThrow("done' or 'in-review'");
   });
 });
 
@@ -1152,7 +1152,7 @@ describe("Git Management API", () => {
       const archivedTask: Task = { ...FAKE_DETAIL, column: "archived" };
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, archivedTask));
 
-      const response = await archiveTask("KB-001");
+      const response = await archiveTask("FN-001");
 
       expect(response.column).toBe("archived");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/archive", {
@@ -1164,7 +1164,7 @@ describe("Git Management API", () => {
     it("throws on error", async () => {
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Task not in done" }, 400));
 
-      await expect(archiveTask("KB-001")).rejects.toThrow("Task not in done");
+      await expect(archiveTask("FN-001")).rejects.toThrow("Task not in done");
     });
   });
 
@@ -1173,7 +1173,7 @@ describe("Git Management API", () => {
       const unarchivedTask: Task = { ...FAKE_DETAIL, column: "done" };
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, unarchivedTask));
 
-      const response = await unarchiveTask("KB-001");
+      const response = await unarchiveTask("FN-001");
 
       expect(response.column).toBe("done");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/unarchive", {
@@ -1185,7 +1185,7 @@ describe("Git Management API", () => {
     it("throws on error", async () => {
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Task not in archived" }, 400));
 
-      await expect(unarchiveTask("KB-001")).rejects.toThrow("Task not in archived");
+      await expect(unarchiveTask("FN-001")).rejects.toThrow("Task not in archived");
     });
   });
 
@@ -1193,7 +1193,7 @@ describe("Git Management API", () => {
     it("fetchWorkspaces requests the workspace list", async () => {
       const payload = {
         project: "/repo",
-        tasks: [{ id: "KB-001", title: "Task", worktree: "/repo/.worktrees/kb-001" }],
+        tasks: [{ id: "FN-001", title: "Task", worktree: "/repo/.worktrees/kb-001" }],
       };
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, payload));
 
@@ -1209,7 +1209,7 @@ describe("Git Management API", () => {
       const payload = { path: "src", entries: [] };
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, payload));
 
-      const response = await fetchWorkspaceFileList("KB-001", "src");
+      const response = await fetchWorkspaceFileList("FN-001", "src");
 
       expect(response).toEqual(payload);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/files?workspace=KB-001&path=src", {
@@ -1233,7 +1233,7 @@ describe("Git Management API", () => {
       const payload = { success: true, mtime: "2026-01-01T00:00:00.000Z", size: 5 };
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, payload));
 
-      const response = await saveWorkspaceFileContent("KB-001", "src/index.ts", "hello");
+      const response = await saveWorkspaceFileContent("FN-001", "src/index.ts", "hello");
 
       expect(response).toEqual(payload);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/files/src%2Findex.ts?workspace=KB-001", {
@@ -1246,7 +1246,7 @@ describe("Git Management API", () => {
     it("propagates workspace API errors", async () => {
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Task not found" }, 404));
 
-      await expect(fetchWorkspaceFileList("KB-404")).rejects.toThrow("Task not found");
+      await expect(fetchWorkspaceFileList("FN-404")).rejects.toThrow("Task not found");
     });
   });
 });
@@ -1374,7 +1374,7 @@ describe("Planning Mode API", () => {
   describe("createTaskFromPlanning", () => {
     it("sends POST to create-task endpoint and returns task", async () => {
       const createdTask: Task = {
-        id: "KB-042",
+        id: "FN-042",
         title: "Build user authentication",
         description: "Implement login/logout with JWT tokens",
         column: "triage",
@@ -1389,7 +1389,7 @@ describe("Planning Mode API", () => {
 
       const result = await createTaskFromPlanning("plan-123");
 
-      expect(result.id).toBe("KB-042");
+      expect(result.id).toBe("FN-042");
       expect(result.column).toBe("triage");
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/planning/create-task", {
         headers: { "Content-Type": "application/json" },
@@ -1444,7 +1444,7 @@ describe("API Error Handling", () => {
 
   describe("JSON responses", () => {
     it("parses successful JSON responses correctly", async () => {
-      const tasks = [{ id: "KB-001", title: "Test Task" }];
+      const tasks = [{ id: "FN-001", title: "Test Task" }];
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, tasks));
 
       const result = await fetchTasks();

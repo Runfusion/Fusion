@@ -36,7 +36,7 @@ describe("AgentListModal", () => {
       name: "Test Agent 2",
       role: "triage" as AgentCapability,
       state: "active" as AgentState,
-      taskId: "KB-001",
+      taskId: "FN-001",
       lastHeartbeatAt: new Date().toISOString(),
       createdAt: new Date(Date.now() - 86400000).toISOString(),
       updatedAt: new Date().toISOString(),
@@ -209,7 +209,7 @@ describe("AgentListModal", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText("KB-001")).toBeTruthy();
+        expect(screen.getByText("FN-001")).toBeTruthy();
       });
     });
 

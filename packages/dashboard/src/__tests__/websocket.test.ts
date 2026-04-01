@@ -50,7 +50,7 @@ class MockStore extends EventEmitter {
 
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
-    id: "KB-063",
+    id: "FN-063",
     title: "Realtime badge updates",
     description: "Test task",
     column: "in-review",
@@ -104,11 +104,11 @@ describe("WebSocketManager", () => {
     const socket = new MockSocket();
 
     manager.addClient(socket as unknown as WebSocket, "client-1");
-    socket.emit("message", Buffer.from(JSON.stringify({ type: "subscribe", taskId: "KB-063" })));
-    expect(manager.getSubscriptionCount("KB-063")).toBe(1);
+    socket.emit("message", Buffer.from(JSON.stringify({ type: "subscribe", taskId: "FN-063" })));
+    expect(manager.getSubscriptionCount("FN-063")).toBe(1);
 
-    socket.emit("message", Buffer.from(JSON.stringify({ type: "unsubscribe", taskId: "KB-063" })));
-    expect(manager.getSubscriptionCount("KB-063")).toBe(0);
+    socket.emit("message", Buffer.from(JSON.stringify({ type: "unsubscribe", taskId: "FN-063" })));
+    expect(manager.getSubscriptionCount("FN-063")).toBe(0);
   });
 
   it("broadcasts badge updates only to subscribed clients", () => {
@@ -119,10 +119,10 @@ describe("WebSocketManager", () => {
     manager.addClient(first as unknown as WebSocket, "client-1");
     manager.addClient(second as unknown as WebSocket, "client-2");
 
-    first.emit("message", Buffer.from(JSON.stringify({ type: "subscribe", taskId: "KB-063" })));
-    second.emit("message", Buffer.from(JSON.stringify({ type: "subscribe", taskId: "KB-064" })));
+    first.emit("message", Buffer.from(JSON.stringify({ type: "subscribe", taskId: "FN-063" })));
+    second.emit("message", Buffer.from(JSON.stringify({ type: "subscribe", taskId: "FN-064" })));
 
-    manager.broadcastBadgeUpdate("KB-063", {
+    manager.broadcastBadgeUpdate("FN-063", {
       prInfo: null,
       issueInfo: {
         url: "https://github.com/owner/repo/issues/2",
@@ -138,7 +138,7 @@ describe("WebSocketManager", () => {
     expect(second.send).not.toHaveBeenCalled();
     expect(JSON.parse(first.sent[0])).toMatchObject({
       type: "badge:updated",
-      taskId: "KB-063",
+      taskId: "FN-063",
       prInfo: null,
       issueInfo: { number: 2 },
     });
@@ -165,13 +165,13 @@ describe("WebSocketManager", () => {
     const socket = new MockSocket();
 
     manager.addClient(socket as unknown as WebSocket, "client-1");
-    socket.emit("message", Buffer.from(JSON.stringify({ type: "subscribe", taskId: "KB-063" })));
+    socket.emit("message", Buffer.from(JSON.stringify({ type: "subscribe", taskId: "FN-063" })));
 
     vi.advanceTimersByTime(200);
 
     expect(socket.terminate).toHaveBeenCalled();
     expect(manager.getClientCount()).toBe(0);
-    expect(manager.getSubscriptionCount("KB-063")).toBe(0);
+    expect(manager.getSubscriptionCount("FN-063")).toBe(0);
   });
 
   it("disposes sockets without leaking tracked clients", () => {
@@ -250,7 +250,7 @@ describe("multi-instance /api/ws integration", () => {
 
     // Create two separate stores (simulating separate instances)
     const taskA = createTask({ 
-      id: "KB-MULTI-001", 
+      id: "FN-MULTI-001", 
       prInfo: { 
         url: "https://github.com/owner/repo/pull/1", 
         number: 1, 
@@ -298,7 +298,7 @@ describe("multi-instance /api/ws integration", () => {
 
     // Emit badge-changing task:updated on instance A (no local subscribers)
     const updatedTaskA = createTask({
-      id: "KB-MULTI-001",
+      id: "FN-MULTI-001",
       prInfo: {
         url: "https://github.com/owner/repo/pull/1",
         number: 1,
@@ -344,7 +344,7 @@ describe("multi-instance /api/ws integration", () => {
     const sharedPubSub: BadgePubSub = new InMemoryBadgePubSub();
     await sharedPubSub.start();
 
-    const task = createTask({ id: "KB-ECHO-001" });
+    const task = createTask({ id: "FN-ECHO-001" });
     const store = new MockStore(task);
 
     const app = createServer(store as any, { 
@@ -369,7 +369,7 @@ describe("multi-instance /api/ws integration", () => {
 
     // Emit task:updated on the same instance
     const updatedTask = createTask({
-      id: "KB-ECHO-001",
+      id: "FN-ECHO-001",
       prInfo: {
         url: "https://github.com/owner/repo/pull/99",
         number: 99,
@@ -418,7 +418,7 @@ describe("multi-instance /api/ws integration", () => {
     await sharedPubSub.start();
 
     const task = createTask({ 
-      id: "KB-LATE-001",
+      id: "FN-LATE-001",
       prInfo: {
         url: "https://github.com/owner/repo/pull/1",
         number: 1,
@@ -453,7 +453,7 @@ describe("multi-instance /api/ws integration", () => {
 
     // First, emit an update on instance A (no subscribers)
     const updatedTask = createTask({
-      id: "KB-LATE-001",
+      id: "FN-LATE-001",
       prInfo: {
         url: "https://github.com/owner/repo/pull/1",
         number: 1,

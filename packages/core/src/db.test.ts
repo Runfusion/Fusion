@@ -192,10 +192,10 @@ describe("Database", () => {
       db.transaction(() => {
         db.prepare(
           "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-        ).run("KB-001", "Test task", "triage", "2025-01-01", "2025-01-01");
+        ).run("FN-001", "Test task", "triage", "2025-01-01", "2025-01-01");
       });
 
-      const row = db.prepare("SELECT * FROM tasks WHERE id = 'KB-001'").get() as any;
+      const row = db.prepare("SELECT * FROM tasks WHERE id = 'FN-001'").get() as any;
       expect(row).toBeDefined();
       expect(row.description).toBe("Test task");
     });
@@ -205,7 +205,7 @@ describe("Database", () => {
         db.transaction(() => {
           db.prepare(
             "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-          ).run("KB-002", "Test task 2", "triage", "2025-01-01", "2025-01-01");
+          ).run("FN-002", "Test task 2", "triage", "2025-01-01", "2025-01-01");
           throw new Error("Simulated failure");
         });
       }).toThrow("Simulated failure");
@@ -214,11 +214,11 @@ describe("Database", () => {
       expect(row).toBeUndefined();
     });
 
-    it("returns the function result", () => {
+    it("returns the function result", async () => {
       const result = db.transaction(() => {
         db.prepare(
           "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-        ).run("KB-003", "Test", "todo", "2025-01-01", "2025-01-01");
+        ).run("FN-003", "Test", "todo", "2025-01-01", "2025-01-01");
         return 42;
       });
       expect(result).toBe(42);
@@ -228,19 +228,19 @@ describe("Database", () => {
       db.transaction(() => {
         db.prepare(
           "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-        ).run("KB-OUTER", "Outer task", "triage", "2025-01-01", "2025-01-01");
+        ).run("FN-OUTER", "Outer task", "triage", "2025-01-01", "2025-01-01");
 
         // Nested transaction
         db.transaction(() => {
           db.prepare(
             "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-          ).run("KB-INNER", "Inner task", "triage", "2025-01-01", "2025-01-01");
+          ).run("FN-INNER", "Inner task", "triage", "2025-01-01", "2025-01-01");
         });
       });
 
       // Both should exist
-      const outer = db.prepare("SELECT * FROM tasks WHERE id = 'KB-OUTER'").get();
-      const inner = db.prepare("SELECT * FROM tasks WHERE id = 'KB-INNER'").get();
+      const outer = db.prepare("SELECT * FROM tasks WHERE id = 'FN-OUTER'").get();
+      const inner = db.prepare("SELECT * FROM tasks WHERE id = 'FN-INNER'").get();
       expect(outer).toBeDefined();
       expect(inner).toBeDefined();
     });
@@ -249,13 +249,13 @@ describe("Database", () => {
       db.transaction(() => {
         db.prepare(
           "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-        ).run("KB-OUTER2", "Outer task 2", "triage", "2025-01-01", "2025-01-01");
+        ).run("FN-OUTER2", "Outer task 2", "triage", "2025-01-01", "2025-01-01");
 
         try {
           db.transaction(() => {
             db.prepare(
               "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-            ).run("KB-INNER2", "Inner task 2", "triage", "2025-01-01", "2025-01-01");
+            ).run("FN-INNER2", "Inner task 2", "triage", "2025-01-01", "2025-01-01");
             throw new Error("Inner failure");
           });
         } catch {
@@ -264,8 +264,8 @@ describe("Database", () => {
       });
 
       // Outer should exist, inner should not
-      const outer = db.prepare("SELECT * FROM tasks WHERE id = 'KB-OUTER2'").get();
-      const inner = db.prepare("SELECT * FROM tasks WHERE id = 'KB-INNER2'").get();
+      const outer = db.prepare("SELECT * FROM tasks WHERE id = 'FN-OUTER2'").get();
+      const inner = db.prepare("SELECT * FROM tasks WHERE id = 'FN-INNER2'").get();
       expect(outer).toBeDefined();
       expect(inner).toBeUndefined();
     });
@@ -274,14 +274,14 @@ describe("Database", () => {
       db.transaction(() => {
         db.prepare(
           "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-        ).run("KB-PRE", "Before inner", "triage", "2025-01-01", "2025-01-01");
+        ).run("FN-PRE", "Before inner", "triage", "2025-01-01", "2025-01-01");
 
         // Inner transaction fails
         try {
           db.transaction(() => {
             db.prepare(
               "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-            ).run("KB-FAIL", "Inner fail", "triage", "2025-01-01", "2025-01-01");
+            ).run("FN-FAIL", "Inner fail", "triage", "2025-01-01", "2025-01-01");
             throw new Error("Inner failure");
           });
         } catch {
@@ -291,13 +291,13 @@ describe("Database", () => {
         // Additional work in outer transaction after inner rollback
         db.prepare(
           "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-        ).run("KB-POST", "After inner", "triage", "2025-01-01", "2025-01-01");
+        ).run("FN-POST", "After inner", "triage", "2025-01-01", "2025-01-01");
       });
 
       // PRE and POST should exist, FAIL should not
-      expect(db.prepare("SELECT * FROM tasks WHERE id = 'KB-PRE'").get()).toBeDefined();
-      expect(db.prepare("SELECT * FROM tasks WHERE id = 'KB-POST'").get()).toBeDefined();
-      expect(db.prepare("SELECT * FROM tasks WHERE id = 'KB-FAIL'").get()).toBeUndefined();
+      expect(db.prepare("SELECT * FROM tasks WHERE id = 'FN-PRE'").get()).toBeDefined();
+      expect(db.prepare("SELECT * FROM tasks WHERE id = 'FN-POST'").get()).toBeDefined();
+      expect(db.prepare("SELECT * FROM tasks WHERE id = 'FN-FAIL'").get()).toBeUndefined();
     });
 
     it("transaction is atomic — partial writes roll back", () => {
@@ -305,14 +305,14 @@ describe("Database", () => {
         db.transaction(() => {
           db.prepare(
             "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-          ).run("KB-A", "Task A", "triage", "2025-01-01", "2025-01-01");
+          ).run("FN-A", "Task A", "triage", "2025-01-01", "2025-01-01");
           db.prepare(
             "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-          ).run("KB-B", "Task B", "triage", "2025-01-01", "2025-01-01");
+          ).run("FN-B", "Task B", "triage", "2025-01-01", "2025-01-01");
           // This should fail - duplicate PK
           db.prepare(
             "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)"
-          ).run("KB-A", "Duplicate", "triage", "2025-01-01", "2025-01-01");
+          ).run("FN-A", "Duplicate", "triage", "2025-01-01", "2025-01-01");
         });
       } catch {
         // expected
@@ -382,7 +382,7 @@ describe("Database", () => {
     it("stores and retrieves a fully populated task record", () => {
       const now = new Date().toISOString();
       const task = {
-        id: "KB-100",
+        id: "FN-100",
         title: "Full task test",
         description: "Test all fields",
         column: "in-progress",
@@ -391,7 +391,7 @@ describe("Database", () => {
         reviewLevel: 3,
         currentStep: 2,
         worktree: "/tmp/wt",
-        blockedBy: "KB-099",
+        blockedBy: "FN-099",
         paused: 1,
         baseBranch: "main",
         modelPresetId: "complex",
@@ -406,7 +406,7 @@ describe("Database", () => {
         createdAt: now,
         updatedAt: now,
         columnMovedAt: now,
-        dependencies: JSON.stringify(["KB-098", "KB-097"]),
+        dependencies: JSON.stringify(["FN-098", "FN-097"]),
         steps: JSON.stringify([{ name: "Step 1", status: "done" }, { name: "Step 2", status: "in-progress" }]),
         log: JSON.stringify([{ timestamp: now, action: "Created" }]),
         attachments: JSON.stringify([{ filename: "test.png", originalName: "test.png", mimeType: "image/png", size: 1024, createdAt: now }]),
@@ -443,8 +443,8 @@ describe("Database", () => {
         task.issueInfo, task.breakIntoSubtasks, task.enabledWorkflowSteps,
       );
 
-      const row = db.prepare("SELECT * FROM tasks WHERE id = 'KB-100'").get() as any;
-      expect(row.id).toBe("KB-100");
+      const row = db.prepare("SELECT * FROM tasks WHERE id = 'FN-100'").get() as any;
+      expect(row.id).toBe("FN-100");
       expect(row.title).toBe("Full task test");
       expect(row.column).toBe("in-progress");
       expect(row.thinkingLevel).toBe("high");
@@ -453,7 +453,7 @@ describe("Database", () => {
       expect(row.breakIntoSubtasks).toBe(1);
 
       // Verify JSON round-trip
-      expect(JSON.parse(row.dependencies)).toEqual(["KB-098", "KB-097"]);
+      expect(JSON.parse(row.dependencies)).toEqual(["FN-098", "FN-097"]);
       expect(JSON.parse(row.steps)).toHaveLength(2);
       expect(JSON.parse(row.log)).toHaveLength(1);
       expect(JSON.parse(row.attachments)).toHaveLength(1);

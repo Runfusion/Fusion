@@ -22,7 +22,7 @@ vi.mock("../../hooks/useAgentLogs", () => ({
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
-    id: "KB-099",
+    id: "FN-099",
     description: "Test task",
     column: "in-progress" as Column,
     dependencies: [],
@@ -198,13 +198,13 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    // The heading "KB-099" should be stripped from the markdown
+    // The heading "FN-099" should be stripped from the markdown
     const markdownBody = container.querySelector(".markdown-body");
-    expect(markdownBody?.innerHTML).not.toContain("KB-099");
+    expect(markdownBody?.innerHTML).not.toContain("FN-099");
     // Description appears in the markdown body
     expect(markdownBody?.textContent).toContain("Fix the login bug");
     // The detail header shows the ID (not duplicated as markdown heading)
-    expect(container.querySelector(".detail-id")?.textContent).toBe("KB-099");
+    expect(container.querySelector(".detail-id")?.textContent).toBe("FN-099");
     // The h2 title shows description, not the task ID
     const h2 = container.querySelector("h2.detail-title");
     expect(h2?.textContent).toBe("Fix the login bug");
@@ -243,7 +243,7 @@ describe("TaskDetailModal", () => {
         addToast={noop}
       />,
     );
-    expect(withTitle.querySelector(".detail-id")?.textContent).toBe("KB-099");
+    expect(withTitle.querySelector(".detail-id")?.textContent).toBe("FN-099");
 
     // Without title
     const { container: withoutTitle } = render(
@@ -257,7 +257,7 @@ describe("TaskDetailModal", () => {
         addToast={noop}
       />,
     );
-    expect(withoutTitle.querySelector(".detail-id")?.textContent).toBe("KB-099");
+    expect(withoutTitle.querySelector(".detail-id")?.textContent).toBe("FN-099");
   });
 
   describe("paste image upload", () => {
@@ -302,7 +302,7 @@ describe("TaskDetailModal", () => {
       });
 
       await waitFor(() => {
-        expect(mockUpload).toHaveBeenCalledWith("KB-099", imageFile);
+        expect(mockUpload).toHaveBeenCalledWith("FN-099", imageFile);
         expect(addToast).toHaveBeenCalledWith("Screenshot attached", "success");
       });
     });
@@ -432,7 +432,7 @@ describe("TaskDetailModal", () => {
       });
 
       await waitFor(() => {
-        expect(mockUpload).toHaveBeenCalledWith("KB-099", imageFile);
+        expect(mockUpload).toHaveBeenCalledWith("FN-099", imageFile);
         expect(addToast).toHaveBeenCalledWith("Screenshot attached", "success");
       });
     });
@@ -457,7 +457,7 @@ describe("TaskDetailModal", () => {
   it("renders dependency list when dependencies exist", () => {
     render(
       <TaskDetailModal
-        task={makeTask({ dependencies: ["KB-001", "KB-002"] })}
+        task={makeTask({ dependencies: ["FN-001", "FN-002"] })}
         onClose={noop}
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
@@ -467,16 +467,16 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(screen.getByText("KB-001")).toBeTruthy();
-    expect(screen.getByText("KB-002")).toBeTruthy();
+    expect(screen.getByText("FN-001")).toBeTruthy();
+    expect(screen.getByText("FN-002")).toBeTruthy();
     expect(screen.queryByText("(no dependencies)")).toBeNull();
   });
 
   it("can add a dependency via the dropdown", async () => {
     const { updateTask } = await import("../../api");
     const allTasks: Task[] = [
-      { id: "KB-001", description: "Dep 1", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
-      { id: "KB-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      { id: "FN-001", description: "Dep 1", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      { id: "FN-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
     ];
 
     render(
@@ -496,13 +496,13 @@ describe("TaskDetailModal", () => {
     // Should show KB-001 in the dropdown but not KB-099 (self is excluded)
     const dropdown = document.querySelector(".dep-dropdown")!;
     expect(dropdown).toBeTruthy();
-    expect(dropdown.textContent).toContain("KB-001");
+    expect(dropdown.textContent).toContain("FN-001");
     expect(dropdown.querySelectorAll(".dep-dropdown-item")).toHaveLength(1);
 
-    fireEvent.click(screen.getByText("KB-001"));
+    fireEvent.click(screen.getByText("FN-001"));
 
     await waitFor(() => {
-      expect(updateTask).toHaveBeenCalledWith("KB-099", { dependencies: ["KB-001"] });
+      expect(updateTask).toHaveBeenCalledWith("FN-099", { dependencies: ["FN-001"] });
     });
   });
 
@@ -511,7 +511,7 @@ describe("TaskDetailModal", () => {
 
     render(
       <TaskDetailModal
-        task={makeTask({ dependencies: ["KB-001", "KB-002"] })}
+        task={makeTask({ dependencies: ["FN-001", "FN-002"] })}
         onClose={noop}
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
@@ -525,7 +525,7 @@ describe("TaskDetailModal", () => {
     fireEvent.click(removeButtons[0]); // Remove KB-001
 
     await waitFor(() => {
-      expect(updateTask).toHaveBeenCalledWith("KB-099", { dependencies: ["KB-002"] });
+      expect(updateTask).toHaveBeenCalledWith("FN-099", { dependencies: ["FN-002"] });
     });
   });
 
@@ -560,10 +560,10 @@ describe("TaskDetailModal", () => {
 
   it("renders dependency dropdown items sorted newest-first by createdAt", () => {
     const allTasks: Task[] = [
-      { id: "KB-001", description: "Oldest", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
-      { id: "KB-003", description: "Newest", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-01T00:00:00Z", updatedAt: "2026-03-01T00:00:00Z" },
-      { id: "KB-002", description: "Middle", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-02-01T00:00:00Z", updatedAt: "2026-02-01T00:00:00Z" },
-      { id: "KB-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-15T00:00:00Z", updatedAt: "2026-03-15T00:00:00Z" },
+      { id: "FN-001", description: "Oldest", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+      { id: "FN-003", description: "Newest", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-01T00:00:00Z", updatedAt: "2026-03-01T00:00:00Z" },
+      { id: "FN-002", description: "Middle", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-02-01T00:00:00Z", updatedAt: "2026-02-01T00:00:00Z" },
+      { id: "FN-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-15T00:00:00Z", updatedAt: "2026-03-15T00:00:00Z" },
     ];
 
     render(
@@ -584,15 +584,15 @@ describe("TaskDetailModal", () => {
     expect(items).toHaveLength(3);
 
     const ids = Array.from(items).map((el) => el.querySelector(".dep-dropdown-id")?.textContent);
-    expect(ids).toEqual(["KB-003", "KB-002", "KB-001"]);
+    expect(ids).toEqual(["FN-003", "FN-002", "FN-001"]);
   });
 
   it("renders tasks with identical createdAt sorted newest-ID-first in dependency dropdown", () => {
     const allTasks: Task[] = [
-      { id: "KB-001", description: "First", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
-      { id: "KB-002", description: "Second", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
-      { id: "KB-003", description: "Third", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
-      { id: "KB-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+      { id: "FN-001", description: "First", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+      { id: "FN-002", description: "Second", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+      { id: "FN-003", description: "Third", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+      { id: "FN-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
     ];
 
     render(
@@ -613,7 +613,7 @@ describe("TaskDetailModal", () => {
     expect(items).toHaveLength(3);
 
     const ids = Array.from(items).map((el) => el.querySelector(".dep-dropdown-id")?.textContent);
-    expect(ids).toEqual(["KB-003", "KB-002", "KB-001"]);
+    expect(ids).toEqual(["FN-003", "FN-002", "FN-001"]);
   });
 
   describe("tab toggle", () => {
@@ -1258,7 +1258,7 @@ describe("TaskDetailModal", () => {
             number: 42,
             status: "open",
             title: "Task",
-            headBranch: "kb/kb-099",
+            headBranch: "fusion/fn-099",
             baseBranch: "main",
             commentCount: 0,
           } })}
@@ -1297,10 +1297,10 @@ describe("TaskDetailModal", () => {
 
   describe("dependency dropdown search", () => {
     const searchTasks: Task[] = [
-      { id: "KB-010", title: "Fix login bug", description: "Users cannot log in", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
-      { id: "KB-020", title: "Add dark mode", description: "Theme support", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-02-01T00:00:00Z", updatedAt: "2026-02-01T00:00:00Z" },
-      { id: "KB-030", title: "Refactor API", description: "Clean up endpoints", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-01T00:00:00Z", updatedAt: "2026-03-01T00:00:00Z" },
-      { id: "KB-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-15T00:00:00Z", updatedAt: "2026-03-15T00:00:00Z" },
+      { id: "FN-010", title: "Fix login bug", description: "Users cannot log in", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+      { id: "FN-020", title: "Add dark mode", description: "Theme support", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-02-01T00:00:00Z", updatedAt: "2026-02-01T00:00:00Z" },
+      { id: "FN-030", title: "Refactor API", description: "Clean up endpoints", column: "todo" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-01T00:00:00Z", updatedAt: "2026-03-01T00:00:00Z" },
+      { id: "FN-099", description: "Self", column: "in-progress" as Column, dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-03-15T00:00:00Z", updatedAt: "2026-03-15T00:00:00Z" },
     ];
 
     function renderWithSearch(taskOverrides: Partial<TaskDetail> = {}) {
@@ -1334,7 +1334,7 @@ describe("TaskDetailModal", () => {
 
       const items = document.querySelectorAll(".dep-dropdown-item");
       expect(items).toHaveLength(1);
-      expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("KB-010");
+      expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("FN-010");
     });
 
     it("matches task ID case-insensitively", () => {
@@ -1345,7 +1345,7 @@ describe("TaskDetailModal", () => {
 
       const items = document.querySelectorAll(".dep-dropdown-item");
       expect(items).toHaveLength(1);
-      expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("KB-020");
+      expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("FN-020");
     });
 
     it("matches task title", () => {
@@ -1356,7 +1356,7 @@ describe("TaskDetailModal", () => {
 
       const items = document.querySelectorAll(".dep-dropdown-item");
       expect(items).toHaveLength(1);
-      expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("KB-020");
+      expect(items[0].querySelector(".dep-dropdown-id")?.textContent).toBe("FN-020");
     });
 
     it("shows empty state when search matches nothing", () => {
@@ -1394,7 +1394,7 @@ describe("TaskDetailModal", () => {
     it("renders dependency list items with clickable class", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ dependencies: ["KB-001", "KB-002"] })}
+          task={makeTask({ dependencies: ["FN-001", "FN-002"] })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1406,15 +1406,15 @@ describe("TaskDetailModal", () => {
 
       const depLinks = container.querySelectorAll(".detail-dep-link");
       expect(depLinks).toHaveLength(2);
-      expect(depLinks[0].textContent).toBe("KB-001");
-      expect(depLinks[1].textContent).toBe("KB-002");
+      expect(depLinks[0].textContent).toBe("FN-001");
+      expect(depLinks[1].textContent).toBe("FN-002");
     });
 
     it("calls fetchTaskDetail and onOpenDetail when clicking a dependency", async () => {
       const { fetchTaskDetail } = await import("../../api");
       const mockFetch = vi.mocked(fetchTaskDetail);
       const mockDetail: TaskDetail = {
-        ...makeTask({ id: "KB-001", description: "Dep 1" }),
+        ...makeTask({ id: "FN-001", description: "Dep 1" }),
         prompt: "",
         attachments: [],
       };
@@ -1423,7 +1423,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ dependencies: ["KB-001"] })}
+          task={makeTask({ dependencies: ["FN-001"] })}
           onOpenDetail={onOpenDetail}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1437,7 +1437,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(depLink);
 
       await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalledWith("KB-001");
+        expect(mockFetch).toHaveBeenCalledWith("FN-001");
         expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
       });
     });
@@ -1451,7 +1451,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ dependencies: ["KB-001"] })}
+          task={makeTask({ dependencies: ["FN-001"] })}
           onOpenDetail={onOpenDetail}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1479,7 +1479,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          task={makeTask({ dependencies: ["KB-001"] })}
+          task={makeTask({ dependencies: ["FN-001"] })}
           onOpenDetail={onOpenDetail}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1496,7 +1496,7 @@ describe("TaskDetailModal", () => {
       expect(onOpenDetail).not.toHaveBeenCalled();
       // updateTask should be called to remove the dependency
       await waitFor(() => {
-        expect(updateTask).toHaveBeenCalledWith("KB-099", { dependencies: [] });
+        expect(updateTask).toHaveBeenCalledWith("FN-099", { dependencies: [] });
       });
     });
   });
@@ -1571,11 +1571,11 @@ describe("TaskDetailModal", () => {
     it("saving updates the task and returns to view mode", async () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
-      mockUpdate.mockResolvedValueOnce({ id: "KB-099" } as Task);
+      mockUpdate.mockResolvedValueOnce({ id: "FN-099" } as Task);
 
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-099", prompt: "# Original" })}
+          task={makeTask({ id: "FN-099", prompt: "# Original" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1592,7 +1592,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalledWith("KB-099", { prompt: "# Updated" });
+        expect(mockUpdate).toHaveBeenCalledWith("FN-099", { prompt: "# Updated" });
       });
 
       // Should return to view mode
@@ -1627,7 +1627,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-099", column: "todo", prompt: "# Test" })}
+          task={makeTask({ id: "FN-099", column: "todo", prompt: "# Test" })}
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1645,7 +1645,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Request AI Revision"));
 
       await waitFor(() => {
-        expect(requestSpecRevision).toHaveBeenCalledWith("KB-099", "Please add more error handling details");
+        expect(requestSpecRevision).toHaveBeenCalledWith("FN-099", "Please add more error handling details");
         expect(addToast).toHaveBeenCalledWith("AI revision requested. Task moved to triage.", "success");
         expect(onClose).toHaveBeenCalled();
       });
@@ -1786,7 +1786,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({
-            id: "KB-001",
+            id: "FN-001",
             column: "triage",
             status: "awaiting-approval",
             prompt: "# Task Spec",
@@ -1803,7 +1803,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Approve Plan"));
 
       await waitFor(() => {
-        expect(mockApprovePlan).toHaveBeenCalledWith("KB-001");
+        expect(mockApprovePlan).toHaveBeenCalledWith("FN-001");
       });
       expect(addToast).toHaveBeenCalledWith("Plan approved — KB-001 moved to Todo", "success");
       expect(onClose).toHaveBeenCalled();
@@ -1822,7 +1822,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({
-            id: "KB-001",
+            id: "FN-001",
             column: "triage",
             status: "awaiting-approval",
             prompt: "# Task Spec",
@@ -1843,7 +1843,7 @@ describe("TaskDetailModal", () => {
       );
 
       await waitFor(() => {
-        expect(mockRejectPlan).toHaveBeenCalledWith("KB-001");
+        expect(mockRejectPlan).toHaveBeenCalledWith("FN-001");
       });
       expect(addToast).toHaveBeenCalledWith(
         "Plan rejected — KB-001 returned to Triage for re-specification",
@@ -1900,7 +1900,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({
-            id: "KB-001",
+            id: "FN-001",
             column: "triage",
             status: "awaiting-approval",
             prompt: "# Task Spec",
@@ -1935,7 +1935,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({
-            id: "KB-001",
+            id: "FN-001",
             column: "triage",
             status: "awaiting-approval",
             prompt: "# Task Spec",
@@ -1999,7 +1999,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001" })}
+          task={makeTask({ id: "FN-001" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2023,12 +2023,12 @@ describe("TaskDetailModal", () => {
       const originalConfirm = window.confirm;
       window.confirm = vi.fn(() => true);
 
-      const mockDuplicate = vi.fn().mockResolvedValue({ id: "KB-002" } as Task);
+      const mockDuplicate = vi.fn().mockResolvedValue({ id: "FN-002" } as Task);
       const onClose = vi.fn();
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001" })}
+          task={makeTask({ id: "FN-001" })}
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2042,7 +2042,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Duplicate"));
 
       await waitFor(() => {
-        expect(mockDuplicate).toHaveBeenCalledWith("KB-001");
+        expect(mockDuplicate).toHaveBeenCalledWith("FN-001");
         expect(onClose).toHaveBeenCalled();
       });
 
@@ -2053,12 +2053,12 @@ describe("TaskDetailModal", () => {
       const originalConfirm = window.confirm;
       window.confirm = vi.fn(() => true);
 
-      const mockDuplicate = vi.fn().mockResolvedValue({ id: "KB-002" } as Task);
+      const mockDuplicate = vi.fn().mockResolvedValue({ id: "FN-002" } as Task);
       const addToast = vi.fn();
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001" })}
+          task={makeTask({ id: "FN-001" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2082,11 +2082,11 @@ describe("TaskDetailModal", () => {
       const originalConfirm = window.confirm;
       window.confirm = vi.fn(() => false);
 
-      const mockDuplicate = vi.fn().mockResolvedValue({ id: "KB-002" } as Task);
+      const mockDuplicate = vi.fn().mockResolvedValue({ id: "FN-002" } as Task);
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001" })}
+          task={makeTask({ id: "FN-001" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2113,7 +2113,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001" })}
+          task={makeTask({ id: "FN-001" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2218,7 +2218,7 @@ describe("TaskDetailModal", () => {
     it("clicking Refine opens the refinement modal", () => {
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "done" })}
+          task={makeTask({ id: "FN-001", column: "done" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2237,7 +2237,7 @@ describe("TaskDetailModal", () => {
     it("shows character counter in refinement modal", () => {
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "done" })}
+          task={makeTask({ id: "FN-001", column: "done" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2255,7 +2255,7 @@ describe("TaskDetailModal", () => {
     it("character counter updates when typing feedback", async () => {
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "done" })}
+          task={makeTask({ id: "FN-001", column: "done" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2278,7 +2278,7 @@ describe("TaskDetailModal", () => {
     it("submit button is disabled when feedback is empty", () => {
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "done" })}
+          task={makeTask({ id: "FN-001", column: "done" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2297,7 +2297,7 @@ describe("TaskDetailModal", () => {
     it("submit button is enabled when feedback is entered", async () => {
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "done" })}
+          task={makeTask({ id: "FN-001", column: "done" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2323,7 +2323,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "done" })}
+          task={makeTask({ id: "FN-001", column: "done" })}
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2346,7 +2346,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "done" })}
+          task={makeTask({ id: "FN-001", column: "done" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2367,14 +2367,14 @@ describe("TaskDetailModal", () => {
 
     it("calls refineTask and closes modal on successful submission", async () => {
       const { refineTask } = await import("../../api");
-      vi.mocked(refineTask).mockResolvedValue({ id: "KB-002", column: "triage" } as Task);
+      vi.mocked(refineTask).mockResolvedValue({ id: "FN-002", column: "triage" } as Task);
 
       const onClose = vi.fn();
       const addToast = vi.fn();
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "done" })}
+          task={makeTask({ id: "FN-001", column: "done" })}
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2392,7 +2392,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Create Refinement Task"));
 
       await waitFor(() => {
-        expect(refineTask).toHaveBeenCalledWith("KB-001", "Need to add more tests");
+        expect(refineTask).toHaveBeenCalledWith("FN-001", "Need to add more tests");
         expect(addToast).toHaveBeenCalledWith("Refinement task created: KB-002", "success");
         expect(onClose).toHaveBeenCalled();
       });
@@ -2406,7 +2406,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "done" })}
+          task={makeTask({ id: "FN-001", column: "done" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2437,7 +2437,7 @@ describe("TaskDetailModal", () => {
     it("shows Edit button in header when task is in triage column", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Test task" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2454,7 +2454,7 @@ describe("TaskDetailModal", () => {
     it("shows Edit button in header when task is in todo column", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "todo", title: "Test task" })}
+          task={makeTask({ id: "FN-001", column: "todo", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2471,7 +2471,7 @@ describe("TaskDetailModal", () => {
     it("does not show Edit button when task is in in-progress column", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "in-progress", title: "Test task" })}
+          task={makeTask({ id: "FN-001", column: "in-progress", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2488,7 +2488,7 @@ describe("TaskDetailModal", () => {
     it("does not show Edit button when already in edit mode", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Test task" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2512,7 +2512,7 @@ describe("TaskDetailModal", () => {
     it("entering edit mode shows title input and description textarea", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Test task", description: "Test description" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test task", description: "Test description" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2538,7 +2538,7 @@ describe("TaskDetailModal", () => {
     it("clicking Cancel exits edit mode without saving", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Original title", description: "Original description" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Original title", description: "Original description" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2566,11 +2566,11 @@ describe("TaskDetailModal", () => {
     it("clicking Save calls updateTask with correct parameters", async () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
-      mockUpdate.mockResolvedValueOnce({ id: "KB-001" } as Task);
+      mockUpdate.mockResolvedValueOnce({ id: "FN-001" } as Task);
 
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Original title", description: "Original description" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Original title", description: "Original description" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2593,7 +2593,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalledWith("KB-001", {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", {
           title: "New title",
           description: "New description",
         });
@@ -2603,7 +2603,7 @@ describe("TaskDetailModal", () => {
     it("Save button is disabled when no changes made", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Test title", description: "Test description" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test title", description: "Test description" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2624,11 +2624,11 @@ describe("TaskDetailModal", () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
       // Delay the resolution to keep isSaving true
-      mockUpdate.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({ id: "KB-001" } as Task), 100)));
+      mockUpdate.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({ id: "FN-001" } as Task), 100)));
 
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Original" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Original" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2655,13 +2655,13 @@ describe("TaskDetailModal", () => {
     it("successful save shows toast and exits edit mode", async () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
-      mockUpdate.mockResolvedValueOnce({ id: "KB-001" } as Task);
+      mockUpdate.mockResolvedValueOnce({ id: "FN-001" } as Task);
 
       const addToast = vi.fn();
 
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Original" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Original" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2698,7 +2698,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Original" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Original" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2719,7 +2719,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
-        expect(addToast).toHaveBeenCalledWith("Failed to update KB-001: Network error", "error");
+        expect(addToast).toHaveBeenCalledWith("Failed to update FN-001: Network error", "error");
       });
 
       // Should stay in edit mode
@@ -2729,7 +2729,7 @@ describe("TaskDetailModal", () => {
     it("Escape key exits edit mode", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Test title" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test title" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2754,7 +2754,7 @@ describe("TaskDetailModal", () => {
     it("Enter in title input moves focus to description textarea", () => {
       const { container } = render(
         <TaskDetailModal
-          task={makeTask({ id: "KB-001", column: "triage", title: "Test title", description: "Test description" })}
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test title", description: "Test description" })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}

@@ -72,7 +72,7 @@ describe("TaskStore", () => {
       const detail = await store.getTask(task.id);
 
       // Heading should be just the task ID when no title is provided
-      expect(detail.prompt).toMatch(/^# KB-001\n/);
+      expect(detail.prompt).toMatch(/^# FN-001\n/);
       // Description appears exactly once in body (not duplicated in heading)
       expect(detail.prompt).toContain("Fix the login bug on the settings page");
     });
@@ -84,7 +84,7 @@ describe("TaskStore", () => {
       });
       const detail = await store.getTask(task.id);
 
-      expect(detail.prompt).toMatch(/^# KB-001: Login bug\n/);
+      expect(detail.prompt).toMatch(/^# FN-001: Login bug\n/);
       expect(detail.prompt).toContain("Fix the login bug on the settings page");
     });
 
@@ -96,7 +96,7 @@ describe("TaskStore", () => {
       const detail = await store.getTask(task.id);
 
       // Heading should be just the task ID when no title is provided
-      expect(detail.prompt).toMatch(/^# KB-001\n/);
+      expect(detail.prompt).toMatch(/^# FN-001\n/);
       // Description appears once in Mission section
       expect(detail.prompt).toContain("Implement caching layer");
     });
@@ -109,7 +109,7 @@ describe("TaskStore", () => {
       });
       const detail = await store.getTask(task.id);
 
-      expect(detail.prompt).toMatch(/^# KB-001: Add caching\n/);
+      expect(detail.prompt).toMatch(/^# FN-001: Add caching\n/);
       expect(detail.prompt).toContain("Implement caching layer for API responses");
     });
 
@@ -248,9 +248,9 @@ describe("TaskStore", () => {
       const ids = tasks.map((t) => t.id);
       expect(new Set(ids).size).toBe(5);
 
-      // IDs should be sequential (KB-001 through KB-005)
+      // IDs should be sequential (FN-001 through FN-005)
       const sortedIds = [...ids].sort();
-      expect(sortedIds).toEqual(["KB-001", "KB-002", "KB-003", "KB-004", "KB-005"]);
+      expect(sortedIds).toEqual(["FN-001", "FN-002", "FN-003", "FN-004", "FN-005"]);
 
       // config.json should be valid JSON with nextId = 6
       const configPath = join(rootDir, ".kb", "config.json");
@@ -620,20 +620,20 @@ describe("TaskStore", () => {
       const task = await createTestTask();
       expect(task.dependencies).toEqual([]);
 
-      const updated = await store.updateTask(task.id, { dependencies: ["KB-999", "KB-002"] });
-      expect(updated.dependencies).toEqual(["KB-999", "KB-002"]);
+      const updated = await store.updateTask(task.id, { dependencies: ["KB-999", "FN-002"] });
+      expect(updated.dependencies).toEqual(["KB-999", "FN-002"]);
 
       // Verify persistence
       const fetched = await store.getTask(task.id);
-      expect(fetched.dependencies).toEqual(["KB-999", "KB-002"]);
+      expect(fetched.dependencies).toEqual(["KB-999", "FN-002"]);
     });
 
     it("replaces existing dependencies", async () => {
       const task = await store.createTask({ description: "Dep task", dependencies: ["KB-999"] });
       expect(task.dependencies).toEqual(["KB-999"]);
 
-      const updated = await store.updateTask(task.id, { dependencies: ["KB-002", "KB-003"] });
-      expect(updated.dependencies).toEqual(["KB-002", "KB-003"]);
+      const updated = await store.updateTask(task.id, { dependencies: ["FN-002", "FN-003"] });
+      expect(updated.dependencies).toEqual(["FN-002", "FN-003"]);
     });
 
     it("clears dependencies with empty array", async () => {
@@ -667,7 +667,7 @@ describe("TaskStore", () => {
       const task = await createTestTask();
       expect(task.dependencies).toEqual([]);
 
-      await expect(store.updateTask(task.id, { dependencies: [task.id, "KB-002"] }))
+      await expect(store.updateTask(task.id, { dependencies: [task.id, "FN-002"] }))
         .rejects.toThrow(`Task ${task.id} cannot depend on itself`);
 
       // Verify the task was not modified
@@ -766,9 +766,9 @@ describe("TaskStore", () => {
   // ── Task prefix tests ──────────────────────────────────────────
 
   describe("taskPrefix setting", () => {
-    it("default prefix produces KB-001 IDs", async () => {
+    it("default prefix produces FN-001 IDs", async () => {
       const task = await store.createTask({ description: "Default prefix" });
-      expect(task.id).toBe("KB-001");
+      expect(task.id).toBe("FN-001");
     });
 
     it("custom prefix produces PROJ-001 IDs", async () => {
@@ -780,8 +780,8 @@ describe("TaskStore", () => {
     it("prefix change mid-stream continues sequence", async () => {
       const t1 = await store.createTask({ description: "First" });
       const t2 = await store.createTask({ description: "Second" });
-      expect(t1.id).toBe("KB-001");
-      expect(t2.id).toBe("KB-002");
+      expect(t1.id).toBe("FN-001");
+      expect(t2.id).toBe("FN-002");
 
       await store.updateSettings({ taskPrefix: "PROJ" });
       const t3 = await store.createTask({ description: "Third" });
@@ -795,7 +795,7 @@ describe("TaskStore", () => {
 
       const tasks = await store.listTasks();
       expect(tasks).toHaveLength(2);
-      expect(tasks.map((t) => t.id).sort()).toEqual(["KB-001", "PROJ-002"]);
+      expect(tasks.map((t) => t.id).sort()).toEqual(["FN-001", "PROJ-002"]);
     });
 
     it("supports pagination with limit and offset", async () => {
@@ -806,7 +806,7 @@ describe("TaskStore", () => {
       const paged = await store.listTasks({ limit: 1, offset: 1 });
 
       expect(paged).toHaveLength(1);
-      expect(paged[0].id).toBe("KB-002");
+      expect(paged[0].id).toBe("FN-002");
     });
   });
 
@@ -1520,7 +1520,7 @@ describe("TaskStore", () => {
         filesChanged: 3,
         insertions: 10,
         deletions: 2,
-        mergeCommitMessage: "feat(KB-001): merge kb/kb-001",
+        mergeCommitMessage: "feat(KB-001): merge fusion/fn-001",
         mergedAt: new Date().toISOString(),
         mergeConfirmed: true,
         prNumber: 42,
@@ -1738,7 +1738,7 @@ describe("TaskStore", () => {
 
 ## Dependencies
 
-- **Task:** KB-001 (must be complete first)
+- **Task:** FN-001 (must be complete first)
 
 ## Steps
 
@@ -1748,7 +1748,7 @@ describe("TaskStore", () => {
       );
 
       const deps = await store.parseDependenciesFromPrompt(task.id);
-      expect(deps).toEqual(["KB-001"]);
+      expect(deps).toEqual(["FN-001"]);
     });
 
     it("returns multiple dependencies in order", async () => {
@@ -1760,8 +1760,8 @@ describe("TaskStore", () => {
 
 ## Dependencies
 
-- **Task:** KB-010 (first dep)
-- **Task:** KB-020 (second dep)
+- **Task:** FN-010 (first dep)
+- **Task:** FN-020 (second dep)
 - **Task:** PROJ-003 (third dep)
 
 ## Steps
@@ -1772,7 +1772,7 @@ describe("TaskStore", () => {
       );
 
       const deps = await store.parseDependenciesFromPrompt(task.id);
-      expect(deps).toEqual(["KB-010", "KB-020", "PROJ-003"]);
+      expect(deps).toEqual(["FN-010", "FN-020", "PROJ-003"]);
     });
 
     it("returns empty array when dependencies section says None", async () => {
@@ -1972,7 +1972,7 @@ describe("TaskStore", () => {
         status: "failed",
         error: "Something went wrong",
         worktree: "test-worktree",
-        blockedBy: "KB-001"
+        blockedBy: "FN-001"
       });
 
       const moved = await store.moveTask(task.id, "todo");
@@ -1993,7 +1993,7 @@ describe("TaskStore", () => {
         status: "failed",
         error: "Something went wrong",
         worktree: "test-worktree",
-        blockedBy: "KB-001"
+        blockedBy: "FN-001"
       });
 
       const moved = await store.moveTask(task.id, "triage");
@@ -2038,7 +2038,7 @@ describe("TaskStore", () => {
         status: "failed",
         error: "Something went wrong",
         worktree: "test-worktree",
-        blockedBy: "KB-001"
+        blockedBy: "FN-001"
       });
 
       // Must go through in-review to reach done
@@ -2146,7 +2146,7 @@ describe("TaskStore", () => {
       const duplicated = await store.duplicateTask(task.id);
 
       expect(duplicated.id).not.toBe(task.id);
-      expect(duplicated.id).toMatch(/^KB-\d+$/);
+      expect(duplicated.id).toMatch(/^FN-\d+$/);
       expect(duplicated.column).toBe("triage");
       expect(duplicated.description).toContain(task.description);
       expect(duplicated.description).toContain(`(Duplicated from ${task.id})`);
@@ -2294,7 +2294,7 @@ describe("TaskStore", () => {
         number: 1,
         status: "open",
         title: "Test PR",
-        headBranch: "kb/kb-001",
+        headBranch: "fusion/fn-001",
         baseBranch: "main",
         commentCount: 0,
       });
@@ -2346,7 +2346,7 @@ describe("TaskStore", () => {
       const refined = await store.refineTask(task.id, "Need to fix edge case");
 
       expect(refined.id).not.toBe(task.id);
-      expect(refined.id).toMatch(/^KB-\d+$/);
+      expect(refined.id).toMatch(/^FN-\d+$/);
       expect(refined.column).toBe("triage");
       expect(refined.title).toBe(`Refinement: ${task.id}`);
     });
@@ -2949,7 +2949,7 @@ describe("TaskStore", () => {
       const detail = await store.getTask(task.id);
 
       // Heading should be just the task ID when no title is provided
-      expect(detail.prompt).toMatch(/^# KB-001\n/);
+      expect(detail.prompt).toMatch(/^# FN-001\n/);
     });
 
     it("includes title in PROMPT.md heading when provided", async () => {
@@ -2960,7 +2960,7 @@ describe("TaskStore", () => {
       });
       const detail = await store.getTask(task.id);
 
-      expect(detail.prompt).toMatch(/^# KB-001: My Feature\n/);
+      expect(detail.prompt).toMatch(/^# FN-001: My Feature\n/);
     });
 
     it("handles empty description gracefully (should throw)", async () => {
@@ -3354,7 +3354,7 @@ describe("TaskStore", () => {
 
   describe("activity log", () => {
     it("recordActivity appends to log file", async () => {
-      await store.recordActivity({ type: "task:created", taskId: "KB-001", taskTitle: "Test", details: "Created" });
+      await store.recordActivity({ type: "task:created", taskId: "FN-001", taskTitle: "Test", details: "Created" });
       const logs = await store.getActivityLog();
       expect(logs).toHaveLength(1);
       expect(logs[0].type).toBe("task:created");
@@ -3363,40 +3363,40 @@ describe("TaskStore", () => {
     });
 
     it("getActivityLog returns entries newest first", async () => {
-      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "First" });
+      await store.recordActivity({ type: "task:created", taskId: "FN-001", details: "First" });
       await new Promise((r) => setTimeout(r, 10));
-      await store.recordActivity({ type: "task:created", taskId: "KB-002", details: "Second" });
+      await store.recordActivity({ type: "task:created", taskId: "FN-002", details: "Second" });
       const logs = await store.getActivityLog();
-      expect(logs[0].taskId).toBe("KB-002");
-      expect(logs[1].taskId).toBe("KB-001");
+      expect(logs[0].taskId).toBe("FN-002");
+      expect(logs[1].taskId).toBe("FN-001");
     });
 
     it("getActivityLog respects limit", async () => {
-      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "First" });
+      await store.recordActivity({ type: "task:created", taskId: "FN-001", details: "First" });
       await new Promise((r) => setTimeout(r, 10));
-      await store.recordActivity({ type: "task:created", taskId: "KB-002", details: "Second" });
+      await store.recordActivity({ type: "task:created", taskId: "FN-002", details: "Second" });
       const logs = await store.getActivityLog({ limit: 1 });
       expect(logs).toHaveLength(1);
-      expect(logs[0].taskId).toBe("KB-002");
+      expect(logs[0].taskId).toBe("FN-002");
     });
 
     it("getActivityLog filters by type", async () => {
-      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "Created" });
-      await store.recordActivity({ type: "task:moved", taskId: "KB-001", details: "Moved" });
+      await store.recordActivity({ type: "task:created", taskId: "FN-001", details: "Created" });
+      await store.recordActivity({ type: "task:moved", taskId: "FN-001", details: "Moved" });
       const logs = await store.getActivityLog({ type: "task:created" });
       expect(logs).toHaveLength(1);
       expect(logs[0].type).toBe("task:created");
     });
 
     it("getActivityLog filters by since timestamp", async () => {
-      const first = await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "Created" });
+      const first = await store.recordActivity({ type: "task:created", taskId: "FN-001", details: "Created" });
       await new Promise((r) => setTimeout(r, 50));
-      const second = await store.recordActivity({ type: "task:created", taskId: "KB-002", details: "Created later" });
+      const second = await store.recordActivity({ type: "task:created", taskId: "FN-002", details: "Created later" });
 
       // Filter for entries strictly after the first one (should return only second)
       const logs = await store.getActivityLog({ since: first.timestamp });
       expect(logs).toHaveLength(1);
-      expect(logs[0].taskId).toBe("KB-002");
+      expect(logs[0].taskId).toBe("FN-002");
 
       // Filter for entries strictly after a time before the first one (should return both)
       const beforeFirst = new Date(new Date(first.timestamp).getTime() - 100).toISOString();
@@ -3405,7 +3405,7 @@ describe("TaskStore", () => {
     });
 
     it("clearActivityLog removes all entries", async () => {
-      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "Test" });
+      await store.recordActivity({ type: "task:created", taskId: "FN-001", details: "Test" });
       await store.clearActivityLog();
       const logs = await store.getActivityLog();
       expect(logs).toHaveLength(0);
@@ -3419,7 +3419,7 @@ describe("TaskStore", () => {
     it("recordActivity includes metadata when provided", async () => {
       await store.recordActivity({
         type: "task:moved",
-        taskId: "KB-001",
+        taskId: "FN-001",
         taskTitle: "Test Task",
         details: "Moved to in-progress",
         metadata: { from: "todo", to: "in-progress" },
@@ -3430,7 +3430,7 @@ describe("TaskStore", () => {
     });
 
     it("activity log survives TaskStore reinitialization", async () => {
-      await store.recordActivity({ type: "task:created", taskId: "KB-001", details: "Test" });
+      await store.recordActivity({ type: "task:created", taskId: "FN-001", details: "Test" });
 
       // Create new store instance
       const newStore = new TaskStore(rootDir, globalDir);
@@ -3438,7 +3438,7 @@ describe("TaskStore", () => {
 
       const logs = await newStore.getActivityLog();
       expect(logs).toHaveLength(1);
-      expect(logs[0].taskId).toBe("KB-001");
+      expect(logs[0].taskId).toBe("FN-001");
     });
   });
 
@@ -3832,7 +3832,7 @@ describe("TaskStore", () => {
       );
 
       expect(task.title).toBeUndefined();
-      expect(task.id).toMatch(/^KB-\d+$/); // Task still created
+      expect(task.id).toMatch(/^FN-\d+$/); // Task still created
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining("Title summarization failed"),
         expect.stringContaining("AI service failed")
@@ -3888,7 +3888,7 @@ describe("TaskStore", () => {
       expect(task.title).toBe("Generated Task Title");
 
       const detail = await store.getTask(task.id);
-      expect(detail.prompt).toMatch(/^# KB-\d+: Generated Task Title\n/);
+      expect(detail.prompt).toMatch(/^# FN-\d+: Generated Task Title\n/);
     });
   });
 });

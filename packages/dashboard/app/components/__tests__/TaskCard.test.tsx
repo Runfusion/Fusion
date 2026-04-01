@@ -61,7 +61,7 @@ function computeCardClass(opts: { dragging?: boolean; queued?: boolean; status?:
 
 describe("TaskCard memoization", () => {
   const createTask = (overrides: Partial<Task> = {}): Task => ({
-    id: "KB-001",
+    id: "FN-001",
     description: "Test task",
     column: "todo",
     dependencies: [],
@@ -144,11 +144,11 @@ describe("TaskCard memoization", () => {
     }
 
     const MemoizedProbe = React.memo(MemoProbe);
-    const { rerender } = render(<MemoizedProbe task={createTask({ dependencies: ["KB-001"] })} />);
+    const { rerender } = render(<MemoizedProbe task={createTask({ dependencies: ["FN-001"] })} />);
 
     expect(cardRenderSpy).toHaveBeenCalledTimes(1);
 
-    rerender(<MemoizedProbe task={createTask({ dependencies: ["KB-001", "KB-002"] })} />);
+    rerender(<MemoizedProbe task={createTask({ dependencies: ["FN-001", "FN-002"] })} />);
 
     expect(cardRenderSpy).toHaveBeenCalledTimes(2);
     expect(screen.getAllByTitle(/Click to view/)).toHaveLength(2);
@@ -170,7 +170,7 @@ describe("TaskCard memoization", () => {
       url: "https://github.com/example/repo/pull/42",
       status: "open" as const,
       title: "Initial PR",
-      headBranch: "kb/kb-129",
+      headBranch: "fusion/fn-129",
       baseBranch: "main",
       lastCheckedAt: "2026-01-01T00:00:00Z",
     };
@@ -237,10 +237,10 @@ describe("TaskCard memoization", () => {
 
     expect(cardRenderSpy).toHaveBeenCalledTimes(1);
 
-    rerender(<MemoizedProbe task={createTask({ blockedBy: "KB-777" })} />);
+    rerender(<MemoizedProbe task={createTask({ blockedBy: "FN-777" })} />);
 
     expect(cardRenderSpy).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("KB-777")).toBeDefined();
+    expect(screen.getByText("FN-777")).toBeDefined();
   });
 
   it("re-renders when queued state changes", () => {
@@ -426,11 +426,11 @@ describe("TaskCard dependency tooltip", () => {
   }
 
   it("returns comma-separated dependency IDs when dependencies are present", () => {
-    expect(computeDepTooltip(["KB-001", "KB-042"])).toBe("KB-001, KB-042");
+    expect(computeDepTooltip(["FN-001", "FN-042"])).toBe("FN-001, FN-042");
   });
 
   it("returns single dependency ID when only one dependency", () => {
-    expect(computeDepTooltip(["KB-010"])).toBe("KB-010");
+    expect(computeDepTooltip(["FN-010"])).toBe("FN-010");
   });
 
   it("returns undefined when dependencies array is empty", () => {
@@ -438,12 +438,12 @@ describe("TaskCard dependency tooltip", () => {
   });
 
   it("handles many dependencies", () => {
-    const deps = ["KB-001", "KB-002", "KB-003", "KB-004"];
-    expect(computeDepTooltip(deps)).toBe("KB-001, KB-002, KB-003, KB-004");
+    const deps = ["FN-001", "FN-002", "FN-003", "FN-004"];
+    expect(computeDepTooltip(deps)).toBe("FN-001, FN-002, FN-003, FN-004");
   });
 
   it("data-tooltip attribute contains dependency IDs as a readable string", () => {
-    const deps = ["KB-005", "KB-012"];
+    const deps = ["FN-005", "FN-012"];
     const tooltip = computeDepTooltip(deps);
     expect(tooltip).toBeDefined();
     // Each dependency ID should appear in the tooltip
@@ -466,7 +466,7 @@ describe("TaskCard file-scope overlap badge logic", () => {
   }
 
   it("shows scope badge when blockedBy is set", () => {
-    expect(shouldShowScopeBadge("KB-003")).toBe(true);
+    expect(shouldShowScopeBadge("FN-003")).toBe(true);
   });
 
   it("does NOT show scope badge when blockedBy is undefined", () => {
@@ -474,7 +474,7 @@ describe("TaskCard file-scope overlap badge logic", () => {
   });
 
   it("shows card-meta when blockedBy is set even with no deps or queued status", () => {
-    expect(shouldShowCardMeta({ blockedBy: "KB-003" })).toBe(true);
+    expect(shouldShowCardMeta({ blockedBy: "FN-003" })).toBe(true);
   });
 
   it("does NOT show card-meta when no deps, not queued, and no blockedBy", () => {
@@ -487,7 +487,7 @@ describe("TaskCard file-scope overlap badge logic", () => {
   }
 
   it("generates correct tooltip text", () => {
-    expect(computeScopeTooltip("KB-005")).toBe("Blocked by KB-005 (file overlap)");
+    expect(computeScopeTooltip("FN-005")).toBe("Blocked by KB-005 (file overlap)");
   });
 });
 
@@ -539,7 +539,7 @@ describe("TaskCard queued badge logic", () => {
  */
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
-    id: "KB-099",
+    id: "FN-099",
     description: "Test task",
     column: "in-progress" as Column,
     dependencies: [],
@@ -560,10 +560,10 @@ describe("TaskCard clickable dependencies", () => {
   });
 
   it("renders dependency badges as clickable when dependencies exist", () => {
-    const task = makeTask({ dependencies: ["KB-001", "KB-002"] });
+    const task = makeTask({ dependencies: ["FN-001", "FN-002"] });
     const allTasks: Task[] = [
-      makeTask({ id: "KB-001", description: "Dep 1" }),
-      makeTask({ id: "KB-002", description: "Dep 2" }),
+      makeTask({ id: "FN-001", description: "Dep 1" }),
+      makeTask({ id: "FN-002", description: "Dep 2" }),
     ];
 
     render(
@@ -599,15 +599,15 @@ describe("TaskCard clickable dependencies", () => {
     const { fetchTaskDetail } = await import("../../api");
     const mockFetch = vi.mocked(fetchTaskDetail);
     const mockDetail: TaskDetail = {
-      ...makeTask({ id: "KB-001", description: "Dep 1" }),
+      ...makeTask({ id: "FN-001", description: "Dep 1" }),
       prompt: "",
       attachments: [],
     };
     mockFetch.mockResolvedValueOnce(mockDetail);
     const onOpenDetail = vi.fn();
 
-    const task = makeTask({ dependencies: ["KB-001"] });
-    const allTasks: Task[] = [makeTask({ id: "KB-001", description: "Dep 1" })];
+    const task = makeTask({ dependencies: ["FN-001"] });
+    const allTasks: Task[] = [makeTask({ id: "FN-001", description: "Dep 1" })];
 
     render(
       <TaskCard
@@ -621,7 +621,7 @@ describe("TaskCard clickable dependencies", () => {
     fireEvent.click(depBadge);
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith("KB-001");
+      expect(mockFetch).toHaveBeenCalledWith("FN-001");
       expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
     });
   });
@@ -633,7 +633,7 @@ describe("TaskCard clickable dependencies", () => {
     const onOpenDetail = vi.fn();
     const addToast = vi.fn();
 
-    const task = makeTask({ dependencies: ["KB-001"] });
+    const task = makeTask({ dependencies: ["FN-001"] });
 
     render(
       <TaskCard
@@ -658,7 +658,7 @@ describe("TaskCard clickable dependencies", () => {
     mockFetch.mockRejectedValueOnce(new Error("Stop here"));
     const addToast = vi.fn();
 
-    const task = makeTask({ dependencies: ["KB-001"] });
+    const task = makeTask({ dependencies: ["FN-001"] });
 
     const { container } = render(
       <TaskCard
@@ -1001,7 +1001,7 @@ describe("TaskCard inline editing", () => {
       />
     );
 
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     expect(card).toBeDefined();
     fireEvent.doubleClick(card!);
 
@@ -1046,7 +1046,7 @@ describe("TaskCard inline editing", () => {
       />
     );
 
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     fireEvent.doubleClick(card!);
 
     // Should NOT show editing UI
@@ -1067,7 +1067,7 @@ describe("TaskCard inline editing", () => {
     );
 
     // Enter edit mode
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     fireEvent.doubleClick(card!);
 
     const titleInput = screen.getByPlaceholderText(/Task title/i) as HTMLInputElement;
@@ -1095,7 +1095,7 @@ describe("TaskCard inline editing", () => {
     );
 
     // Enter edit mode
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     await user.dblClick(card!);
 
     const titleInput = screen.getByPlaceholderText(/Task title/i);
@@ -1126,7 +1126,7 @@ describe("TaskCard inline editing", () => {
     );
 
     // Enter edit mode
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     fireEvent.doubleClick(card!);
 
     const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
@@ -1136,7 +1136,7 @@ describe("TaskCard inline editing", () => {
     fireEvent.keyDown(descTextarea, { key: "Enter", shiftKey: false });
 
     await waitFor(() => {
-      expect(mockUpdateTask).toHaveBeenCalledWith("KB-099", {
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-099", {
         title: "Title",
         description: "New Desc",
       });
@@ -1156,7 +1156,7 @@ describe("TaskCard inline editing", () => {
     );
 
     // Enter edit mode
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     fireEvent.doubleClick(card!);
 
     const titleInput = screen.getByPlaceholderText(/Task title/i) as HTMLInputElement;
@@ -1182,7 +1182,7 @@ describe("TaskCard inline editing", () => {
     );
 
     // Enter edit mode
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     fireEvent.doubleClick(card!);
 
     const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
@@ -1213,7 +1213,7 @@ describe("TaskCard inline editing", () => {
     );
 
     // Enter edit mode
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     fireEvent.doubleClick(card!);
 
     const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
@@ -1251,7 +1251,7 @@ describe("TaskCard inline editing", () => {
     );
 
     // Enter edit mode
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     fireEvent.doubleClick(card!);
 
     const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
@@ -1281,7 +1281,7 @@ describe("TaskCard inline editing", () => {
     );
 
     // Enter edit mode
-    const card = document.querySelector('[data-id="KB-099"]') as HTMLElement;
+    const card = document.querySelector('[data-id="FN-099"]') as HTMLElement;
     fireEvent.doubleClick(card);
 
     // Card should have editing class
@@ -1300,7 +1300,7 @@ describe("TaskCard inline editing", () => {
       />
     );
 
-    const card = document.querySelector('[data-id="KB-099"]') as HTMLElement;
+    const card = document.querySelector('[data-id="FN-099"]') as HTMLElement;
     expect(card.classList.contains("card-editing")).toBe(false);
 
     fireEvent.doubleClick(card);
@@ -2038,7 +2038,7 @@ describe("TaskCard GitHub badges", () => {
     mockUseBadgeWebSocket.mockReturnValue({
       badgeUpdates: new Map([
         [
-          "KB-099",
+          "FN-099",
           {
             prInfo: {
               url: "https://github.com/owner/repo/pull/42",
@@ -2088,7 +2088,7 @@ describe("TaskCard GitHub badges", () => {
     mockUseBadgeWebSocket.mockReturnValue({
       badgeUpdates: new Map([
         [
-          "KB-099",
+          "FN-099",
           {
             prInfo: {
               url: "https://github.com/owner/repo/pull/42",
@@ -2137,7 +2137,7 @@ describe("TaskCard GitHub badges", () => {
     mockUseBadgeWebSocket.mockReturnValue({
       badgeUpdates: new Map([
         [
-          "KB-099",
+          "FN-099",
           {
             issueInfo: {
               url: "https://github.com/owner/repo/issues/123",
@@ -2218,11 +2218,11 @@ describe("TaskCard GitHub badges", () => {
       />
     );
 
-    expect(subscribeToBadge).toHaveBeenCalledWith("KB-099");
+    expect(subscribeToBadge).toHaveBeenCalledWith("FN-099");
 
     unmount();
 
-    expect(unsubscribeFromBadge).toHaveBeenCalledWith("KB-099");
+    expect(unsubscribeFromBadge).toHaveBeenCalledWith("FN-099");
   });
 
   it("waits for viewport intersection before subscribing and unsubscribes when leaving", () => {
@@ -2281,13 +2281,13 @@ describe("TaskCard GitHub badges", () => {
         observers[0].callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
       });
 
-      expect(subscribeToBadge).toHaveBeenCalledWith("KB-099");
+      expect(subscribeToBadge).toHaveBeenCalledWith("FN-099");
 
       act(() => {
         observers[0].callback([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver);
       });
 
-      expect(unsubscribeFromBadge).toHaveBeenCalledWith("KB-099");
+      expect(unsubscribeFromBadge).toHaveBeenCalledWith("FN-099");
     } finally {
       (globalThis as unknown as { IntersectionObserver: typeof IntersectionObserver | undefined }).IntersectionObserver = originalIntersectionObserver;
     }
@@ -2310,7 +2310,7 @@ describe("TaskCard expand button", () => {
     const { fetchTaskDetail } = await import("../../api");
     const mockFetch = vi.mocked(fetchTaskDetail);
     const mockDetail: TaskDetail = {
-      ...makeTask({ id: "KB-099" }),
+      ...makeTask({ id: "FN-099" }),
       prompt: "",
       attachments: [],
     };
@@ -2327,6 +2327,9 @@ describe("TaskCard expand button", () => {
       />
     );
 
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card).toBeDefined();
+
     const expandButton = screen.getByRole("button", { name: /Open task details/i });
     expect(expandButton).toBeDefined();
     expect(expandButton.classList.contains("card-expand-btn")).toBe(true);
@@ -2334,7 +2337,7 @@ describe("TaskCard expand button", () => {
     fireEvent.click(expandButton);
 
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith("KB-099");
+      expect(mockFetch).toHaveBeenCalledWith("FN-099");
       expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
     });
   });
@@ -2352,7 +2355,7 @@ describe("TaskCard expand button", () => {
       />
     );
 
-    const card = document.querySelector('[data-id="KB-099"]');
+    const card = document.querySelector('[data-id="FN-099"]');
     expect(card).toBeDefined();
 
     // Click on the card title (part of card body)
@@ -2383,6 +2386,104 @@ describe("TaskCard expand button", () => {
     expect(expandButton.getAttribute("title")).toBe("Open task details");
   });
 
+  it("does NOT open modal during vertical scrolling", async () => {
+    const onOpenDetail = vi.fn();
+
+    render(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={onOpenDetail}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card).toBeDefined();
+
+    fireEvent.touchStart(card!, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    fireEvent.touchMove(card!, {
+      touches: [{ clientX: 100, clientY: 115 }],
+    });
+
+    fireEvent.touchEnd(card!, {
+      changedTouches: [{ clientX: 100, clientY: 115 }],
+      target: card,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("does NOT open modal during horizontal scrolling", async () => {
+    const onOpenDetail = vi.fn();
+
+    render(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={onOpenDetail}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card).toBeDefined();
+
+    fireEvent.touchStart(card!, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    fireEvent.touchMove(card!, {
+      touches: [{ clientX: 115, clientY: 100 }],
+    });
+
+    fireEvent.touchEnd(card!, {
+      changedTouches: [{ clientX: 115, clientY: 100 }],
+      target: card,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("does NOT open modal on long press (slow touch)", async () => {
+    const onOpenDetail = vi.fn();
+
+    render(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={onOpenDetail}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card).toBeDefined();
+
+    // Simulate long press: touchStart, wait > 300ms, then touchEnd
+    fireEvent.touchStart(card!, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    // Wait longer than tap threshold (300ms)
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    fireEvent.touchEnd(card!, {
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+      target: card,
+    });
+
+    // Wait for any async operations
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Modal should NOT have opened
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
   it("expand button is present in all columns", () => {
     const columns: Column[] = ["triage", "todo", "in-progress", "in-review", "done", "archived"];
 
@@ -2409,7 +2510,7 @@ describe("TaskCard expand button", () => {
     const { fetchTaskDetail } = await import("../../api");
     const mockFetch = vi.mocked(fetchTaskDetail);
     const mockDetail: TaskDetail = {
-      ...makeTask({ id: "KB-099" }),
+      ...makeTask({ id: "FN-099" }),
       prompt: "",
       attachments: [],
     };
@@ -2426,12 +2527,17 @@ describe("TaskCard expand button", () => {
       />
     );
 
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card).toBeDefined();
+
     const expandButton = screen.getByRole("button", { name: /Open task details/i });
 
     // Click the expand button - should only trigger once
     fireEvent.click(expandButton);
 
     await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith("FN-099");
+      expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
       expect(onOpenDetail).toHaveBeenCalledTimes(1);
     });
   });
@@ -2444,7 +2550,7 @@ describe("TaskCard title display", () => {
   const noopToast = vi.fn();
 
   const makeTask = (overrides: Partial<Task> = {}): Task => ({
-    id: "KB-001",
+    id: "FN-001",
     description: "Test task",
     column: "todo",
     dependencies: [],
@@ -2504,7 +2610,7 @@ describe("TaskCard title display", () => {
     );
 
     // Look for the task ID within the card-title element specifically
-    const cardTitle = screen.getByText("KB-001", { selector: ".card-title" });
+    const cardTitle = screen.getByText("FN-001", { selector: ".card-title" });
     expect(cardTitle).toBeDefined();
   });
 });

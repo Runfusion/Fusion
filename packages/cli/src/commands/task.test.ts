@@ -58,7 +58,7 @@ import { GitHubClient } from "@fusion/dashboard";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
-    id: "KB-001",
+    id: "FN-001",
     description: "A short description",
     column: "triage",
     dependencies: [],
@@ -91,16 +91,16 @@ describe("runTaskShow", () => {
       getTask: vi.fn().mockResolvedValue(task),
     }));
 
-    await runTaskShow("KB-001");
+    await runTaskShow("FN-001");
 
     const headerLine = logSpy.mock.calls.find(
-      (call) => typeof call[0] === "string" && call[0].includes("KB-001:")
+      (call) => typeof call[0] === "string" && call[0].includes("FN-001:")
     );
     expect(headerLine).toBeDefined();
     expect(headerLine![0]).toContain(longDesc);
     // Ensure no truncation happened
     expect(headerLine![0]).not.toContain(longDesc.slice(0, 60) + "…");
-    expect(headerLine![0].length).toBeGreaterThan(60 + "  KB-001: ".length);
+    expect(headerLine![0].length).toBeGreaterThan(60 + "  FN-001: ".length);
   });
 
   it("displays the title when present instead of description", async () => {
@@ -114,10 +114,10 @@ describe("runTaskShow", () => {
       getTask: vi.fn().mockResolvedValue(task),
     }));
 
-    await runTaskShow("KB-001");
+    await runTaskShow("FN-001");
 
     const headerLine = logSpy.mock.calls.find(
-      (call) => typeof call[0] === "string" && call[0].includes("KB-001:")
+      (call) => typeof call[0] === "string" && call[0].includes("FN-001:")
     );
     expect(headerLine).toBeDefined();
     expect(headerLine![0]).toContain("My Task Title");
@@ -151,7 +151,7 @@ describe("runTaskCreate with --attach", () => {
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),
       createTask: vi.fn().mockResolvedValue({
-        id: "KB-002",
+        id: "FN-002",
         description: "test task",
         column: "triage",
         dependencies: [],
@@ -178,7 +178,7 @@ describe("runTaskCreate with --attach", () => {
 
     expect(mockAddAttachment).toHaveBeenCalledOnce();
     expect(mockAddAttachment).toHaveBeenCalledWith(
-      "KB-002",
+      "FN-002",
       "test.png",
       expect.any(Buffer),
       "image/png",
@@ -247,7 +247,7 @@ describe("runTaskCreate with --depends", () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     mockCreateTask = vi.fn().mockImplementation((input: { description: string; dependencies?: string[] }) => ({
-      id: "KB-003",
+      id: "FN-003",
       description: input.description,
       column: "triage",
       dependencies: input.dependencies || [],
@@ -269,28 +269,28 @@ describe("runTaskCreate with --depends", () => {
   });
 
   it("passes dependencies to store.createTask when depends provided", async () => {
-    await runTaskCreate("test task", undefined, ["KB-124"]);
+    await runTaskCreate("test task", undefined, ["FN-124"]);
 
     expect(mockCreateTask).toHaveBeenCalledWith({
       description: "test task",
-      dependencies: ["KB-124"],
+      dependencies: ["FN-124"],
     });
   });
 
   it("passes multiple dependencies correctly", async () => {
-    await runTaskCreate("test task", undefined, ["KB-124", "KB-100"]);
+    await runTaskCreate("test task", undefined, ["FN-124", "FN-100"]);
 
     expect(mockCreateTask).toHaveBeenCalledWith({
       description: "test task",
-      dependencies: ["KB-124", "KB-100"],
+      dependencies: ["FN-124", "FN-100"],
     });
 
     const depsLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("Dependencies:"),
     );
     expect(depsLine).toBeDefined();
-    expect(depsLine![0]).toContain("KB-124");
-    expect(depsLine![0]).toContain("KB-100");
+    expect(depsLine![0]).toContain("FN-124");
+    expect(depsLine![0]).toContain("FN-100");
   });
 
   it("works without dependencies (backward compatible)", async () => {
@@ -417,7 +417,7 @@ describe("runTaskImportGitHubInteractive", () => {
     // Setup existing task with source URL
     mockListTasks.mockResolvedValueOnce([
       {
-        id: "KB-001",
+        id: "FN-001",
         description: "Existing\n\nSource: https://github.com/owner/repo/issues/1",
         column: "triage",
       },
@@ -764,7 +764,7 @@ describe("runTaskImportFromGitHub", () => {
     // Setup existing task with source URL
     mockListTasks.mockResolvedValueOnce([
       {
-        id: "KB-001",
+        id: "FN-001",
         description: "Existing\n\nSource: https://github.com/owner/repo/issues/1",
         column: "triage",
       },
@@ -877,7 +877,7 @@ describe("runTaskDuplicate", () => {
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     mockDuplicateTask = vi.fn().mockResolvedValue({
-      id: "KB-002",
+      id: "FN-002",
       description: "Duplicated task",
       column: "triage",
       dependencies: [],
@@ -899,17 +899,17 @@ describe("runTaskDuplicate", () => {
   });
 
   it("duplicates task and prints success", async () => {
-    await runTaskDuplicate("KB-001");
+    await runTaskDuplicate("FN-001");
 
     expect(mockDuplicateTask).toHaveBeenCalledOnce();
-    expect(mockDuplicateTask).toHaveBeenCalledWith("KB-001");
+    expect(mockDuplicateTask).toHaveBeenCalledWith("FN-001");
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Duplicated"),
     );
     expect(successLine).toBeDefined();
-    expect(successLine![0]).toContain("KB-001");
-    expect(successLine![0]).toContain("KB-002");
+    expect(successLine![0]).toContain("FN-001");
+    expect(successLine![0]).toContain("FN-002");
   });
 
   it("throws when task not found", async () => {
@@ -941,10 +941,10 @@ describe("runTaskRefine", () => {
     });
 
     mockRefineTask = vi.fn().mockResolvedValue({
-      id: "KB-002",
+      id: "FN-002",
       description: "Refinement of KB-001",
       column: "triage",
-      dependencies: ["KB-001"],
+      dependencies: ["FN-001"],
       steps: [],
       currentStep: 0,
       log: [],
@@ -965,34 +965,34 @@ describe("runTaskRefine", () => {
   it("refines task with interactive feedback and prints success", async () => {
     mockRlQuestion.mockResolvedValue("Need to add more tests");
 
-    await runTaskRefine("KB-001");
+    await runTaskRefine("FN-001");
 
     expect(mockRlQuestion).toHaveBeenCalledWith("What needs to be refined? ");
     expect(mockRlClose).toHaveBeenCalled();
     expect(mockRefineTask).toHaveBeenCalledOnce();
-    expect(mockRefineTask).toHaveBeenCalledWith("KB-001", "Need to add more tests");
+    expect(mockRefineTask).toHaveBeenCalledWith("FN-001", "Need to add more tests");
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Created refinement"),
     );
     expect(successLine).toBeDefined();
-    expect(successLine![0]).toContain("KB-002");
-    expect(successLine![0]).toContain("KB-001");
+    expect(successLine![0]).toContain("FN-002");
+    expect(successLine![0]).toContain("FN-001");
 
     // Check that dependency is printed
     const depLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("Dependency:"),
     );
     expect(depLine).toBeDefined();
-    expect(depLine![0]).toContain("KB-001");
+    expect(depLine![0]).toContain("FN-001");
   });
 
   it("refines task with provided feedback (non-interactive)", async () => {
-    await runTaskRefine("KB-001", "Fix the error handling");
+    await runTaskRefine("FN-001", "Fix the error handling");
 
     expect(mockRlQuestion).not.toHaveBeenCalled();
     expect(mockRefineTask).toHaveBeenCalledOnce();
-    expect(mockRefineTask).toHaveBeenCalledWith("KB-001", "Fix the error handling");
+    expect(mockRefineTask).toHaveBeenCalledWith("FN-001", "Fix the error handling");
   });
 
   it("exits when interactive feedback is empty", async () => {
@@ -1000,7 +1000,7 @@ describe("runTaskRefine", () => {
 
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
 
-    await runTaskRefine("KB-001");
+    await runTaskRefine("FN-001");
 
     expect(mockRlClose).toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalledWith("Feedback is required");
@@ -1012,7 +1012,7 @@ describe("runTaskRefine", () => {
   it("exits when provided feedback is empty", async () => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
 
-    await runTaskRefine("KB-001", "   ");
+    await runTaskRefine("FN-001", "   ");
 
     expect(errorSpy).toHaveBeenCalledWith("Feedback is required");
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -1023,7 +1023,7 @@ describe("runTaskRefine", () => {
   it("exits when feedback exceeds 2000 characters", async () => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
 
-    await runTaskRefine("KB-001", "A".repeat(2001));
+    await runTaskRefine("FN-001", "A".repeat(2001));
 
     expect(errorSpy).toHaveBeenCalledWith("Feedback must be 2000 characters or less");
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -1034,16 +1034,16 @@ describe("runTaskRefine", () => {
   it("allows feedback at exactly 2000 characters", async () => {
     const longFeedback = "A".repeat(2000);
 
-    await runTaskRefine("KB-001", longFeedback);
+    await runTaskRefine("FN-001", longFeedback);
 
     expect(mockRefineTask).toHaveBeenCalledOnce();
-    expect(mockRefineTask).toHaveBeenCalledWith("KB-001", longFeedback);
+    expect(mockRefineTask).toHaveBeenCalledWith("FN-001", longFeedback);
   });
 
   it("throws when task not in done or in-review", async () => {
     mockRefineTask.mockRejectedValueOnce(new Error("Task must be in 'done' or 'in-review' column to refine"));
 
-    await expect(runTaskRefine("KB-001", "Some feedback")).rejects.toThrow("done' or 'in-review'");
+    await expect(runTaskRefine("FN-001", "Some feedback")).rejects.toThrow("done' or 'in-review'");
   });
 
   it("throws when task not found", async () => {
@@ -1076,7 +1076,7 @@ describe("runTaskDelete", () => {
     });
 
     mockGetTask = vi.fn().mockResolvedValue({
-      id: "KB-001",
+      id: "FN-001",
       description: "Test task",
       column: "triage",
       dependencies: [],
@@ -1088,7 +1088,7 @@ describe("runTaskDelete", () => {
     });
 
     mockDeleteTask = vi.fn().mockResolvedValue({
-      id: "KB-001",
+      id: "FN-001",
       description: "Test task",
       column: "triage",
       dependencies: [],
@@ -1111,31 +1111,31 @@ describe("runTaskDelete", () => {
   });
 
   it("deletes task successfully with force=true (no prompt)", async () => {
-    await runTaskDelete("KB-001", true);
+    await runTaskDelete("FN-001", true);
 
     expect(mockGetTask).toHaveBeenCalledOnce();
-    expect(mockGetTask).toHaveBeenCalledWith("KB-001");
+    expect(mockGetTask).toHaveBeenCalledWith("FN-001");
     expect(mockRlQuestion).not.toHaveBeenCalled();
     expect(mockDeleteTask).toHaveBeenCalledOnce();
-    expect(mockDeleteTask).toHaveBeenCalledWith("KB-001");
+    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001");
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),
     );
     expect(successLine).toBeDefined();
-    expect(successLine![0]).toContain("KB-001");
+    expect(successLine![0]).toContain("FN-001");
   });
 
   it("deletes task after confirmation prompt with 'y'", async () => {
     mockRlQuestion.mockResolvedValue("y");
 
-    await runTaskDelete("KB-001", false);
+    await runTaskDelete("FN-001", false);
 
     expect(mockRlQuestion).toHaveBeenCalledOnce();
     expect(mockRlQuestion).toHaveBeenCalledWith("Are you sure you want to delete KB-001? [y/N] ");
     expect(mockRlClose).toHaveBeenCalled();
     expect(mockDeleteTask).toHaveBeenCalledOnce();
-    expect(mockDeleteTask).toHaveBeenCalledWith("KB-001");
+    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001");
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),
@@ -1146,7 +1146,7 @@ describe("runTaskDelete", () => {
   it("deletes task after confirmation prompt with 'yes'", async () => {
     mockRlQuestion.mockResolvedValue("yes");
 
-    await runTaskDelete("KB-001", false);
+    await runTaskDelete("FN-001", false);
 
     expect(mockDeleteTask).toHaveBeenCalledOnce();
   });
@@ -1155,7 +1155,7 @@ describe("runTaskDelete", () => {
     mockRlQuestion.mockResolvedValue("n");
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
 
-    await runTaskDelete("KB-001", false);
+    await runTaskDelete("FN-001", false);
 
     expect(mockRlQuestion).toHaveBeenCalledOnce();
     expect(mockRlClose).toHaveBeenCalled();
@@ -1168,7 +1168,7 @@ describe("runTaskDelete", () => {
     mockRlQuestion.mockResolvedValue("");
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
 
-    await runTaskDelete("KB-001", false);
+    await runTaskDelete("FN-001", false);
 
     expect(mockRlQuestion).toHaveBeenCalledOnce();
     expect(mockDeleteTask).not.toHaveBeenCalled();
@@ -1193,9 +1193,9 @@ describe("runTaskDelete", () => {
     mockDeleteTask.mockRejectedValueOnce(new Error("Task has dependencies"));
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
 
-    await runTaskDelete("KB-001", true);
+    await runTaskDelete("FN-001", true);
 
-    expect(errorSpy).toHaveBeenCalledWith("✗ Failed to delete KB-001: Task has dependencies");
+    expect(errorSpy).toHaveBeenCalledWith("✗ Failed to delete FN-001: Task has dependencies");
     expect(exitSpy).toHaveBeenCalledWith(1);
 
     exitSpy.mockRestore();
@@ -1223,10 +1223,10 @@ describe("runTaskComment", () => {
       addTaskComment: vi.fn().mockResolvedValue(makeTask({ comments: [{ id: "c1", text: "Hello", author: "alice", createdAt: new Date().toISOString() }] })),
     }));
 
-    await runTaskComment("KB-001", "Hello", "alice");
+    await runTaskComment("FN-001", "Hello", "alice");
 
     const store = (TaskStore as unknown as ReturnType<typeof vi.fn>).mock.results.at(-1)?.value;
-    expect(store.addTaskComment).toHaveBeenCalledWith("KB-001", "Hello", "alice");
+    expect(store.addTaskComment).toHaveBeenCalledWith("FN-001", "Hello", "alice");
     expect(logSpy).toHaveBeenCalledWith("  ✓ Comment added to KB-001");
   });
 
@@ -1236,9 +1236,9 @@ describe("runTaskComment", () => {
       getTask: vi.fn().mockResolvedValue(makeTask({ comments: [{ id: "c1", text: "Hello", author: "alice", createdAt: "2026-01-01T00:00:00.000Z" }] })),
     }));
 
-    await runTaskComments("KB-001");
+    await runTaskComments("FN-001");
 
-    expect(logSpy).toHaveBeenCalledWith("  Comments for KB-001:");
+    expect(logSpy).toHaveBeenCalledWith("  Comments for FN-001:");
   });
 });
 
@@ -1272,27 +1272,27 @@ describe("runTaskRetry", () => {
 
   it("retries failed task successfully", async () => {
     mockGetTask.mockResolvedValueOnce(makeTask({ 
-      id: "KB-001", 
+      id: "FN-001", 
       status: "failed",
       error: "Some error",
       column: "in-progress"
     }));
-    mockUpdateTask.mockResolvedValueOnce(makeTask({ id: "KB-001", status: undefined, error: undefined }));
-    mockMoveTask.mockResolvedValueOnce(makeTask({ id: "KB-001", column: "todo" }));
-    mockLogEntry.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockUpdateTask.mockResolvedValueOnce(makeTask({ id: "FN-001", status: undefined, error: undefined }));
+    mockMoveTask.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "todo" }));
+    mockLogEntry.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
 
-    await runTaskRetry("KB-001");
+    await runTaskRetry("FN-001");
 
-    expect(mockGetTask).toHaveBeenCalledWith("KB-001");
-    expect(mockUpdateTask).toHaveBeenCalledWith("KB-001", { status: null, error: null });
-    expect(mockMoveTask).toHaveBeenCalledWith("KB-001", "todo");
-    expect(mockLogEntry).toHaveBeenCalledWith("KB-001", "Retry requested from CLI", "Task reset to todo for retry");
+    expect(mockGetTask).toHaveBeenCalledWith("FN-001");
+    expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Retry requested from CLI", "Task reset to todo for retry");
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Retried"),
     );
     expect(successLine).toBeDefined();
-    expect(successLine![0]).toContain("KB-001");
+    expect(successLine![0]).toContain("FN-001");
     expect(successLine![0]).toContain("todo");
   });
 
@@ -1304,22 +1304,22 @@ describe("runTaskRetry", () => {
 
   it("throws error when task is not failed", async () => {
     mockGetTask.mockResolvedValueOnce(makeTask({ 
-      id: "KB-001", 
+      id: "FN-001", 
       status: undefined,
       column: "in-progress"
     }));
 
-    await expect(runTaskRetry("KB-001")).rejects.toThrow("Task KB-001 is not failed (status: none)");
+    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task KB-001 is not failed (status: none)");
   });
 
   it("throws error with correct status when task has different status", async () => {
     mockGetTask.mockResolvedValueOnce(makeTask({ 
-      id: "KB-001", 
+      id: "FN-001", 
       status: "paused",
       column: "in-progress"
     }));
 
-    await expect(runTaskRetry("KB-001")).rejects.toThrow("Task KB-001 is not failed (status: paused)");
+    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task KB-001 is not failed (status: paused)");
   });
 });
 
@@ -1340,7 +1340,7 @@ describe("runTaskLogs", () => {
   function makeAgentLogEntry(overrides: Record<string, unknown> = {}): import("@fusion/core").AgentLogEntry {
     return {
       timestamp: new Date().toISOString(),
-      taskId: "KB-001",
+      taskId: "FN-001",
       text: "Test message",
       type: "text" as const,
       ...overrides,
@@ -1389,7 +1389,7 @@ describe("runTaskLogs", () => {
   });
 
   it("displays logs with various entry types", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([
       makeAgentLogEntry({ type: "text", text: "Analyzing code" }),
       makeAgentLogEntry({ type: "thinking", text: "Let me think" }),
@@ -1398,10 +1398,10 @@ describe("runTaskLogs", () => {
       makeAgentLogEntry({ type: "tool_error", text: "read", detail: "File not found" }),
     ]);
 
-    await runTaskLogs("KB-001");
+    await runTaskLogs("FN-001");
 
-    expect(mockGetTask).toHaveBeenCalledWith("KB-001");
-    expect(mockGetAgentLogs).toHaveBeenCalledWith("KB-001");
+    expect(mockGetTask).toHaveBeenCalledWith("FN-001");
+    expect(mockGetAgentLogs).toHaveBeenCalledWith("FN-001");
     expect(logSpy).toHaveBeenCalledTimes(5);
 
     // Check that each type is formatted
@@ -1415,13 +1415,13 @@ describe("runTaskLogs", () => {
   });
 
   it("displays agent role when present", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([
       makeAgentLogEntry({ type: "text", text: "Starting execution", agent: "executor" }),
       makeAgentLogEntry({ type: "text", text: "Reviewing code", agent: "reviewer" }),
     ]);
 
-    await runTaskLogs("KB-001");
+    await runTaskLogs("FN-001");
 
     const calls = logSpy.mock.calls.map((call) => call[0] as string);
     expect(calls[0]).toContain("[EXECUTOR]");
@@ -1429,10 +1429,10 @@ describe("runTaskLogs", () => {
   });
 
   it("shows 'no logs found' message when logs are empty", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([]);
 
-    await runTaskLogs("KB-001");
+    await runTaskLogs("FN-001");
 
     expect(logSpy).toHaveBeenCalledWith("No agent logs found for KB-001");
   });
@@ -1450,12 +1450,12 @@ describe("runTaskLogs", () => {
   });
 
   it("respects --limit flag", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce(
       Array.from({ length: 200 }, (_, i) => makeAgentLogEntry({ text: `Line ${i + 1}` }))
     );
 
-    await runTaskLogs("KB-001", { limit: 50 });
+    await runTaskLogs("FN-001", { limit: 50 });
 
     // Should only show 50 entries (default is 100, we specified 50)
     expect(logSpy).toHaveBeenCalledTimes(50);
@@ -1467,18 +1467,18 @@ describe("runTaskLogs", () => {
   });
 
   it("enforces max limit of 1000", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce(
       Array.from({ length: 1500 }, (_, i) => makeAgentLogEntry({ text: `Line ${i + 1}` }))
     );
 
-    await runTaskLogs("KB-001", { limit: 2000 });  // Request 2000, should be capped at 1000
+    await runTaskLogs("FN-001", { limit: 2000 });  // Request 2000, should be capped at 1000
 
     expect(logSpy).toHaveBeenCalledTimes(1000);
   });
 
   it("filters by --type flag", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([
       makeAgentLogEntry({ type: "text", text: "Text 1" }),
       makeAgentLogEntry({ type: "tool", text: "tool1" }),
@@ -1487,7 +1487,7 @@ describe("runTaskLogs", () => {
       makeAgentLogEntry({ type: "thinking", text: "Think 1" }),
     ]);
 
-    await runTaskLogs("KB-001", { type: "text" });
+    await runTaskLogs("FN-001", { type: "text" });
 
     // Should only show 2 text entries
     expect(logSpy).toHaveBeenCalledTimes(2);
@@ -1497,7 +1497,7 @@ describe("runTaskLogs", () => {
   });
 
   it("filters by type with --limit combined", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     // Create 50 tool entries interspersed with text entries
     const entries: import("@fusion/core").AgentLogEntry[] = [];
     for (let i = 0; i < 100; i++) {
@@ -1508,7 +1508,7 @@ describe("runTaskLogs", () => {
     }
     mockGetAgentLogs.mockResolvedValueOnce(entries);
 
-    await runTaskLogs("KB-001", { type: "tool", limit: 10 });
+    await runTaskLogs("FN-001", { type: "tool", limit: 10 });
 
     // Should show 10 tool entries (the last 10 tool entries: #50, #52, #54, #56, #58, #60, #62, #64, #66, #68... wait, that's not right)
     // Actually it's #50, #52, #54, #56, #58, #60, #62, #64, #66, #68... no wait, tool entries are at indices 0, 2, 4...
@@ -1518,13 +1518,13 @@ describe("runTaskLogs", () => {
   });
 
   it("calls watchFile when --follow is set", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([
       makeAgentLogEntry({ type: "text", text: "Existing log" }),
     ]);
 
     // Don't await - follow mode keeps the promise pending
-    const logsPromise = runTaskLogs("KB-001", { follow: true });
+    const logsPromise = runTaskLogs("FN-001", { follow: true });
 
     // Give a tick for the async operations to start
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1537,11 +1537,11 @@ describe("runTaskLogs", () => {
   });
 
   it("calls unwatchFile in SIGINT handler", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([]);
 
     // Start follow mode
-    runTaskLogs("KB-001", { follow: true });
+    runTaskLogs("FN-001", { follow: true });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     // Trigger SIGINT
@@ -1551,11 +1551,11 @@ describe("runTaskLogs", () => {
   });
 
   it("prints waiting message in follow mode when no log file exists", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([]);
     mockExistsSync.mockReturnValue(false);
 
-    runTaskLogs("KB-001", { follow: true });
+    runTaskLogs("FN-001", { follow: true });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     const waitingMessage = logSpy.mock.calls.find(
@@ -1568,7 +1568,7 @@ describe("runTaskLogs", () => {
   });
 
   it("reads and prints new entries in follow mode", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([
       makeAgentLogEntry({ type: "text", text: "Initial" }),
     ]);
@@ -1576,7 +1576,7 @@ describe("runTaskLogs", () => {
     // Mock file to exist with size 0 initially (no content read yet)
     mockStatSync.mockReturnValue({ size: 0 });
     
-    runTaskLogs("KB-001", { follow: true });
+    runTaskLogs("FN-001", { follow: true });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     // Get the watchFile callback
@@ -1600,12 +1600,12 @@ describe("runTaskLogs", () => {
   });
 
   it("applies type filter in follow mode", async () => {
-    mockGetTask.mockResolvedValueOnce(makeTask({ id: "KB-001" }));
+    mockGetTask.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
     mockGetAgentLogs.mockResolvedValueOnce([]);
 
     mockStatSync.mockReturnValue({ size: 0 });
     
-    runTaskLogs("KB-001", { follow: true, type: "tool" });
+    runTaskLogs("FN-001", { follow: true, type: "tool" });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     const watchCallback = mockWatchFile.mock.calls[0][2] as () => void;
@@ -1650,7 +1650,7 @@ describe("runTaskPrCreate", () => {
 
   function makeInReviewTask(overrides: Record<string, unknown> = {}) {
     return {
-      id: "KB-001",
+      id: "FN-001",
       title: "Test Task Title",
       description: "Test task description for PR creation",
       column: "in-review",
@@ -1671,7 +1671,7 @@ describe("runTaskPrCreate", () => {
       number: 42,
       status: "open" as const,
       title: "Test Task Title",
-      headBranch: "kb/kb-001",
+      headBranch: "fusion/fn-001",
       baseBranch: "main",
       commentCount: 0,
       ...overrides,
@@ -1725,26 +1725,26 @@ describe("runTaskPrCreate", () => {
       url: "https://github.com/owner/repo/pull/42",
     }));
 
-    await runTaskPrCreate("KB-001", { 
+    await runTaskPrCreate("FN-001", { 
       title: "Custom PR Title", 
       base: "develop", 
       body: "PR description body" 
     });
 
-    expect(mockGetTask).toHaveBeenCalledWith("KB-001");
+    expect(mockGetTask).toHaveBeenCalledWith("FN-001");
     expect(mockCreatePr).toHaveBeenCalledWith({
       owner: "owner",
       repo: "repo",
       title: "Custom PR Title",
       body: "PR description body",
-      head: "kb/kb-001",
+      head: "fusion/fn-001",
       base: "develop",
     });
-    expect(mockUpdatePrInfo).toHaveBeenCalledWith("KB-001", expect.objectContaining({
+    expect(mockUpdatePrInfo).toHaveBeenCalledWith("FN-001", expect.objectContaining({
       number: 42,
       url: "https://github.com/owner/repo/pull/42",
     }));
-    expect(mockLogEntry).toHaveBeenCalledWith("KB-001", "Created PR", "PR #42: https://github.com/owner/repo/pull/42");
+    expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Created PR", "PR #42: https://github.com/owner/repo/pull/42");
     
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Created PR")
@@ -1757,11 +1757,11 @@ describe("runTaskPrCreate", () => {
     mockGetTask.mockResolvedValueOnce(task);
     mockCreatePr.mockResolvedValueOnce(makePrInfo({ title: "My Task Title" }));
 
-    await runTaskPrCreate("KB-001", {});
+    await runTaskPrCreate("FN-001", {});
 
     expect(mockCreatePr).toHaveBeenCalledWith(expect.objectContaining({
       title: "My Task Title",
-      head: "kb/kb-001",
+      head: "fusion/fn-001",
     }));
   });
 
@@ -1770,7 +1770,7 @@ describe("runTaskPrCreate", () => {
     mockGetTask.mockResolvedValueOnce(task);
     mockCreatePr.mockResolvedValueOnce(makePrInfo());
 
-    await runTaskPrCreate("KB-001", {});
+    await runTaskPrCreate("FN-001", {});
 
     // Title should be first 50 chars of description, sentence-cased, with ellipsis if truncated
     expect(mockCreatePr).toHaveBeenCalledWith(expect.objectContaining({
@@ -1802,7 +1802,7 @@ describe("runTaskPrCreate", () => {
       throw new Error("process.exit");
     }) as (code?: number) => never);
 
-    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+    await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("must be in 'in-review' column"));
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -1816,7 +1816,7 @@ describe("runTaskPrCreate", () => {
         number: 10,
         status: "open",
         title: "Existing PR",
-        headBranch: "kb/kb-001",
+        headBranch: "fusion/fn-001",
         baseBranch: "main",
         commentCount: 0,
       },
@@ -1827,7 +1827,7 @@ describe("runTaskPrCreate", () => {
       throw new Error("process.exit");
     }) as (code?: number) => never);
 
-    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+    await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("already has PR #10"));
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -1845,7 +1845,7 @@ describe("runTaskPrCreate", () => {
       throw new Error("process.exit");
     }) as (code?: number) => never);
 
-    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+    await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Not authenticated with GitHub"));
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -1862,7 +1862,7 @@ describe("runTaskPrCreate", () => {
     
     mockCreatePr.mockResolvedValueOnce(makePrInfo());
 
-    await runTaskPrCreate("KB-001", {});
+    await runTaskPrCreate("FN-001", {});
 
     expect(GitHubClient).toHaveBeenCalledWith("test-token");
     expect(mockUpdatePrInfo).toHaveBeenCalled();
@@ -1879,7 +1879,7 @@ describe("runTaskPrCreate", () => {
       throw new Error("process.exit");
     }) as (code?: number) => never);
 
-    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+    await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Could not determine GitHub repository"));
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -1893,7 +1893,7 @@ describe("runTaskPrCreate", () => {
     mockGetTask.mockResolvedValueOnce(task);
     mockCreatePr.mockResolvedValueOnce(makePrInfo());
 
-    await runTaskPrCreate("KB-001", {});
+    await runTaskPrCreate("FN-001", {});
 
     expect(mockCreatePr).toHaveBeenCalledWith(expect.objectContaining({
       owner: "custom-owner",
@@ -1911,7 +1911,7 @@ describe("runTaskPrCreate", () => {
       throw new Error("process.exit");
     }) as (code?: number) => never);
 
-    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+    await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("GITHUB_REPOSITORY format is invalid"));
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -1921,15 +1921,15 @@ describe("runTaskPrCreate", () => {
   it("exits with error when PR already exists for branch", async () => {
     const task = makeInReviewTask();
     mockGetTask.mockResolvedValueOnce(task);
-    mockCreatePr.mockRejectedValueOnce(new Error("A pull request already exists for owner/repo:kb/kb-001"));
+    mockCreatePr.mockRejectedValueOnce(new Error("A pull request already exists for owner/repo:fusion/fn-001"));
     
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("process.exit");
     }) as (code?: number) => never);
 
-    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+    await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
 
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("already exists for owner/repo:kb/kb-001"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("already exists for owner/repo:fusion/fn-001"));
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
   });
@@ -1943,7 +1943,7 @@ describe("runTaskPrCreate", () => {
       throw new Error("process.exit");
     }) as (code?: number) => never);
 
-    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+    await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("No commits between"));
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -1959,7 +1959,7 @@ describe("runTaskPrCreate", () => {
       throw new Error("process.exit");
     }) as (code?: number) => never);
 
-    await expect(runTaskPrCreate("KB-001", {})).rejects.toThrow("process.exit");
+    await expect(runTaskPrCreate("FN-001", {})).rejects.toThrow("process.exit");
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Network error"));
     expect(exitSpy).toHaveBeenCalledWith(1);

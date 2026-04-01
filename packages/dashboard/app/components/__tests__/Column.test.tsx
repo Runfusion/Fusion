@@ -55,7 +55,7 @@ const defaultProps = {
 
 describe("Column count-flash", () => {
   it("does not apply count-flash class on initial render", () => {
-    const tasks = [makeTask("KB-001")];
+    const tasks = [makeTask("FN-001")];
     render(<Column {...defaultProps} tasks={tasks} />);
 
     const badge = screen.getByText("1");
@@ -64,10 +64,10 @@ describe("Column count-flash", () => {
   });
 
   it("applies count-flash class when task count increases", () => {
-    const tasks = [makeTask("KB-001")];
+    const tasks = [makeTask("FN-001")];
     const { rerender } = render(<Column {...defaultProps} tasks={tasks} />);
 
-    const moreTasks = [makeTask("KB-001"), makeTask("KB-002")];
+    const moreTasks = [makeTask("FN-001"), makeTask("FN-002")];
     rerender(<Column {...defaultProps} tasks={moreTasks} />);
 
     const badge = screen.getByText("2");
@@ -75,10 +75,10 @@ describe("Column count-flash", () => {
   });
 
   it("does not apply count-flash class when task count decreases", () => {
-    const tasks = [makeTask("KB-001"), makeTask("KB-002")];
+    const tasks = [makeTask("FN-001"), makeTask("FN-002")];
     const { rerender } = render(<Column {...defaultProps} tasks={tasks} />);
 
-    const fewerTasks = [makeTask("KB-001")];
+    const fewerTasks = [makeTask("FN-001")];
     rerender(<Column {...defaultProps} tasks={fewerTasks} />);
 
     const badge = screen.getByText("1");
@@ -88,7 +88,7 @@ describe("Column count-flash", () => {
 
 describe("Column memoization", () => {
   it("does not re-render task cards when rerendered with the same task references", () => {
-    const tasks = [makeTask("KB-001")];
+    const tasks = [makeTask("FN-001")];
     const props = { ...defaultProps, tasks };
 
     const { rerender } = render(<Column {...props} />);
@@ -182,19 +182,19 @@ describe("Column pagination", () => {
 
 describe("Column QuickEntryBox", () => {
   it("renders QuickEntryBox in triage column when onQuickCreate is provided", () => {
-    const tasks = [makeTask("KB-001")];
+    const tasks = [makeTask("FN-001")];
     render(<Column {...defaultProps} tasks={tasks} onQuickCreate={vi.fn()} />);
     expect(screen.getByTestId("quick-entry-box")).toBeTruthy();
   });
 
   it("does not render QuickEntryBox in triage column when onQuickCreate is not provided", () => {
-    const tasks = [makeTask("KB-001")];
+    const tasks = [makeTask("FN-001")];
     render(<Column {...defaultProps} tasks={tasks} />);
     expect(screen.queryByTestId("quick-entry-box")).toBeNull();
   });
 
   it("does not render QuickEntryBox in non-triage columns", () => {
-    const tasks = [makeTask("KB-001")];
+    const tasks = [makeTask("FN-001")];
     render(<Column {...defaultProps} tasks={tasks} column="todo" onQuickCreate={vi.fn()} />);
     expect(screen.queryByTestId("quick-entry-box")).toBeNull();
   });
@@ -204,13 +204,13 @@ describe("Column same-column drop", () => {
   it("does not call onMoveTask when dropping task into its current column", () => {
     const onMoveTask = vi.fn().mockResolvedValue({} as Task);
     const addToast = vi.fn();
-    const tasks = [{ ...makeTask("KB-001"), column: "todo" as ColumnType }];
+    const tasks = [{ ...makeTask("FN-001"), column: "todo" as ColumnType }];
     
     render(<Column {...defaultProps} column="todo" tasks={tasks} onMoveTask={onMoveTask} addToast={addToast} />);
 
     const columnEl = screen.getByText("1").closest(".column") as HTMLElement;
     const dataTransfer = {
-      getData: vi.fn().mockReturnValue("KB-001"),
+      getData: vi.fn().mockReturnValue("FN-001"),
       dropEffect: "move",
     };
 
@@ -222,13 +222,13 @@ describe("Column same-column drop", () => {
 
   it("removes drag-over styling after drop even on same column", () => {
     const onMoveTask = vi.fn().mockResolvedValue({} as Task);
-    const tasks = [{ ...makeTask("KB-001"), column: "todo" as ColumnType }];
+    const tasks = [{ ...makeTask("FN-001"), column: "todo" as ColumnType }];
     
     render(<Column {...defaultProps} column="todo" tasks={tasks} onMoveTask={onMoveTask} />);
 
     const columnEl = screen.getByText("1").closest(".column") as HTMLElement;
     const dataTransfer = {
-      getData: vi.fn().mockReturnValue("KB-001"),
+      getData: vi.fn().mockReturnValue("FN-001"),
       dropEffect: "move",
     };
 
@@ -253,12 +253,12 @@ describe("Column same-column drop", () => {
 
     const columnEl = screen.getByText("0").closest(".column") as HTMLElement;
     const dataTransfer = {
-      getData: vi.fn().mockReturnValue("KB-001"),
+      getData: vi.fn().mockReturnValue("FN-001"),
       dropEffect: "move",
     };
 
     fireEvent.drop(columnEl, { dataTransfer });
 
-    expect(onMoveTask).toHaveBeenCalledWith("KB-001", "in-review");
+    expect(onMoveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
 });
