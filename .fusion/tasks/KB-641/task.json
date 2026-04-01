@@ -1,18 +1,17 @@
 {
   "id": "KB-641",
   "description": "Terminal still doesn't work. Failed to create session. Max sessions may be reached",
-  "column": "in-review",
+  "column": "done",
   "size": "S",
   "reviewLevel": 1,
   "currentStep": 5,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/ivory-breeze",
   "baseCommitSha": "edd6cc9c1e181d683018a4079900745071cb8753",
   "modelProvider": "openai-codex",
   "modelId": "gpt-5.4",
   "summary": "KB-641’s requested terminal error handling changes are already present in the scoped files: TerminalService returns a discriminated CreateSessionResult, the terminal session route maps each failure code to the correct HTTP status, and both terminal-service and route tests already assert the specific messages/statuses. I verified the implementation by inspecting the scoped files, but could not run tests or build because this worktree is missing node_modules; pnpm reported vitest/Node type dependencies unavailable. No code changes or documentation updates were required, and there were no out-of-scope findings.",
   "createdAt": "2026-04-01T01:52:07.518Z",
-  "updatedAt": "2026-04-01T14:09:29.233Z",
-  "columnMovedAt": "2026-04-01T14:09:29.233Z",
+  "updatedAt": "2026-04-01T14:11:15.300Z",
+  "columnMovedAt": "2026-04-01T14:11:15.300Z",
   "dependencies": [],
   "steps": [
     {

@@ -1,21 +1,55 @@
 {
   "id": "KB-620",
   "description": "Migration and First-Run Experience: Implement auto-migration from single-project to multi-project system, backward compatibility layer, and first-run setup wizard.\n\n1. **Auto-Migration** (`packages/core/src/db-migrate.ts` — extend existing):\n   - On first run post-upgrade, detect existing `.kb/` directory\n   - Auto-create central DB at `~/.pi/kb/kb-central.db` if missing\n   - Auto-register existing `.kb/` directory as a project in central registry\n   - Set project name from git remote name or directory name\n   - Set isolation mode to `in-process` (default)\n   - Idempotent: re-running with existing central DB is a no-op\n\n2. **Backward Compatibility**:\n   - Single-project users experience zero behavior change\n   - All existing commands work without `--project` flag\n   - Dashboard defaults to single project view when only one project registered\n   - No breaking changes to TaskStore API\n   - Existing `.kb/kb.db` stays in place, central DB is additive\n\n3. **First-Run Detection** — Logic to determine first-run state:\n   - No central DB exists → first run\n   - Central DB exists but empty → setup wizard\n   - Central DB exists with projects → normal operation\n   - Existing `.kb/` but no central DB → migration path\n\n4. **Setup Wizard Integration**:\n   - CLI: `fn init` extended to register project in central DB\n   - Dashboard: overview page shows migration prompt for existing single-project\n   - Both paths converge on same `CentralCore.registerProject()` call\n\n5. **Migration Testing**:\n   - Test: fresh install → setup wizard path\n   - Test: existing single project → auto-migration path\n   - Test: post-migration → all existing features work\n   - Test: idempotent migration (run twice, no errors)\n   - Test: backward compatibility (single project, no --project flag)\n\n6. **Rollback Safety**:\n   - Central DB deletion doesn't break existing per-project `.kb/` databases\n   - Document rollback procedure in AGENTS.md\n\n**File scope:**\n- `packages/core/src/db-migrate.ts` (extend with central DB migration)\n- `packages/core/src/central-core.ts` (add migration helpers)\n- `packages/cli/src/bin.ts` (extend `fn init` for multi-project)\n- `packages/core/test/migration.test.ts` (new)\n- `packages/core/test/backward-compat.test.ts` (new)\n\n**Context:** Read `packages/core/src/db-migrate.ts` for existing migration patterns, `packages/core/src/central-core.ts` for CentralCore API, `packages/cli/src/bin.ts` for CLI init command.",
-  "column": "todo",
-  "status": "queued",
+  "column": "done",
   "size": "M",
   "reviewLevel": 3,
-  "currentStep": 0,
+  "currentStep": 8,
+  "baseCommitSha": "1f796b93e69c8866ced338b8c327ca6b692ec88f",
+  "summary": "KB-620 Migration and First-Run Experience is fully implemented and verified. All components were already in place:\n\n**Core Implementation:**\n- `packages/core/src/migration.ts` - FirstRunDetector, MigrationCoordinator, BackwardCompat classes with full type definitions\n- `packages/core/src/db-migrate.ts` - Extended with needsCentralMigration(), detectExistingProjects(), autoMigrateToCentral()\n- `packages/core/src/central-core.ts` - autoRegisterProject(), getFirstRunState(), isProjectRegistered() methods\n\n**CLI Integration:**\n- `packages/cli/src/bin.ts` - fn init command with idempotent project creation/registration, migration hooks at startup\n\n**Dashboard Integration:**\n- `packages/dashboard/src/routes.ts` - /api/setup-state and /api/complete-setup endpoints\n\n**Tests:**\n- `packages/core/src/migration.test.ts` - 34 tests for first-run detection, migration coordination, idempotency\n- `packages/core/src/backward-compat.test.ts` - 13 tests for single-project auto-resolution, multi-project enforcement, legacy mode\n\n**Documentation:**\n- `AGENTS.md` - Multi-Project Migration section with auto-migration behavior, backward compatibility, rollback procedure\n- `.changeset/multi-project-migration.md` - Changeset for @fusion/core and @gsxdsm/fusion\n\n**Fixes Applied:**\n- Fixed TypeScript syntax error in executor.test.ts (malformed template literals)\n- Added missing hybridExecutorLog export to logger.ts\n\nAll 767 core tests pass, build succeeds.",
   "createdAt": "2026-03-31T23:26:48.611Z",
-  "updatedAt": "2026-04-01T14:10:26.198Z",
-  "columnMovedAt": "2026-03-31T23:35:32.331Z",
+  "updatedAt": "2026-04-01T14:19:51.346Z",
+  "columnMovedAt": "2026-04-01T14:19:51.346Z",
   "dependencies": [
     "KB-615",
     "KB-616",
     "KB-618",
     "KB-619"
   ],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "First-Run Detection Logic",
+      "status": "done"
+    },
+    {
+      "name": "Auto-Migration to Central Database",
+      "status": "done"
+    },
+    {
+      "name": "Backward Compatibility Layer",
+      "status": "done"
+    },
+    {
+      "name": "CLI Integration — fn init Command and Migration Hooks",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard First-Run Wizard Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
   "log": [
     {
       "timestamp": "2026-03-31T23:26:48.611Z",
@@ -38,6 +72,63 @@
       "timestamp": "2026-03-31T23:35:28.428Z",
       "action": "Spec review: APPROVE",
       "outcome": "This is a well-crafted specification that correctly builds upon existing patterns in the kb codebase. The spec accurately references real files (`db-migrate.ts`, `global-settings.ts`, `db.ts`, `bin.ts`, `index.ts`) and follows established conventions for migrations, SQLite storage, and testing. The stub strategy for incomplete dependencies is pragmatic, and the rollback safety considerations are thorough. The four-state first-run detection model (`fresh-install`, `needs-migration`, `setup-wizard"
+    },
+    {
+      "timestamp": "2026-04-01T14:16:49.795Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/faint-mesa"
+    },
+    {
+      "timestamp": "2026-04-01T14:16:49.811Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T14:16:52.529Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:01.453Z",
+      "action": "Fixed TypeScript syntax error in executor.test.ts (missing closing backticks in template literals)",
+      "outcome": "Tests can now compile and run"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:04.167Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:09.360Z",
+      "action": "Step 1 (First-Run Detection Logic) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:09.366Z",
+      "action": "Step 2 (Auto-Migration to Central Database) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:09.369Z",
+      "action": "Step 3 (Backward Compatibility Layer) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:09.372Z",
+      "action": "Step 4 (CLI Integration — fn init Command and Migration Hooks) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:09.377Z",
+      "action": "Step 5 (Dashboard First-Run Wizard Integration) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:09.380Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:09.383Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:19:13.433Z",
+      "action": "Task marked done by agent"
     }
+  ],
+  "modifiedFiles": [
+    "packages/engine/src/executor.test.ts",
+    "packages/engine/src/logger.ts"
   ]
 }

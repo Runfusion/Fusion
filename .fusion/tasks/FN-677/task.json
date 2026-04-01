@@ -1,17 +1,30 @@
 {
   "id": "FN-677",
   "description": "Fix pre-existing merge conflict in packages/core/src/types.ts at line 470. The file has unresolved git conflict markers (<<<<<<< HEAD, =======, >>>>>>>) from a bad merge commit (c2c830da). The conflict is about whether `summarize?: boolean` should be in TaskCreateInput. This causes build failures and test failures across the dashboard package.",
-  "column": "todo",
-  "status": "queued",
+  "column": "done",
   "size": "S",
   "reviewLevel": 0,
-  "currentStep": 0,
-  "blockedBy": "FN-669",
+  "currentStep": 3,
+  "baseCommitSha": "a9ccd86ece4985a2989fd97cea7b98a81d0fb44e",
+  "summary": "Added 6 missing type interfaces to packages/core/src/types.ts: DetectedProject, SetupState, ProjectSetupInput, SetupCompletionResult, MigrationOptions, and MigrationResult. Also added setupComplete?: boolean to GlobalSettings interface. All types are properly exported and the first-run.ts and migration-orchestrator.ts files now compile without errors. All 18 first-run tests pass successfully.",
   "createdAt": "2026-04-01T13:58:36.241Z",
-  "updatedAt": "2026-04-01T14:10:26.209Z",
-  "columnMovedAt": "2026-04-01T14:00:35.176Z",
+  "updatedAt": "2026-04-01T14:23:44.135Z",
+  "columnMovedAt": "2026-04-01T14:23:44.135Z",
   "dependencies": [],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Add Missing Type Definitions",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
   "log": [
     {
       "timestamp": "2026-04-01T13:58:36.241Z",
@@ -25,6 +38,37 @@
       "timestamp": "2026-04-01T14:00:32.976Z",
       "action": "Spec review: APPROVE",
       "outcome": "The specification accurately identifies a real build-breaking issue: `first-run.ts` and `migration-orchestrator.ts` import 6 types (`DetectedProject`, `SetupState`, `ProjectSetupInput`, `SetupCompletionResult`, `MigrationOptions`, `MigrationResult`) that do not exist in `types.ts`. The spec correctly maps the required type definitions based on actual usage patterns in the source files and includes a secondary requirement to add `setupComplete?: boolean` to `GlobalSettings`. The size (S) and revi"
+    },
+    {
+      "timestamp": "2026-04-01T14:21:51.607Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/lemon-iris"
+    },
+    {
+      "timestamp": "2026-04-01T14:21:51.624Z",
+      "action": "Step 0 (Add Missing Type Definitions) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T14:21:59.185Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:23:22.195Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:23:24.682Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:23:27.256Z",
+      "action": "Step 0 (Add Missing Type Definitions) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:23:27.259Z",
+      "action": "Task marked done by agent"
     }
+  ],
+  "modifiedFiles": [
+    "packages/core/src/types.ts"
   ]
 }

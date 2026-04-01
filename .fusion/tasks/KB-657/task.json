@@ -1,16 +1,15 @@
 {
   "id": "KB-657",
   "description": "Have a button to expand the quick add view to show additional options. Keep it in expanded until button is pressed . Both board and list vkdes",
-  "column": "in-review",
+  "column": "done",
   "size": "M",
   "reviewLevel": 2,
   "currentStep": 6,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/azure-cedar",
   "baseCommitSha": "52e34cdd8255d5dbbb780acacaf9affc90c11302",
   "summary": "Completed task KB-657: Added expand/collapse toggle button to Quick Add views. Both QuickEntryBox (list view) and InlineCreateCard (board view) now have manual toggle buttons with ChevronDown/ChevronUp icons. The components were already implemented in KB-656 with: isExpanded state defaulting to false, no auto-expand on focus, no auto-collapse on blur, proper accessibility attributes (aria-expanded, aria-controls), and CSS styles for collapsed/expanded states. Updated ListView tests to use toggle button instead of focus for expanding QuickEntryBox. Created changeset file documenting the UI behavior improvement. All 98 component tests pass (61 QuickEntryBox + 37 InlineCreateCard).",
   "createdAt": "2026-04-01T02:38:43.252Z",
-  "updatedAt": "2026-04-01T14:10:06.038Z",
-  "columnMovedAt": "2026-04-01T14:10:06.038Z",
+  "updatedAt": "2026-04-01T14:13:29.632Z",
+  "columnMovedAt": "2026-04-01T14:13:29.632Z",
   "dependencies": [
     "KB-656"
   ],

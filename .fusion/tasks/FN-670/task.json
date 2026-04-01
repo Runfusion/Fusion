@@ -1,15 +1,15 @@
 {
   "id": "FN-670",
   "description": "Make sure the system always ensures build passes before merging to main. Make sure this is in the promots",
-  "column": "in-progress",
+  "column": "done",
   "size": "M",
   "reviewLevel": 2,
-  "currentStep": 2,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/azure-lotus",
+  "currentStep": 6,
   "baseCommitSha": "d9fa45fb36c9763edcd0b0bdbce057cc811a9026",
+  "summary": "Successfully implemented mandatory build verification before merging to main (FN-670). Added build verification section to the merger system prompt, passed build command to merge context, updated executor prompt to emphasize build verification, and implemented build failure handling with a report_build_failure tool. When build fails during merge, the system resets staged changes with git reset --merge, logs the failure, and keeps the task in \"in-review\" for human investigation. All 88 merger tests pass including 6 new build verification tests. Created changeset documenting the new behavior.",
   "createdAt": "2026-04-01T13:51:35.917Z",
-  "updatedAt": "2026-04-01T14:10:02.040Z",
-  "columnMovedAt": "2026-04-01T14:08:26.163Z",
+  "updatedAt": "2026-04-01T14:28:38.966Z",
+  "columnMovedAt": "2026-04-01T14:28:38.966Z",
   "dependencies": [],
   "steps": [
     {
@@ -22,19 +22,19 @@
     },
     {
       "name": "Update Executor Prompt Template",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "name": "Handle Build Failure in Merge Flow",
-      "status": "pending"
+      "status": "done"
     },
     {
       "name": "Testing & Verification",
-      "status": "pending"
+      "status": "done"
     },
     {
       "name": "Documentation & Delivery",
-      "status": "pending"
+      "status": "done"
     }
   ],
   "log": [
@@ -114,6 +114,127 @@
     {
       "timestamp": "2026-04-01T14:10:02.040Z",
       "action": "Step 2 (Update Executor Prompt Template) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:11:04.585Z",
+      "action": "Step 2 (Update Executor Prompt Template) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:11:04.589Z",
+      "action": "code review requested for Step 2 (Pass Build Command to Merge Context)"
+    },
+    {
+      "timestamp": "2026-04-01T14:12:23.816Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly passes the build command through the merge flow. The `buildCommand` parameter is properly threaded from `aiMergeTask()` → `executeMergeAttempt()` → `runAiAgentForCommit()` → `buildMergePrompt()`, with empty strings normalized to `undefined`. The \"## Build command\" section is conditionally added to the merge prompt with the exact format specified in the requirements."
+    },
+    {
+      "timestamp": "2026-04-01T14:12:24.875Z",
+      "action": "plan review requested for Step 3 (Update Executor Prompt Template)"
+    },
+    {
+      "timestamp": "2026-04-01T14:12:52.998Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is sound and will achieve its stated outcome. The instruction to add build verification guidance to the executor's \"Begin\" section is clear and correctly targeted. The `settings` parameter with `buildCommand` is already available in the function signature, and the \"## Project Commands\" section already displays the build command when configured."
+    },
+    {
+      "timestamp": "2026-04-01T14:12:55.769Z",
+      "action": "Step 3 (Handle Build Failure in Merge Flow) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:13:33.939Z",
+      "action": "Step 3 (Handle Build Failure in Merge Flow) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:13:33.944Z",
+      "action": "code review requested for Step 3 (Update Executor Prompt Template)"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:23.890Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly adds build verification instructions to the executor prompt template. The change is minimal and precise—adding the exact required text to the \"Begin\" section and leveraging the existing Project Commands section that already displays the build command when configured."
+    },
+    {
+      "timestamp": "2026-04-01T14:14:27.148Z",
+      "action": "plan review requested for Step 4 (Handle Build Failure in Merge Flow)"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:54.035Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The step's approach contains a critical misunderstanding of how the agent session works. The plan assumes `session.prompt()` returns the agent's text response, but it doesn't—the pi-coding-agent system captures output via callbacks, not return values. Additionally, the plan doesn't account for the fallback commit mechanism that would incorrectly succeed even when the build fails."
+    },
+    {
+      "timestamp": "2026-04-01T14:14:59.673Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:59.677Z",
+      "action": "Revising Step 4 approach based on review feedback",
+      "outcome": "The original plan assumed session.prompt() returns agent text, which is incorrect. Using a tool-based failure signal (report_build_failure) is the correct approach. This tool will set a flag that we can check after session.prompt() resolves."
+    },
+    {
+      "timestamp": "2026-04-01T14:15:41.750Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:15:41.754Z",
+      "action": "code review requested for Step 4 (Handle Build Failure in Merge Flow)"
+    },
+    {
+      "timestamp": "2026-04-01T14:16:52.040Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The Step 4 implementation correctly adds build failure handling to the merge flow with proper error propagation, git reset, and task state preservation. However, **critical test coverage is missing** — none of the required tests for build verification functionality were added to `merger.test.ts`, which is a blocking requirement per Step 5 of the task specification."
+    },
+    {
+      "timestamp": "2026-04-01T14:23:59.074Z",
+      "action": "code review requested for Step 4 (Handle Build Failure in Merge Flow)"
+    },
+    {
+      "timestamp": "2026-04-01T14:24:52.562Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation correctly handles build failures in the merge flow. The `runAiAgentForCommit()` function now returns a structured result object `{ success: boolean; error?: string }` instead of a plain boolean. Build failures are properly detected, logged, and cause the merge to abort with `git reset --merge` called to clean up staged changes. The error propagates correctly to keep the task in \"in-review\" status."
+    },
+    {
+      "timestamp": "2026-04-01T14:24:55.795Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:24:57.223Z",
+      "action": "plan review requested for Step 6 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-04-01T14:25:20.761Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The codebase has been fully implemented for Steps 1-5. The merger.ts file contains all build verification logic including the system prompt section, build command passing, `report_build_failure` tool, and proper error handling with `git reset --merge`. The executor.ts has the build verification instruction at line 1875. Comprehensive tests are in place in merger.test.ts. Step 6 only requires creating the changeset file, which is straightforward."
+    },
+    {
+      "timestamp": "2026-04-01T14:25:21.778Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:25:29.262Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:25:30.628Z",
+      "action": "code review requested for Step 6 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-04-01T14:26:15.902Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "Step 6 has been correctly implemented. The changeset file is properly created with accurate documentation of the new build verification behavior, and the AGENTS.md correctly requires no updates since this is an internal engine behavior change. All prior steps (1-5) are also fully implemented with correct logic, proper test coverage, and adherence to the specification."
+    },
+    {
+      "timestamp": "2026-04-01T14:26:30.483Z",
+      "action": "Task marked done by agent"
     }
+  ],
+  "modifiedFiles": [
+    ".changeset/build-verification-before-merge.md",
+    "packages/engine/package.json",
+    "packages/engine/src/executor.test.ts",
+    "packages/engine/src/executor.ts",
+    "packages/engine/src/merger.test.ts",
+    "packages/engine/src/merger.ts"
   ]
 }

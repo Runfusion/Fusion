@@ -308,7 +308,7 @@ export function deleteTaskComment(id: string, commentId: string): Promise<Task> 
 }
 
 export function addComment(id: string, text: string): Promise<Task> {
-  return api<Task>(`/tasks/${id}/steer`, {
+  return api<Task>(`/tasks/${id}/comments`, {
     method: "POST",
     body: JSON.stringify({ text }),
   });

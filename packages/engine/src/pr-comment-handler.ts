@@ -81,11 +81,11 @@ export class PrCommentHandler {
       return;
     }
 
-    // Build steering comment text
-    const text = this.buildSteeringText(prInfo, comment, hasCodeSuggestions);
+    // Build comment text
+    const text = this.buildCommentText(prInfo, comment, hasCodeSuggestions);
 
     try {
-      await this.store.addComment(taskId, text, "agent");
+      await this.store.addTaskComment(taskId, text, "agent");
       prMonitorLog.log(`Added comment for PR review #${comment.id}`);
     } catch (err) {
       prMonitorLog.error(`Failed to add comment for ${taskId}:`, err);
@@ -117,9 +117,9 @@ export class PrCommentHandler {
   }
 
   /**
-   * Build steering comment text from PR review comment.
+   * Build comment text from PR review comment.
    */
-  private buildSteeringText(
+  private buildCommentText(
     prInfo: PrInfo,
     comment: PrComment,
     hasCodeSuggestions: boolean

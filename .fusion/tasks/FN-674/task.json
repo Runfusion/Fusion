@@ -1,19 +1,32 @@
 {
   "id": "FN-674",
   "description": "List view on the dashboard is just a blank page",
-  "column": "todo",
-  "status": "queued",
+  "column": "done",
   "size": "S",
   "reviewLevel": 2,
-  "currentStep": 0,
-  "blockedBy": "KB-641",
+  "currentStep": 3,
+  "baseCommitSha": "cb3428ac9822acbbe5bc1cbc5b870f52c58591c5",
   "modelProvider": "anthropic",
   "modelId": "claude-sonnet-4-6",
+  "summary": "Fixed blank list view in dashboard by modifying the /api/tasks GET endpoint in routes.ts to handle the projectId query parameter. When provided, the endpoint dynamically imports CentralCore to look up the project, creates a TaskStore for that project's path, fetches tasks, and properly closes both stores. Added TaskStore.close() method to packages/core/src/store.ts for resource cleanup. Added 5 backend route tests in routes.test.ts and 7 frontend API tests in project-routes.test.ts. All 320 relevant tests pass with no regressions.",
   "createdAt": "2026-04-01T13:56:15.834Z",
-  "updatedAt": "2026-04-01T14:10:26.207Z",
-  "columnMovedAt": "2026-04-01T13:59:03.387Z",
+  "updatedAt": "2026-04-01T14:27:38.730Z",
+  "columnMovedAt": "2026-04-01T14:27:38.730Z",
   "dependencies": [],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Add Project-Aware Task Fetching to Backend",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
   "log": [
     {
       "timestamp": "2026-04-01T13:56:15.834Z",
@@ -27,6 +40,97 @@
       "timestamp": "2026-04-01T13:59:01.268Z",
       "action": "Spec review: APPROVE",
       "outcome": "The specification accurately identifies a real bug: the frontend's `fetchProjectTasks()` sends `projectId` to `/api/tasks`, but the backend endpoint ignores it. The spec correctly identifies the file locations, provides a clear implementation approach using dynamic imports (matching the existing pattern for `AgentStore`), and requires appropriate test coverage. One minor gap exists around `TaskStore.getOrCreateForProject` which doesn't exist in the current codebase."
+    },
+    {
+      "timestamp": "2026-04-01T14:11:26.402Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/proud-thorn"
+    },
+    {
+      "timestamp": "2026-04-01T14:11:26.438Z",
+      "action": "Step 0 (Add Project-Aware Task Fetching to Backend) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T14:11:31.692Z",
+      "action": "Step 0 (Add Project-Aware Task Fetching to Backend) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:12:23.751Z",
+      "action": "Step 0 (Add Project-Aware Task Fetching to Backend) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:12:26.158Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:12:29.982Z",
+      "action": "plan review requested for Step 1 (Add Project-Aware Task Fetching to Backend)"
+    },
+    {
+      "timestamp": "2026-04-01T14:13:12.148Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan correctly identifies the problem (backend ignores `projectId` parameter) and the general solution approach. However, it contains critical gaps around TaskStore lifecycle management, resource cleanup, and performance overhead that would cause resource leaks and degraded performance in production."
+    },
+    {
+      "timestamp": "2026-04-01T14:13:17.702Z",
+      "action": "Plan review REVISE: Need to add TaskStore.close() for resource cleanup, align with existing CentralCore pattern (don't close central after each request), consistent error handling (404 for not found, 200 empty for unavailable), import TaskStore dynamically alongside CentralCore"
+    },
+    {
+      "timestamp": "2026-04-01T14:17:10.413Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:17:10.418Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:17:27.515Z",
+      "action": "code review requested for Step 1 (Add Project-Aware Task Fetching to Backend)"
+    },
+    {
+      "timestamp": "2026-04-01T14:17:59.243Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation correctly adds project-aware task fetching to the `/api/tasks` endpoint, following the pattern established in the activity-feed endpoint. However, there are two blocking issues: **missing `central.close()`** causes a resource leak, and **no tests were added** for the new functionality as explicitly required by the step."
+    },
+    {
+      "timestamp": "2026-04-01T14:19:28.848Z",
+      "action": "code review requested for Step 1 (Add Project-Aware Task Fetching to Backend)"
+    },
+    {
+      "timestamp": "2026-04-01T14:20:23.077Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation adds project-aware task fetching to `/api/tasks` endpoint, but has a critical bug where `TaskStore.init()` is never called on the dynamically created project store, which may cause runtime failures. Additionally, the required changeset file is missing, and the test coverage only validates frontend API calls rather than the backend route behavior with CentralCore integration."
+    },
+    {
+      "timestamp": "2026-04-01T14:23:53.247Z",
+      "action": "code review requested for Step 1 (Add Project-Aware Task Fetching to Backend)"
+    },
+    {
+      "timestamp": "2026-04-01T14:24:42.053Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds project-aware task fetching to the `/api/tasks` endpoint. The code properly handles the `projectId` query parameter by delegating to the appropriate project's TaskStore via CentralCore, includes graceful degradation, and maintains backward compatibility. Tests are comprehensive in both the backend (`routes.test.ts`) and frontend API layer (`project-routes.test.ts`). A proper changeset has been added."
+    },
+    {
+      "timestamp": "2026-04-01T14:24:46.332Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:24:52.026Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:25:31.622Z",
+      "action": "Implementation complete. Modified routes.ts to handle projectId query param via CentralCore/TaskStore delegation. Added close() to TaskStore in core. Added comprehensive tests in both routes.test.ts (5 backend tests) and project-routes.test.ts (7 frontend API tests). Added changeset file for the patch release.\""
+    },
+    {
+      "timestamp": "2026-04-01T14:25:36.442Z",
+      "action": "Task marked done by agent"
     }
+  ],
+  "modifiedFiles": [
+    ".changeset/fix-blank-list-view-project-tasks.md",
+    "packages/core/src/store.ts",
+    "packages/dashboard/src/__tests__/project-routes.test.ts",
+    "packages/dashboard/src/routes.test.ts",
+    "packages/dashboard/src/routes.ts"
   ]
 }

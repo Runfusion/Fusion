@@ -1,0 +1,107 @@
+{
+  "id": "FN-678",
+  "title": "Refinement: KB-653",
+  "description": "This isn’t working\n\nRefines: KB-653",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 3,
+  "baseCommitSha": "a8dbd95d8c4d38001b0934c8db86547350bb2280",
+  "summary": "Implemented title truncation for TaskCard component as specified in KB-653. Added `truncate()` utility function that truncates strings over 140 characters with ellipsis. Modified the `.card-title` div to display truncated text with the full text available in a tooltip via the `title` attribute. Updated all existing tests and added new tests for truncation behavior, tooltip display, edge cases (exactly 140 chars), and description fallback truncation. Created a changeset file for the patch-level change to @gsxdsm/fusion. All 143 TaskCard tests pass and the build succeeds.",
+  "createdAt": "2026-04-01T14:12:36.493Z",
+  "updatedAt": "2026-04-01T14:17:04.050Z",
+  "columnMovedAt": "2026-04-01T14:17:04.050Z",
+  "dependencies": [
+    "KB-653"
+  ],
+  "steps": [
+    {
+      "name": "Implement Title Truncation and Tooltip",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T14:12:36.493Z",
+      "action": "Created as refinement of KB-653"
+    },
+    {
+      "timestamp": "2026-04-01T14:13:23.038Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T14:13:48.432Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, accurate, and actionable. All file references point to real locations, the mission is clear and bounded, and steps have concrete verifiable outcomes. Testing requirements demand real automated tests with assertions. The task is appropriately sized as Small (S) with Review Level 0 given its localized scope."
+    },
+    {
+      "timestamp": "2026-04-01T14:13:59.854Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/crisp-trout"
+    },
+    {
+      "timestamp": "2026-04-01T14:13:59.873Z",
+      "action": "Step 0 (Implement Title Truncation and Tooltip) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:06.487Z",
+      "action": "Step 0 (Implement Title Truncation and Tooltip) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:15.052Z",
+      "action": "Step 0 (Implement Title Truncation and Tooltip) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:15.055Z",
+      "action": "Preflight complete. Found title display at line ~496 in TaskCard.tsx, existing truncate() function in TaskDetailModal.tsx at line 90, and existing title display tests starting at line 2499.",
+      "outcome": "Ready to implement truncation"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:16.187Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:27.264Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:27.268Z",
+      "action": "Added truncate() utility function and modified .card-title div to truncate text to 140 chars with ellipsis and show full text in tooltip via title attribute.",
+      "outcome": "TaskCard.tsx modified successfully"
+    },
+    {
+      "timestamp": "2026-04-01T14:14:36.495Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:15:34.762Z",
+      "action": "All TaskCard tests pass (143 tests). The failures in the full suite are unrelated to TaskCard changes (WorkspaceSelector and other components).",
+      "outcome": "TaskCard-specific tests verified"
+    },
+    {
+      "timestamp": "2026-04-01T14:15:41.298Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:15:41.302Z",
+      "action": "Step 2 complete. TaskCard tests pass (143 tests), dashboard build succeeds. Some unrelated test failures exist in other components.",
+      "outcome": "Tests and build verified"
+    },
+    {
+      "timestamp": "2026-04-01T14:15:59.877Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "modifiedFiles": [
+    ".changeset/truncate-board-titles.md",
+    "packages/dashboard/app/components/TaskCard.tsx",
+    "packages/dashboard/app/components/__tests__/TaskCard.test.tsx"
+  ]
+}

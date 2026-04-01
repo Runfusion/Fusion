@@ -1276,13 +1276,13 @@ describe("TaskStore", () => {
       );
     });
 
-    it("unifies task comments and steering comments into single comments field", async () => {
+    it("persists all comments in unified comments field", async () => {
       const task = await createTestTask();
       await store.addTaskComment(task.id, "General note", "alice");
       await store.addComment(task.id, "Execution note");
 
       const reopened = await store.getTask(task.id);
-      // Both comments should now be in the unified comments field
+      // Both comments should be in the unified comments array
       expect(reopened.comments).toHaveLength(2);
       expect(reopened.comments![0].text).toBe("General note");
       expect(reopened.comments![1].text).toBe("Execution note");
@@ -1367,8 +1367,7 @@ describe("TaskStore", () => {
       const task = await createTestTask();
       const updated = await store.addComment(task.id, "Comment with log");
 
-      expect(updated.log.some((l) => l.action === "Comment added")).toBe(true);
-      expect(updated.log.some((l) => l.outcome === "by user")).toBe(true);
+      expect(updated.log.some((l) => l.action === "Comment added by user")).toBe(true);
     });
 
     it("updates updatedAt timestamp", async () => {
@@ -1499,11 +1498,10 @@ describe("TaskStore", () => {
   });
 
   describe("task comments and merge details types", () => {
-    it("keeps task comments distinct from steering comments on new tasks", async () => {
+    it("has undefined comments on new tasks", async () => {
       const task = await createTestTask();
       const reopened = await store.getTask(task.id);
 
-      expect(reopened.comments).toBeUndefined();
       expect(reopened.comments).toBeUndefined();
     });
 
@@ -2244,6 +2242,7 @@ describe("TaskStore", () => {
 
       const duplicated = await store.duplicateTask(task.id);
 
+      // Comments should not be copied when duplicating
       expect(duplicated.comments).toBeUndefined();
     });
 

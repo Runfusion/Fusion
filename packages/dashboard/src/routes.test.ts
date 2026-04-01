@@ -1987,7 +1987,7 @@ describe("Pause/Unpause endpoints", () => {
             id: "1234567890-abc123",
             text: "Please handle the edge case",
             createdAt: "2026-01-01T00:00:00.000Z",
-            author: "user" as const,
+            author: "user",
           },
         ],
       };

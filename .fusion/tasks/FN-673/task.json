@@ -1,18 +1,17 @@
 {
   "id": "FN-673",
   "description": "The Claude usage drop down is always saying rate limited now. It wasn’t like this before. Something broke. Fix it. It used to capture from the cli like codexbar",
-  "column": "in-review",
+  "column": "done",
   "size": "S",
   "reviewLevel": 1,
   "currentStep": 3,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/bold-oak",
   "baseCommitSha": "e13302579838d5891e4079eddb7a549ff4b9d712",
   "modelProvider": "anthropic",
   "modelId": "claude-opus-4-6",
   "summary": "Fixed the Claude usage indicator that was always showing \"Rate limited\" status. Root cause: the `fetchClaudeUsage()` function in `packages/dashboard/src/usage.ts` was sending an outdated `anthropic-beta: oauth-2025-04-20` header that caused the API to return error responses. Fix: (1) removed the outdated beta header, (2) added retry logic with exponential backoff for transient 429 responses (max 3 retries, respects retry-after header), (3) auth errors (401/403) fail immediately without retrying. Added 7 new tests covering header removal, retry behavior, exponential backoff, retry-after header respect, and auth error non-retry behavior. All 46 usage tests pass.",
   "createdAt": "2026-04-01T13:52:59.547Z",
-  "updatedAt": "2026-04-01T14:08:13.177Z",
-  "columnMovedAt": "2026-04-01T14:08:13.177Z",
+  "updatedAt": "2026-04-01T14:11:09.050Z",
+  "columnMovedAt": "2026-04-01T14:11:09.050Z",
   "dependencies": [],
   "steps": [
     {

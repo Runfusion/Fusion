@@ -989,7 +989,7 @@ export async function runTaskSteer(id: string, message?: string, projectName?: s
   // Show success with preview
   const preview = trimmed.length > 60 ? trimmed.slice(0, 60) + "…" : trimmed;
   console.log();
-  console.log(`  ✓ Steering comment added to ${task.id}`);
+  console.log(`  ✓ Comment added to ${task.id}`);
   console.log(`    "${preview}"`);
   console.log();
 }

@@ -3,7 +3,7 @@ import { PrCommentHandler } from "./pr-comment-handler.js";
 import type { TaskStore, Task } from "@fusion/core";
 
 const mockStore = {
-  addComment: vi.fn<(id: string, text: string, author?: "user" | "agent") => Promise<Task>>(),
+  addTaskComment: vi.fn<(id: string, text: string, author?: string) => Promise<Task>>(),
   createTask: vi.fn<(input: Parameters<TaskStore["createTask"]>[0]) => Promise<Task>>().mockResolvedValue({ id: "FN-123" } as Task),
 } as unknown as TaskStore;
 
@@ -49,7 +49,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).not.toHaveBeenCalled();
+      expect(mockStore.addTaskComment).not.toHaveBeenCalled();
     });
   });
 
@@ -65,7 +65,7 @@ describe("PrCommentHandler", () => {
       { body: "Consider using a different approach", keyword: "consider" },
       { body: "I suggest renaming this", keyword: "suggest" },
       { body: "Recommend adding tests", keyword: "recommend" },
-    ])("creates steering comment for actionable feedback containing '$keyword': $body", async ({ body }) => {
+    ])("creates comment for actionable feedback containing '$keyword': $body", async ({ body }) => {
       await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
@@ -77,12 +77,12 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).toHaveBeenCalled();
+      expect(mockStore.addTaskComment).toHaveBeenCalled();
     });
   });
 
   describe("code suggestions", () => {
-    it("creates steering comment for comments with code blocks", async () => {
+    it("creates comment for comments with code blocks", async () => {
       await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
@@ -94,10 +94,10 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).toHaveBeenCalled();
+      expect(mockStore.addTaskComment).toHaveBeenCalled();
     });
 
-    it("creates steering comment for inline code suggestions", async () => {
+    it("creates comment for inline code suggestions", async () => {
       await handler.handleNewComments("FN-001", mockPrInfo, [
         {
           id: 1,
@@ -109,11 +109,11 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).toHaveBeenCalled();
+      expect(mockStore.addTaskComment).toHaveBeenCalled();
     });
   });
 
-  describe("steering comment content", () => {
+  describe("comment content", () => {
     it("includes PR info and comment details", async () => {
       await handler.handleNewComments("FN-001", mockPrInfo, [
         {
@@ -126,7 +126,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const call = (mockStore.addComment as ReturnType<typeof vi.fn>).mock.calls[0];
+      const call = (mockStore.addTaskComment as ReturnType<typeof vi.fn>).mock.calls[0];
       const text = call[1] as string;
 
       expect(text).toContain("PR Review Feedback");
@@ -151,7 +151,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const call = (mockStore.addComment as ReturnType<typeof vi.fn>).mock.calls[0];
+      const call = (mockStore.addTaskComment as ReturnType<typeof vi.fn>).mock.calls[0];
       const text = call[1] as string;
 
       expect(text.length).toBeLessThan(longBody.length);
@@ -170,7 +170,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).toHaveBeenCalledWith(
+      expect(mockStore.addTaskComment).toHaveBeenCalledWith(
         "FN-001",
         expect.any(String),
         "agent"
@@ -189,7 +189,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const text = (mockStore.addComment as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      const text = (mockStore.addTaskComment as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
       expect(text).toContain("This PR is already merged");
       expect(text).toContain("follow-up work");
     });

@@ -529,7 +529,7 @@ describe("addComment", () => {
     expect(result.id).toBe("FN-001");
     expect(result.comments).toHaveLength(1);
     expect(result.comments![0].text).toBe("Please handle the edge case");
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/steer", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments", {
       headers: { "Content-Type": "application/json" },
       method: "POST",
       body: JSON.stringify({ text: "Please handle the edge case" }),

@@ -7,7 +7,7 @@
   "currentStep": 3,
   "summary": "Implemented board title truncation to 140 characters in TaskCard.tsx. Added truncate() utility function that truncates text to max 140 chars with ellipsis (…) suffix. The full untruncated text is shown in a tooltip via the title attribute. Added 7 comprehensive test cases covering: short titles, exactly 140 chars, over 140 chars, description fallback, and tooltip verification. All tests pass. Created changeset file for the patch release.",
   "createdAt": "2026-04-01T02:36:33.043Z",
-  "updatedAt": "2026-04-01T05:42:14.023Z",
+  "updatedAt": "2026-04-01T14:12:36.499Z",
   "columnMovedAt": "2026-04-01T05:42:14.023Z",
   "dependencies": [],
   "steps": [
@@ -78,6 +78,11 @@
     {
       "timestamp": "2026-04-01T05:41:44.482Z",
       "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-04-01T14:12:36.499Z",
+      "action": "Refinement requested",
+      "outcome": "This isn’t working"
     }
   ]
 }

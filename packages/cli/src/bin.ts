@@ -76,7 +76,7 @@ Usage:
   fn task unpause <id>                Unpause a task (resumes automation)
   fn task comment <id> [message]      Add task comment (prompts if message omitted)
   fn task comments <id>               List task comments
-  fn task steer <id> [message]        Add steering comment (prompts if message omitted)
+  fn task steer <id> [message]        Alias for 'task comment'
   fn task retry <id>                  Retry a failed task (clears error, moves to todo)
   fn task pr-create <id> [--title <title>] [--base <branch>] [--body <body>]
                          Create a GitHub PR for an in-review task

@@ -1622,7 +1622,7 @@ describe("buildExecutionPrompt", () => {
           id: "1",
           text: "Please handle the edge case",
           createdAt: new Date().toISOString(),
-          author: "user" as const,
+          author: "user",
         },
       ],
     });
@@ -1631,7 +1631,7 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("## Steering Comments");
     expect(result).toContain("**user**");
     expect(result).toContain("> Please handle the edge case");
-    expect(result).toContain("The following comments were added during execution");
+    expect(result).toContain("The following comments were added");
   });
 
   it("formats multiple comments correctly", () => {
@@ -1642,13 +1642,13 @@ describe("buildExecutionPrompt", () => {
           id: "1",
           text: "First comment",
           createdAt: new Date(now.getTime() - 60000).toISOString(), // 1 minute ago
-          author: "user" as const,
+          author: "user",
         },
         {
           id: "2",
           text: "Second comment",
           createdAt: now.toISOString(),
-          author: "agent" as const,
+          author: "agent",
         },
       ],
     });
@@ -1660,8 +1660,8 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("> Second comment");
   });
 
-  it("omits Comments section when steeringComments is empty", () => {
-    const task = createMockTaskDetail({ steeringComments: [] });
+  it("omits Comments section when comments is empty", () => {
+    const task = createMockTaskDetail({ comments: [] });
     const result = buildExecutionPrompt(task);
 
     expect(result).not.toContain("## Steering Comments");
@@ -1675,14 +1675,14 @@ describe("buildExecutionPrompt", () => {
   });
 
   it("includes only the 10 most recent comments", () => {
-    const comments = Array.from({ length: 15 }, (_, i) => ({
+    const allComments = Array.from({ length: 15 }, (_, i) => ({
       id: `${i}`,
       text: `Comment ${i}`,
       createdAt: new Date().toISOString(),
-      author: "user" as const,
+      author: "user",
     }));
 
-    const task = createMockTaskDetail({ comments });
+    const task = createMockTaskDetail({ comments: allComments });
     const result = buildExecutionPrompt(task);
 
     // Should include comments 5-14 (the 10 most recent), not 0-4

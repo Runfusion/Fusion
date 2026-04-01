@@ -150,7 +150,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       steps: fromJson<import("./types.js").TaskStep[]>(row.steps) || [],
       log: fromJson<import("./types.js").TaskLogEntry[]>(row.log) || [],
       attachments: (() => { const a = fromJson<TaskAttachment[]>(row.attachments); return a && a.length > 0 ? a : undefined; })(),
-      comments: (() => { const c = fromJson<import("./types.js").TaskComment[]>(row.comments); return c && c.length > 0 ? c : undefined; })(),
+      comments: (() => {
+        // Merge legacy steeringComments and comments into unified comments field
+        const legacySteering = fromJson<Array<{ id: string; text: string; createdAt: string; author: string }>>(row.steeringComments) || [];
+        const regularComments = fromJson<import("./types.js").TaskComment[]>(row.comments) || [];
+        const merged = [...legacySteering, ...regularComments];
+        return merged.length > 0 ? merged : undefined;
+      })(),
       workflowStepResults: (() => { const w = fromJson<import("./types.js").WorkflowStepResult[]>(row.workflowStepResults); return w && w.length > 0 ? w : undefined; })(),
       prInfo: fromJson<import("./types.js").PrInfo>(row.prInfo),
       issueInfo: fromJson<import("./types.js").IssueInfo>(row.issueInfo),
@@ -208,6 +214,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       toJson(task.steps || []),
       toJson(task.log || []),
       toJson(task.attachments || []),
+      "[]", // steeringComments column - no longer used, write empty array
       toJson(task.comments || []),
       toJson(task.workflowStepResults || []),
       toJsonNullable(task.prInfo),
@@ -1997,6 +2004,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * Comments are injected into the AI execution context.
    * When a comment is added to a task in the "done" column by a user,
    * automatically creates a refinement task with the comment text as feedback.
+   * 
+   * Note: Now uses the unified comments system (TaskComment).
    */
   async addComment(
     id: string,

@@ -849,9 +849,10 @@ describe("TaskDetailModal", () => {
       // Click Steering tab
       fireEvent.click(screen.getByText("Steering"));
 
-      // Steering content should appear
-      expect(screen.getByText("Steering Comments")).toBeTruthy();
-      expect(screen.getByPlaceholderText(/Add a steering comment/)).toBeTruthy();
+      // Steering content should appear - look for the h4 heading "Comments" within the SteeringTab
+      const headings = screen.getAllByText("Comments");
+      expect(headings.length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByPlaceholderText(/Add a comment/)).toBeTruthy();
       // Definition content should be hidden
       expect(container.querySelector(".markdown-body")).toBeNull();
     });

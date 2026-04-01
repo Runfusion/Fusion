@@ -1,17 +1,15 @@
 {
   "id": "FN-671",
   "description": "I can’t access all header icons now on mobile",
-  "column": "in-review",
-  "status": "merging",
+  "column": "done",
   "size": "S",
   "reviewLevel": 1,
   "currentStep": 6,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/eager-thorn",
   "baseCommitSha": "c3552af142f40e5833f5207c74af0e60de491e99",
   "summary": "Successfully fixed the mobile header layout by moving Usage and Activity Log buttons to the overflow menu. Changes include:\n\n1. Modified Header.tsx to wrap Usage and Activity Log buttons with `!isMobile` condition (desktop-only inline display)\n2. Added both buttons to the mobile overflow menu in alphabetical order (View Activity Log, View Usage)\n3. Reorganized the entire overflow menu alphabetically: Browse Files, Create a task with AI planning, Git Manager, Import from GitHub, Manage Agents, Open Terminal, Scheduled Tasks, Settings, View Activity Log, View Usage, Workflow Steps\n4. Updated Header.test.tsx with new tests for Activity Log and corrected mobile Usage behavior tests\n5. All 57 Header tests passing, dashboard build successful\n6. Created changeset for the patch release",
   "createdAt": "2026-04-01T13:51:52.837Z",
-  "updatedAt": "2026-04-01T14:06:53.198Z",
-  "columnMovedAt": "2026-04-01T14:06:45.151Z",
+  "updatedAt": "2026-04-01T14:10:52.752Z",
+  "columnMovedAt": "2026-04-01T14:10:52.752Z",
   "dependencies": [],
   "steps": [
     {

@@ -224,7 +224,10 @@ async function migrateTasks(kbDir: string, db: Database): Promise<void> {
         toJson(task.steps || []),
         toJson(task.log || []),
         toJson(task.attachments || []),
-        toJson(mergedComments),
+        toJson(task.attachments || []),
+        "[]", // steeringComments column - no longer used, write empty array
+        // Merge legacy steeringComments into unified comments field during migration
+        toJson([...((task as any).steeringComments || []), ...(task.comments || [])]),
         toJson(task.workflowStepResults || []),
         toJsonNullable(task.prInfo),
         toJsonNullable(task.issueInfo),
