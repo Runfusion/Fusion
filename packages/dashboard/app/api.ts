@@ -138,6 +138,34 @@ export function updateTask(id: string, updates: { title?: string; description?: 
   });
 }
 
+/**
+ * Batch update AI model configuration for multiple tasks.
+ * @param taskIds - Array of task IDs to update
+ * @param modelProvider - Executor model provider (optional, null to clear)
+ * @param modelId - Executor model ID (optional, null to clear)
+ * @param validatorModelProvider - Validator model provider (optional, null to clear)
+ * @param validatorModelId - Validator model ID (optional, null to clear)
+ * @returns Promise with updated tasks and count
+ */
+export function batchUpdateTaskModels(
+  taskIds: string[],
+  modelProvider?: string | null,
+  modelId?: string | null,
+  validatorModelProvider?: string | null,
+  validatorModelId?: string | null,
+): Promise<{ updated: Task[]; count: number }> {
+  return api<{ updated: Task[]; count: number }>("/tasks/batch-update-models", {
+    method: "POST",
+    body: JSON.stringify({
+      taskIds,
+      modelProvider,
+      modelId,
+      validatorModelProvider,
+      validatorModelId,
+    }),
+  });
+}
+
 export function moveTask(id: string, column: Column): Promise<Task> {
   return api<Task>(`/tasks/${id}/move`, {
     method: "POST",
