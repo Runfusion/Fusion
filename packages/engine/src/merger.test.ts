@@ -1665,3 +1665,232 @@ describe("isTrivialWhitespaceConflict", () => {
     expect(cmdStr).toContain(':3:"src/utils.ts"');
   });
 });
+
+// ── Build Verification Tests ─────────────────────────────────────────
+
+describe("aiMergeTask — build verification", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    // Default happy path exec mock
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached") && !cmdStr.includes("--quiet")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr.includes("reset --merge")) return Buffer.from("");
+      return Buffer.from("");
+    });
+  });
+
+  it("system prompt contains build verification section", async () => {
+    let capturedSystemPrompt: string | undefined;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedSystemPrompt = opts.systemPrompt;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore();
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(capturedSystemPrompt).toContain("## Build verification");
+    expect(capturedSystemPrompt).toContain("If a build command is configured for this project, you MUST run it");
+    expect(capturedSystemPrompt).toContain("BUILD FAILED:");
+  });
+
+  it("includes build command in merge prompt when configured", async () => {
+    let capturedArgs: any;
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      capturedArgs = opts;
+      // Simulate agent committing by returning session that results in clean state
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Simulate commit happening by making staged check return "0" (clean)
+            mockedExecSync.mockImplementation((cmd: any) => {
+              const cmdStr = String(cmd);
+              if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
+              if (cmdStr.includes("git log")) return "- feat: something" as any;
+              if (cmdStr.includes("--stat")) return "1 file changed" as any;
+              if (cmdStr.includes("merge --squash")) return Buffer.from("");
+              // After commit, diff shows clean
+              if (cmdStr.includes("diff --cached --quiet")) return "0" as any;
+              if (cmdStr.includes("branch -d")) return Buffer.from("");
+              if (cmdStr.includes("worktree remove")) return Buffer.from("");
+              return Buffer.from("");
+            });
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      buildCommand: "pnpm build",
+    });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // Verify custom tool was passed
+    expect(capturedArgs.customTools).toBeDefined();
+    expect(capturedArgs.customTools.some((t: any) => t.name === "report_build_failure")).toBe(true);
+  });
+
+  it("merge succeeds when build passes (agent reports success)", async () => {
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Simulate commit happening by making staged check return "0" (clean)
+            mockedExecSync.mockImplementation((cmd: any) => {
+              const cmdStr = String(cmd);
+              if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
+              if (cmdStr.includes("git log")) return "- feat: something" as any;
+              if (cmdStr.includes("--stat")) return "1 file changed" as any;
+              if (cmdStr.includes("merge --squash")) return Buffer.from("");
+              // After commit, diff shows clean
+              if (cmdStr.includes("diff --cached --quiet")) return "0" as any;
+              if (cmdStr.includes("branch -d")) return Buffer.from("");
+              if (cmdStr.includes("worktree remove")) return Buffer.from("");
+              return Buffer.from("");
+            });
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      buildCommand: "pnpm build",
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+
+  it("merge aborts when build fails via report_build_failure tool", async () => {
+    // Mock agent that calls the report_build_failure tool execute method
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      const reportTool = opts.customTools?.find((t: any) => t.name === "report_build_failure");
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // Simulate the agent calling the tool when session.prompt() is called
+            if (reportTool) {
+              await reportTool.execute("tool-call-123", { message: "Type error in src/utils.ts" });
+            }
+          }),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const resetCalls: string[] = [];
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("reset --merge")) {
+        resetCalls.push(cmdStr);
+        return Buffer.from("");
+      }
+      // Default happy path for other commands
+      if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      // Staged changes present (agent didn't commit due to build failure)
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("branch -d")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      buildCommand: "pnpm build",
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
+      "Build verification failed for FN-050: Type error in src/utils.ts",
+    );
+
+    // Verify git reset --merge was called
+    expect(resetCalls.length).toBeGreaterThan(0);
+    // Verify task was NOT moved to done
+    expect(store.moveTask).not.toHaveBeenCalled();
+    // Verify log entry was made
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      "Build verification failed during merge",
+      "Type error in src/utils.ts",
+    );
+  });
+
+  it("merge proceeds normally when no build command is configured", async () => {
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    // buildCommand is undefined by default in DEFAULT_SETTINGS
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+
+  it("merge proceeds when buildCommand is empty string (treated as undefined)", async () => {
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      buildCommand: "   ", // whitespace-only, should be treated as undefined
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+});

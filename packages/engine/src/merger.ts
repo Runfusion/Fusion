@@ -6,6 +6,8 @@ import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
 import { mergerLog } from "./logger.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 
 /** Conflict type classification for merge conflict resolution */
 export type ConflictType =
@@ -471,7 +473,19 @@ Look at the branch commits and diff to understand what was done, then run:
 ${commitFormat}
 
 Do NOT use generic messages like "merge branch" or "resolve conflicts".
-Base the message on the ACTUAL work done in the branch commits.`;
+Base the message on the ACTUAL work done in the branch commits.
+
+## Build verification
+
+If a build command is configured for this project, you MUST run it before committing.
+
+1. Run the build command (shown in the prompt context below)
+2. If the build succeeds (exit code 0), proceed with the commit
+3. If the build fails (non-zero exit code), DO NOT commit. Instead:
+   - Respond with "BUILD FAILED: <error details>" 
+   - Stop and do not proceed further
+
+The merge will only be completed if the build passes or no build command is configured.`;
 }
 
 /**
@@ -596,6 +610,9 @@ export async function aiMergeTask(
   const mergeAttempt = async (attemptNum: 1 | 2 | 3): Promise<boolean> => {
     mergerLog.log(`${taskId}: merge attempt ${attemptNum}/3...`);
 
+    // Normalize buildCommand: treat empty string as undefined
+    const buildCommand = settings.buildCommand?.trim() || undefined;
+
     try {
       // Try the merge with appropriate strategy for this attempt
       const success = await executeMergeAttempt({
@@ -610,6 +627,7 @@ export async function aiMergeTask(
         attemptNum,
         options,
         result,
+        buildCommand,
       }, aiTracker);
 
       if (success) {
@@ -630,6 +648,11 @@ export async function aiMergeTask(
 
       return false;
     } catch (error: any) {
+      // Check if it's a build verification failure - don't retry, propagate immediately
+      if (error.message?.includes("Build verification failed")) {
+        throw error; // Fatal - don't retry build failures
+      }
+      
       // Clean up on error before potentially rethrowing or retrying
       if (attemptNum < 3 && smartConflictResolution) {
         mergerLog.log(`${taskId}: attempt ${attemptNum} error, cleaning up for retry...`);
@@ -751,6 +774,7 @@ interface MergeAttemptParams {
   attemptNum: 1 | 2 | 3;
   options: MergerOptions;
   result: MergeResult;
+  buildCommand?: string;
 }
 
 /** Mutable flag to track AI agent invocation */
@@ -779,6 +803,7 @@ async function executeMergeAttempt(
     attemptNum,
     options,
     result,
+    buildCommand,
   } = params;
 
   // Attempt 3: Use -X theirs strategy
@@ -920,7 +945,7 @@ async function executeMergeAttempt(
     // - Complex conflicts remain after attempt 2 auto-resolution - AI resolves them
     // Spawn AI agent
     aiTracker.aiWasInvoked = true; // Track that AI was invoked
-    return await runAiAgentForCommit({
+    const agentResult = await runAiAgentForCommit({
       store,
       rootDir,
       taskId,
@@ -931,8 +956,32 @@ async function executeMergeAttempt(
       hasConflicts,
       simplifiedContext: attemptNum === 2,
       options,
+      buildCommand,
     });
+
+    // Handle build failure
+    if (!agentResult.success) {
+      // Build verification failed - log, reset staged changes, and throw
+      const errorMessage = agentResult.error || "Build verification failed";
+      await store.logEntry(taskId, "Build verification failed during merge", errorMessage);
+      
+      // Reset staged changes to abort the merge
+      try {
+        execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
+      } catch {
+        // Ignore reset errors
+      }
+      
+      throw new Error(`Build verification failed for ${taskId}: ${errorMessage}`);
+    }
+
+    return true;
   } catch (error: any) {
+    // Check if it's a build verification failure - don't retry, propagate immediately
+    if (error.message?.includes("Build verification failed")) {
+      throw error; // Fatal - don't retry build failures
+    }
+    
     // Check if it's a non-conflict merge failure
     if (error.message?.includes("Merge failed")) {
       throw error; // Fatal
@@ -1011,12 +1060,15 @@ interface AiAgentParams {
   hasConflicts: boolean;
   simplifiedContext: boolean;
   options: MergerOptions;
+  buildCommand?: string;
 }
 
 /**
  * Run the AI agent to resolve conflicts and/or write commit message.
+ * Returns { success: true } on success, { success: false, error: string } on build failure.
+ * Throws on agent errors or unrecoverable failures.
  */
-async function runAiAgentForCommit(params: AiAgentParams): Promise<boolean> {
+async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: boolean; error?: string }> {
   const {
     store,
     rootDir,
@@ -1028,9 +1080,33 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<boolean> {
     hasConflicts,
     simplifiedContext,
     options,
+    buildCommand,
   } = params;
 
   const settings = await store.getSettings();
+
+  // Track build failure state
+  let buildFailed = false;
+  let buildErrorMessage = "";
+
+  // Create custom tool for reporting build failures
+  const reportBuildFailureTool: ToolDefinition = {
+    name: "report_build_failure",
+    label: "Report Build Failure",
+    description: "Report that the build verification failed. Use this when the build command returns a non-zero exit code. Provide the error details in the message parameter.",
+    parameters: Type.Object({
+      message: Type.String({ description: "Error message describing why the build failed" }),
+    }),
+    execute: async (_toolCallId: string, params: unknown) => {
+      const { message } = params as { message: string };
+      buildFailed = true;
+      buildErrorMessage = message;
+      return { 
+        content: [{ type: "text", text: `Build failure reported: ${message}` }],
+        details: undefined 
+      };
+    },
+  };
 
   mergerLog.log(`${taskId}: ${hasConflicts ? "resolving conflicts + " : ""}writing commit message`);
 
@@ -1050,6 +1126,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<boolean> {
     cwd: rootDir,
     systemPrompt: buildMergeSystemPrompt(includeTaskId),
     tools: "coding",
+    customTools: [reportBuildFailureTool],
     onText: agentLogger.onText,
     onThinking: agentLogger.onThinking,
     onToolStart: agentLogger.onToolStart,
@@ -1070,10 +1147,17 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<boolean> {
       diffStat,
       hasConflicts,
       simplifiedContext,
+      buildCommand,
     });
     await session.prompt(prompt);
 
     checkSessionError(session);
+
+    // Check if build failed
+    if (buildFailed) {
+      mergerLog.error(`Build verification failed for ${taskId}: ${buildErrorMessage}`);
+      return { success: false, error: buildErrorMessage };
+    }
 
     // Verify commit happened
     const staged = execSync("git diff --cached --quiet 2>&1; echo $?", {
@@ -1082,16 +1166,24 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<boolean> {
     }).trim();
 
     if (staged !== "0") {
-      mergerLog.log("Agent didn't commit — committing with fallback message");
-      const escapedLog = commitLog.replace(/"/g, '\\"');
-      const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
-      execSync(
-        `git commit -m "${fallbackPrefix}: merge ${branch}" -m "${escapedLog}"`,
-        { cwd: rootDir, stdio: "pipe" },
-      );
+      // Only use fallback commit if no build command was configured
+      // If build command was configured, agent should have committed or reported failure
+      if (!buildCommand) {
+        mergerLog.log("Agent didn't commit — committing with fallback message");
+        const escapedLog = commitLog.replace(/"/g, '\\"');
+        const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
+        execSync(
+          `git commit -m "${fallbackPrefix}: merge ${branch}" -m "${escapedLog}"`,
+          { cwd: rootDir, stdio: "pipe" },
+        );
+      } else {
+        // Build command was configured but agent didn't commit and didn't report failure
+        // This is an error condition - agent didn't follow instructions
+        throw new Error(`Agent did not commit and did not report build failure for ${taskId}`);
+      }
     }
 
-    return true;
+    return { success: true };
   } catch (err: any) {
     mergerLog.error(`Agent failed: ${err.message}`);
 
@@ -1113,10 +1205,11 @@ interface MergePromptParams {
   diffStat: string;
   hasConflicts: boolean;
   simplifiedContext?: boolean;
+  buildCommand?: string;
 }
 
 function buildMergePrompt(params: MergePromptParams): string {
-  const { taskId, branch, commitLog, diffStat, hasConflicts, simplifiedContext } = params;
+  const { taskId, branch, commitLog, diffStat, hasConflicts, simplifiedContext, buildCommand } = params;
 
   const parts = [
     `Finalize the merge of branch \`${branch}\` for task ${taskId}.`,
@@ -1151,6 +1244,17 @@ function buildMergePrompt(params: MergePromptParams): string {
       "## No conflicts",
       "The merge applied cleanly. All changes are staged.",
       "Write and run the `git commit` command with a good message summarizing the work.",
+    );
+  }
+
+  // Add build command section if provided
+  if (buildCommand) {
+    parts.push(
+      "",
+      "## Build command",
+      `Build command: \`${buildCommand}\``,
+      "",
+      "Run this command via bash tool before committing to verify the build passes.",
     );
   }
 

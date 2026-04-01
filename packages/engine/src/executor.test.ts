@@ -1617,7 +1617,7 @@ describe("buildExecutionPrompt", () => {
 
   it("includes Comments section when comments has entries", () => {
     const task = createMockTaskDetail({
-      comments: [
+      steeringComments: [
         {
           id: "1",
           text: "Please handle the edge case",
@@ -1637,7 +1637,7 @@ describe("buildExecutionPrompt", () => {
   it("formats multiple comments correctly", () => {
     const now = new Date();
     const task = createMockTaskDetail({
-      comments: [
+      steeringComments: [
         {
           id: "1",
           text: "First comment",
@@ -1660,8 +1660,8 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("> Second comment");
   });
 
-  it("omits Comments section when comments is empty", () => {
-    const task = createMockTaskDetail({ comments: [] });
+  it("omits Comments section when steeringComments is empty", () => {
+    const task = createMockTaskDetail({ steeringComments: [] });
     const result = buildExecutionPrompt(task);
 
     expect(result).not.toContain("## Steering Comments");

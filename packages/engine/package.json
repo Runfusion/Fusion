@@ -24,7 +24,8 @@
   "dependencies": {
     "@fusion/core": "workspace:*",
     "@mariozechner/pi-ai": "^0.62.0",
-    "@mariozechner/pi-coding-agent": "^0.62.0"
+    "@mariozechner/pi-coding-agent": "^0.62.0",
+    "@sinclair/typebox": "^0.34.48"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

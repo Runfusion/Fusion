@@ -1870,7 +1870,9 @@ Use \`task_update\` to report progress on every step transition.
 Use \`task_log\` for important actions and decisions.
 Use \`task_create\` if you find out-of-scope work that needs doing.
 Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"\`
-When all steps are complete: call \`task_done()\``;
+When all steps are complete: call \`task_done()\`
+
+Verify build passes using the configured build command before calling \`task_done()\`.`;
 }
 
 /**
