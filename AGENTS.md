@@ -136,7 +136,7 @@ await central.logActivity({
   projectId: project.id,
   projectName: project.name,
   timestamp: new Date().toISOString(),
-  details: "Task KB-001 created"
+  details: "Task FN-001 created"
 });
 
 // Get recent activity across all projects
@@ -287,7 +287,7 @@ Use `useBadgeWebSocket()` when a UI surface needs live badge snapshots for speci
 
 ## Git
 
-- Commit messages: `feat(KB-XXX):`, `fix(KB-XXX):`, `test(KB-XXX):`
+- Commit messages: `feat(FN-XXX):`, `fix(FN-XXX):`, `test(FN-XXX):`
 - One commit per step (not per file change)
 - Always include the task ID prefix
 
