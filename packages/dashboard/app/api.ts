@@ -1910,3 +1910,39 @@ export interface TaskDiff {
 export function fetchTaskDiff(taskId: string): Promise<TaskDiff> {
   return api<TaskDiff>(`/tasks/${encodeURIComponent(taskId)}/diff`);
 }
+
+// ── Scripts API ───────────────────────────────────────────────────────────
+
+/** Script execution result */
+export interface ScriptRunResult {
+  output: string;
+  exitCode: number;
+}
+
+/** Fetch all project-defined scripts */
+export function fetchScripts(): Promise<Record<string, string>> {
+  return api<Record<string, string>>("/scripts");
+}
+
+/** Add or update a script */
+export function addScript(name: string, command: string): Promise<Record<string, string>> {
+  return api<Record<string, string>>("/scripts", {
+    method: "POST",
+    body: JSON.stringify({ name, command }),
+  });
+}
+
+/** Remove a script by name */
+export function removeScript(name: string): Promise<Record<string, string>> {
+  return api<Record<string, string>>(`/scripts/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
+/** Execute a script with optional arguments */
+export function runScript(name: string, args?: string[]): Promise<ScriptRunResult> {
+  return api<ScriptRunResult>(`/scripts/${encodeURIComponent(name)}/run`, {
+    method: "POST",
+    body: JSON.stringify({ args }),
+  });
+}

@@ -5789,6 +5789,187 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     }
   });
 
+  // ── Scripts Routes ─────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/scripts
+   * Returns all project-defined scripts from settings.
+   * Response: Record<string, string>
+   */
+  router.get("/scripts", async (_req, res) => {
+    try {
+      const settings = await store.getSettings();
+      res.json(settings.scripts || {});
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/scripts
+   * Add or update a script.
+   * Body: { name: string, command: string }
+   * Validates name (alphanumeric, hyphens, underscores only, no spaces).
+   * Returns: Record<string, string> (updated scripts)
+   */
+  router.post("/scripts", async (req, res) => {
+    try {
+      const { name, command } = req.body;
+
+      // Validate name
+      if (!name || typeof name !== "string" || !name.trim()) {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      if (!command || typeof command !== "string" || !command.trim()) {
+        res.status(400).json({ error: "command is required" });
+        return;
+      }
+
+      const trimmedName = name.trim();
+      const trimmedCommand = command.trim();
+
+      // Validate script name format (alphanumeric, hyphens, underscores only)
+      if (!/^[a-zA-Z0-9_-]+$/.test(trimmedName)) {
+        res.status(400).json({
+          error: "Script name must be alphanumeric with hyphens and underscores only (no spaces)",
+        });
+        return;
+      }
+
+      // Check for reserved/conflicting names
+      const reservedNames = ["run", "list", "add", "remove", "delete", "help"];
+      if (reservedNames.includes(trimmedName.toLowerCase())) {
+        res.status(400).json({ error: `Script name '${trimmedName}' is reserved` });
+        return;
+      }
+
+      const settings = await store.getSettings();
+      const currentScripts = settings.scripts || {};
+
+      // Check if script already exists (for conflict detection)
+      const exists = trimmedName in currentScripts;
+
+      // Update scripts
+      const updatedScripts = {
+        ...currentScripts,
+        [trimmedName]: trimmedCommand,
+      };
+
+      await store.updateSettings({ scripts: updatedScripts });
+
+      res.status(exists ? 200 : 201).json(updatedScripts);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/scripts/:name
+   * Remove a script by name.
+   * Returns: Record<string, string> (updated scripts)
+   */
+  router.delete("/scripts/:name", async (req, res) => {
+    try {
+      const { name } = req.params;
+
+      if (!name || !name.trim()) {
+        res.status(400).json({ error: "Script name is required" });
+        return;
+      }
+
+      const settings = await store.getSettings();
+      const currentScripts = settings.scripts || {};
+
+      if (!(name in currentScripts)) {
+        res.status(404).json({ error: `Script '${name}' not found` });
+        return;
+      }
+
+      // Remove the script
+      const { [name]: _removed, ...remainingScripts } = currentScripts;
+
+      await store.updateSettings({ scripts: remainingScripts });
+
+      res.json(remainingScripts);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/scripts/:name/run
+   * Execute a script with optional args.
+   * Body: { args?: string[] }
+   * Returns: { output: string; exitCode: number }
+   */
+  router.post("/scripts/:name/run", async (req, res) => {
+    try {
+      const { name } = req.params;
+      const { args } = req.body;
+
+      if (!name || !name.trim()) {
+        res.status(400).json({ error: "Script name is required" });
+        return;
+      }
+
+      // Validate args if provided
+      if (args !== undefined && !Array.isArray(args)) {
+        res.status(400).json({ error: "args must be an array of strings" });
+        return;
+      }
+      if (args && args.some((arg: unknown) => typeof arg !== "string")) {
+        res.status(400).json({ error: "args must be an array of strings" });
+        return;
+      }
+
+      const settings = await store.getSettings();
+      const scripts = settings.scripts || {};
+      const command = scripts[name];
+
+      if (!command) {
+        res.status(404).json({ error: `Script '${name}' not found` });
+        return;
+      }
+
+      // Build the full command with args
+      const sanitizedArgs = (args || [])
+        .map((arg: string) => arg.replace(/["\\]/g, "\\$&"))
+        .join(" ");
+      const fullCommand = sanitizedArgs ? `${command} ${sanitizedArgs}` : command;
+
+      // Execute the command using terminal service or execSync
+      const rootDir = store.getRootDir();
+      let output: string;
+      let exitCode: number;
+
+      try {
+        // Use execSync for synchronous execution
+        output = execSync(fullCommand, {
+          encoding: "utf-8",
+          timeout: 300000, // 5 minute timeout
+          cwd: rootDir,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        exitCode = 0;
+      } catch (execErr: any) {
+        // Command failed or timed out
+        output = execErr.stdout || "";
+        if (execErr.stderr) {
+          output += (output ? "\n" : "") + execErr.stderr;
+        }
+        if (execErr.message && !execErr.stderr) {
+          output += (output ? "\n" : "") + execErr.message;
+        }
+        exitCode = execErr.status || 1;
+      }
+
+      res.json({ output: output.trim(), exitCode });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Agent Routes ───────────────────────────────────────────────────────────
 
   /**

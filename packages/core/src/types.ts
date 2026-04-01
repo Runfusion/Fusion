@@ -666,6 +666,10 @@ export interface ProjectSettings {
    *  Must be set together with `titleSummarizerProvider`. Falls back to planningModelId,
    *  then defaultModelId if not specified. */
   titleSummarizerModelId?: string;
+  /** Project-defined shell scripts for quick command execution.
+   *  Key is the script name, value is the shell command to execute.
+   *  Script names must be alphanumeric with hyphens and underscores only. */
+  scripts?: Record<string, string>;
 }
 
 /**
@@ -731,6 +735,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   autoSummarizeTitles: false,
   titleSummarizerProvider: undefined,
   titleSummarizerModelId: undefined,
+  scripts: {},
 };
 
 /**
@@ -793,6 +798,7 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "autoSummarizeTitles",
   "titleSummarizerProvider",
   "titleSummarizerModelId",
+  "scripts",
 ] as const;
 
 export interface BoardConfig {

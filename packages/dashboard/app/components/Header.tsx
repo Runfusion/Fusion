@@ -28,6 +28,7 @@ export interface HeaderProps {
   onOpenGitManager?: () => void;
   onOpenWorkflowSteps?: () => void;
   onOpenAgents?: () => void;
+  onOpenScripts?: () => void;
   onToggleTerminal?: () => void;
   /** Opens the top-level workspace-aware file browser modal. */
   onOpenFiles?: () => void;
@@ -74,6 +75,7 @@ export function Header({
   onOpenGitManager,
   onOpenWorkflowSteps,
   onOpenAgents,
+  onOpenScripts,
   onToggleTerminal,
   onOpenFiles,
   filesOpen,
@@ -393,6 +395,18 @@ export function Header({
           </button>
         )}
 
+        {/* Scripts - desktop only */}
+        {!isMobile && onOpenScripts && (
+          <button
+            className="btn-icon"
+            onClick={onOpenScripts}
+            title="Scripts"
+            data-testid="scripts-btn"
+          >
+            <Terminal size={16} />
+          </button>
+        )}
+
         {/* Settings - always inline on desktop */}
         {!isMobile && (
           <button className="btn-icon" onClick={onOpenSettings} title="Settings">
@@ -493,6 +507,17 @@ export function Header({
               >
                 <Bot size={16} />
                 <span>Manage Agents</span>
+              </button>
+            )}
+            {onOpenScripts && (
+              <button
+                className="mobile-overflow-item"
+                onClick={() => handleOverflowAction(onOpenScripts)}
+                role="menuitem"
+                data-testid="overflow-scripts-btn"
+              >
+                <Terminal size={16} />
+                <span>Scripts</span>
               </button>
             )}
             <button

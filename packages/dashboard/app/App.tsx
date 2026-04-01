@@ -24,6 +24,7 @@ import { ActivityLogModal } from "./components/ActivityLogModal";
 import { WorkflowStepManager } from "./components/WorkflowStepManager";
 import { AgentListModal } from "./components/AgentListModal";
 import { AgentsView } from "./components/AgentsView";
+import { ScriptsModal } from "./components/ScriptsModal";
 import { useTasks } from "./hooks/useTasks";
 import { useProjects } from "./hooks/useProjects";
 import { useCurrentProject } from "./hooks/useCurrentProject";
@@ -48,6 +49,8 @@ function AppInner() {
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const [scriptsOpen, setScriptsOpen] = useState(false);
+  const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [rootDir, setRootDir] = useState<string>(".");
@@ -332,10 +335,6 @@ function AppInner() {
     setTerminalOpen((prev) => !prev);
   }, []);
 
-  const handleTerminalClose = useCallback(() => {
-    setTerminalOpen(false);
-  }, []);
-
   const handleOpenFiles = useCallback(() => {
     setFilesOpen(true);
   }, []);
@@ -360,6 +359,22 @@ function AppInner() {
   // Agent handlers
   const handleOpenAgents = useCallback(() => setAgentsOpen(true), []);
   const handleCloseAgents = useCallback(() => setAgentsOpen(false), []);
+
+  // Scripts handlers
+  const handleOpenScripts = useCallback(() => setScriptsOpen(true), []);
+  const handleCloseScripts = useCallback(() => setScriptsOpen(false), []);
+
+  const handleRunScript = useCallback((name: string, command: string) => {
+    setTerminalInitialCommand(command);
+    setScriptsOpen(false);
+    setTerminalOpen(true);
+    addToast(`Running script: ${name}`, "success");
+  }, [addToast]);
+
+  const handleTerminalClose = useCallback(() => {
+    setTerminalOpen(false);
+    setTerminalInitialCommand(undefined);
+  }, []);
 
   // Setup wizard complete handler
   const handleSetupComplete = useCallback((project: ProjectInfo) => {
@@ -450,6 +465,7 @@ function AppInner() {
         onOpenGitManager={handleOpenGitManager}
         onOpenWorkflowSteps={() => setWorkflowStepsOpen(true)}
         onOpenAgents={handleOpenAgents}
+        onOpenScripts={handleOpenScripts}
         onToggleTerminal={handleToggleTerminal}
         onOpenFiles={handleOpenFiles}
         filesOpen={filesOpen}
@@ -518,6 +534,13 @@ function AppInner() {
       <TerminalModal
         isOpen={terminalOpen}
         onClose={handleTerminalClose}
+        initialCommand={terminalInitialCommand}
+      />
+      <ScriptsModal
+        isOpen={scriptsOpen}
+        onClose={handleCloseScripts}
+        addToast={addToast}
+        onRunScript={handleRunScript}
       />
       {filesOpen && (
         <FileBrowserModal
