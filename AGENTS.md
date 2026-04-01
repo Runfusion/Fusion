@@ -393,6 +393,45 @@ Directory for backup files, relative to the project root. The directory is creat
 - Must be a relative path (no leading `/` or `\`)
 - Must not contain parent directory traversal (`..`)
 
+### `autoSummarizeTitles` (default: `false`)
+
+When enabled, tasks created without titles but with descriptions longer than 140 characters will automatically receive an AI-generated title (max 60 characters).
+
+**How it works:**
+- When a task is created without a title and the description exceeds 140 characters, the system calls the AI summarization service
+- The AI generates a concise title (≤60 characters) that captures the essence of the task
+- The generated title is stored in the task and appears in the PROMPT.md heading
+- If the AI service is unavailable or returns an error, the task is still created without a title (no blocking)
+
+**Configuration:**
+```json
+{
+  "settings": {
+    "autoSummarizeTitles": true,
+    "titleSummarizerProvider": "anthropic",
+    "titleSummarizerModelId": "claude-sonnet-4-5"
+  }
+}
+```
+
+### `titleSummarizerProvider` (optional)
+
+AI model provider for title summarization when `autoSummarizeTitles` is enabled. Must be set together with `titleSummarizerModelId`.
+
+**Model selection hierarchy:**
+When generating titles, the system uses the first available model from this priority list:
+1. `titleSummarizerProvider` + `titleSummarizerModelId` (if both configured)
+2. `planningProvider` + `planningModelId` (if both configured)
+3. `defaultProvider` + `defaultModelId` (if both configured)
+4. Automatic model resolution (fallback)
+
+### `titleSummarizerModelId` (optional)
+
+AI model ID for title summarization when `autoSummarizeTitles` is enabled. Must be set together with `titleSummarizerProvider`.
+
+**Rate limiting:**
+The `/api/ai/summarize-title` endpoint is rate-limited to 10 requests per hour per IP to prevent abuse.
+
 ### CLI Commands
 
 Manual backup operations are available via the CLI:

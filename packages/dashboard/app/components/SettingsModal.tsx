@@ -37,6 +37,7 @@ const SETTINGS_SECTIONS = [
   { id: "general", label: "General", scope: "project" as const },
   { id: "model", label: "Model", scope: "global" as const },
   { id: "model-presets", label: "Model Presets", scope: "project" as const },
+  { id: "ai-summarization", label: "AI Summarization", scope: "project" as const },
   { id: "appearance", label: "Appearance", scope: "global" as const },
   { id: "scheduling", label: "Scheduling", scope: "project" as const },
   { id: "worktrees", label: "Worktrees", scope: "project" as const },
@@ -825,6 +826,112 @@ export function SettingsModal({
           </>
         );
       }
+      case "ai-summarization":
+        return (
+          <>
+            {renderScopeBanner()}
+            <h4 className="settings-section-heading">AI Summarization</h4>
+            <div className="form-group">
+              <label htmlFor="autoSummarizeTitles" className="checkbox-label">
+                <input
+                  id="autoSummarizeTitles"
+                  type="checkbox"
+                  checked={form.autoSummarizeTitles || false}
+                  onChange={(e) => setForm((f) => ({ ...f, autoSummarizeTitles: e.target.checked }))}
+                />
+                Auto-summarize long descriptions as titles
+              </label>
+              <small>
+                When enabled, tasks created without a title but with descriptions over 140 characters
+                will automatically get an AI-generated title (max 60 characters).
+              </small>
+            </div>
+
+            {(form.autoSummarizeTitles || false) && (
+              <>
+                <div className="form-group">
+                  <label>Title summarization model</label>
+                  {modelsLoading ? (
+                    <small>Loading available models...</small>
+                  ) : availableModels.length === 0 ? (
+                    <small>No models available. Configure authentication first.</small>
+                  ) : (
+                    <CustomModelDropdown
+                      id="titleSummarizerModel"
+                      label="Title summarization model"
+                      models={availableModels}
+                      value={
+                        form.titleSummarizerProvider && form.titleSummarizerModelId
+                          ? `${form.titleSummarizerProvider}/${form.titleSummarizerModelId}`
+                          : ""
+                      }
+                      onChange={(val) => {
+                        if (!val) {
+                          setForm((f) => ({
+                            ...f,
+                            titleSummarizerProvider: undefined,
+                            titleSummarizerModelId: undefined,
+                          }));
+                          return;
+                        }
+                        const slashIdx = val.indexOf("/");
+                        setForm((f) => ({
+                          ...f,
+                          titleSummarizerProvider: val.slice(0, slashIdx),
+                          titleSummarizerModelId: val.slice(slashIdx + 1),
+                        }));
+                      }}
+                      placeholder="Use fallback model"
+                    />
+                  )}
+                  <small>
+                    {form.titleSummarizerProvider && form.titleSummarizerModelId
+                      ? "Using explicitly configured model"
+                      : form.planningProvider && form.planningModelId
+                        ? "(using planning model)"
+                        : form.defaultProvider && form.defaultModelId
+                          ? "(using default model)"
+                          : "(using automatic model selection)"}
+                  </small>
+                </div>
+
+                <div className="form-group">
+                  <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() =>
+                        setForm((f) => ({
+                          ...f,
+                          titleSummarizerProvider: f.planningProvider,
+                          titleSummarizerModelId: f.planningModelId,
+                        }))
+                      }
+                      disabled={!form.planningProvider || !form.planningModelId}
+                    >
+                      Use planning model
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() =>
+                        setForm((f) => ({
+                          ...f,
+                          titleSummarizerProvider: f.defaultProvider,
+                          titleSummarizerModelId: f.defaultModelId,
+                        }))
+                      }
+                      disabled={!form.defaultProvider || !form.defaultModelId}
+                    >
+                      Use default model
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </>
+        );
+
       case "appearance":
         return (
           <>

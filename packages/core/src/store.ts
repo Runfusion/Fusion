@@ -582,7 +582,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return join(this.tasksDir, id);
   }
 
-  async createTask(input: TaskCreateInput): Promise<Task> {
+  async createTask(
+    input: TaskCreateInput,
+    options?: {
+      onSummarize?: (description: string) => Promise<string | null>;
+      settings?: { autoSummarizeTitles?: boolean };
+    }
+  ): Promise<Task> {
     if (!input.description?.trim()) {
       throw new Error("Description is required and cannot be empty");
     }
@@ -592,10 +598,31 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (input.dependencies?.includes(id)) {
       throw new Error(`Task ${id} cannot depend on itself`);
     }
+
+    // Determine if we should try to summarize the title
+    let title = input.title?.trim() || undefined;
+    const shouldSummarize =
+      !title && // Only if no title provided
+      input.description.length > 140 && // Only if description is long enough
+      (input.summarize === true || // Explicit request
+        options?.settings?.autoSummarizeTitles === true); // Auto-enabled
+
+    if (shouldSummarize && options?.onSummarize) {
+      try {
+        const generatedTitle = await options.onSummarize(input.description);
+        if (generatedTitle) {
+          title = generatedTitle;
+        }
+      } catch (err) {
+        // Log warning but don't block task creation
+        console.warn(`[TaskStore] Title summarization failed for task ${id}:`, err instanceof Error ? err.message : err);
+      }
+    }
+
     const now = new Date().toISOString();
     const task: Task = {
       id,
-      title: input.title?.trim() || undefined,
+      title,
       description: input.description,
       column: input.column || "triage",
       dependencies: input.dependencies || [],

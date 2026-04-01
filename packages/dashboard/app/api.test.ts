@@ -22,6 +22,7 @@ import {
   saveWorkspaceFileContent,
   startPlanningStreaming,
   fetchTasks,
+  summarizeTitle,
 } from "./api";
 import type { Task, TaskDetail, BatchStatusResponse } from "@fusion/core";
 
@@ -1675,6 +1676,127 @@ describe("REFINE_ERROR_MESSAGES", () => {
     expect(REFINE_ERROR_MESSAGES.RATE_LIMIT).toBe("Too many refinement requests. Please wait an hour.");
     expect(REFINE_ERROR_MESSAGES.INVALID_TYPE).toBe("Invalid refinement option selected.");
     expect(REFINE_ERROR_MESSAGES.NETWORK).toBe("Failed to refine text. Please try again.");
+  });
+});
+
+// --- Summarize Title Tests ---
+
+describe("summarizeTitle", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("returns title on successful response", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockResolvedValue(JSON.stringify({ title: "Generated Title" })),
+    });
+    global.fetch = mockFetch;
+
+    const result = await summarizeTitle("a".repeat(200));
+
+    expect(result).toBe("Generated Title");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/ai/summarize-title",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: "a".repeat(200), provider: undefined, modelId: undefined }),
+      })
+    );
+  });
+
+  it("sends provider and modelId when provided", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockResolvedValue(JSON.stringify({ title: "Generated Title" })),
+    });
+    global.fetch = mockFetch;
+
+    await summarizeTitle("a".repeat(200), "anthropic", "claude-sonnet-4-5");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/ai/summarize-title",
+      expect.objectContaining({
+        body: JSON.stringify({ description: "a".repeat(200), provider: "anthropic", modelId: "claude-sonnet-4-5" }),
+      })
+    );
+  });
+
+  it("throws descriptive error on 400 response", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockResolvedValue(JSON.stringify({ error: "Description too short" })),
+    });
+    global.fetch = mockFetch;
+
+    await expect(summarizeTitle("short")).rejects.toThrow("Invalid request: Description too short");
+  });
+
+  it("throws descriptive error on 429 response", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockResolvedValue(JSON.stringify({ error: "Rate limit exceeded" })),
+    });
+    global.fetch = mockFetch;
+
+    await expect(summarizeTitle("a".repeat(200))).rejects.toThrow("Rate limit exceeded: Rate limit exceeded");
+  });
+
+  it("throws descriptive error on 503 response", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockResolvedValue(JSON.stringify({ error: "AI service unavailable" })),
+    });
+    global.fetch = mockFetch;
+
+    await expect(summarizeTitle("a".repeat(200))).rejects.toThrow("AI service temporarily unavailable: AI service unavailable");
+  });
+
+  it("throws generic error on other failure responses", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockResolvedValue(JSON.stringify({ error: "Internal server error" })),
+    });
+    global.fetch = mockFetch;
+
+    await expect(summarizeTitle("a".repeat(200))).rejects.toThrow("Internal server error");
+  });
+
+  it("throws error for non-JSON responses", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/html" }),
+      text: vi.fn().mockResolvedValue("<html>Not JSON</html>"),
+    });
+    global.fetch = mockFetch;
+
+    await expect(summarizeTitle("a".repeat(200))).rejects.toThrow("API returned non-JSON response");
+  });
+
+  it("throws error when response has no title", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: vi.fn().mockResolvedValue(JSON.stringify({})),
+    });
+    global.fetch = mockFetch;
+
+    await expect(summarizeTitle("a".repeat(200))).rejects.toThrow("API returned empty title");
   });
 });
 

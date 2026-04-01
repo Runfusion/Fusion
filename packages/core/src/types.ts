@@ -466,6 +466,8 @@ export interface TaskCreateInput {
   validatorModelId?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
+  /** When true, trigger AI title summarization if description is long and no title provided */
+  summarize?: boolean;
 }
 
 // ── Settings Scope Types ────────────────────────────────────────────────
@@ -641,6 +643,18 @@ export interface ProjectSettings {
   autoBackupRetention?: number;
   /** Directory for backup files, relative to project root. Default: ".kb/backups". */
   autoBackupDir?: string;
+  /** When true, tasks created without titles but with descriptions longer than 140
+   *  characters will automatically receive an AI-generated title (max 60 chars).
+   *  Default: false. */
+  autoSummarizeTitles?: boolean;
+  /** AI model provider for title summarization (when autoSummarizeTitles is enabled).
+   *  Must be set together with `titleSummarizerModelId`. Falls back to planningProvider,
+   *  then defaultProvider if not specified. */
+  titleSummarizerProvider?: string;
+  /** AI model ID for title summarization (when autoSummarizeTitles is enabled).
+   *  Must be set together with `titleSummarizerProvider`. Falls back to planningModelId,
+   *  then defaultModelId if not specified. */
+  titleSummarizerModelId?: string;
 }
 
 /**
@@ -701,6 +715,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   autoBackupSchedule: "0 2 * * *",
   autoBackupRetention: 7,
   autoBackupDir: ".kb/backups",
+  autoSummarizeTitles: false,
+  titleSummarizerProvider: undefined,
+  titleSummarizerModelId: undefined,
 };
 
 /**
@@ -758,6 +775,9 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "autoBackupSchedule",
   "autoBackupRetention",
   "autoBackupDir",
+  "autoSummarizeTitles",
+  "titleSummarizerProvider",
+  "titleSummarizerModelId",
 ] as const;
 
 export interface BoardConfig {

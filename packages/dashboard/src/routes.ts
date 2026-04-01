@@ -1428,19 +1428,54 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         }
       }
 
-      const task = await store.createTask({
-        title,
-        description,
-        column,
-        dependencies,
-        breakIntoSubtasks,
-        enabledWorkflowSteps,
-        modelPresetId: validateOptionalModelField(modelPresetId, "modelPresetId"),
-        modelProvider: executorModel.provider,
-        modelId: executorModel.modelId,
-        validatorModelProvider: validatorModel.provider,
-        validatorModelId: validatorModel.modelId,
-      });
+      // Check for summarize flag in request
+      const summarize = req.body.summarize === true;
+
+      // Get settings for auto-summarization
+      const settings = await store.getSettings();
+
+      // Create onSummarize callback if summarization is enabled
+      const onSummarize = (summarize || settings.autoSummarizeTitles)
+        ? async (desc: string): Promise<string | null> => {
+            try {
+              const { summarizeTitle } = await import("@fusion/core");
+
+              // Resolve model selection hierarchy for summarization
+              const resolvedProvider =
+                (settings.titleSummarizerProvider && settings.titleSummarizerModelId ? settings.titleSummarizerProvider : undefined) ||
+                (settings.planningProvider && settings.planningModelId ? settings.planningProvider : undefined) ||
+                (settings.defaultProvider && settings.defaultModelId ? settings.defaultProvider : undefined);
+
+              const resolvedModelId =
+                (settings.titleSummarizerProvider && settings.titleSummarizerModelId ? settings.titleSummarizerModelId : undefined) ||
+                (settings.planningProvider && settings.planningModelId ? settings.planningModelId : undefined) ||
+                (settings.defaultProvider && settings.defaultModelId ? settings.defaultModelId : undefined);
+
+              return await summarizeTitle(desc, store.getRootDir(), resolvedProvider, resolvedModelId);
+            } catch {
+              // Return null on error so task creation continues without title
+              return null;
+            }
+          }
+        : undefined;
+
+      const task = await store.createTask(
+        {
+          title,
+          description,
+          column,
+          dependencies,
+          breakIntoSubtasks,
+          enabledWorkflowSteps,
+          modelPresetId: validateOptionalModelField(modelPresetId, "modelPresetId"),
+          modelProvider: executorModel.provider,
+          modelId: executorModel.modelId,
+          validatorModelProvider: validatorModel.provider,
+          validatorModelId: validatorModel.modelId,
+          summarize,
+        },
+        { onSummarize, settings: { autoSummarizeTitles: settings.autoSummarizeTitles } }
+      );
       res.status(201).json(task);
     } catch (err: any) {
       const status = err.message?.includes("must be a string") ? 400 : 500;
@@ -4911,6 +4946,108 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(500).json({ error: err.message || "AI service error" });
       } else {
         res.status(500).json({ error: err?.message || "Failed to refine text" });
+      }
+    }
+  });
+
+  /**
+   * POST /api/ai/summarize-title
+   * AI-powered title generation from task descriptions.
+   * Body: { description: string, provider?: string, modelId?: string }
+   * Returns: { title: string }
+   *
+   * Generates a concise title (≤60 characters) from descriptions longer than 140 characters.
+   * Rate limited: 10 requests per hour per IP
+   */
+  router.post("/ai/summarize-title", async (req, res) => {
+    try {
+      const { description, provider, modelId } = req.body;
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const rootDir = store.getRootDir();
+
+      const {
+        checkRateLimit,
+        getRateLimitResetTime,
+        summarizeTitle,
+        validateDescription,
+        MIN_DESCRIPTION_LENGTH,
+        MAX_DESCRIPTION_LENGTH,
+        RateLimitError,
+        ValidationError,
+        AiServiceError,
+      } = await import("@fusion/core");
+
+      // Debug logging
+      if (process.env.KB_DEBUG_AI) {
+        console.log(`[ai-summarize] Request from ${ip}, description length: ${description?.length || 0}`);
+      }
+
+      // Check rate limit first
+      if (!checkRateLimit(ip)) {
+        const resetTime = getRateLimitResetTime(ip);
+        res.status(429).json({
+          error: `Rate limit exceeded. Maximum 10 summarization requests per hour. Reset at ${resetTime?.toISOString() || "unknown"}`,
+        });
+        return;
+      }
+
+      // Validate request body
+      try {
+        validateDescription(description);
+      } catch (err: any) {
+        if (err?.name === "ValidationError") {
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+
+      // Resolve model selection hierarchy:
+      // 1. Request body provider+modelId
+      // 2. Settings titleSummarizerProvider + titleSummarizerModelId
+      // 3. Settings planningProvider + planningModelId
+      // 4. Settings defaultProvider + defaultModelId
+      // 5. Automatic model resolution (no explicit model)
+      const settings = await store.getSettings();
+
+      const resolvedProvider =
+        (provider && modelId ? provider : undefined) ||
+        (settings.titleSummarizerProvider && settings.titleSummarizerModelId ? settings.titleSummarizerProvider : undefined) ||
+        (settings.planningProvider && settings.planningModelId ? settings.planningProvider : undefined) ||
+        (settings.defaultProvider && settings.defaultModelId ? settings.defaultProvider : undefined);
+
+      const resolvedModelId =
+        (provider && modelId ? modelId : undefined) ||
+        (settings.titleSummarizerProvider && settings.titleSummarizerModelId ? settings.titleSummarizerModelId : undefined) ||
+        (settings.planningProvider && settings.planningModelId ? settings.planningModelId : undefined) ||
+        (settings.defaultProvider && settings.defaultModelId ? settings.defaultModelId : undefined);
+
+      if (process.env.KB_DEBUG_AI) {
+        console.log(`[ai-summarize] Resolved model: ${resolvedProvider || "auto"}/${resolvedModelId || "auto"}`);
+      }
+
+      // Process summarization
+      const title = await summarizeTitle(description, rootDir, resolvedProvider, resolvedModelId);
+
+      if (!title) {
+        res.status(400).json({
+          error: `Description must be at least ${MIN_DESCRIPTION_LENGTH} characters for summarization`,
+        });
+        return;
+      }
+
+      res.json({ title });
+    } catch (err: any) {
+      // Check error by name since error classes are from dynamic import
+      if (err?.name === "RateLimitError") {
+        res.status(429).json({ error: err.message });
+      } else if (err?.name === "AiServiceError") {
+        res.status(503).json({ error: err.message || "AI service temporarily unavailable" });
+      } else if (err?.name === "ValidationError") {
+        res.status(400).json({ error: err.message });
+      } else {
+        console.error("[ai-summarize] Unexpected error:", err);
+        res.status(500).json({ error: err?.message || "Failed to generate title" });
       }
     }
   });

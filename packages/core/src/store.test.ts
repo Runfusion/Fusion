@@ -3733,4 +3733,162 @@ describe("TaskStore", () => {
       expect(task.enabledWorkflowSteps).toBeUndefined();
     });
   });
+
+  // ── Title Summarization Tests ────────────────────────────────────────────
+
+  describe("createTask with title summarization", () => {
+    it("should use generated title when onSummarize returns a title", async () => {
+      const longDescription = "a".repeat(200);
+      const mockOnSummarize = vi.fn().mockResolvedValue("AI Generated Title");
+
+      const task = await store.createTask(
+        { description: longDescription },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(task.title).toBe("AI Generated Title");
+      expect(mockOnSummarize).toHaveBeenCalledWith(longDescription);
+    });
+
+    it("should not call onSummarize when title is already provided", async () => {
+      const mockOnSummarize = vi.fn().mockResolvedValue("AI Title");
+
+      const task = await store.createTask(
+        { title: "User Title", description: "a".repeat(200) },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(task.title).toBe("User Title");
+      expect(mockOnSummarize).not.toHaveBeenCalled();
+    });
+
+    it("should not call onSummarize when description is too short", async () => {
+      const shortDescription = "a".repeat(100);
+      const mockOnSummarize = vi.fn().mockResolvedValue("AI Title");
+
+      const task = await store.createTask(
+        { description: shortDescription },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(task.title).toBeUndefined();
+      expect(mockOnSummarize).not.toHaveBeenCalled();
+    });
+
+    it("should not call onSummarize when autoSummarizeTitles is false", async () => {
+      const mockOnSummarize = vi.fn().mockResolvedValue("AI Title");
+
+      const task = await store.createTask(
+        { description: "a".repeat(200) },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: false } }
+      );
+
+      expect(task.title).toBeUndefined();
+      expect(mockOnSummarize).not.toHaveBeenCalled();
+    });
+
+    it("should not call onSummarize when no settings provided", async () => {
+      const mockOnSummarize = vi.fn().mockResolvedValue("AI Title");
+
+      const task = await store.createTask(
+        { description: "a".repeat(200) },
+        { onSummarize: mockOnSummarize }
+      );
+
+      expect(task.title).toBeUndefined();
+      expect(mockOnSummarize).not.toHaveBeenCalled();
+    });
+
+    it("should call onSummarize when summarize input flag is true", async () => {
+      const mockOnSummarize = vi.fn().mockResolvedValue("AI Title");
+
+      const task = await store.createTask(
+        { description: "a".repeat(200), summarize: true },
+        { onSummarize: mockOnSummarize }
+      );
+
+      expect(task.title).toBe("AI Title");
+      expect(mockOnSummarize).toHaveBeenCalled();
+    });
+
+    it("should handle onSummarize returning null", async () => {
+      const mockOnSummarize = vi.fn().mockResolvedValue(null);
+
+      const task = await store.createTask(
+        { description: "a".repeat(200) },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(task.title).toBeUndefined();
+    });
+
+    it("should handle onSummarize throwing error gracefully", async () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const mockOnSummarize = vi.fn().mockRejectedValue(new Error("AI service failed"));
+
+      const task = await store.createTask(
+        { description: "a".repeat(200) },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(task.title).toBeUndefined();
+      expect(task.id).toMatch(/^KB-\d+$/); // Task still created
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Title summarization failed"),
+        expect.stringContaining("AI service failed")
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it("should trigger summarization at exactly 141 characters", async () => {
+      const boundaryDescription = "a".repeat(141);
+      const mockOnSummarize = vi.fn().mockResolvedValue("AI Title");
+
+      const task = await store.createTask(
+        { description: boundaryDescription },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(mockOnSummarize).toHaveBeenCalled();
+    });
+
+    it("should not trigger summarization at exactly 140 characters", async () => {
+      const boundaryDescription = "a".repeat(140);
+      const mockOnSummarize = vi.fn().mockResolvedValue("AI Title");
+
+      const task = await store.createTask(
+        { description: boundaryDescription },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(mockOnSummarize).not.toHaveBeenCalled();
+    });
+
+    it("should prioritize explicit title over summarize flag", async () => {
+      const mockOnSummarize = vi.fn().mockResolvedValue("AI Title");
+
+      const task = await store.createTask(
+        { title: "User Title", description: "a".repeat(200), summarize: true },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(task.title).toBe("User Title");
+      expect(mockOnSummarize).not.toHaveBeenCalled();
+    });
+
+    it("should include generated title in PROMPT.md heading", async () => {
+      const mockOnSummarize = vi.fn().mockResolvedValue("Generated Task Title");
+
+      const task = await store.createTask(
+        { description: "a".repeat(200) },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(task.title).toBe("Generated Task Title");
+
+      const detail = await store.getTask(task.id);
+      expect(detail.prompt).toMatch(/^# KB-\d+: Generated Task Title\n/);
+    });
+  });
 });

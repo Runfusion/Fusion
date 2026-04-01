@@ -52,6 +52,24 @@ export type {
   ImportResult,
 } from "./settings-export.js";
 
+// ── AI Summarization ─────────────────────────────────────────────────────
+
+export {
+  summarizeTitle,
+  checkRateLimit,
+  getRateLimitResetTime,
+  validateDescription,
+  SUMMARIZE_SYSTEM_PROMPT,
+  MAX_DESCRIPTION_LENGTH,
+  MIN_DESCRIPTION_LENGTH,
+  MAX_TITLE_LENGTH,
+  MAX_REQUESTS_PER_HOUR,
+  ValidationError,
+  RateLimitError,
+  AiServiceError,
+  __resetSummarizeState,
+} from "./ai-summarize.js";
+
 // ── Mission Hierarchy Types ────────────────────────────────────────────
 
 export {
