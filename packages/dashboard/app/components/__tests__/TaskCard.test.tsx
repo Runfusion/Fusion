@@ -2513,8 +2513,63 @@ describe("TaskCard title display", () => {
     ...overrides,
   } as Task);
 
-  it("displays full description when no title exists (no truncation)", () => {
-    const longDescription = "A".repeat(100);
+  it("truncates titles longer than 140 characters with ellipsis", () => {
+    const longTitle = "A".repeat(150);
+    const task = makeTask({ title: longTitle });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // The title should be truncated to 140 chars + "…"
+    const expectedTruncated = "A".repeat(140) + "…";
+    const cardTitle = screen.getByText(expectedTruncated);
+    expect(cardTitle).toBeDefined();
+    expect(cardTitle.textContent?.length).toBe(141); // 140 + ellipsis
+  });
+
+  it("shows full title in tooltip via title attribute", () => {
+    const longTitle = "A".repeat(150);
+    const task = makeTask({ title: longTitle });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // The title attribute should contain the full untruncated text
+    const cardTitle = document.querySelector(".card-title");
+    expect(cardTitle).toHaveAttribute("title", longTitle);
+  });
+
+  it("does not truncate titles exactly 140 characters", () => {
+    const exactTitle = "B".repeat(140);
+    const task = makeTask({ title: exactTitle });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Exactly 140 characters should NOT be truncated (no ellipsis)
+    const cardTitle = screen.getByText(exactTitle);
+    expect(cardTitle).toBeDefined();
+    expect(cardTitle.textContent).toBe(exactTitle);
+    expect(cardTitle.textContent?.length).toBe(140);
+  });
+
+  it("truncates description fallback when no title present and description exceeds 140 chars", () => {
+    const longDescription = "C".repeat(200);
     const task = makeTask({ title: undefined, description: longDescription });
 
     render(
@@ -2525,10 +2580,46 @@ describe("TaskCard title display", () => {
       />
     );
 
-    // The full 100-character description should be visible
-    const cardTitle = screen.getByText(longDescription);
+    // The description should be truncated to 140 chars + "…"
+    const expectedTruncated = "C".repeat(140) + "…";
+    const cardTitle = screen.getByText(expectedTruncated);
     expect(cardTitle).toBeDefined();
-    expect(cardTitle.textContent).toBe(longDescription);
+    expect(cardTitle.textContent?.length).toBe(141);
+  });
+
+  it("shows full description in tooltip when used as fallback", () => {
+    const longDescription = "D".repeat(200);
+    const task = makeTask({ title: undefined, description: longDescription });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // The title attribute should contain the full untruncated description
+    const cardTitle = document.querySelector(".card-title");
+    expect(cardTitle).toHaveAttribute("title", longDescription);
+  });
+
+  it("does not truncate short titles under 140 characters", () => {
+    const shortTitle = "A".repeat(100);
+    const task = makeTask({ title: shortTitle });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Short titles should display unchanged
+    const cardTitle = screen.getByText(shortTitle);
+    expect(cardTitle).toBeDefined();
+    expect(cardTitle.textContent).toBe(shortTitle);
     expect(cardTitle.textContent?.length).toBe(100);
   });
 

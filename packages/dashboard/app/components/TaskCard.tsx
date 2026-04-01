@@ -637,8 +637,8 @@ function TaskCardComponent({
           <span className="card-error-text">{task.error.length > 60 ? task.error.slice(0, 60) + "…" : task.error}</span>
         </div>
       )}
-      <div className="card-title">
-        {task.title || task.description || task.id}
+      <div className="card-title" title={task.title || task.description || undefined}>
+        {truncate(task.title, MAX_TITLE_LENGTH) || truncate(task.description, MAX_TITLE_LENGTH) || task.id}
       </div>
       {task.steps.length > 0 && (() => {
         const completedSteps = task.steps.filter((s) => s.status === "done" || s.status === "skipped").length;
@@ -734,6 +734,12 @@ function TaskCardComponent({
 
 const TOUCH_MOVE_THRESHOLD = 10; // pixels
 const TOUCH_TAP_MAX_DURATION = 300; // milliseconds
+const MAX_TITLE_LENGTH = 140;
+
+function truncate(s: string | undefined, max: number): string {
+  if (!s) return "";
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
 
 export const TaskCard = memo(TaskCardComponent, areTaskCardPropsEqual);
 TaskCard.displayName = "TaskCard";
