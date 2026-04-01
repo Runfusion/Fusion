@@ -45,6 +45,7 @@ const { runSettingsExport } = await import("./commands/settings-export.js");
 const { runSettingsImport } = await import("./commands/settings-import.js");
 const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
 const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
+const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice } = await import("./commands/mission.js");
 const { runProjectList, runProjectAdd, runProjectRemove, runProjectInfo } = await import("./commands/project.js");
 
 const HELP = `
@@ -93,6 +94,11 @@ Usage:
   fn backup --list           List all database backups
   fn backup --restore <file> Restore database from a backup file
   fn backup --cleanup        Remove old backups exceeding retention limit
+  fn mission create [title] [description]  Create a new mission
+  fn mission list                       List all missions
+  fn mission show <id>                  Show mission with hierarchy
+  fn mission delete <id> [--force]      Delete a mission
+  fn mission activate-slice <slice-id>  Activate a pending slice
 
 Options:
   --project <name>           Target a specific project (for task/settings commands)
@@ -587,6 +593,70 @@ async function main() {
         } else {
           console.error("Usage: fn backup --create | --list | --cleanup | --restore <filename>");
           process.exit(1);
+        }
+        break;
+      }
+
+      case "mission": {
+        const subcommand = args[1];
+        switch (subcommand) {
+          case "create": {
+            const titleParts: string[] = [];
+            for (let i = 2; i < args.length; i++) {
+              titleParts.push(args[i]);
+            }
+            const fullInput = titleParts.join(" ");
+            // Split on first space to separate title and description if provided
+            const firstSpaceIdx = fullInput.indexOf(" ");
+            let title: string | undefined;
+            let description: string | undefined;
+            if (firstSpaceIdx > 0) {
+              title = fullInput.slice(0, firstSpaceIdx);
+              description = fullInput.slice(firstSpaceIdx + 1).trim();
+            } else {
+              title = fullInput || undefined;
+            }
+            await runMissionCreate(title, description, projectName);
+            break;
+          }
+          case "list":
+          case "ls":
+            await runMissionList(projectName);
+            break;
+          case "show":
+          case "info": {
+            const id = args[2];
+            if (!id) {
+              console.error("Usage: fn mission show <id>");
+              process.exit(1);
+            }
+            await runMissionShow(id, projectName);
+            break;
+          }
+          case "delete":
+          case "rm": {
+            const id = args[2];
+            if (!id) {
+              console.error("Usage: fn mission delete <id> [--force]");
+              process.exit(1);
+            }
+            const force = args.includes("--force");
+            await runMissionDelete(id, force, projectName);
+            break;
+          }
+          case "activate-slice": {
+            const id = args[2];
+            if (!id) {
+              console.error("Usage: fn mission activate-slice <slice-id>");
+              process.exit(1);
+            }
+            await runMissionActivateSlice(id, projectName);
+            break;
+          }
+          default:
+            console.error(`Unknown subcommand: mission ${subcommand || ""}`);
+            console.error("Try: fn mission create | list | show <id> | delete <id> | activate-slice <id>");
+            process.exit(1);
         }
         break;
       }

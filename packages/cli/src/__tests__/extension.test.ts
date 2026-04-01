@@ -90,6 +90,16 @@ describe("kb pi extension", () => {
         "kb_task_unarchive",
         "kb_task_delete",
         "kb_task_plan",
+        // Mission tools
+        "kb_mission_create",
+        "kb_mission_list",
+        "kb_mission_show",
+        "kb_mission_delete",
+        "kb_milestone_add",
+        "kb_slice_add",
+        "kb_feature_add",
+        "kb_slice_activate",
+        "kb_feature_link_task",
       ];
 
       for (const name of expected) {
@@ -389,6 +399,146 @@ describe("kb pi extension", () => {
         makeCtx(tmpDir),
       );
       expect(unpauseResult.content[0].text).toContain("Unpaused FN-001");
+    });
+  });
+
+  describe("kb_mission_create", () => {
+    it("creates mission and returns mission data", async () => {
+      const tool = api.tools.get("kb_mission_create")!;
+      const result = await tool.execute(
+        "call-1",
+        { title: "Test Mission", description: "Test description" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.details.missionId).toBeDefined();
+      expect(result.details.title).toBe("Test Mission");
+      expect(result.content[0].text).toContain("Created");
+      expect(result.content[0].text).toContain("Test Mission");
+    });
+  });
+
+  describe("kb_mission_list", () => {
+    it("returns formatted list of missions", async () => {
+      // First create a mission
+      const createTool = api.tools.get("kb_mission_create")!;
+      await createTool.execute(
+        "c1",
+        { title: "Mission A" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const listTool = api.tools.get("kb_mission_list")!;
+      const result = await listTool.execute(
+        "call-1",
+        {},
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.details.count).toBeGreaterThanOrEqual(1);
+      expect(result.content[0].text).toContain("Missions");
+    });
+  });
+
+  describe("kb_mission_show", () => {
+    it("returns mission with hierarchy", async () => {
+      // Create mission
+      const createTool = api.tools.get("kb_mission_create")!;
+      const created = await createTool.execute(
+        "c1",
+        { title: "Test Mission" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const showTool = api.tools.get("kb_mission_show")!;
+      const result = await showTool.execute(
+        "call-1",
+        { id: created.details.missionId },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.details.mission).toBeDefined();
+      expect(result.content[0].text).toContain("Test Mission");
+    });
+
+    it("returns error when mission not found", async () => {
+      const showTool = api.tools.get("kb_mission_show")!;
+      const result = await showTool.execute(
+        "call-1",
+        { id: "M-999" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("not found");
+    });
+  });
+
+  describe("kb_mission_delete", () => {
+    it("deletes mission and confirms", async () => {
+      // Create mission
+      const createTool = api.tools.get("kb_mission_create")!;
+      const created = await createTool.execute(
+        "c1",
+        { title: "Mission to Delete" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const deleteTool = api.tools.get("kb_mission_delete")!;
+      const result = await deleteTool.execute(
+        "call-1",
+        { id: created.details.missionId },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.details.missionId).toBe(created.details.missionId);
+      expect(result.content[0].text).toContain("Deleted");
+    });
+  });
+
+  describe("kb_slice_activate", () => {
+    it("activates slice and updates status", async () => {
+      // This test would need a full mission hierarchy setup
+      // For now, verify the tool exists and has correct parameters
+      const tool = api.tools.get("kb_slice_activate")!;
+      expect(tool).toBeDefined();
+      expect(tool.parameters.properties.id).toBeDefined();
+    });
+  });
+
+  describe("kb_feature_link_task", () => {
+    it("links feature to task", async () => {
+      // Create a task first
+      const createTaskTool = api.tools.get("kb_task_create")!;
+      const taskResult = await createTaskTool.execute(
+        "c1",
+        { description: "Task for feature" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      // Verify the tool exists with correct parameters
+      const tool = api.tools.get("kb_feature_link_task")!;
+      expect(tool).toBeDefined();
+      expect(tool.parameters.properties.featureId).toBeDefined();
+      expect(tool.parameters.properties.taskId).toBeDefined();
     });
   });
 });

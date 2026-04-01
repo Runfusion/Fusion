@@ -434,6 +434,8 @@ export interface Task {
   summary?: string;
   /** Files modified during agent execution, captured at task completion time */
   modifiedFiles?: string[];
+  /** Optional ID of the slice this task is linked to (for mission-based work) */
+  sliceId?: string;
   /** ISO-8601 timestamp of when the task last entered its current column.
    *  Used to sort cards within a column so that recently-moved cards appear at the top. */
   columnMovedAt?: string;

@@ -1,4 +1,4 @@
-import { resolveDependencyOrder, type TaskStore, type Task } from "@fusion/core";
+import { resolveDependencyOrder, type TaskStore, type Task, type MissionStore, type FeatureStatus } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -60,6 +60,8 @@ export interface SchedulerOptions {
   onBlocked?: (task: Task, blockedBy: string[]) => void;
   /** Optional PR monitor for tracking in-review PRs */
   prMonitor?: PrMonitor;
+  /** Optional MissionStore for slice activation and auto-advance */
+  missionStore?: MissionStore;
 }
 
 /**
@@ -122,23 +124,36 @@ export class Scheduler {
     /**
      * PR Monitoring: Start monitoring when a task moves to "in-review",
      * stop monitoring when it moves out.
+     * 
+     * Also handles mission auto-advance: when a linked task completes,
+     * update feature status and potentially activate next pending slice.
      */
     this.store.on("task:moved", ({ task, to }) => {
-      if (!this.options.prMonitor) return;
+      // PR Monitoring
+      if (this.options.prMonitor) {
+        if (to === "in-review" && task.prInfo) {
+          // Start monitoring existing PR
+          const repo = getCurrentGitHubRepo(this.store.getRootDir());
+          if (repo) {
+            this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
+          }
+        } else if (task.column === "in-review" && to !== "in-review") {
+          // Task moved out of in-review, stop monitoring
+          this.options.prMonitor.stopMonitoring(task.id);
 
-      if (to === "in-review" && task.prInfo) {
-        // Start monitoring existing PR
-        const repo = getCurrentGitHubRepo(this.store.getRootDir());
-        if (repo) {
-          this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
+          // If task has a closed/merged PR, check for unaddressed feedback
+          if (task.prInfo && (task.prInfo.status === "closed" || task.prInfo.status === "merged")) {
+            // This would need the tracked PR data - handled by PrMonitor/PrCommentHandler
+          }
         }
-      } else if (task.column === "in-review" && to !== "in-review") {
-        // Task moved out of in-review, stop monitoring
-        this.options.prMonitor.stopMonitoring(task.id);
+      }
 
-        // If task has a closed/merged PR, check for unaddressed feedback
-        if (task.prInfo && (task.prInfo.status === "closed" || task.prInfo.status === "merged")) {
-          // This would need the tracked PR data - handled by PrMonitor/PrCommentHandler
+      // Mission progress tracking: when task with sliceId moves to "in-progress" or "done"
+      if (task.sliceId && this.options.missionStore) {
+        if (to === "in-progress") {
+          void this.handleMissionTaskStart(task.id, task.sliceId);
+        } else if (to === "done") {
+          void this.handleMissionTaskCompletion(task.id, task.sliceId);
         }
       }
     });
@@ -477,6 +492,120 @@ export class Scheduler {
       schedulerLog.error("Scheduling error:", err);
     } finally {
       this.scheduling = false;
+    }
+  }
+
+  /**
+   * Handle mission task start.
+   * When a task with a sliceId moves to "in-progress", update the linked
+   * feature status to "in-progress" to reflect active work.
+   */
+  private async handleMissionTaskStart(taskId: string, sliceId: string): Promise<void> {
+    if (!this.options.missionStore) return;
+
+    const missionStore = this.options.missionStore;
+
+    try {
+      // Find the feature linked to this task
+      const feature = missionStore.getFeatureByTaskId(taskId);
+      if (!feature) {
+        schedulerLog.log(`Task ${taskId} has sliceId ${sliceId} but no linked feature found`);
+        return;
+      }
+
+      // Only update if feature is still in "triaged" status
+      if (feature.status === "triaged") {
+        await missionStore.updateFeatureStatus(feature.id, "in-progress");
+        schedulerLog.log(`Feature ${feature.id} marked in-progress (task ${taskId} started)`);
+      }
+    } catch (err) {
+      schedulerLog.error(`Error handling mission task start for ${taskId}:`, err);
+    }
+  }
+
+  /**
+   * Handle mission task completion.
+   * When a task with a sliceId moves to "done", update the linked feature
+   * status and check if the slice is complete. If autoAdvance is enabled
+   * on the mission, activate the next pending slice.
+   */
+  private async handleMissionTaskCompletion(taskId: string, sliceId: string): Promise<void> {
+    if (!this.options.missionStore) return;
+
+    const missionStore = this.options.missionStore;
+
+    try {
+      // Find the feature linked to this task
+      const feature = missionStore.getFeatureByTaskId(taskId);
+      if (!feature) {
+        schedulerLog.log(`Task ${taskId} has sliceId ${sliceId} but no linked feature found`);
+        return;
+      }
+
+      // Update feature status to done
+      await missionStore.updateFeatureStatus(feature.id, "done");
+      schedulerLog.log(`Feature ${feature.id} marked done (task ${taskId} completed)`);
+
+      // Get the slice to check its status
+      const slice = missionStore.getSlice(sliceId);
+      if (!slice) {
+        schedulerLog.warn(`Slice ${sliceId} not found for task ${taskId}`);
+        return;
+      }
+
+      // Get the milestone to find the mission
+      const milestone = missionStore.getMilestone(slice.milestoneId);
+      if (!milestone) {
+        schedulerLog.warn(`Milestone ${slice.milestoneId} not found for slice ${sliceId}`);
+        return;
+      }
+
+      // Recompute and check if slice is now complete
+      const newSliceStatus = missionStore.computeSliceStatus(sliceId);
+      if (newSliceStatus === "complete") {
+        schedulerLog.log(`Slice ${sliceId} completed (all features done)`);
+
+        // Check if mission has autoAdvance enabled
+        const mission = missionStore.getMission(milestone.missionId);
+        if (mission?.autoAdvance) {
+          // Activate next pending slice
+          const nextSlice = await this.activateNextPendingSlice(mission.id);
+          if (nextSlice) {
+            schedulerLog.log(`Auto-advanced: activated slice ${nextSlice.id} for mission ${mission.id}`);
+          }
+        }
+      }
+    } catch (err) {
+      schedulerLog.error(`Error handling mission task completion for ${taskId}:`, err);
+    }
+  }
+
+  /**
+   * Activate the next pending slice in a mission.
+   * Finds the first milestone with pending slices and activates
+   * the first pending slice in that milestone.
+   *
+   * @param missionId - Mission ID
+   * @returns The activated slice, or null if no pending slices
+   */
+  async activateNextPendingSlice(missionId: string): Promise<import("@fusion/core").Slice | null> {
+    if (!this.options.missionStore) return null;
+
+    const missionStore = this.options.missionStore;
+
+    try {
+      const nextSlice = missionStore.findNextPendingSlice(missionId);
+      if (!nextSlice) {
+        schedulerLog.log(`Mission ${missionId}: no pending slices to activate`);
+        return null;
+      }
+
+      const activated = missionStore.activateSlice(nextSlice.id);
+      schedulerLog.log(`Activated slice ${activated.id} for mission ${missionId}`);
+      return activated;
+    } catch (err) {
+      schedulerLog.error(`Error activating next slice for mission ${missionId}:`, err);
+      return null;
     }
   }
 }
