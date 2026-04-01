@@ -43,7 +43,7 @@ interface TaskCardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  onOpenFilesForTask?: (taskId: string) => void;
 }
 
 function areTaskBadgeInfosEqual(
@@ -109,7 +109,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.reviewLevel === nextTask.reviewLevel &&
     previousTask.mergeRetries === nextTask.mergeRetries &&
     JSON.stringify(previousTask.attachments ?? []) === JSON.stringify(nextTask.attachments ?? []) &&
-    JSON.stringify(previousTask.comments ?? []) === JSON.stringify(nextTask.comments ?? []) &&
+    JSON.stringify(previousTask.steeringComments ?? []) === JSON.stringify(nextTask.steeringComments ?? []) &&
     areTaskDependenciesEqual(previousTask.dependencies, nextTask.dependencies) &&
     areTaskStepsEqual(previousTask.steps, nextTask.steps) &&
     areTaskBadgeInfosEqual(previousTask.prInfo, nextTask.prInfo) &&
@@ -694,7 +694,7 @@ function TaskCardComponent({
           className="card-session-files"
           onClick={(e) => {
             e.stopPropagation();
-            onOpenFilesForTask?.(task.id, task.worktree, task.column);
+            onOpenFilesForTask?.(task.id);
           }}
           disabled={!onOpenFilesForTask}
         >

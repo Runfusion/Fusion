@@ -6,11 +6,11 @@ import type { ActivityLogEntry } from "@fusion/core";
 
 // Mock the API module
 vi.mock("../../api", () => ({
-  fetchActivityFeed: vi.fn(),
+  fetchActivityLog: vi.fn(),
   clearActivityLog: vi.fn(),
 }));
 
-const mockFetchActivityFeed = vi.mocked(apiModule.fetchActivityFeed);
+const mockFetchActivityLog = vi.mocked(apiModule.fetchActivityLog);
 const mockClearActivityLog = vi.mocked(apiModule.clearActivityLog);
 
 describe("ActivityLogModal", () => {
@@ -53,7 +53,7 @@ describe("ActivityLogModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchActivityFeed.mockResolvedValue(mockActivityEntries);
+    mockFetchActivityLog.mockResolvedValue(mockActivityEntries);
     mockClearActivityLog.mockResolvedValue({ success: true });
   });
 
@@ -128,7 +128,7 @@ describe("ActivityLogModal", () => {
     );
 
     await waitFor(() => {
-      expect(mockFetchActivityFeed).toHaveBeenCalled();
+      expect(mockFetchActivityLog).toHaveBeenCalled();
     });
   });
 
@@ -146,7 +146,7 @@ describe("ActivityLogModal", () => {
     fireEvent.change(filterSelect, { target: { value: "task:created" } });
 
     await waitFor(() => {
-      expect(mockFetchActivityFeed).toHaveBeenCalledWith(
+      expect(mockFetchActivityLog).toHaveBeenCalledWith(
         expect.objectContaining({ type: "task:created" })
       );
     });
@@ -164,19 +164,19 @@ describe("ActivityLogModal", () => {
 
     // Wait for initial load
     await waitFor(() => {
-      expect(mockFetchActivityFeed).toHaveBeenCalledTimes(1);
+      expect(mockFetchActivityLog).toHaveBeenCalledTimes(1);
     });
 
     const refreshButton = screen.getByTestId("activity-refresh");
     fireEvent.click(refreshButton);
 
     await waitFor(() => {
-      expect(mockFetchActivityFeed).toHaveBeenCalledTimes(2);
+      expect(mockFetchActivityLog).toHaveBeenCalledTimes(2);
     });
   });
 
   it("shows empty state when no entries", async () => {
-    mockFetchActivityFeed.mockResolvedValue([]);
+    mockFetchActivityLog.mockResolvedValue([]);
 
     render(
       <ActivityLogModal
@@ -193,7 +193,7 @@ describe("ActivityLogModal", () => {
   });
 
   it("shows error state when API fails", async () => {
-    mockFetchActivityFeed.mockRejectedValue(new Error("API Error"));
+    mockFetchActivityLog.mockRejectedValue(new Error("API Error"));
 
     render(
       <ActivityLogModal
@@ -249,101 +249,5 @@ describe("ActivityLogModal", () => {
 
     // Check that confirmation dialog appears
     expect(screen.getByText(/Clear Activity Log/i)).toBeTruthy();
-  });
-
-  // ── Project Filter Tests ─────────────────────────────────────────
-
-  it("shows project filter when projects provided", async () => {
-    const mockProjects = [
-      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
-      { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
-    ];
-
-    render(
-      <ActivityLogModal
-        isOpen={true}
-        onClose={mockOnClose}
-        tasks={mockTasks}
-        projects={mockProjects}
-      />
-    );
-
-    const projectFilter = await screen.findByTestId("activity-project-filter");
-    expect(projectFilter).toBeTruthy();
-    
-    // Should have "All Projects" option
-    expect(screen.getByText("All Projects")).toBeDefined();
-    // Should have project options
-    expect(screen.getByText("Project One")).toBeDefined();
-    expect(screen.getByText("Project Two")).toBeDefined();
-  });
-
-  it("does not show project filter when no projects provided", async () => {
-    render(
-      <ActivityLogModal
-        isOpen={true}
-        onClose={mockOnClose}
-        tasks={mockTasks}
-      />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("activity-filter")).toBeTruthy();
-    });
-
-    // Project filter should not exist
-    expect(screen.queryByTestId("activity-project-filter")).toBeNull();
-  });
-
-  it("calls onProjectFilterChange when project filter changed", async () => {
-    const mockProjects = [
-      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
-    ];
-    const onProjectFilterChange = vi.fn();
-
-    render(
-      <ActivityLogModal
-        isOpen={true}
-        onClose={mockOnClose}
-        tasks={mockTasks}
-        projects={mockProjects}
-        onProjectFilterChange={onProjectFilterChange}
-      />
-    );
-
-    const projectFilter = await screen.findByTestId("activity-project-filter");
-    fireEvent.change(projectFilter, { target: { value: "proj_1" } });
-
-    expect(onProjectFilterChange).toHaveBeenCalledWith("proj_1");
-  });
-
-  it("shows empty state message mentioning filters when filter is active", async () => {
-    mockFetchActivityFeed.mockResolvedValue([]);
-    const mockProjects = [
-      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
-    ];
-
-    render(
-      <ActivityLogModal
-        isOpen={true}
-        onClose={mockOnClose}
-        tasks={mockTasks}
-        projects={mockProjects}
-      />
-    );
-
-    // Wait for initial load
-    await waitFor(() => {
-      expect(screen.getByTestId("activity-empty")).toBeTruthy();
-    });
-
-    // Change the filter to trigger filtered empty state
-    const projectFilter = screen.getByTestId("activity-project-filter");
-    fireEvent.change(projectFilter, { target: { value: "proj_1" } });
-
-    // Should show filter-specific message
-    await waitFor(() => {
-      expect(screen.getByText(/No activity matches the current filters/)).toBeTruthy();
-    });
   });
 });

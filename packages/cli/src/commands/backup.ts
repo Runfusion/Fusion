@@ -4,22 +4,17 @@ import {
   runBackupCommand,
   TaskStore,
 } from "@fusion/core";
-import { resolveProject } from "../project-context.js";
 
 /**
  * Find the project root and create a backup manager.
  */
-async function getBackupManager(projectName?: string): Promise<{
+async function getBackupManager(): Promise<{
   manager: BackupManager;
   store: TaskStore;
   kbDir: string;
 }> {
-  const store = projectName 
-    ? (await resolveProject(projectName)).store
-    : new TaskStore(process.cwd());
-  if (!projectName) {
-    await store.init();
-  }
+  const store = new TaskStore(process.cwd());
+  await store.init();
   // Access the private kbDir property via type assertion
   const kbDir = (store as unknown as { kbDir: string }).kbDir;
   const settings = await store.getSettings();
@@ -31,8 +26,8 @@ async function getBackupManager(projectName?: string): Promise<{
  * Create a database backup immediately.
  * Usage: kb backup --create
  */
-export async function runBackupCreate(projectName?: string): Promise<void> {
-  const { manager, kbDir, store } = await getBackupManager(projectName);
+export async function runBackupCreate(): Promise<void> {
+  const { manager, kbDir, store } = await getBackupManager();
   const settings = await store.getSettings();
   
   console.log("Creating database backup...");
@@ -52,8 +47,8 @@ export async function runBackupCreate(projectName?: string): Promise<void> {
  * List all database backups.
  * Usage: kb backup --list
  */
-export async function runBackupList(projectName?: string): Promise<void> {
-  const { manager } = await getBackupManager(projectName);
+export async function runBackupList(): Promise<void> {
+  const { manager } = await getBackupManager();
   
   const backups = await manager.listBackups();
   
@@ -85,8 +80,8 @@ export async function runBackupList(projectName?: string): Promise<void> {
  * Restore database from a backup file.
  * Usage: kb backup --restore <filename>
  */
-export async function runBackupRestore(filename: string, projectName?: string): Promise<void> {
-  const { manager } = await getBackupManager(projectName);
+export async function runBackupRestore(filename: string): Promise<void> {
+  const { manager } = await getBackupManager();
   
   console.log(`Restoring backup: ${filename}`);
   console.log("A pre-restore backup will be created first.\n");
@@ -105,8 +100,8 @@ export async function runBackupRestore(filename: string, projectName?: string): 
  * Remove old backups exceeding retention limit.
  * Usage: kb backup --cleanup
  */
-export async function runBackupCleanup(projectName?: string): Promise<void> {
-  const { manager } = await getBackupManager(projectName);
+export async function runBackupCleanup(): Promise<void> {
+  const { manager } = await getBackupManager();
   
   console.log("Cleaning up old backups...");
   

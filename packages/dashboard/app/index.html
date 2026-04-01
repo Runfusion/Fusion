@@ -11,7 +11,7 @@
         try {
           var mode = localStorage.getItem('kb-dashboard-theme-mode') || 'dark';
           var colorTheme = localStorage.getItem('kb-dashboard-color-theme') || 'default';
-          var validThemes = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'high-contrast', 'industrial', 'monochrome', 'solarized', 'factory', 'ayu', 'one-dark'];
+          var validThemes = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'monochrome', 'high-contrast', 'solarized', 'factory', 'ayu', 'one-dark'];
           if (!validThemes.includes(colorTheme)) {
             colorTheme = 'default';
           }

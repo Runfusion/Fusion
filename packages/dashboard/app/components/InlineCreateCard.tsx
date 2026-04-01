@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp } from "lucide-react";
+import { Brain, Link, Lightbulb, ListTree, Zap } from "lucide-react";
 import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { fetchModels, uploadAttachment, fetchSettings } from "../api";
@@ -87,8 +87,6 @@ export function InlineCreateCard({
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>(availableModels ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const [isExpanded, setIsExpanded] = useState(false);
-  const justResetRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -190,21 +188,40 @@ export function InlineCreateCard({
     [loadedModels],
   );
 
-  // Track focus-out for justResetRef cleanup only (no auto-cancel on blur)
+  // Cancel when focus leaves the card entirely and there's no content
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
     const handleFocusOut = (e: FocusEvent) => {
       // relatedTarget is the element receiving focus — if it's inside the card, ignore
       if (e.relatedTarget instanceof Node && card.contains(e.relatedTarget)) return;
-      // Clear justResetRef flag when focus actually leaves the card
-      if (justResetRef.current) {
-        justResetRef.current = false;
+      // Only cancel if empty and dropdowns are not open
+      if (
+        description.trim() === "" &&
+        pendingImages.length === 0 &&
+        dependencies.length === 0 &&
+        !hasExecutorOverride &&
+        !hasValidatorOverride &&
+        !showDeps &&
+        !showModels &&
+        !showPresets
+      ) {
+        onCancel();
       }
     };
     card.addEventListener("focusout", handleFocusOut);
     return () => card.removeEventListener("focusout", handleFocusOut);
-  }, []);
+  }, [
+    description,
+    pendingImages,
+    dependencies,
+    hasExecutorOverride,
+    hasValidatorOverride,
+    showDeps,
+    showModels,
+    showPresets,
+    onCancel,
+  ]);
 
   // Clean up object URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -290,19 +307,9 @@ export function InlineCreateCard({
       setPendingImages([]);
 
       setSelectedPresetId(undefined);
-      setExecutorProvider(undefined);
-      setExecutorModelId(undefined);
-      setValidatorProvider(undefined);
-      setValidatorModelId(undefined);
-      setDependencies([]);
-      setShowDeps(false);
-      setShowModels(false);
-      setShowPresets(false);
       addToast(`Created ${task.id}`, "success");
 
-      // Collapse and clear localStorage after successful task creation
-      setIsExpanded(false);
-      justResetRef.current = true;
+      // Clear localStorage after successful task creation
       if (typeof window !== "undefined") {
         localStorage.removeItem(STORAGE_KEY);
       }
@@ -330,27 +337,10 @@ export function InlineCreateCard({
     async (e: React.KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        // Close dropdowns first if open
-        if (showDeps || showModels || showPresets) {
-          setShowDeps(false);
-          setShowModels(false);
-          setShowPresets(false);
-          return;
+        // Clear localStorage when user explicitly cancels
+        if (typeof window !== "undefined") {
+          localStorage.removeItem(STORAGE_KEY);
         }
-        // Clear non-empty input on Escape and clear localStorage
-        if (description.trim()) {
-          setDescription("");
-          // Reset height
-          if (inputRef.current) {
-            inputRef.current.style.height = "auto";
-          }
-          // Clear localStorage when user explicitly clears input
-          if (typeof window !== "undefined") {
-            localStorage.removeItem(STORAGE_KEY);
-          }
-        }
-        // Collapse and cancel on escape
-        setIsExpanded(false);
         onCancel();
         return;
       }
@@ -359,7 +349,7 @@ export function InlineCreateCard({
         handleSubmit();
       }
     },
-    [handleSubmit, onCancel, description, showDeps, showModels, showPresets],
+    [handleSubmit, onCancel],
   );
 
   const toggleDep = useCallback((id: string) => {
@@ -450,47 +440,24 @@ export function InlineCreateCard({
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len) + "…" : s;
 
-  const toggleExpanded = useCallback(() => {
-    // Skip if we just reset the form (prevents re-expanding after successful creation)
-    if (justResetRef.current) {
-      justResetRef.current = false;
-      return;
-    }
-    setIsExpanded((prev) => !prev);
-  }, []);
-
   return (
-    <div className={`inline-create-card ${isExpanded ? "inline-create-card--expanded" : "inline-create-card--collapsed"}`} ref={cardRef}>
-      <div className="inline-create-main-row">
-        <textarea
-          ref={inputRef}
-          rows={1}
-          className="inline-create-input"
-          placeholder="What needs to be done?"
-          value={description}
-          onChange={(e) => {
-            setDescription(e.target.value);
-            const el = e.target;
-            el.style.height = "auto";
-            el.style.height = el.scrollHeight + "px";
-          }}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          disabled={submitting}
-          aria-controls="inline-create-controls"
-        />
-        <button
-          type="button"
-          className="btn btn-sm inline-create-toggle"
-          onClick={toggleExpanded}
-          aria-expanded={isExpanded}
-          aria-controls="inline-create-controls"
-          data-testid="inline-create-toggle"
-          title={isExpanded ? "Collapse" : "Expand"}
-        >
-          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
-      </div>
+    <div className="inline-create-card" ref={cardRef}>
+      <textarea
+        ref={inputRef}
+        rows={1}
+        className="inline-create-input"
+        placeholder="What needs to be done?"
+        value={description}
+        onChange={(e) => {
+          setDescription(e.target.value);
+          const el = e.target;
+          el.style.height = "auto";
+          el.style.height = el.scrollHeight + "px";
+        }}
+        onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
+        disabled={submitting}
+      />
       {pendingImages.length > 0 && (
         <div className="inline-create-previews">
           {pendingImages.map((img, i) => (
@@ -509,30 +476,29 @@ export function InlineCreateCard({
           ))}
         </div>
       )}
-      {isExpanded && (
-        <div id="inline-create-controls" className="inline-create-footer">
-          <div className="inline-create-controls">
-            <div className="dep-trigger-wrap">
-              <button
-                type="button"
-                className="btn btn-sm dep-trigger"
-                onClick={toggleDepsDropdown}
-              >
-                <Link size={12} style={{ verticalAlign: "middle" }} />
-                {dependencies.length > 0 ? ` ${dependencies.length} deps` : " Deps"}
-              </button>
-              {showDeps && (() => {
-                const term = depSearch.toLowerCase();
-                const filtered = (term
-                  ? tasks.filter((t) =>
-                      t.id.toLowerCase().includes(term) ||
-                      (t.title && t.title.toLowerCase().includes(term)) ||
-                      (t.description && t.description.toLowerCase().includes(term))
-                    )
-                  : [...tasks]
-                ).sort((a, b) => {
-                  const cmp = b.createdAt.localeCompare(a.createdAt);
-                  if (cmp !== 0) return cmp;
+      <div className="inline-create-footer">
+        <div className="inline-create-controls">
+          <div className="dep-trigger-wrap">
+            <button
+              type="button"
+              className="btn btn-sm dep-trigger"
+              onClick={toggleDepsDropdown}
+            >
+              <Link size={12} style={{ verticalAlign: "middle" }} />
+              {dependencies.length > 0 ? ` ${dependencies.length} deps` : " Deps"}
+            </button>
+            {showDeps && (() => {
+              const term = depSearch.toLowerCase();
+              const filtered = (term
+                ? tasks.filter((t) =>
+                    t.id.toLowerCase().includes(term) ||
+                    (t.title && t.title.toLowerCase().includes(term)) ||
+                    (t.description && t.description.toLowerCase().includes(term))
+                  )
+                : [...tasks]
+              ).sort((a, b) => {
+                const cmp = b.createdAt.localeCompare(a.createdAt);
+                if (cmp !== 0) return cmp;
                 const aNum = parseInt(a.id.slice(a.id.lastIndexOf("-") + 1), 10) || 0;
                 const bNum = parseInt(b.id.slice(b.id.lastIndexOf("-") + 1), 10) || 0;
                 return bNum - aNum;
@@ -750,7 +716,6 @@ export function InlineCreateCard({
           </button>
         </div>
       </div>
-    )}
     </div>
   );
 }

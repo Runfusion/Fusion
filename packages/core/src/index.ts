@@ -1,5 +1,5 @@
 export { COLUMNS, COLUMN_LABELS, COLUMN_DESCRIPTIONS, VALID_TRANSITIONS, DEFAULT_SETTINGS, DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, THINKING_LEVELS, THEME_MODES, COLOR_THEMES, WORKFLOW_STEP_TEMPLATES } from "./types.js";
-export type { Column, IssueInfo, IssueState, PrInfo, PrStatus, Task, TaskAttachment, TaskComment, TaskCommentInput, TaskCreateInput, TaskDetail, AgentLogEntry, AgentLogType, AgentRole, BoardConfig, MergeDetails, MergeResult, Settings, GlobalSettings, ProjectSettings, SettingsScope, TaskStep, StepStatus, TaskLogEntry, ActivityLogEntry, ActivityEventType, ThinkingLevel, ThemeMode, ColorTheme, PlanningQuestion, PlanningSummary, PlanningResponse, PlanningQuestionType, ArchivedTaskEntry, BatchStatusRequest, BatchStatusResponse, BatchStatusEntry, BatchStatusResult, ModelPreset, WorkflowStep, WorkflowStepInput, WorkflowStepResult, WorkflowStepTemplate, Agent, AgentState, AgentDetail, AgentCreateInput, AgentUpdateInput, AgentCapability, AgentHeartbeatEvent } from "./types.js";
+export type { Column, IssueInfo, IssueState, PrInfo, PrStatus, Task, TaskAttachment, TaskComment, TaskCommentInput, TaskCreateInput, TaskDetail, AgentLogEntry, AgentLogType, AgentRole, BoardConfig, MergeDetails, MergeResult, Settings, GlobalSettings, ProjectSettings, SettingsScope, TaskStep, StepStatus, TaskLogEntry, ActivityLogEntry, ActivityEventType, ThinkingLevel, SteeringComment, ThemeMode, ColorTheme, PlanningQuestion, PlanningSummary, PlanningResponse, PlanningQuestionType, ArchivedTaskEntry, BatchStatusRequest, BatchStatusResponse, BatchStatusEntry, BatchStatusResult, ModelPreset, WorkflowStep, WorkflowStepInput, WorkflowStepResult, WorkflowStepTemplate, Agent, AgentState, AgentDetail, AgentCreateInput, AgentUpdateInput, AgentCapability, AgentHeartbeatEvent } from "./types.js";
 export { AgentStore } from "./agent-store.js";
 export type { AgentStoreEvents } from "./agent-store.js";
 export { TaskStore } from "./store.js";
@@ -121,26 +121,5 @@ export type {
   ProjectStatus, 
   ProjectHealth, 
   CentralActivityLogEntry, 
-  GlobalConcurrencyState,
-  DetectedProject,
-  MigrationOptions,
-  MigrationResult,
-  ProjectSetupInput,
-  SetupState,
-  SetupCompletionResult,
+  GlobalConcurrencyState 
 } from "./types.js";
-
-// ── Migration & First-Run (Multi-Project Support) ───────────────────────────
-
-export {
-  MigrationOrchestrator,
-  createMigrationOrchestrator,
-  MAX_AUTO_REGISTER_PROJECTS,
-  DEFAULT_MAX_DEPTH,
-  EXCLUDED_DIRS,
-} from "./migration-orchestrator.js";
-
-export {
-  FirstRunExperience,
-  createFirstRunExperience,
-} from "./first-run.js";

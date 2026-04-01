@@ -541,8 +541,7 @@ describe("migrateFromLegacy", () => {
       expect(JSON.parse(row.steps)).toHaveLength(2);
       expect(JSON.parse(row.log)).toHaveLength(1);
       expect(JSON.parse(row.attachments)).toHaveLength(1);
-      // steeringComments should be merged into comments
-      expect(JSON.parse(row.comments)).toHaveLength(1); // 1 steering comment migrated
+      expect(JSON.parse(row.steeringComments)).toHaveLength(1);
       expect(JSON.parse(row.workflowStepResults)).toHaveLength(1);
       expect(JSON.parse(row.prInfo).number).toBe(1);
       expect(JSON.parse(row.issueInfo).number).toBe(10);

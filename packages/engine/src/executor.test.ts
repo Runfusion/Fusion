@@ -8,27 +8,6 @@ vi.mock("./pi.js", () => ({
 vi.mock("./reviewer.js", () => ({
   reviewStep: vi.fn(),
 }));
-vi.mock("./logger.js", () => {
-  const createMockLogger = () => ({
-    log: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  });
-  return {
-    createLogger: vi.fn(() => createMockLogger()),
-    schedulerLog: createMockLogger(),
-    executorLog: createMockLogger(),
-    triageLog: createMockLogger(),
-    mergerLog: createMockLogger(),
-    worktreePoolLog: createMockLogger(),
-    reviewerLog: createMockLogger(),
-    prMonitorLog: createMockLogger(),
-    runtimeLog: createMockLogger(),
-    ipcLog: createMockLogger(),
-    projectManagerLog: createMockLogger(),
-    hybridExecutorLog: createMockLogger(),
-  };
-});
 vi.mock("./merger.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./merger.js")>();
   return {
@@ -473,7 +452,7 @@ describe("TaskExecutor worktree naming", () => {
 
       // Should use task ID (lowercase) as worktree name
       expect(store.updateTask).toHaveBeenCalledWith("FN-042", {
-        worktree: "/tmp/test/.worktrees/fn-042",
+        worktree: "/tmp/test/.worktrees/kb-042",
       });
       // Should NOT call generateWorktreeName when using task-id
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
@@ -644,7 +623,8 @@ describe("TaskExecutor worktree recovery", () => {
     // Should have logged worktree creation
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      expect.stringContaining("Worktree created at"),
+      expect.stringContaining("Worktree created"),
+      expect.stringContaining(".worktrees/"),
     );
     // execSync should be called for worktree creation
     expect(mockedExecSync).toHaveBeenCalledWith(
@@ -678,8 +658,8 @@ describe("TaskExecutor worktree recovery", () => {
     // Should have logged cleanup and retry
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      expect.stringContaining("Cleaned up conflicting worktree, retrying"),
-      "/tmp/test/.worktrees/swift-falcon",
+      expect.stringContaining("Cleaned up conflicting worktree"),
+      "/tmp/test/.worktrees/green-sage",
     );
     // Should eventually succeed
     expect(store.updateTask).toHaveBeenCalledWith(
@@ -907,7 +887,8 @@ describe("TaskExecutor worktree recovery", () => {
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      expect.stringContaining("Removed stale branch reference, retrying"),
+      expect.stringContaining("Removed stale branch"),
+      "fusion/fn-050",
     );
   });
 
@@ -941,6 +922,7 @@ describe("TaskExecutor worktree recovery", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("Removing existing directory (not a registered worktree)"),
+      expect.any(String),
     );
   });
 
@@ -1005,7 +987,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     await executor.execute(makeTask({
       id: "FN-060",
-      baseBranch: "kb/fn-059",
+      baseBranch: "fusion/fn-059",
     }));
 
     // The git worktree add command should include the startPoint
@@ -1013,7 +995,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree add"),
     );
     expect(worktreeAddCalls.length).toBeGreaterThan(0);
-    expect(worktreeAddCalls[0][0]).toContain("kb/fn-059");
+    expect(worktreeAddCalls[0][0]).toContain("fusion/fn-059");
   });
 
   it("creates worktree from HEAD when baseBranch is not set", async () => {
@@ -1043,12 +1025,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     await executor.execute(makeTask({
       id: "FN-062",
-      baseBranch: "kb/fn-061",
+      baseBranch: "fusion/fn-061",
     }));
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-062",
-      expect.stringContaining("based on kb/fn-061"),
+      expect.stringContaining("based on fusion/fn-061"),
     );
   });
 
@@ -1075,13 +1057,13 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     let firstAttempt = true;
     mockedExecSync.mockImplementation((cmd: any) => {
-      if (typeof cmd === "string" && cmd.includes("git worktree add") && cmd.includes("-b") && firstAttempt) {
+      if (cmd === 'git worktree add -b "fusion/fn-064" "/tmp/test/.worktrees/swift-falcon"' && firstAttempt) {
         firstAttempt = false;
         const err: any = new Error(
-          `fatal: 'kb/fn-064' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-064' is already used by worktree at '${conflictingPath}'`,
         );
         err.stderr = Buffer.from(
-          `fatal: 'kb/fn-064' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-064' is already used by worktree at '${conflictingPath}'`,
         );
         throw err;
       }
@@ -1095,12 +1077,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       expect.objectContaining({ cwd: "/tmp/test", stdio: "pipe" }),
     );
     expect(mockedExecSync).toHaveBeenCalledWith(
-      'git branch -D "kb/fn-064"',
+      'git branch -D "fusion/fn-064"',
       expect.objectContaining({ cwd: "/tmp/test", stdio: "pipe" }),
     );
 
     const worktreeCreateCalls = mockedExecSync.mock.calls.filter(
-      (call) => typeof call[0] === "string" && call[0].includes('git worktree add') && call[0].includes("-b"),
+      (call) => call[0] === 'git worktree add -b "fusion/fn-064" "/tmp/test/.worktrees/swift-falcon"',
     );
     expect(worktreeCreateCalls).toHaveLength(2);
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -1115,12 +1097,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const conflictingPath = "/tmp/test/.worktrees/sharp-stone";
 
     mockedExecSync.mockImplementation((cmd: any) => {
-      if (typeof cmd === "string" && cmd.includes("git worktree add") && cmd.includes("-b")) {
+      if (cmd === 'git worktree add -b "kb/fn-065" "/tmp/test/.worktrees/swift-falcon"') {
         const err: any = new Error(
-          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}'`
+          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}'`,
         );
         err.stderr = Buffer.from(
-          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}'`
+          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}'`,
         );
         throw err;
       }
@@ -1139,6 +1121,10 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     await executor.execute(makeTask({ id: "FN-065" }));
 
     // After 3 retry attempts, should fail with combined error message
+    expect(store.updateTask).toHaveBeenCalledWith("FN-065", {
+      status: "failed",
+      error: expect.stringContaining("Worktree conflict"),
+    });
     expect(store.updateTask).toHaveBeenCalledWith("FN-065", {
       status: "failed",
       error: expect.stringContaining("automatic cleanup failed"),
@@ -1168,13 +1154,13 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     await executor.execute(makeTask({
       id: "FN-064",
-      baseBranch: "kb/fn-063",
+      baseBranch: "fusion/fn-063",
     }));
 
     expect(prepareSpy).toHaveBeenCalledWith(
       "/tmp/test/.worktrees/idle-wt",
-      "kb/fn-064",
-      "kb/fn-063",
+      "fusion/fn-064",
+      "fusion/fn-063",
     );
   });
 
@@ -1205,7 +1191,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     expect(prepareSpy).toHaveBeenCalledWith(
       "/tmp/test/.worktrees/idle-wt",
-      "kb/fn-065",
+      "fusion/fn-065",
       undefined,
     );
   });
@@ -1512,7 +1498,7 @@ describe("buildExecutionPrompt", () => {
 
     expect(result).toContain("## Attachments");
     expect(result).toContain("**screenshot.png** (screenshot)");
-    expect(result).toContain("/home/user/project/.fusion/tasks/FN-001/attachments/abc123-screenshot.png");
+    expect(result).toContain("/home/user/project/.fusion/tasks/KB-001/attachments/abc123-screenshot.png");
   });
 
   it("includes attachment section with absolute paths for text attachments", () => {
@@ -1526,7 +1512,7 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("## Attachments");
     expect(result).toContain("**error.log** (text/plain)");
     expect(result).toContain("read for context");
-    expect(result).toContain("/home/user/project/.fusion/tasks/FN-001/attachments/def456-error.log");
+    expect(result).toContain("/home/user/project/.fusion/tasks/KB-001/attachments/def456-error.log");
   });
 
   it("includes both image and text attachments", () => {
@@ -1615,9 +1601,9 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("## Project Commands");
   });
 
-  it("includes Comments section when steeringComments has entries", () => {
+  it("includes Steering Comments section when steeringComments has entries", () => {
     const task = createMockTaskDetail({
-      comments: [
+      steeringComments: [
         {
           id: "1",
           text: "Please handle the edge case",
@@ -1628,16 +1614,16 @@ describe("buildExecutionPrompt", () => {
     });
     const result = buildExecutionPrompt(task);
 
-    expect(result).toContain("## Comments");
+    expect(result).toContain("## Steering Comments");
     expect(result).toContain("**user**");
     expect(result).toContain("> Please handle the edge case");
-    expect(result).toContain("The following comments were added during execution");
+    expect(result).toContain("The following steering comments were added by the user");
   });
 
-  it("formats multiple comments correctly", () => {
+  it("formats multiple steering comments correctly", () => {
     const now = new Date();
     const task = createMockTaskDetail({
-      comments: [
+      steeringComments: [
         {
           id: "1",
           text: "First comment",
@@ -1660,29 +1646,29 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("> Second comment");
   });
 
-  it("omits Comments section when steeringComments is empty", () => {
-    const task = createMockTaskDetail({ comments: [] });
+  it("omits Steering Comments section when steeringComments is empty", () => {
+    const task = createMockTaskDetail({ steeringComments: [] });
     const result = buildExecutionPrompt(task);
 
-    expect(result).not.toContain("## Comments");
+    expect(result).not.toContain("## Steering Comments");
   });
 
-  it("omits Comments section when steeringComments is undefined", () => {
+  it("omits Steering Comments section when steeringComments is undefined", () => {
     const task = createMockTaskDetail();
     const result = buildExecutionPrompt(task);
 
-    expect(result).not.toContain("## Comments");
+    expect(result).not.toContain("## Steering Comments");
   });
 
-  it("includes only the 10 most recent comments", () => {
-    const comments = Array.from({ length: 15 }, (_, i) => ({
+  it("includes only the 10 most recent steering comments", () => {
+    const steeringComments = Array.from({ length: 15 }, (_, i) => ({
       id: `${i}`,
       text: `Comment ${i}`,
       createdAt: new Date().toISOString(),
       author: "user" as const,
     }));
 
-    const task = createMockTaskDetail({ comments });
+    const task = createMockTaskDetail({ steeringComments });
     const result = buildExecutionPrompt(task);
 
     // Should include comments 5-14 (the 10 most recent), not 0-4
@@ -1692,12 +1678,12 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("> Comment 4");
   });
 
-  it("end-to-end: comments are fully injected into execution prompt with correct format", () => {
+  it("end-to-end: steering comments are fully injected into execution prompt with correct format", () => {
     const now = new Date();
     const task = createMockTaskDetail({
       id: "FN-123",
       title: "Verify Steering Feature",
-      comments: [
+      steeringComments: [
         {
           id: "sc-001",
           text: "Please ensure all edge cases are handled in the validation logic",
@@ -1722,10 +1708,10 @@ describe("buildExecutionPrompt", () => {
     const result = buildExecutionPrompt(task, "/project", { testCommand: "pnpm test" } as any);
 
     // Verify section header exists
-    expect(result).toContain("## Comments");
+    expect(result).toContain("## Steering Comments");
 
     // Verify explanatory header text
-    expect(result).toContain("The following comments were added during execution");
+    expect(result).toContain("The following steering comments were added by the user during execution");
     expect(result).toContain("Consider adjusting your approach or replanning remaining steps based on this feedback");
 
     // Verify all three comments appear with correct author badges
@@ -1742,7 +1728,7 @@ describe("buildExecutionPrompt", () => {
     expect(result).toMatch(/\*\*user\*\* — \d+m? ago/);
 
     // Verify the section appears in the expected location (after progress section, before review level)
-    const steeringSectionIndex = result.indexOf("## Comments");
+    const steeringSectionIndex = result.indexOf("## Steering Comments");
     const reviewLevelIndex = result.indexOf("## Review level");
     expect(steeringSectionIndex).toBeGreaterThan(0);
     expect(reviewLevelIndex).toBeGreaterThan(steeringSectionIndex);
@@ -3193,7 +3179,7 @@ describe("task_add_dep tool", () => {
 
     await tools.task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
 
-    expect(store.logEntry).toHaveBeenCalledWith("FN-TEST", "Added dependency on FN-OTHER — stopping execution for re-specification");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-TEST", "Added dependency on KB-OTHER — stopping execution for re-specification");
   });
 
   it("appends to existing dependencies without overwriting when confirm=true", async () => {
@@ -3334,7 +3320,7 @@ describe("task_add_dep tool", () => {
 
     // Branch deletion should have been attempted
     const branchDeleteCalls = mockedExecSync.mock.calls.filter(
-      (c) => typeof c[0] === "string" && (c[0] as string).includes("branch -D") && (c[0] as string).includes("kb/fn-dep"),
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("branch -D") && (c[0] as string).includes("fusion/fn-dep"),
     );
     expect(branchDeleteCalls.length).toBeGreaterThan(0);
 
@@ -4127,7 +4113,7 @@ describe("Workflow Steps Execution", () => {
   });
 });
 
-describe("Real-time comment injection", () => {
+describe("Real-time steering injection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -4165,7 +4151,7 @@ describe("Real-time comment injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      comments: [existingComment],
+      steeringComments: [existingComment],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -4177,7 +4163,7 @@ describe("Real-time comment injection", () => {
     expect(steerFn).not.toHaveBeenCalled();
   });
 
-  it("injects new comments via session.steer() on task:updated", async () => {
+  it("injects new steering comments via session.steer() on task:updated", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
     let promptResolve: () => void;
@@ -4213,7 +4199,7 @@ describe("Real-time comment injection", () => {
     // Wait for agent to start
     await new Promise(resolve => setTimeout(resolve, 20));
 
-    // Simulate adding a comment mid-execution
+    // Simulate adding a steering comment mid-execution
     const newComment = {
       id: "9876543210-def456",
       text: "Please use a different approach",
@@ -4230,7 +4216,7 @@ describe("Real-time comment injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      comments: [newComment],
+      steeringComments: [newComment],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -4240,13 +4226,13 @@ describe("Real-time comment injection", () => {
 
     // Verify steer was called with the formatted message
     expect(steerFn).toHaveBeenCalledOnce();
-    expect(steerFn.mock.calls[0][0]).toContain("📣 **New feedback**");
+    expect(steerFn.mock.calls[0][0]).toContain("📣 **New steering feedback**");
     expect(steerFn.mock.calls[0][0]).toContain("Please use a different approach");
 
     // Verify log entry was created
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      expect.stringContaining("Comment received mid-execution"),
+      expect.stringContaining("Steering comment received mid-execution"),
       "by user"
     );
 
@@ -4255,7 +4241,7 @@ describe("Real-time comment injection", () => {
     await executePromise;
   });
 
-  it("does not re-inject already seen comments", async () => {
+  it("does not re-inject already seen steering comments", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
 
@@ -4280,7 +4266,7 @@ describe("Real-time comment injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      comments: [{
+      steeringComments: [{
         id: commentId,
         text: "Original comment",
         createdAt: new Date().toISOString(),
@@ -4303,7 +4289,7 @@ describe("Real-time comment injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      comments: [{
+      steeringComments: [{
         id: commentId,
         text: "Original comment",
         createdAt: new Date().toISOString(),
@@ -4345,7 +4331,7 @@ describe("Real-time comment injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      comments: [],
+      steeringComments: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -4363,7 +4349,7 @@ describe("Real-time comment injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      comments: [{
+      steeringComments: [{
         id: commentId,
         text: "Comment that fails",
         createdAt: new Date().toISOString(),
@@ -4389,7 +4375,7 @@ describe("Real-time comment injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      comments: [{
+      steeringComments: [{
         id: commentId,
         text: "Comment that fails",
         createdAt: new Date().toISOString(),
@@ -4408,7 +4394,7 @@ describe("Real-time comment injection", () => {
     await executePromise;
   });
 
-  it("does not inject comments for tasks not in activeSessions", async () => {
+  it("does not inject steering comments for tasks not in activeSessions", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
 
@@ -4432,7 +4418,7 @@ describe("Real-time comment injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      comments: [{
+      steeringComments: [{
         id: "3333333333-ccc333",
         text: "Should not be injected",
         createdAt: new Date().toISOString(),
@@ -4447,13 +4433,13 @@ describe("Real-time comment injection", () => {
     expect(steerFn).not.toHaveBeenCalled();
   });
 
-  it("handles multiple new comments in a single task:updated", async () => {
+  it("handles multiple new steering comments in a single task:updated", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
     let resolvePrompt: () => void;
     const promptPromise = new Promise<void>(resolve => { resolvePrompt = resolve; });
 
-    // Set up getTask to return the task with existing comment
+    // Set up getTask to return the task with existing steering comment
     store.getTask.mockResolvedValue({
       id: "FN-001",
       title: "Test",
@@ -4464,7 +4450,7 @@ describe("Real-time comment injection", () => {
       currentStep: 0,
       log: [],
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
-      comments: [{
+      steeringComments: [{
         id: "existing-comment",
         text: "Original",
         createdAt: new Date().toISOString(),
@@ -4511,7 +4497,7 @@ describe("Real-time comment injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      comments: [
+      steeringComments: [
         {
           id: "existing-comment",
           text: "Original",
@@ -4546,3 +4532,4 @@ describe("Real-time comment injection", () => {
     await executePromise;
   });
 });
+

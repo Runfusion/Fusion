@@ -18,18 +18,11 @@ vi.mock("node:fs", () => ({
   readFileSync: (...args: any[]) => mockReadFileSync(...args),
 }));
 
-// Mock child_process
-const mockExecFileSync = vi.fn();
-vi.mock("node:child_process", () => ({
-  execFileSync: (...args: any[]) => mockExecFileSync(...args),
-}));
-
 describe("usage", () => {
   beforeEach(() => {
     clearUsageCache();
     mockRequest.mockClear();
     mockReadFileSync.mockClear();
-    mockExecFileSync.mockClear();
     vi.stubEnv("HOME", "/home/testuser");
   });
 
@@ -95,9 +88,6 @@ describe("usage", () => {
       mockReadFileSync.mockImplementation(() => {
         throw new Error("File not found");
       });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
-      });
 
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude");
@@ -105,141 +95,6 @@ describe("usage", () => {
       expect(claude).toBeDefined();
       expect(claude!.status).toBe("no-auth");
       expect(claude!.error).toContain("No Claude CLI credentials");
-    });
-
-    it("reads credentials from macOS keychain when file paths fail", async () => {
-      const mockResponse = {
-        five_hour: {
-          utilization: 30.0,
-          resets_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
-        },
-        seven_day: {
-          utilization: 15.0,
-          resets_at: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-      };
-
-      // File paths fail
-      mockReadFileSync.mockImplementation(() => {
-        throw new Error("File not found");
-      });
-
-      // Keychain succeeds
-      mockExecFileSync.mockImplementation(() => {
-        return JSON.stringify({
-          claudeAiOauth: {
-            accessToken: "keychain-token",
-            scopes: ["user:profile"],
-            subscriptionType: "pro",
-          },
-        });
-      });
-
-      // Mock https request
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from(JSON.stringify(mockResponse)));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
-      const providers = await fetchAllProviderUsage();
-      const claude = providers.find((p) => p.name === "Claude")!;
-
-      expect(claude.status).toBe("ok");
-      expect(claude.plan).toBe("Pro");
-      expect(claude.windows).toHaveLength(2);
-
-      // Verify keychain command was called with correct arguments
-      expect(mockExecFileSync).toHaveBeenCalledWith(
-        "security",
-        ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
-        { encoding: "utf-8", timeout: 5000 }
-      );
-    });
-
-    it("falls back to no-auth when both file and keychain fail", async () => {
-      mockReadFileSync.mockImplementation(() => {
-        throw new Error("File not found");
-      });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
-      });
-
-      const providers = await fetchAllProviderUsage();
-      const claude = providers.find((p) => p.name === "Claude")!;
-
-      expect(claude.status).toBe("no-auth");
-      expect(claude.error).toContain("No Claude CLI credentials");
-    });
-
-    it("parses keychain credentials with rateLimitTier for plan detection", async () => {
-      const mockResponse = {
-        five_hour: {
-          utilization: 25.0,
-          resets_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-        },
-      };
-
-      mockReadFileSync.mockImplementation(() => {
-        throw new Error("File not found");
-      });
-
-      // Keychain with rateLimitTier instead of subscriptionType
-      mockExecFileSync.mockImplementation(() => {
-        return JSON.stringify({
-          claudeAiOauth: {
-            accessToken: "keychain-token",
-            scopes: ["user:profile"],
-            rateLimitTier: "default_claude_max_20x",
-          },
-        });
-      });
-
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from(JSON.stringify(mockResponse)));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
-      const providers = await fetchAllProviderUsage();
-      const claude = providers.find((p) => p.name === "Claude")!;
-
-      expect(claude.status).toBe("ok");
-      expect(claude.plan).toBe("Max"); // Should detect "max" from rateLimitTier
     });
 
     it("detects missing scope error", async () => {
@@ -251,9 +106,6 @@ describe("usage", () => {
           });
         }
         throw new Error("File not found");
-      });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
       });
 
       const providers = await fetchAllProviderUsage();

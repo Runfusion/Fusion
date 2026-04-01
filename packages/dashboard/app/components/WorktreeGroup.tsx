@@ -15,7 +15,7 @@ interface WorktreeGroupProps {
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
-  onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  onOpenFilesForTask?: (taskId: string) => void;
 }
 
 function WorktreeGroupComponent({

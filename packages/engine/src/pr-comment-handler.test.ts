@@ -3,7 +3,7 @@ import { PrCommentHandler } from "./pr-comment-handler.js";
 import type { TaskStore, Task } from "@fusion/core";
 
 const mockStore = {
-  addComment: vi.fn<(id: string, text: string, author?: "user" | "agent") => Promise<Task>>(),
+  addSteeringComment: vi.fn<(id: string, text: string, author?: "user" | "agent") => Promise<Task>>(),
   createTask: vi.fn<(input: Parameters<TaskStore["createTask"]>[0]) => Promise<Task>>().mockResolvedValue({ id: "FN-123" } as Task),
 } as unknown as TaskStore;
 
@@ -49,7 +49,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).not.toHaveBeenCalled();
+      expect(mockStore.addSteeringComment).not.toHaveBeenCalled();
     });
   });
 
@@ -77,7 +77,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).toHaveBeenCalled();
+      expect(mockStore.addSteeringComment).toHaveBeenCalled();
     });
   });
 
@@ -94,7 +94,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).toHaveBeenCalled();
+      expect(mockStore.addSteeringComment).toHaveBeenCalled();
     });
 
     it("creates steering comment for inline code suggestions", async () => {
@@ -109,7 +109,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).toHaveBeenCalled();
+      expect(mockStore.addSteeringComment).toHaveBeenCalled();
     });
   });
 
@@ -126,7 +126,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const call = (mockStore.addComment as ReturnType<typeof vi.fn>).mock.calls[0];
+      const call = (mockStore.addSteeringComment as ReturnType<typeof vi.fn>).mock.calls[0];
       const text = call[1] as string;
 
       expect(text).toContain("PR Review Feedback");
@@ -151,7 +151,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const call = (mockStore.addComment as ReturnType<typeof vi.fn>).mock.calls[0];
+      const call = (mockStore.addSteeringComment as ReturnType<typeof vi.fn>).mock.calls[0];
       const text = call[1] as string;
 
       expect(text.length).toBeLessThan(longBody.length);
@@ -170,7 +170,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      expect(mockStore.addComment).toHaveBeenCalledWith(
+      expect(mockStore.addSteeringComment).toHaveBeenCalledWith(
         "FN-001",
         expect.any(String),
         "agent"
@@ -189,7 +189,7 @@ describe("PrCommentHandler", () => {
         },
       ]);
 
-      const text = (mockStore.addComment as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      const text = (mockStore.addSteeringComment as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
       expect(text).toContain("This PR is already merged");
       expect(text).toContain("follow-up work");
     });

@@ -1,8 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as https from "node:https";
-import * as child_process from "node:child_process";
-import { promisify } from "node:util";
 
 /**
  * Pace information for weekly usage windows
@@ -211,23 +209,6 @@ function decodeJwtPayload(token: string): any {
 
 // ── Claude fetcher ─────────────────────────────────────────────────────────
 
-/**
- * Read Claude credentials from macOS keychain.
- * Returns the parsed credentials object or null if not found/error.
- */
-function readClaudeKeychainCredentials(): any | null {
-  try {
-    const result = child_process.execFileSync(
-      "security",
-      ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
-      { encoding: "utf-8", timeout: 5000 }
-    );
-    return JSON.parse(result.trim());
-  } catch {
-    return null;
-  }
-}
-
 async function fetchClaudeUsage(): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Claude",
@@ -248,11 +229,6 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
       creds = JSON.parse(fs.readFileSync(p, "utf-8"));
       break;
     } catch {}
-  }
-
-  // Fallback to macOS keychain if file credentials not found
-  if (!creds) {
-    creds = readClaudeKeychainCredentials();
   }
 
   const oauthCreds = creds?.claudeAiOauth || creds;

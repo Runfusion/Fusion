@@ -23,22 +23,6 @@ import {
   startPlanningStreaming,
   fetchTasks,
   summarizeTitle,
-  fetchProjects,
-  registerProject,
-  unregisterProject,
-  fetchProjectHealth,
-  fetchActivityFeed,
-  pauseProject,
-  resumeProject,
-  fetchFirstRunStatus,
-  fetchGlobalConcurrency,
-  fetchProjectTasks,
-  fetchProjectConfig,
-  type ProjectInfo,
-  type ProjectHealth,
-  type ActivityFeedEntry,
-  type FirstRunStatus,
-  type GlobalConcurrencyState,
 } from "./api";
 import type { Task, TaskDetail, BatchStatusResponse } from "@fusion/core";
 
@@ -52,7 +36,7 @@ const FAKE_DETAIL: TaskDetail = {
   log: [],
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
-  prompt: "# FN-001",
+  prompt: "# KB-001",
 };
 
 function mockFetchResponse(
@@ -141,7 +125,7 @@ describe("updateTask", () => {
     const result = await updateTask("FN-001", { dependencies: ["FN-002"] });
 
     expect(result.dependencies).toEqual(["FN-002"]);
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001", {
       headers: { "Content-Type": "application/json" },
       method: "PATCH",
       body: JSON.stringify({ dependencies: ["FN-002"] }),
@@ -182,7 +166,7 @@ describe("task comments api", () => {
     const result = await fetchTaskComments("FN-001");
 
     expect(result).toEqual(comments);
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/comments", {
       headers: { "Content-Type": "application/json" },
     });
   });
@@ -193,7 +177,7 @@ describe("task comments api", () => {
     const result = await addTaskComment("FN-001", "Hello", "user");
 
     expect(result).toEqual(FAKE_TASK);
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/comments", {
       headers: { "Content-Type": "application/json" },
       method: "POST",
       body: JSON.stringify({ text: "Hello", author: "user" }),
@@ -205,7 +189,7 @@ describe("task comments api", () => {
 
     await updateTaskComment("FN-001", "c1", "Updated");
 
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments/c1", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/comments/c1", {
       headers: { "Content-Type": "application/json" },
       method: "PATCH",
       body: JSON.stringify({ text: "Updated" }),
@@ -217,7 +201,7 @@ describe("task comments api", () => {
 
     await deleteTaskComment("FN-001", "c1");
 
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments/c1", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/comments/c1", {
       headers: { "Content-Type": "application/json" },
       method: "DELETE",
     });
@@ -529,7 +513,7 @@ describe("addSteeringComment", () => {
     expect(result.id).toBe("FN-001");
     expect(result.steeringComments).toHaveLength(1);
     expect(result.steeringComments![0].text).toBe("Please handle the edge case");
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/steer", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/steer", {
       headers: { "Content-Type": "application/json" },
       method: "POST",
       body: JSON.stringify({ text: "Please handle the edge case" }),
@@ -794,7 +778,7 @@ describe("approvePlan", () => {
 
     expect(result.column).toBe("todo");
     expect(result.status).toBeUndefined();
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/approve-plan", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/approve-plan", {
       headers: { "Content-Type": "application/json" },
       method: "POST",
     });
@@ -828,7 +812,7 @@ describe("rejectPlan", () => {
 
     expect(result.column).toBe("triage");
     expect(result.status).toBeUndefined();
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/reject-plan", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/reject-plan", {
       headers: { "Content-Type": "application/json" },
       method: "POST",
     });
@@ -854,7 +838,7 @@ describe("refineTask", () => {
 
   const FAKE_REFINED_TASK: Task = {
     id: "FN-002",
-    description: "Refinement of FN-001",
+    description: "Refinement of KB-001",
     column: "triage",
     dependencies: ["FN-001"],
     steps: [],
@@ -872,7 +856,7 @@ describe("refineTask", () => {
     expect(result.id).toBe("FN-002");
     expect(result.column).toBe("triage");
     expect(result.dependencies).toContain("FN-001");
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/refine", {
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/refine", {
       headers: { "Content-Type": "application/json" },
       method: "POST",
       body: JSON.stringify({ feedback: "Need to add more tests and improve error handling" }),
@@ -1171,7 +1155,7 @@ describe("Git Management API", () => {
       const response = await archiveTask("FN-001");
 
       expect(response.column).toBe("archived");
-      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/archive", {
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/archive", {
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
@@ -1192,7 +1176,7 @@ describe("Git Management API", () => {
       const response = await unarchiveTask("FN-001");
 
       expect(response.column).toBe("done");
-      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/unarchive", {
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/KB-001/unarchive", {
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
@@ -1228,7 +1212,7 @@ describe("Git Management API", () => {
       const response = await fetchWorkspaceFileList("FN-001", "src");
 
       expect(response).toEqual(payload);
-      expect(globalThis.fetch).toHaveBeenCalledWith("/api/files?workspace=FN-001&path=src", {
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/files?workspace=KB-001&path=src", {
         headers: { "Content-Type": "application/json" },
       });
     });
@@ -1252,7 +1236,7 @@ describe("Git Management API", () => {
       const response = await saveWorkspaceFileContent("FN-001", "src/index.ts", "hello");
 
       expect(response).toEqual(payload);
-      expect(globalThis.fetch).toHaveBeenCalledWith("/api/files/src%2Findex.ts?workspace=FN-001", {
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/files/src%2Findex.ts?workspace=KB-001", {
         headers: { "Content-Type": "application/json" },
         method: "POST",
         body: JSON.stringify({ content: "hello" }),
@@ -1816,342 +1800,3 @@ describe("summarizeTitle", () => {
   });
 });
 
-// ── Project Management API Tests ───────────────────────────────────────────
-
-const FAKE_PROJECT: ProjectInfo = {
-  id: "proj_abc123",
-  name: "Test Project",
-  path: "/path/to/project",
-  status: "active",
-  isolationMode: "in-process",
-  createdAt: "2026-01-01T00:00:00.000Z",
-  updatedAt: "2026-01-01T00:00:00.000Z",
-  lastActivityAt: "2026-01-01T00:00:00.000Z",
-};
-
-const FAKE_PROJECT_HEALTH: ProjectHealth = {
-  projectId: "proj_abc123",
-  status: "active",
-  activeTaskCount: 5,
-  inFlightAgentCount: 2,
-  lastActivityAt: "2026-01-01T00:00:00.000Z",
-  totalTasksCompleted: 100,
-  totalTasksFailed: 5,
-  averageTaskDurationMs: 600000,
-  updatedAt: "2026-01-01T00:00:00.000Z",
-};
-
-const FAKE_ACTIVITY_ENTRY: ActivityFeedEntry = {
-  id: "act_123",
-  timestamp: "2026-01-01T00:00:00.000Z",
-  type: "task:created",
-  projectId: "proj_abc123",
-  projectName: "Test Project",
-  taskId: "KB-001",
-  taskTitle: "Test Task",
-  details: "Task created",
-};
-
-describe("fetchProjects", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("returns list of projects", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, [FAKE_PROJECT]));
-
-    const result = await fetchProjects();
-
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("proj_abc123");
-    expect(result[0].name).toBe("Test Project");
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/projects",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
-    );
-  });
-
-  it("throws on error response", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Database error" }));
-
-    await expect(fetchProjects()).rejects.toThrow("Database error");
-  });
-});
-
-describe("registerProject", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("registers a new project", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_PROJECT));
-
-    const result = await registerProject({
-      name: "Test Project",
-      path: "/path/to/project",
-      isolationMode: "in-process",
-    });
-
-    expect(result.id).toBe("proj_abc123");
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/projects",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          name: "Test Project",
-          path: "/path/to/project",
-          isolationMode: "in-process",
-        }),
-      })
-    );
-  });
-
-  it("uses default isolation mode when not specified", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_PROJECT));
-
-    await registerProject({
-      name: "Test Project",
-      path: "/path/to/project",
-    });
-
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        body: JSON.stringify({
-          name: "Test Project",
-          path: "/path/to/project",
-          isolationMode: undefined,
-        }),
-      })
-    );
-  });
-});
-
-describe("unregisterProject", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("unregisters a project", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {}));
-
-    await unregisterProject("proj_abc123");
-
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/projects/proj_abc123",
-      expect.objectContaining({ method: "DELETE" })
-    );
-  });
-
-  it("url-encodes project id", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {}));
-
-    await unregisterProject("proj/with+special");
-
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/projects/proj%2Fwith%2Bspecial",
-      expect.any(Object)
-    );
-  });
-});
-
-describe("fetchProjectHealth", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("returns health metrics for a project", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_PROJECT_HEALTH));
-
-    const result = await fetchProjectHealth("proj_abc123");
-
-    expect(result.projectId).toBe("proj_abc123");
-    expect(result.activeTaskCount).toBe(5);
-    expect(result.inFlightAgentCount).toBe(2);
-    expect(result.totalTasksCompleted).toBe(100);
-  });
-});
-
-describe("fetchActivityFeed", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("returns activity feed without options", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, [FAKE_ACTIVITY_ENTRY]));
-
-    const result = await fetchActivityFeed();
-
-    expect(result).toHaveLength(1);
-    expect(result[0].type).toBe("task:created");
-    expect(result[0].projectName).toBe("Test Project");
-  });
-
-  it("passes query parameters", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
-
-    await fetchActivityFeed({
-      limit: 50,
-      since: "2026-01-01T00:00:00.000Z",
-      projectId: "proj_abc123",
-      type: "task:created",
-    });
-
-    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[0]).toContain("limit=50");
-    expect(call[0]).toContain("since=2026-01-01T00%3A00%3A00.000Z");
-    expect(call[0]).toContain("projectId=proj_abc123");
-    expect(call[0]).toContain("type=task%3Acreated");
-  });
-});
-
-describe("pauseProject", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("pauses a project", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { ...FAKE_PROJECT, status: "paused" }));
-
-    const result = await pauseProject("proj_abc123");
-
-    expect(result.status).toBe("paused");
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/projects/proj_abc123/pause",
-      expect.objectContaining({ method: "POST" })
-    );
-  });
-});
-
-describe("resumeProject", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("resumes a paused project", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { ...FAKE_PROJECT, status: "active" }));
-
-    const result = await resumeProject("proj_abc123");
-
-    expect(result.status).toBe("active");
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/projects/proj_abc123/resume",
-      expect.objectContaining({ method: "POST" })
-    );
-  });
-});
-
-describe("fetchFirstRunStatus", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("returns first run status with existing projects", async () => {
-    const mockStatus: FirstRunStatus = { hasProjects: true, singleProjectPath: "/existing/project" };
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockStatus));
-
-    const result = await fetchFirstRunStatus();
-
-    expect(result.hasProjects).toBe(true);
-    expect(result.singleProjectPath).toBe("/existing/project");
-  });
-
-  it("returns first run status with no projects", async () => {
-    const mockStatus: FirstRunStatus = { hasProjects: false, singleProjectPath: null };
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockStatus));
-
-    const result = await fetchFirstRunStatus();
-
-    expect(result.hasProjects).toBe(false);
-    expect(result.singleProjectPath).toBeNull();
-  });
-});
-
-describe("fetchGlobalConcurrency", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("returns global concurrency state", async () => {
-    const mockState: GlobalConcurrencyState = {
-      globalMaxConcurrent: 4,
-      currentlyActive: 2,
-      queuedCount: 1,
-      projectsActive: { "proj_abc123": 2 },
-    };
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockState));
-
-    const result = await fetchGlobalConcurrency();
-
-    expect(result.globalMaxConcurrent).toBe(4);
-    expect(result.currentlyActive).toBe(2);
-    expect(result.projectsActive["proj_abc123"]).toBe(2);
-  });
-});
-
-describe("fetchProjectTasks", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("fetches tasks for a specific project", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, [{ id: "KB-001", description: "Test", column: "todo", dependencies: [], steps: [], currentStep: 0, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }]));
-
-    const result = await fetchProjectTasks("proj_abc123");
-
-    expect(result).toHaveLength(1);
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/tasks?"),
-      expect.any(Object)
-    );
-    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[0]).toContain("projectId=proj_abc123");
-  });
-
-  it("passes pagination parameters", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
-
-    await fetchProjectTasks("proj_abc123", 50, 100);
-
-    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[0]).toContain("limit=50");
-    expect(call[0]).toContain("offset=100");
-  });
-});
-
-describe("fetchProjectConfig", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("returns project config", async () => {
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { maxConcurrent: 4, rootDir: "/path/to/project" }));
-
-    const result = await fetchProjectConfig("proj_abc123");
-
-    expect(result.maxConcurrent).toBe(4);
-    expect(result.rootDir).toBe("/path/to/project");
-  });
-});

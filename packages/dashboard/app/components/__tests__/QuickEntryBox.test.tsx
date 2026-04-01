@@ -78,8 +78,6 @@ vi.mock("lucide-react", () => ({
   Sparkles: () => null,
   Save: () => null,
   X: () => null,
-  ChevronDown: () => null,
-  ChevronUp: () => null,
 }));
 
 // Mock ModelSelectionModal
@@ -138,11 +136,7 @@ vi.mock("../ModelSelectionModal", () => ({
   },
 }));
 
-function renderQuickEntryBox(props = {}, { startCollapsed = false } = {}) {
-  // Set disclosure state if needed
-  if (startCollapsed) {
-    localStorage.setItem("kb-quick-entry-expanded", "false");
-  }
+function renderQuickEntryBox(props = {}) {
   const defaultProps = {
     onCreate: vi.fn().mockResolvedValue(undefined),
     addToast: vi.fn(),
@@ -153,82 +147,38 @@ function renderQuickEntryBox(props = {}, { startCollapsed = false } = {}) {
   return { ...result, props: { ...defaultProps, ...props } };
 }
 
-// Helper to expand the QuickEntryBox by clicking the toggle button
-function expandQuickEntry() {
-  const toggleButton = screen.getByTestId("quick-entry-toggle");
-  fireEvent.click(toggleButton);
-}
-
 describe("QuickEntryBox", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    localStorage.clear();
   });
 
   afterEach(() => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
-    localStorage.clear();
   });
 
   it("renders textarea with placeholder", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
     expect(textarea).toBeTruthy();
     expect(textarea.tagName.toLowerCase()).toBe("textarea");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("Add a task...");
   });
 
-  it("does NOT expand on focus", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+  it("expands on focus", () => {
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.focus(textarea);
 
-    // Should NOT auto-expand on focus (manual toggle only)
-    expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
-  });
-
-  it("toggle button expands the view", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-    const textarea = screen.getByTestId("quick-entry-input");
-
-    // Initially not expanded
-    expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
-
-    // Click toggle to expand
-    expandQuickEntry();
-
-    // Now expanded
     expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
   });
 
-  it("toggle button collapses the view when expanded", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+  it("collapses on blur when empty", async () => {
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
-    // Expand first
-    expandQuickEntry();
-    expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
-
-    // Click toggle again to collapse
-    expandQuickEntry();
-
-    // Now collapsed
-    expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
-  });
-
-  it("does NOT collapse on blur when empty", async () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-    const textarea = screen.getByTestId("quick-entry-input");
-
-    // Expand manually
-    expandQuickEntry();
+    fireEvent.focus(textarea);
     expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
 
     fireEvent.blur(textarea);
@@ -236,19 +186,16 @@ describe("QuickEntryBox", () => {
       vi.advanceTimersByTime(250);
     });
 
-    // Should NOT collapse on blur
     await waitFor(() => {
-      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
     });
   });
 
-  it("does NOT collapse on blur when has content", async () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+  it("collapses on blur even when has content", async () => {
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
-    // Expand manually and add content
-    expandQuickEntry();
+    fireEvent.focus(textarea);
     fireEvent.change(textarea, { target: { value: "Some task" } });
 
     fireEvent.blur(textarea);
@@ -256,15 +203,14 @@ describe("QuickEntryBox", () => {
       vi.advanceTimersByTime(250);
     });
     
-    // Should NOT collapse on blur - expanded state persists
+    // Wait for React to re-render after state change
     await waitFor(() => {
-      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
     });
   });
 
   it("creates task on Enter key with TaskCreateInput", async () => {
-    const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    const { props } = renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(textarea, { target: { value: "New task description" } });
@@ -281,11 +227,10 @@ describe("QuickEntryBox", () => {
   });
 
   it("allows Shift+Enter to insert newline when expanded", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-    expandQuickEntry();
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
+    fireEvent.focus(textarea);
     fireEvent.change(textarea, { target: { value: "Line 1" } });
 
     // Shift+Enter should not prevent default (allow newline)
@@ -296,8 +241,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("submits on Enter even when expanded (without Shift)", async () => {
-    const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    const { props } = renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.focus(textarea);
@@ -316,8 +260,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("prevents default on Enter key (without Shift)", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(textarea, { target: { value: "Task" } });
@@ -328,8 +271,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("shows loading state during creation", async () => {
-    const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    const { props } = renderQuickEntryBox();
     // Slow down the promise to see loading state
     props.onCreate.mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 100)));
 
@@ -347,8 +289,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("clears input after successful creation", async () => {
-    const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    const { props } = renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(textarea, { target: { value: "Task to create" } });
@@ -362,8 +303,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("shows error toast on failure and keeps input content", async () => {
-    const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    const { props } = renderQuickEntryBox();
     props.onCreate.mockRejectedValue(new Error("Network error"));
 
     const textarea = screen.getByTestId("quick-entry-input");
@@ -379,8 +319,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("clears non-empty input on Escape key", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(textarea, { target: { value: "Some text" } });
@@ -391,11 +330,10 @@ describe("QuickEntryBox", () => {
   });
 
   it("collapses and blurs on Escape key", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-    expandQuickEntry();
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
+    fireEvent.focus(textarea);
     expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
 
     fireEvent.keyDown(textarea, { key: "Escape" });
@@ -404,8 +342,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("does not clear empty input on Escape key", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.keyDown(textarea, { key: "Escape" });
@@ -413,8 +350,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("does not submit on Enter if input is empty", async () => {
-    const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    const { props } = renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.keyDown(textarea, { key: "Enter" });
@@ -426,8 +362,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("does not submit on Enter if input is only whitespace", async () => {
-    const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    const { props } = renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(textarea, { target: { value: "   " } });
@@ -439,8 +374,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("updates textarea value on change", () => {
-    renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(textarea, { target: { value: "Updated text" } });
@@ -448,8 +382,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("trims whitespace when creating task", async () => {
-    const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    const { props } = renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(textarea, { target: { value: "  Task with spaces  " } });
@@ -465,8 +398,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("maintains focus after successful creation", async () => {
-    const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    const { props } = renderQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.change(textarea, { target: { value: "Task to create" } });
@@ -481,46 +413,46 @@ describe("QuickEntryBox", () => {
   });
 
   describe("Rich creation features", () => {
-    it("shows dependency button when expanded", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
+    it("shows dependency button when focused", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
 
-      // Initially, no controls are visible
+      // Initially, no controls are visible before focus
       expect(screen.queryByTestId("quick-entry-deps-button")).toBeNull();
 
-      // Expand and type something
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with deps" } });
 
       // Now the dependency button should be visible
       expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
     });
 
-    it("shows model selector button when expanded", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
+    it("shows model selector button when focused", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
 
       // Initially, no controls are visible
       expect(screen.queryByTestId("quick-entry-models-button")).toBeNull();
 
-      // Expand and type something
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with models" } });
 
       // Now the model selector button should be visible
       expect(screen.getByTestId("quick-entry-models-button")).toBeTruthy();
     });
 
-    it("shows Plan and Subtask buttons when expanded", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
+    it("shows Plan and Subtask buttons when focused", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
 
       // Initially, no controls are visible
       expect(screen.queryByTestId("plan-button")).toBeNull();
       expect(screen.queryByTestId("subtask-button")).toBeNull();
 
-      // Expand and type something
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to plan" } });
 
       // Now the Plan and Subtask buttons should be visible
@@ -529,10 +461,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("opens dependency dropdown when clicking deps button", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with deps" } });
       fireEvent.click(screen.getByTestId("quick-entry-deps-button"));
 
@@ -542,11 +474,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("opens model modal when clicking models button", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with models" } });
 
       // Modal should not be visible initially
@@ -560,11 +491,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("modal receives correct props (models, loading state, etc.)", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with models" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
@@ -580,11 +510,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("selects dependencies and includes them in submit payload", async () => {
-      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with deps" } });
       fireEvent.click(screen.getByTestId("quick-entry-deps-button"));
 
@@ -611,6 +540,7 @@ describe("QuickEntryBox", () => {
       const { props } = renderQuickEntryBox({ onPlanningMode });
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Plan this task" } });
       fireEvent.click(screen.getByTestId("plan-button"));
 
@@ -627,6 +557,7 @@ describe("QuickEntryBox", () => {
       const { props } = renderQuickEntryBox({ onSubtaskBreakdown });
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Break this down" } });
       fireEvent.click(screen.getByTestId("subtask-button"));
 
@@ -639,12 +570,11 @@ describe("QuickEntryBox", () => {
     });
 
     it("disables Plan and Subtask buttons when description is empty", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Type something first to make buttons appear
+      // Focus and type something first to make buttons appear
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Some task" } });
 
       const planButton = screen.getByTestId("plan-button") as HTMLButtonElement;
@@ -666,11 +596,11 @@ describe("QuickEntryBox", () => {
     });
 
     it("Plan button prevents textarea blur on mousedown", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      // Focus and expand
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to plan" } });
 
       // Get plan button and trigger mousedown (prevents blur)
@@ -685,11 +615,11 @@ describe("QuickEntryBox", () => {
     });
 
     it("Subtask button prevents textarea blur on mousedown", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      // Focus and expand
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to break down" } });
 
       // Get subtask button and trigger mousedown (prevents blur)
@@ -706,10 +636,10 @@ describe("QuickEntryBox", () => {
     it("shows toast when Plan clicked with empty description", () => {
       const addToast = vi.fn();
       renderQuickEntryBox({ addToast });
-      expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Type something first to make buttons appear
+      // Focus and type something first to make buttons appear
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Some task" } });
 
       // Clear input
@@ -724,11 +654,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("includes selected models in submit payload", async () => {
-      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with model" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
@@ -756,11 +685,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("closes modal on Escape when open", async () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with modal" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
@@ -778,11 +706,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("clears all state on second Escape after dropdowns are closed", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to clear" } });
 
       // First Escape closes any dropdowns
@@ -796,12 +723,11 @@ describe("QuickEntryBox", () => {
       expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
     });
 
-    it("resets all state after successful creation (preserves disclosure preference)", async () => {
-      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+    it("resets all state after successful creation", async () => {
+      const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to reset" } });
 
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -810,12 +736,11 @@ describe("QuickEntryBox", () => {
         expect(props.onCreate).toHaveBeenCalled();
       });
 
-      // After creation, input should be cleared
+      // After creation, controls should be collapsed
       expect((textarea as HTMLTextAreaElement).value).toBe("");
-      // Disclosure preference persists - controls remain visible since we expanded earlier
-      expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
-      expect(screen.getByTestId("plan-button")).toBeTruthy();
-      expect(screen.getByTestId("subtask-button")).toBeTruthy();
+      expect(screen.queryByTestId("quick-entry-deps-button")).toBeNull();
+      expect(screen.queryByTestId("plan-button")).toBeNull();
+      expect(screen.queryByTestId("subtask-button")).toBeNull();
     });
   });
 
@@ -829,84 +754,11 @@ describe("QuickEntryBox", () => {
       localStorage.clear();
     });
 
-    it("restores disclosure state from localStorage on mount", () => {
-      // Pre-populate localStorage with expanded state
-      localStorage.setItem("kb-quick-entry-expanded", "true");
-
-      renderQuickEntryBox();
-      const toggleButton = screen.getByTestId("quick-entry-toggle");
-
-      // Should restore the saved disclosure state (expanded)
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("true");
-      // Controls should be visible
-      expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
-    });
-
-    it("defaults to expanded when localStorage is empty", () => {
-      renderQuickEntryBox();
-      const toggleButton = screen.getByTestId("quick-entry-toggle");
-
-      // Should default to expanded (true) for backward compatibility
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("true");
-      // Controls should be visible
-      expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
-    });
-
-    it("updates localStorage when toggling disclosure", async () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      const toggleButton = screen.getByTestId("quick-entry-toggle");
-
-      // Wait for initial state to be persisted (useEffect runs after mount)
-      await waitFor(() => {
-        expect(localStorage.getItem("kb-quick-entry-expanded")).toBe("false");
-      });
-
-      // Initially collapsed
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("false");
-
-      // Click to expand
-      fireEvent.click(toggleButton);
-
-      // Should be expanded
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("true");
-      // localStorage should be updated
-      await waitFor(() => {
-        expect(localStorage.getItem("kb-quick-entry-expanded")).toBe("true");
-      });
-
-      // Click to collapse
-      fireEvent.click(toggleButton);
-
-      // Should be collapsed
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("false");
-      // localStorage should be updated
-      await waitFor(() => {
-        expect(localStorage.getItem("kb-quick-entry-expanded")).toBe("false");
-      });
-    });
-
-    it("aria-expanded attribute updates correctly when toggling", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      const toggleButton = screen.getByTestId("quick-entry-toggle");
-
-      // Initially collapsed
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("false");
-
-      // Click to expand
-      fireEvent.click(toggleButton);
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("true");
-
-      // Click to collapse
-      fireEvent.click(toggleButton);
-      expect(toggleButton.getAttribute("aria-expanded")).toBe("false");
-    });
-
     it("restores description from localStorage on mount", () => {
       // Pre-populate localStorage
       localStorage.setItem("kb-quick-entry-text", "Saved task description");
 
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
       // Should restore the saved description
@@ -914,8 +766,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("updates localStorage when typing", async () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Typing this task" } });
@@ -927,8 +778,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("clears localStorage after successful task creation", async () => {
-      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+      const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
       // Type something to set localStorage
@@ -949,12 +799,11 @@ describe("QuickEntryBox", () => {
     });
 
     it("clears localStorage when Escape clears non-empty input", async () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
       // Type something to set localStorage
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to clear" } });
       await waitFor(() => {
         expect(localStorage.getItem("kb-quick-entry-text")).toBe("Task to clear");
@@ -969,12 +818,11 @@ describe("QuickEntryBox", () => {
     });
 
     it("does not clear localStorage on first Escape when closing dropdowns", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
       // Type something and open dropdown
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task with dropdown" } });
       fireEvent.click(screen.getByTestId("quick-entry-deps-button"));
 
@@ -991,16 +839,15 @@ describe("QuickEntryBox", () => {
   });
 
   describe("AI Refine feature", () => {
-    it("shows refine button when expanded and text is entered", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    it("shows refine button when text is entered", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
 
       // Initially, refine button is not visible
       expect(screen.queryByTestId("refine-button")).toBeNull();
 
-      // Expand and type something
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to refine" } });
 
       // Now the refine button should be visible
@@ -1008,12 +855,11 @@ describe("QuickEntryBox", () => {
     });
 
     it("refine button is hidden when textarea is empty", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Type something
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Some text" } });
       expect(screen.getByTestId("refine-button")).toBeTruthy();
 
@@ -1028,11 +874,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("opens refine menu on button click", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to refine" } });
       fireEvent.click(screen.getByTestId("refine-button"));
 
@@ -1044,11 +889,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("closes refine menu on Escape key", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to refine" } });
       fireEvent.click(screen.getByTestId("refine-button"));
 
@@ -1067,11 +911,10 @@ describe("QuickEntryBox", () => {
       const { refineText } = await import("../../api");
       vi.mocked(refineText).mockResolvedValueOnce("Refined description");
 
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Original text" } });
       fireEvent.click(screen.getByTestId("refine-button"));
 
@@ -1091,11 +934,10 @@ describe("QuickEntryBox", () => {
       const { refineText } = await import("../../api");
       vi.mocked(refineText).mockResolvedValueOnce("Refined description");
 
-      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Original text" } });
       fireEvent.click(screen.getByTestId("refine-button"));
       fireEvent.click(screen.getByTestId("refine-clarify"));
@@ -1121,11 +963,10 @@ describe("QuickEntryBox", () => {
 
       const { getRefineErrorMessage } = await import("../../api");
 
-      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Original text" } });
       fireEvent.click(screen.getByTestId("refine-button"));
       fireEvent.click(screen.getByTestId("refine-clarify"));
@@ -1143,11 +984,10 @@ describe("QuickEntryBox", () => {
       // Slow down the promise to see loading state
       vi.mocked(refineText).mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 100)));
 
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Original text" } });
       fireEvent.click(screen.getByTestId("refine-button"));
       fireEvent.click(screen.getByTestId("refine-clarify"));
@@ -1166,11 +1006,10 @@ describe("QuickEntryBox", () => {
       const { refineText } = await import("../../api");
       vi.mocked(refineText).mockResolvedValueOnce("Refined description with much more content here");
 
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Short" } });
       fireEvent.click(screen.getByTestId("refine-button"));
       fireEvent.click(screen.getByTestId("refine-expand"));
@@ -1184,12 +1023,11 @@ describe("QuickEntryBox", () => {
       const { refineText } = await import("../../api");
       vi.mocked(refineText).mockResolvedValueOnce("Refined text");
 
-      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
       // Open refine menu but don't select anything
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task" } });
       fireEvent.click(screen.getByTestId("refine-button"));
 
@@ -1208,16 +1046,15 @@ describe("QuickEntryBox", () => {
   });
 
   describe("Save button", () => {
-    it("shows save button when expanded and text is entered", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+    it("shows save button when text is entered", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
 
       // Initially, save button is not visible
       expect(screen.queryByTestId("save-button")).toBeNull();
 
-      // Expand and type something
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to save" } });
 
       // Now the save button should be visible
@@ -1225,12 +1062,11 @@ describe("QuickEntryBox", () => {
     });
 
     it("save button is disabled when textarea is empty", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Type something
+      // Focus and type something
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Some text" } });
       expect(screen.getByTestId("save-button")).toBeTruthy();
 
@@ -1245,14 +1081,13 @@ describe("QuickEntryBox", () => {
     });
 
     it("save button is disabled during submission", async () => {
-      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
+      const { props } = renderQuickEntryBox();
       // Slow down the promise to see loading state
       props.onCreate.mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 100)));
 
-      expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "New task" } });
 
       // Start submission with Enter key
@@ -1268,11 +1103,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("clicking save button persists to localStorage", async () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Draft task description" } });
 
       // Click the save button
@@ -1285,11 +1119,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("clicking save button creates the task", async () => {
-      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      const { props } = renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to save" } });
 
       // Click the save button
@@ -1307,11 +1140,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("save button has correct test id", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to save" } });
 
       // Button should have data-testid="save-button"
@@ -1320,11 +1152,10 @@ describe("QuickEntryBox", () => {
     });
 
     it("save button has correct title attribute", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to save" } });
 
       const saveButton = screen.getByTestId("save-button");
@@ -1332,11 +1163,11 @@ describe("QuickEntryBox", () => {
     });
 
     it("save button prevents textarea blur on mousedown", () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
-      // Component starts with disclosure expanded by default
-      expandQuickEntry();
+      renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
+      // Focus and expand
+      fireEvent.focus(textarea);
       fireEvent.change(textarea, { target: { value: "Task to save" } });
 
       // Get save button and trigger mousedown (prevents blur)

@@ -1,13 +1,6 @@
-// @vitest-environment node
-
-import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import express from "express";
 import http from "node:http";
-import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { execFileSync } from "node:child_process";
 import { createApiRoutes } from "./routes.js";
 import { GitHubClient } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -17,7 +10,6 @@ import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { __resetPlanningState } from "./planning.js";
 import { __resetSubtaskBreakdownState } from "./subtask-breakdown.js";
 import * as terminalServiceModule from "./terminal-service.js";
-import { get as performGet, request as performRequest } from "./test-request.js";
 
 // Mock @fusion/core for gh CLI auth checks
 vi.mock("@fusion/core", async () => {
@@ -71,7 +63,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getGlobalSettingsStore: vi.fn().mockReturnValue(createMockGlobalSettingsStore()),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),
-    addComment: vi.fn(),
+    addSteeringComment: vi.fn(),
     addTaskComment: vi.fn(),
     updateTaskComment: vi.fn(),
     deleteTaskComment: vi.fn(),
@@ -101,11 +93,28 @@ const FAKE_TASK_DETAIL: TaskDetail = {
   prompt: "# KB-001\n\nTest task",
 };
 
+/** Helper: send GET and return { status, body } */
 async function GET(app: express.Express, path: string): Promise<{ status: number; body: any }> {
-  const res = await performGet(app, path);
-  return { status: res.status, body: res.body };
+  return new Promise((resolve, reject) => {
+    const server = app.listen(0, () => {
+      const addr = server.address() as { port: number };
+      http.get(`http://127.0.0.1:${addr.port}${path}`, (res) => {
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => {
+          server.close();
+          try {
+            resolve({ status: res.statusCode!, body: JSON.parse(data) });
+          } catch {
+            resolve({ status: res.statusCode!, body: data });
+          }
+        });
+      }).on("error", (err) => { server.close(); reject(err); });
+    });
+  });
 }
 
+/** Helper: send a request with method/body and return { status, body } */
 async function REQUEST(
   app: express.Express,
   method: string,
@@ -113,8 +122,30 @@ async function REQUEST(
   body?: Buffer | string,
   headers?: Record<string, string>,
 ): Promise<{ status: number; body: any }> {
-  const res = await performRequest(app, method, path, body, headers);
-  return { status: res.status, body: res.body };
+  return new Promise((resolve, reject) => {
+    const server = app.listen(0, () => {
+      const addr = server.address() as { port: number };
+      const url = new URL(`http://127.0.0.1:${addr.port}${path}`);
+      const req = http.request(
+        { hostname: url.hostname, port: url.port, path: url.pathname, method, headers },
+        (res) => {
+          let data = "";
+          res.on("data", (chunk) => (data += chunk));
+          res.on("end", () => {
+            server.close();
+            try {
+              resolve({ status: res.statusCode!, body: JSON.parse(data) });
+            } catch {
+              resolve({ status: res.statusCode!, body: data });
+            }
+          });
+        },
+      );
+      req.on("error", (err) => { server.close(); reject(err); });
+      if (body) req.write(body);
+      req.end();
+    });
+  });
 }
 
 /** Build a minimal multipart/form-data body */
@@ -238,19 +269,13 @@ describe("POST /tasks", () => {
     );
 
     expect(res.status).toBe(201);
-    expect(store.createTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: undefined,
-        description: "Big initiative",
-        column: undefined,
-        dependencies: undefined,
-        breakIntoSubtasks: true,
-        summarize: false,
-      }),
-      expect.objectContaining({
-        settings: { autoSummarizeTitles: undefined },
-      }),
-    );
+    expect(store.createTask).toHaveBeenCalledWith({
+      title: undefined,
+      description: "Big initiative",
+      column: undefined,
+      dependencies: undefined,
+      breakIntoSubtasks: true,
+    });
   });
 
   it("forwards model overrides when both provider and id are supplied", async () => {
@@ -279,23 +304,17 @@ describe("POST /tasks", () => {
     );
 
     expect(res.status).toBe(201);
-    expect(store.createTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: undefined,
-        description: "Use explicit models",
-        column: undefined,
-        dependencies: undefined,
-        breakIntoSubtasks: undefined,
-        modelProvider: "anthropic",
-        modelId: "claude-sonnet-4-5",
-        validatorModelProvider: "openai",
-        validatorModelId: "gpt-4o",
-        summarize: false,
-      }),
-      expect.objectContaining({
-        settings: { autoSummarizeTitles: undefined },
-      }),
-    );
+    expect(store.createTask).toHaveBeenCalledWith({
+      title: undefined,
+      description: "Use explicit models",
+      column: undefined,
+      dependencies: undefined,
+      breakIntoSubtasks: undefined,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      validatorModelProvider: "openai",
+      validatorModelId: "gpt-4o",
+    });
   });
 
   it("normalizes partial model overrides back to defaults", async () => {
@@ -318,23 +337,17 @@ describe("POST /tasks", () => {
     );
 
     expect(res.status).toBe(201);
-    expect(store.createTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: undefined,
-        description: "Ignore partial model selection",
-        column: undefined,
-        dependencies: undefined,
-        breakIntoSubtasks: undefined,
-        modelProvider: undefined,
-        modelId: undefined,
-        validatorModelProvider: undefined,
-        validatorModelId: undefined,
-        summarize: false,
-      }),
-      expect.objectContaining({
-        settings: { autoSummarizeTitles: undefined },
-      }),
-    );
+    expect(store.createTask).toHaveBeenCalledWith({
+      title: undefined,
+      description: "Ignore partial model selection",
+      column: undefined,
+      dependencies: undefined,
+      breakIntoSubtasks: undefined,
+      modelProvider: undefined,
+      modelId: undefined,
+      validatorModelProvider: undefined,
+      validatorModelId: undefined,
+    });
   });
 
   it("returns 400 when model fields are not strings", async () => {
@@ -595,8 +608,8 @@ describe("POST /tasks/:id/retry", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined, error: undefined });
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
   it("returns 400 when task is not in failed state", async () => {
@@ -623,8 +636,8 @@ describe("POST /tasks/:id/retry", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined, error: undefined });
-    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 });
 
@@ -655,7 +668,7 @@ describe("POST /tasks/:id/duplicate", () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBe("FN-002");
     expect(res.body.column).toBe("triage");
-    expect(store.duplicateTask).toHaveBeenCalledWith("KB-001");
+    expect(store.duplicateTask).toHaveBeenCalledWith("FN-001");
   });
 
   it("returns 404 when source task not found", async () => {
@@ -712,8 +725,8 @@ describe("POST /tasks/:id/refine", () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBe("FN-002");
     expect(res.body.column).toBe("triage");
-    expect(store.refineTask).toHaveBeenCalledWith("KB-001", "Need improvements");
-    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Refinement requested", "Need improvements");
+    expect(store.refineTask).toHaveBeenCalledWith("FN-001", "Need improvements");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Refinement requested", "Need improvements");
   });
 
   it("creates refinement task from in-review task and returns 201", async () => {
@@ -727,7 +740,7 @@ describe("POST /tasks/:id/refine", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.column).toBe("triage");
-    expect(store.refineTask).toHaveBeenCalledWith("KB-001", "Fix edge cases");
+    expect(store.refineTask).toHaveBeenCalledWith("FN-001", "Fix edge cases");
   });
 
   it("returns 400 when task is not in done or in-review column", async () => {
@@ -834,7 +847,7 @@ describe("POST /tasks/:id/archive", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.column).toBe("archived");
-    expect(store.archiveTask).toHaveBeenCalledWith("KB-001");
+    expect(store.archiveTask).toHaveBeenCalledWith("FN-001");
   });
 
   it("returns 400 when task is not in done column", async () => {
@@ -886,7 +899,7 @@ describe("POST /tasks/:id/unarchive", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.column).toBe("done");
-    expect(store.unarchiveTask).toHaveBeenCalledWith("KB-001");
+    expect(store.unarchiveTask).toHaveBeenCalledWith("FN-001");
   });
 
   it("returns 400 when task is not in archived column", async () => {
@@ -1260,7 +1273,7 @@ describe("PATCH /tasks/:id", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       title: undefined,
       description: undefined,
       prompt: undefined,
@@ -1281,7 +1294,7 @@ describe("PATCH /tasks/:id", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       title: "New",
       description: undefined,
       prompt: undefined,
@@ -1312,7 +1325,7 @@ describe("PATCH /tasks/:id", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       title: undefined,
       description: undefined,
       prompt: undefined,
@@ -1361,7 +1374,7 @@ describe("PATCH /tasks/:id", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       title: undefined,
       description: undefined,
       prompt: undefined,
@@ -1411,7 +1424,7 @@ describe("Attachment routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.filename).toBe("1234-screenshot.png");
     expect((store.addAttachment as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
-      "KB-001",
+      "FN-001",
       "screenshot.png",
       expect.any(Buffer),
       "image/png",
@@ -1454,7 +1467,7 @@ describe("Attachment routes", () => {
     const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001/attachments/1234-screenshot.png");
 
     expect(res.status).toBe(200);
-    expect((store.deleteAttachment as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("KB-001", "1234-screenshot.png");
+    expect((store.deleteAttachment as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("FN-001", "1234-screenshot.png");
   });
 
   it("DELETE /tasks/:id/attachments/:filename — returns 404 for missing", async () => {
@@ -1478,7 +1491,7 @@ describe("Attachment routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeLogs);
-      expect(store.getAgentLogs).toHaveBeenCalledWith("KB-001");
+    expect(store.getAgentLogs).toHaveBeenCalledWith("FN-001");
   });
 
   it("GET /tasks/:id/logs — returns empty array when no logs", async () => {
@@ -1763,14 +1776,14 @@ describe("Pause/Unpause endpoints", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/pause");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: "FN-001", paused: true });
-    expect(store.pauseTask).toHaveBeenCalledWith("KB-001", true);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", true);
   });
 
   it("POST /tasks/:id/unpause — unpauses a task", async () => {
     (store.pauseTask as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "FN-001" });
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/unpause");
     expect(res.status).toBe(200);
-    expect(store.pauseTask).toHaveBeenCalledWith("KB-001", false);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", false);
   });
 
   it("POST /tasks/:id/pause — returns 500 on error", async () => {
@@ -1807,7 +1820,7 @@ describe("Pause/Unpause endpoints", () => {
         "Content-Type": "application/json",
       });
       expect(res.status).toBe(200);
-      expect(store.addTaskComment).toHaveBeenCalledWith("KB-001", "Hello", "user");
+      expect(store.addTaskComment).toHaveBeenCalledWith("FN-001", "Hello", "user");
     });
 
     it("PATCH /tasks/:id/comments/:commentId — updates a task comment", async () => {
@@ -1821,7 +1834,7 @@ describe("Pause/Unpause endpoints", () => {
         "Content-Type": "application/json",
       });
       expect(res.status).toBe(200);
-      expect(store.updateTaskComment).toHaveBeenCalledWith("KB-001", "c1", "Updated");
+      expect(store.updateTaskComment).toHaveBeenCalledWith("FN-001", "c1", "Updated");
     });
 
     it("DELETE /tasks/:id/comments/:commentId — deletes a task comment", async () => {
@@ -1833,7 +1846,7 @@ describe("Pause/Unpause endpoints", () => {
 
       const res = await REQUEST(app, "DELETE", "/api/tasks/KB-001/comments/c1");
       expect(res.status).toBe(200);
-      expect(store.deleteTaskComment).toHaveBeenCalledWith("KB-001", "c1");
+      expect(store.deleteTaskComment).toHaveBeenCalledWith("FN-001", "c1");
     });
   });
 
@@ -1850,7 +1863,7 @@ describe("Pause/Unpause endpoints", () => {
           },
         ],
       };
-      (store.addComment as ReturnType<typeof vi.fn>).mockResolvedValue(mockComment);
+      (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(mockComment);
 
       const res = await REQUEST(
         buildApp(),
@@ -1862,8 +1875,8 @@ describe("Pause/Unpause endpoints", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual(mockComment);
-      expect(store.addComment).toHaveBeenCalledWith(
-        "KB-001",
+      expect(store.addSteeringComment).toHaveBeenCalledWith(
+        "FN-001",
         "Please handle the edge case",
         "user"
       );
@@ -1909,7 +1922,7 @@ describe("Pause/Unpause endpoints", () => {
     it("returns 404 when task not found", async () => {
       const error = new Error("Task not found") as Error & { code?: string };
       error.code = "ENOENT";
-      (store.addComment as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+      (store.addSteeringComment as ReturnType<typeof vi.fn>).mockRejectedValue(error);
 
       const res = await REQUEST(
         buildApp(),
@@ -1923,7 +1936,7 @@ describe("Pause/Unpause endpoints", () => {
     });
 
     it("returns 500 on unexpected errors", async () => {
-      (store.addComment as ReturnType<typeof vi.fn>).mockRejectedValue(
+      (store.addSteeringComment as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error("Database error")
       );
 
@@ -3160,10 +3173,19 @@ describe("POST /github/issues/batch-import", () => {
   });
 
   it("handles rate limit (429) with retry and eventual success", async () => {
-    const throttledSpy = vi.spyOn(GitHubClient.prototype, "fetchThrottled").mockResolvedValueOnce({
-      success: true,
-      data: mockGitHubIssue(1, "Issue After Rate Limit"),
-    } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>);
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: new Headers({ "Retry-After": "1" }),
+        json: () => Promise.resolve({ message: "Rate limited" }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockGitHubIssue(1, "Issue After Rate Limit")),
+      } as Response);
 
     const res = await REQUEST(
       buildApp(),
@@ -3177,7 +3199,7 @@ describe("POST /github/issues/batch-import", () => {
     expect(res.body.results).toHaveLength(1);
     expect(res.body.results[0].success).toBe(true);
     expect(res.body.results[0].taskId).toBeDefined();
-    expect(throttledSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // Initial 429 + 1 retry
   }, 10000); // Increase timeout for retry delay
 
   it("returns error after max retries exceeded on 429", async () => {
@@ -3203,7 +3225,8 @@ describe("POST /github/issues/batch-import", () => {
     expect(res.body.results[0].success).toBe(false);
     expect(res.body.results[0].error).toContain("rate limit");
     expect(res.body.results[0].retryAfter).toBe(1);
-    expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
+    // Initial attempt + 3 retries = 4 calls
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
   }, 15000); // Increase timeout for multiple retries
 
   it("processes issues sequentially (not parallel)", async () => {
@@ -3651,124 +3674,14 @@ describe("POST /tasks/:id/reject-plan", () => {
 // --- Git Management route tests ---
 // These are integration tests that run against the actual git repository
 
-describe("GET /tasks/:id/file-diffs", () => {
-  let store: TaskStore;
-  let worktreeDir: string;
-  let testRoot: string;
-
-  beforeEach(() => {
-    testRoot = mkdtempSync(join(tmpdir(), "kb-dashboard-file-diffs-"));
-    worktreeDir = join(testRoot, "repo");
-    mkdirSync(worktreeDir, { recursive: true });
-    execFileSync("git", ["init", "-b", "main", worktreeDir]);
-    execFileSync("git", ["-C", worktreeDir, "config", "user.email", "kb-tests@example.com"]);
-    execFileSync("git", ["-C", worktreeDir, "config", "user.name", "KB Tests"]);
-    writeFileSync(join(worktreeDir, "README.md"), "base\n");
-    writeFileSync(join(worktreeDir, "keep.txt"), "keep\n");
-    execFileSync("git", ["-C", worktreeDir, "add", "."]);
-    execFileSync("git", ["-C", worktreeDir, "commit", "-m", "base"]);
-
-    store = createMockStore({
-      getTask: vi.fn().mockResolvedValue({
-        ...FAKE_TASK_DETAIL,
-        id: "KB-651",
-        worktree: worktreeDir,
-        baseBranch: "main",
-      }),
-    });
-  });
-
-  afterEach(() => {
-    rmSync(testRoot, { recursive: true, force: true });
-  });
-
-  function buildApp() {
-    const app = express();
-    app.use(express.json());
-    app.use("/api", createApiRoutes(store));
-    return app;
-  }
-
-  it("returns changed files with statuses and diffs", async () => {
-    writeFileSync(join(worktreeDir, "README.md"), "base\nchanged\n");
-    writeFileSync(join(worktreeDir, "added.txt"), "new file\n");
-    execFileSync("git", ["-C", worktreeDir, "mv", "keep.txt", "renamed.txt"]);
-    execFileSync("git", ["-C", worktreeDir, "rm", "renamed.txt"]);
-
-    const res = await GET(buildApp(), "/api/tasks/KB-651/file-diffs");
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ path: "README.md", status: "modified", diff: expect.stringContaining("+changed") }),
-        expect.objectContaining({ path: "added.txt", status: "added", diff: expect.stringContaining("+++ b/added.txt") }),
-        expect.objectContaining({ path: "keep.txt", status: "deleted", diff: expect.stringContaining("--- a/keep.txt") }),
-      ]),
-    );
-  });
-
-  it("returns renamed files with oldPath", async () => {
-    execFileSync("git", ["-C", worktreeDir, "mv", "keep.txt", "renamed.txt"]);
-
-    const res = await GET(buildApp(), "/api/tasks/KB-651/file-diffs");
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual([
-      expect.objectContaining({ path: "renamed.txt", oldPath: "keep.txt", status: "renamed" }),
-    ]);
-  });
-
-  it("returns empty array when worktree is missing", async () => {
-    store = createMockStore({
-      getTask: vi.fn().mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "KB-651", worktree: join(testRoot, "missing"), baseBranch: "main" }),
-    });
-
-    const res = await GET(buildApp(), "/api/tasks/KB-651/file-diffs");
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
-  });
-
-  it("returns empty array when there are no changes", async () => {
-    const res = await GET(buildApp(), "/api/tasks/KB-651/file-diffs");
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
-  });
-});
-
 describe("Git Management endpoints", () => {
   let store: TaskStore;
-  let gitRepoDir: string;
-  let gitTestRoot: string;
-
-  beforeAll(() => {
-    gitTestRoot = mkdtempSync(join(tmpdir(), "kb-dashboard-git-"));
-    const remoteDir = join(gitTestRoot, "remote.git");
-    gitRepoDir = join(gitTestRoot, "repo");
-
-    mkdirSync(gitRepoDir, { recursive: true });
-    execFileSync("git", ["init", "--bare", remoteDir]);
-    execFileSync("git", ["init", gitRepoDir]);
-    execFileSync("git", ["-C", gitRepoDir, "config", "user.email", "kb-tests@example.com"]);
-    execFileSync("git", ["-C", gitRepoDir, "config", "user.name", "KB Tests"]);
-    writeFileSync(join(gitRepoDir, "README.md"), "# Test Repo\n");
-    execFileSync("git", ["-C", gitRepoDir, "add", "README.md"]);
-    execFileSync("git", ["-C", gitRepoDir, "commit", "-m", "Initial commit"]);
-    execFileSync("git", ["-C", gitRepoDir, "remote", "add", "origin", remoteDir]);
-    execFileSync("git", ["-C", gitRepoDir, "push", "-u", "origin", "HEAD"]);
-  });
 
   beforeEach(() => {
+    // Use the actual project root so git commands work
     store = createMockStore({
-      getRootDir: vi.fn().mockReturnValue(gitRepoDir),
+      getRootDir: vi.fn().mockReturnValue(process.cwd()),
     });
-  });
-
-  afterAll(() => {
-    if (gitTestRoot) {
-      rmSync(gitTestRoot, { recursive: true, force: true });
-    }
   });
 
   function buildApp() {
@@ -4817,13 +4730,9 @@ describe("Terminal session routes", () => {
   });
 
   describe("POST /api/terminal/sessions", () => {
-    it("returns 503 when max sessions reached", async () => {
+    it("returns 503 when max sessions reached (session is null)", async () => {
       const mockService = {
-        createSession: vi.fn().mockResolvedValue({
-          success: false,
-          code: "max_sessions",
-          error: "Maximum terminal sessions reached. Please close an existing terminal and try again.",
-        }),
+        createSession: vi.fn().mockResolvedValue(null),
       };
       vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
 
@@ -4836,102 +4745,7 @@ describe("Terminal session routes", () => {
       );
 
       expect(res.status).toBe(503);
-      expect(res.body.error).toBe("Maximum terminal sessions reached. Please close an existing terminal and try again.");
-
-      vi.restoreAllMocks();
-    });
-
-    it("returns 400 when shell is not allowed", async () => {
-      const mockService = {
-        createSession: vi.fn().mockResolvedValue({
-          success: false,
-          code: "invalid_shell",
-          error: "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).",
-        }),
-      };
-      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
-
-      const res = await REQUEST(
-        buildApp(),
-        "POST",
-        "/api/terminal/sessions",
-        JSON.stringify({}),
-        { "Content-Type": "application/json" },
-      );
-
-      expect(res.status).toBe(400);
-      expect(res.body.error).toBe("Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).");
-
-      vi.restoreAllMocks();
-    });
-
-    it("returns 503 when PTY module fails to load", async () => {
-      const mockService = {
-        createSession: vi.fn().mockResolvedValue({
-          success: false,
-          code: "pty_load_failed",
-          error: "Terminal service unavailable. The PTY module could not be loaded.",
-        }),
-      };
-      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
-
-      const res = await REQUEST(
-        buildApp(),
-        "POST",
-        "/api/terminal/sessions",
-        JSON.stringify({}),
-        { "Content-Type": "application/json" },
-      );
-
-      expect(res.status).toBe(503);
-      expect(res.body.error).toBe("Terminal service unavailable. The PTY module could not be loaded.");
-
-      vi.restoreAllMocks();
-    });
-
-    it("returns 500 when PTY spawn fails", async () => {
-      const mockService = {
-        createSession: vi.fn().mockResolvedValue({
-          success: false,
-          code: "pty_spawn_failed",
-          error: "Failed to start terminal shell process.",
-        }),
-      };
-      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
-
-      const res = await REQUEST(
-        buildApp(),
-        "POST",
-        "/api/terminal/sessions",
-        JSON.stringify({}),
-        { "Content-Type": "application/json" },
-      );
-
-      expect(res.status).toBe(500);
-      expect(res.body.error).toBe("Failed to start terminal shell process.");
-
-      vi.restoreAllMocks();
-    });
-
-    it("returns 201 when session creation succeeds", async () => {
-      const mockService = {
-        createSession: vi.fn().mockResolvedValue({
-          success: true,
-          session: { id: "term-123", shell: "/bin/zsh", cwd: "/test" },
-        }),
-      };
-      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
-
-      const res = await REQUEST(
-        buildApp(),
-        "POST",
-        "/api/terminal/sessions",
-        JSON.stringify({}),
-        { "Content-Type": "application/json" },
-      );
-
-      expect(res.status).toBe(201);
-      expect(res.body).toEqual({ sessionId: "term-123", shell: "/bin/zsh", cwd: "/test" });
+      expect(res.body.error).toContain("Max sessions");
 
       vi.restoreAllMocks();
     });
@@ -4973,24 +4787,38 @@ describe("Terminal WebSocket close handler", () => {
     const server = http.createServer(app);
 
     setupTerminalWebSocket(app, server);
-    class FakeWebSocket extends EventEmitter {
-      send = vi.fn();
-      close = vi.fn(() => this.emit("close"));
-      terminate = vi.fn();
-    }
 
-    const ws = new FakeWebSocket();
-    const wss = (app as express.Express & { terminalWsServer?: EventEmitter }).terminalWsServer;
-    expect(wss).toBeTruthy();
+    await new Promise<void>((resolve, reject) => {
+      server.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const { WebSocket: WsClient } = require("ws");
+        const ws = new WsClient(`ws://127.0.0.1:${addr.port}/api/terminal/ws?sessionId=term-ws-test`);
 
-    wss!.emit("connection", ws, {
-      url: "/api/terminal/ws?sessionId=term-ws-test",
-      headers: { host: "127.0.0.1" },
+        ws.on("open", () => {
+          // Close the WebSocket - this should trigger killSession
+          ws.close();
+        });
+
+        ws.on("close", () => {
+          // Give the close handler time to execute
+          setTimeout(() => {
+            try {
+              expect(killSessionMock).toHaveBeenCalledWith("term-ws-test");
+              server.close();
+              resolve();
+            } catch (err) {
+              server.close();
+              reject(err);
+            }
+          }, 50);
+        });
+
+        ws.on("error", (err: Error) => {
+          server.close();
+          reject(err);
+        });
+      });
     });
-
-    ws.close();
-
-    expect(killSessionMock).toHaveBeenCalledWith("term-ws-test");
 
     vi.restoreAllMocks();
   });
@@ -5024,24 +4852,31 @@ describe("Terminal WebSocket close handler", () => {
     const server = http.createServer(app);
 
     setupTerminalWebSocket(app, server);
-    class FakeWebSocket extends EventEmitter {
-      send = vi.fn();
-      close = vi.fn(() => this.emit("close"));
-      terminate = vi.fn();
-    }
 
-    const ws = new FakeWebSocket();
-    const wss = (app as express.Express & { terminalWsServer?: EventEmitter }).terminalWsServer;
-    expect(wss).toBeTruthy();
+    await new Promise<void>((resolve, reject) => {
+      server.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const { WebSocket: WsClient } = require("ws");
+        const ws = new WsClient(`ws://127.0.0.1:${addr.port}/api/terminal/ws?sessionId=term-ws-err`);
 
-    wss!.emit("connection", ws, {
-      url: "/api/terminal/ws?sessionId=term-ws-err",
-      headers: { host: "127.0.0.1" },
+        ws.on("open", () => {
+          // Force-terminate the connection to trigger error/close
+          ws.terminate();
+        });
+
+        // After termination, give the handler time to run
+        setTimeout(() => {
+          try {
+            expect(killSessionMock).toHaveBeenCalledWith("term-ws-err");
+            server.close();
+            resolve();
+          } catch (err) {
+            server.close();
+            reject(err);
+          }
+        }, 200);
+      });
     });
-
-    ws.emit("error", new Error("synthetic websocket failure"));
-
-    expect(killSessionMock).toHaveBeenCalledWith("term-ws-err");
 
     vi.restoreAllMocks();
   });

@@ -327,6 +327,13 @@ export interface TaskAttachment {
   createdAt: string;
 }
 
+export interface SteeringComment {
+  id: string;
+  text: string;
+  createdAt: string;
+  author: "user" | "agent";
+}
+
 export interface TaskComment {
   id: string;
   text: string;
@@ -380,11 +387,8 @@ export interface Task {
    *  unmerged branch. The executor reads this to branch from the
    *  dependency's branch instead of HEAD. Cleared after worktree creation. */
   baseBranch?: string;
-  /** Commit SHA of the base branch at worktree creation time.
-   *  Used for computing file diffs when reviewing task changes.
-   *  Set by the executor when creating the worktree. */
-  baseCommitSha?: string;
   attachments?: TaskAttachment[];
+  steeringComments?: SteeringComment[];
   comments?: TaskComment[];
   /** PR information for tasks linked to GitHub pull requests */
   prInfo?: PrInfo;
@@ -424,10 +428,6 @@ export interface Task {
   error?: string;
   /** Optional summary of what was changed/fixed when task is completed */
   summary?: string;
-  /** Files modified during agent execution, captured at task completion time */
-  modifiedFiles?: string[];
-  /** Optional ID of the slice this task is linked to (for mission-based work) */
-  sliceId?: string;
   /** ISO-8601 timestamp of when the task last entered its current column.
    *  Used to sort cards within a column so that recently-moved cards appear at the top. */
   columnMovedAt?: string;
@@ -523,13 +523,6 @@ export interface GlobalSettings {
   /** ntfy.sh topic name for push notifications. When set along with ntfyEnabled,
    *  notifications are sent to https://ntfy.sh/{topic} when tasks complete or fail. */
   ntfyTopic?: string;
-  /** Default project ID to use when no explicit project is specified and
-   *  no project can be auto-detected from the current directory.
-   *  Used for multi-project CLI workflows. */
-  defaultProjectId?: string;
-  /** When true, indicates the first-run setup wizard has been completed.
-   *  Set by FirstRunExperience.completeSetup() after successful migration. */
-  setupComplete?: boolean;
 }
 
 /**
@@ -663,10 +656,6 @@ export interface ProjectSettings {
    *  Must be set together with `titleSummarizerProvider`. Falls back to planningModelId,
    *  then defaultModelId if not specified. */
   titleSummarizerModelId?: string;
-  /** Project-defined shell scripts for quick command execution.
-   *  Key is the script name, value is the shell command to execute.
-   *  Script names must be alphanumeric with hyphens and underscores only. */
-  scripts?: Record<string, string>;
 }
 
 /**
@@ -693,7 +682,6 @@ export const DEFAULT_GLOBAL_SETTINGS: Required<Pick<GlobalSettings, "themeMode" 
   defaultThinkingLevel: undefined,
   ntfyEnabled: false,
   ntfyTopic: undefined,
-  defaultProjectId: undefined,
 };
 
 /** Default values for project-level settings. */
@@ -731,7 +719,6 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   autoSummarizeTitles: false,
   titleSummarizerProvider: undefined,
   titleSummarizerModelId: undefined,
-  scripts: {},
 };
 
 /**
@@ -753,7 +740,6 @@ export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<keyof GlobalSettings> = [
   "defaultThinkingLevel",
   "ntfyEnabled",
   "ntfyTopic",
-  "defaultProjectId",
 ] as const;
 
 /** Keys that belong to the project settings scope. */
@@ -793,7 +779,6 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "autoSummarizeTitles",
   "titleSummarizerProvider",
   "titleSummarizerModelId",
-  "scripts",
 ] as const;
 
 export interface BoardConfig {
@@ -876,11 +861,8 @@ export interface ArchivedTaskEntry {
   breakIntoSubtasks?: boolean;
   paused?: boolean;
   baseBranch?: string;
-  baseCommitSha?: string;
   mergeRetries?: number;
   error?: string;
-  /** Files modified during agent execution, captured at task completion time */
-  modifiedFiles?: string[];
 }
 
 /** Type of planning question presented to the user */
@@ -1094,76 +1076,4 @@ export interface AgentUpdateInput {
   name?: string;
   role?: AgentCapability;
   metadata?: Record<string, unknown>;
-}
-
-// ── Migration & First-Run Types (Multi-Project Support) ───────────────────
-
-/** A project detected during filesystem scanning for auto-migration */
-export interface DetectedProject {
-  /** Absolute path to the project directory */
-  path: string;
-  /** Project name (derived from directory basename) */
-  name: string;
-  /** Whether the project has a valid kb database */
-  hasDb: boolean;
-}
-
-/** Options for migration orchestration */
-export interface MigrationOptions {
-  /** Starting path for project detection (default: process.cwd()) */
-  startPath?: string;
-  /** Whether to auto-register detected projects (default: false) */
-  autoRegister?: boolean;
-  /** Whether to perform a dry run (detect only, don't register) */
-  dryRun?: boolean;
-  /** Maximum depth to scan (default: 5) */
-  maxDepth?: number;
-  /** Progress callback for UI feedback */
-  onProgress?: (current: number, total: number, projectPath: string) => void;
-}
-
-/** Result of migration execution */
-export interface MigrationResult {
-  /** Projects detected during scan */
-  projectsDetected: DetectedProject[];
-  /** Projects successfully registered */
-  projectsRegistered: RegisteredProject[];
-  /** Projects skipped (already registered or invalid) */
-  projectsSkipped: Array<{ path: string; reason: string }>;
-  /** Errors encountered during migration */
-  errors: Array<{ path: string; error: string }>;
-}
-
-/** Input for setting up a project during first-run wizard */
-export interface ProjectSetupInput {
-  /** Absolute path to project directory */
-  path: string;
-  /** Display name for the project */
-  name: string;
-  /** Execution isolation mode (default: 'in-process') */
-  isolationMode?: IsolationMode;
-}
-
-/** Complete setup state for first-run experience */
-export interface SetupState {
-  /** Whether this is a fresh installation (no projects registered) */
-  isFirstRun: boolean;
-  /** Whether any projects were detected during scan */
-  hasDetectedProjects: boolean;
-  /** Projects detected but not yet registered */
-  detectedProjects: DetectedProject[];
-  /** Projects already registered in the system */
-  registeredProjects: RegisteredProject[];
-  /** Recommended action based on current state */
-  recommendedAction: 'auto-detect' | 'manual-setup' | 'create-new';
-}
-
-/** Result of completing the setup wizard */
-export interface SetupCompletionResult {
-  /** Whether setup completed successfully */
-  success: boolean;
-  /** Projects that were registered */
-  projects: RegisteredProject[];
-  /** Suggested next steps for the user */
-  nextSteps: string[];
 }

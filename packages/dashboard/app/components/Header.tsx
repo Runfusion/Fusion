@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow, Bot, ChevronLeft } from "lucide-react";
-import type { ProjectInfo } from "@fusion/core";
-import { ProjectSelector } from "./ProjectSelector";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow, Bot } from "lucide-react";
 
 // GitHub logo icon (Octocat mark) - uses currentColor for theme compatibility
 function GitHubLogo({ size = 16 }: { size?: number }) {
@@ -18,7 +16,7 @@ function GitHubLogo({ size = 16 }: { size?: number }) {
   );
 }
 
-export interface HeaderProps {
+interface HeaderProps {
   onOpenSettings?: () => void;
   onOpenGitHubImport?: () => void;
   onOpenPlanning?: () => void;
@@ -28,7 +26,6 @@ export interface HeaderProps {
   onOpenGitManager?: () => void;
   onOpenWorkflowSteps?: () => void;
   onOpenAgents?: () => void;
-  onOpenScripts?: () => void;
   onToggleTerminal?: () => void;
   /** Opens the top-level workspace-aware file browser modal. */
   onOpenFiles?: () => void;
@@ -37,15 +34,10 @@ export interface HeaderProps {
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
   onToggleEnginePause?: () => void;
-  view?: "board" | "list" | "agents";
-  onChangeView?: (view: "board" | "list" | "agents") => void;
+  view?: "board" | "list";
+  onChangeView?: (view: "board" | "list") => void;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
-  /** Multi-project props */
-  projects?: ProjectInfo[];
-  currentProject?: ProjectInfo | null;
-  onSelectProject?: (project: ProjectInfo) => void;
-  onViewAllProjects?: () => void;
 }
 
 function useIsMobile() {
@@ -75,7 +67,6 @@ export function Header({
   onOpenGitManager,
   onOpenWorkflowSteps,
   onOpenAgents,
-  onOpenScripts,
   onToggleTerminal,
   onOpenFiles,
   filesOpen,
@@ -87,10 +78,6 @@ export function Header({
   onChangeView,
   searchQuery = "",
   onSearchChange,
-  projects = [],
-  currentProject,
-  onSelectProject,
-  onViewAllProjects,
 }: HeaderProps) {
   const isMobile = useIsMobile();
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
@@ -166,35 +153,7 @@ export function Header({
         <img src="/logo.svg" alt="Fusion logo" className="header-logo" width={24} height={24} />
         <h1 className="logo">Fusion</h1>
         <span className="logo-sub">tasks</span>
-        
-        {/* Back to All Projects button when viewing a specific project */}
-        {currentProject && onViewAllProjects && (
-          <button
-            className="header-back-button"
-            onClick={onViewAllProjects}
-            title="Back to All Projects"
-            data-testid="back-to-projects-btn"
-          >
-            <ChevronLeft size={14} />
-            <span>All Projects</span>
-          </button>
-        )}
       </div>
-
-      {/* Project Selector - shown when 2+ projects */}
-      {projects.length > 1 && (
-        <div className="header-project-selector">
-          <ProjectSelector
-            projects={projects}
-            currentProject={currentProject || null}
-            onSelect={(project) => {
-              onSelectProject?.(project);
-            }}
-            onViewAll={onViewAllProjects || (() => {})}
-          />
-        </div>
-      )}
-
       <div className="header-actions">
         {/* Desktop Search - only show in board view */}
         {onSearchChange && view === "board" && !isMobile && (
@@ -278,15 +237,6 @@ export function Header({
               aria-pressed={view === "list"}
             >
               <List size={16} />
-            </button>
-            <button
-              className={`view-toggle-btn${view === "agents" ? " active" : ""}`}
-              onClick={() => onChangeView("agents")}
-              title="Agents view"
-              aria-label="Agents view"
-              aria-pressed={view === "agents"}
-            >
-              <Bot size={16} />
             </button>
           </div>
         )}
@@ -392,18 +342,6 @@ export function Header({
             data-testid="agents-btn"
           >
             <Bot size={16} />
-          </button>
-        )}
-
-        {/* Scripts - desktop only */}
-        {!isMobile && onOpenScripts && (
-          <button
-            className="btn-icon"
-            onClick={onOpenScripts}
-            title="Scripts"
-            data-testid="scripts-btn"
-          >
-            <Terminal size={16} />
           </button>
         )}
 
@@ -536,17 +474,6 @@ export function Header({
               >
                 <Bot size={16} />
                 <span>Manage Agents</span>
-              </button>
-            )}
-            {onOpenScripts && (
-              <button
-                className="mobile-overflow-item"
-                onClick={() => handleOverflowAction(onOpenScripts)}
-                role="menuitem"
-                data-testid="overflow-scripts-btn"
-              >
-                <Terminal size={16} />
-                <span>Scripts</span>
               </button>
             )}
             <button

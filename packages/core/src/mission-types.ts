@@ -48,8 +48,6 @@ export interface Mission {
   status: MissionStatus;
   /** State of the AI specification interview process */
   interviewState: InterviewState;
-  /** When true, automatically activate the next pending slice when current slice completes */
-  autoAdvance?: boolean;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */

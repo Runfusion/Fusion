@@ -1,16 +1,13 @@
 import { useState, useCallback, useEffect } from "react";
-import type { TaskDetail, TaskCreateInput, Task, ThemeMode, ProjectInfo } from "@fusion/core";
-import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, fetchModels, fetchTaskDetail } from "./api";
+import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@fusion/core";
+import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, fetchModels } from "./api";
 import type { ModelInfo } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
-import { ProjectOverview } from "./components/ProjectOverview";
-import { SetupWizardModal } from "./components/SetupWizardModal";
 import { TaskDetailModal } from "./components/TaskDetailModal";
 import { TerminalModal } from "./components/TerminalModal";
 import { FileBrowserModal } from "./components/FileBrowserModal";
-import { ChangedFilesModal } from "./components/ChangedFilesModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { PlanningModeModal } from "./components/PlanningModeModal";
 import { SubtaskBreakdownModal } from "./components/SubtaskBreakdownModal";
@@ -24,11 +21,7 @@ import { ScheduledTasksModal } from "./components/ScheduledTasksModal";
 import { ActivityLogModal } from "./components/ActivityLogModal";
 import { WorkflowStepManager } from "./components/WorkflowStepManager";
 import { AgentListModal } from "./components/AgentListModal";
-import { AgentsView } from "./components/AgentsView";
-import { ScriptsModal } from "./components/ScriptsModal";
 import { useTasks } from "./hooks/useTasks";
-import { useProjects } from "./hooks/useProjects";
-import { useCurrentProject } from "./hooks/useCurrentProject";
 import { ToastProvider, useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
 
@@ -46,81 +39,33 @@ function AppInner() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [fileBrowserWorkspace, setFileBrowserWorkspace] = useState("project");
-  const [changedFilesState, setChangedFilesState] = useState<{ taskId: string; worktree: string | undefined; column: string } | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
-  const [scriptsOpen, setScriptsOpen] = useState(false);
-  const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [rootDir, setRootDir] = useState<string>(".");
   const [autoMerge, setAutoMerge] = useState(true);
   const [globalPaused, setGlobalPaused] = useState(false);
   const [enginePaused, setEnginePaused] = useState(false);
-  
-  // Multi-project state
-  const { projects, loading: projectsLoading, register, update: updateProject, unregister: unregisterProject } = useProjects();
-  const { currentProject, setCurrentProject, clearCurrentProject, loading: currentProjectLoading } = useCurrentProject(projects);
-  
-  // View state: "overview" for all projects, "project" for single project task view
-  const [viewMode, setViewMode] = useState<"overview" | "project">(() => {
+  const [view, setView] = useState<"board" | "list">(() => {
+    // Initialize from localStorage if available
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("kb-dashboard-view-mode");
-      if (saved === "overview" || saved === "project") {
-        return saved;
-      }
-    }
-    return "overview";
-  });
-  
-  // Task view state (only meaningful when viewMode="project")
-  const [taskView, setTaskView] = useState<"board" | "list" | "agents">(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("kb-dashboard-task-view");
-      if (saved === "list" || saved === "board" || saved === "agents") {
+      const saved = localStorage.getItem("kb-dashboard-view");
+      if (saved === "list" || saved === "board") {
         return saved;
       }
     }
     return "board";
   });
-  
   const [searchQuery, setSearchQuery] = useState("");
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
-  
-  // Setup wizard state
-  const [setupWizardOpen, setSetupWizardOpen] = useState(false);
-  
-  // Tasks hook with project context
-  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone } = useTasks(
-    currentProject ? { projectId: currentProject.id } : undefined
-  );
+  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone } = useTasks();
 
   // Theme management
   const { themeMode, colorTheme, setThemeMode, setColorTheme } = useTheme();
-
-  // Auto-open setup wizard on first run (no projects)
-  useEffect(() => {
-    if (!projectsLoading && projects.length === 0 && !setupWizardOpen) {
-      // Delay slightly to allow initial render
-      const timer = setTimeout(() => {
-        setSetupWizardOpen(true);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [projectsLoading, projects.length, setupWizardOpen]);
-
-  // Persist view mode
-  useEffect(() => {
-    localStorage.setItem("kb-dashboard-view-mode", viewMode);
-  }, [viewMode]);
-
-  // Persist task view
-  useEffect(() => {
-    localStorage.setItem("kb-dashboard-task-view", taskView);
-  }, [taskView]);
 
   // Theme toggle handler: cycles Dark → Light → System → Dark
   const handleToggleTheme = useCallback(() => {
@@ -163,73 +108,14 @@ function AppInner() {
   }, []);
   const { toasts, addToast, removeToast } = useToast();
 
-  // Handle deep link to task on mount
+  // Persist view preference to localStorage
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const taskId = params.get("task");
-    if (!taskId) return;
+    localStorage.setItem("kb-dashboard-view", view);
+  }, [view]);
 
-    // Clean URL immediately without reloading
-    const url = new URL(window.location.href);
-    url.searchParams.delete("task");
-    window.history.replaceState({}, "", url.toString());
-
-    // Load and open the task directly
-    fetchTaskDetail(taskId)
-      .then((task) => {
-        handleDetailOpen(task);
-      })
-      .catch(() => {
-        addToast(`Task ${taskId} not found`, "error");
-      });
+  const handleChangeView = useCallback((newView: "board" | "list") => {
+    setView(newView);
   }, []);
-
-  // Project selection handlers
-  const handleSelectProject = useCallback((project: ProjectInfo) => {
-    setCurrentProject(project);
-    setViewMode("project");
-  }, [setCurrentProject]);
-
-  const handleViewAllProjects = useCallback(() => {
-    clearCurrentProject();
-    setViewMode("overview");
-  }, [clearCurrentProject]);
-
-  const handleAddProject = useCallback(() => {
-    setSetupWizardOpen(true);
-  }, []);
-
-  const handlePauseProject = useCallback(async (project: ProjectInfo) => {
-    try {
-      await updateProject(project.id, { status: "paused" });
-      addToast(`Project ${project.name} paused`, "success");
-    } catch {
-      addToast(`Failed to pause project ${project.name}`, "error");
-    }
-  }, [updateProject, addToast]);
-
-  const handleResumeProject = useCallback(async (project: ProjectInfo) => {
-    try {
-      await updateProject(project.id, { status: "active" });
-      addToast(`Project ${project.name} resumed`, "success");
-    } catch {
-      addToast(`Failed to resume project ${project.name}`, "error");
-    }
-  }, [updateProject, addToast]);
-
-  const handleRemoveProject = useCallback(async (project: ProjectInfo) => {
-    try {
-      await unregisterProject(project.id);
-      addToast(`Project ${project.name} removed`, "success");
-      // If we removed the current project, go back to overview
-      if (currentProject?.id === project.id) {
-        clearCurrentProject();
-        setViewMode("overview");
-      }
-    } catch {
-      addToast(`Failed to remove project ${project.name}`, "error");
-    }
-  }, [unregisterProject, currentProject, clearCurrentProject, addToast]);
 
   const handleNewTaskOpen = useCallback(() => setNewTaskModalOpen(true), []);
   const handleNewTaskClose = useCallback(() => setNewTaskModalOpen(false), []);
@@ -337,16 +223,17 @@ function AppInner() {
     setTerminalOpen((prev) => !prev);
   }, []);
 
+  const handleTerminalClose = useCallback(() => {
+    setTerminalOpen(false);
+  }, []);
+
   const handleOpenFiles = useCallback(() => {
     setFilesOpen(true);
   }, []);
 
-  const handleOpenChangedFiles = useCallback((taskId: string, worktree: string | undefined, column: string) => {
-    setChangedFilesState({ taskId, worktree, column });
-  }, []);
-
-  const handleCloseChangedFiles = useCallback(() => {
-    setChangedFilesState(null);
+  const handleOpenFilesForTask = useCallback((taskId: string) => {
+    setFileBrowserWorkspace(taskId);
+    setFilesOpen(true);
   }, []);
 
   const handleWorkspaceChange = useCallback((workspace: string) => {
@@ -365,54 +252,31 @@ function AppInner() {
   const handleOpenAgents = useCallback(() => setAgentsOpen(true), []);
   const handleCloseAgents = useCallback(() => setAgentsOpen(false), []);
 
-  // Scripts handlers
-  const handleOpenScripts = useCallback(() => setScriptsOpen(true), []);
-  const handleCloseScripts = useCallback(() => setScriptsOpen(false), []);
-
-  const handleRunScript = useCallback((name: string, command: string) => {
-    setTerminalInitialCommand(command);
-    setScriptsOpen(false);
-    setTerminalOpen(true);
-    addToast(`Running script: ${name}`, "success");
-  }, [addToast]);
-
-  const handleTerminalClose = useCallback(() => {
-    setTerminalOpen(false);
-    setTerminalInitialCommand(undefined);
-  }, []);
-
-  // Setup wizard complete handler
-  const handleSetupComplete = useCallback((project: ProjectInfo) => {
-    setSetupWizardOpen(false);
-    setCurrentProject(project);
-    setViewMode("project");
-    addToast(`Project ${project.name} added successfully`, "success");
-  }, [setCurrentProject, addToast]);
-
-  // Determine which view to render
-  const renderMainContent = () => {
-    if (viewMode === "overview") {
-      return (
-        <ProjectOverview
-          projects={projects}
-          loading={projectsLoading}
-          onSelectProject={handleSelectProject}
-          onAddProject={handleAddProject}
-          onPauseProject={handlePauseProject}
-          onResumeProject={handleResumeProject}
-          onRemoveProject={handleRemoveProject}
-          onViewAllProjects={handleViewAllProjects}
-        />
-      );
-    }
-
-    // Project task view
-    if (taskView === "agents") {
-      return <AgentsView addToast={addToast} />;
-    }
-
-    if (taskView === "board") {
-      return (
+  return (
+    <>
+      <Header
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenGitHubImport={() => setGitHubImportOpen(true)}
+        onOpenPlanning={handlePlanningOpen}
+        onOpenUsage={handleOpenUsage}
+        onOpenActivityLog={handleOpenActivityLog}
+        onOpenSchedules={handleOpenSchedules}
+        onOpenGitManager={handleOpenGitManager}
+        onOpenWorkflowSteps={() => setWorkflowStepsOpen(true)}
+        onOpenAgents={handleOpenAgents}
+        onToggleTerminal={handleToggleTerminal}
+        onOpenFiles={handleOpenFiles}
+        filesOpen={filesOpen}
+        globalPaused={globalPaused}
+        enginePaused={enginePaused}
+        onToggleGlobalPause={handleToggleGlobalPause}
+        onToggleEnginePause={handleToggleEnginePause}
+        view={view}
+        onChangeView={handleChangeView}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
+      {view === "board" ? (
         <Board
           tasks={tasks}
           maxConcurrent={maxConcurrent}
@@ -432,62 +296,23 @@ function AppInner() {
           onArchiveAllDone={archiveAllDone}
           searchQuery={searchQuery}
           availableModels={availableModels}
-          onOpenFilesForTask={handleOpenChangedFiles}
-          projectId={currentProject?.id}
-          projectName={currentProject?.name}
+          onOpenFilesForTask={handleOpenFilesForTask}
         />
-      );
-    }
-
-    // List view
-    return (
-      <ListView
-        tasks={tasks}
-        onMoveTask={moveTask}
-        onOpenDetail={handleDetailOpen}
-        addToast={addToast}
-        globalPaused={globalPaused}
-        onNewTask={handleNewTaskOpen}
-        onQuickCreate={handleBoardQuickCreate}
-        onPlanningMode={handleNewTaskPlanningMode}
-        onSubtaskBreakdown={handleSubtaskBreakdown}
-        availableModels={availableModels}
-        projectId={currentProject?.id}
-        projectName={currentProject?.name}
-      />
-    );
-  };
-
-  return (
-    <>
-      <Header
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenGitHubImport={() => setGitHubImportOpen(true)}
-        onOpenPlanning={handlePlanningOpen}
-        onOpenUsage={handleOpenUsage}
-        onOpenActivityLog={handleOpenActivityLog}
-        onOpenSchedules={handleOpenSchedules}
-        onOpenGitManager={handleOpenGitManager}
-        onOpenWorkflowSteps={() => setWorkflowStepsOpen(true)}
-        onOpenAgents={handleOpenAgents}
-        onOpenScripts={handleOpenScripts}
-        onToggleTerminal={handleToggleTerminal}
-        onOpenFiles={handleOpenFiles}
-        filesOpen={filesOpen}
-        globalPaused={globalPaused}
-        enginePaused={enginePaused}
-        onToggleGlobalPause={handleToggleGlobalPause}
-        onToggleEnginePause={handleToggleEnginePause}
-        view={taskView}
-        onChangeView={setTaskView}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        projects={projects}
-        currentProject={currentProject}
-        onSelectProject={handleSelectProject}
-        onViewAllProjects={handleViewAllProjects}
-      />
-      {renderMainContent()}
+      ) : (
+        // List view now uses the same modal-based create flow as board view.
+        <ListView
+          tasks={tasks}
+          onMoveTask={moveTask}
+          onOpenDetail={handleDetailOpen}
+          addToast={addToast}
+          globalPaused={globalPaused}
+          onNewTask={handleNewTaskOpen}
+          onQuickCreate={handleBoardQuickCreate}
+          onPlanningMode={handleNewTaskPlanningMode}
+          onSubtaskBreakdown={handleSubtaskBreakdown}
+          availableModels={availableModels}
+        />
+      )}
       {detailTask && (
         <TaskDetailModal
           task={detailTask}
@@ -539,13 +364,6 @@ function AppInner() {
       <TerminalModal
         isOpen={terminalOpen}
         onClose={handleTerminalClose}
-        initialCommand={terminalInitialCommand}
-      />
-      <ScriptsModal
-        isOpen={scriptsOpen}
-        onClose={handleCloseScripts}
-        addToast={addToast}
-        onRunScript={handleRunScript}
       />
       {filesOpen && (
         <FileBrowserModal
@@ -553,15 +371,6 @@ function AppInner() {
           isOpen={true}
           onClose={() => setFilesOpen(false)}
           onWorkspaceChange={handleWorkspaceChange}
-        />
-      )}
-      {changedFilesState && (
-        <ChangedFilesModal
-          taskId={changedFilesState.taskId}
-          worktree={changedFilesState.worktree}
-          column={changedFilesState.column}
-          isOpen={true}
-          onClose={handleCloseChangedFiles}
         />
       )}
       <UsageIndicator
@@ -609,12 +418,6 @@ function AppInner() {
         isOpen={agentsOpen}
         onClose={handleCloseAgents}
         addToast={addToast}
-      />
-      <SetupWizardModal
-        isOpen={setupWizardOpen}
-        onClose={() => setSetupWizardOpen(false)}
-        onComplete={handleSetupComplete}
-        onRegisterProject={register}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>

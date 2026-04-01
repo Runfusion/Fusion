@@ -162,16 +162,6 @@ export interface TerminalOptions {
   env?: Record<string, string>;
 }
 
-export type CreateSessionErrorCode =
-  | "max_sessions"
-  | "invalid_shell"
-  | "pty_load_failed"
-  | "pty_spawn_failed";
-
-export type CreateSessionResult =
-  | { success: true; session: TerminalSession }
-  | { success: false; error: string; code: CreateSessionErrorCode };
-
 type DataCallback = (sessionId: string, data: string) => void;
 type ExitCallback = (sessionId: string, exitCode: number) => void;
 
@@ -398,7 +388,7 @@ export class TerminalService extends EventEmitter {
   /**
    * Create a new terminal session
    */
-  async createSession(options: TerminalOptions = {}): Promise<CreateSessionResult> {
+  async createSession(options: TerminalOptions = {}): Promise<TerminalSession | null> {
     // Auto-evict stale sessions when at 80% of limit
     if (this.sessions.size >= Math.floor(this.maxSessions * 0.8)) {
       this.evictStaleSessions();
@@ -407,11 +397,7 @@ export class TerminalService extends EventEmitter {
     // Check session limit
     if (this.sessions.size >= this.maxSessions) {
       console.error(`Max sessions (${this.maxSessions}) reached, refusing new session`);
-      return {
-        success: false,
-        code: "max_sessions",
-        error: "Maximum terminal sessions reached. Please close an existing terminal and try again.",
-      };
+      return null;
     }
 
     const id = `term-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
@@ -422,11 +408,7 @@ export class TerminalService extends EventEmitter {
     // Validate shell is allowed
     if (!this.isAllowedShell(shell)) {
       console.error(`Shell not allowed: ${shell}`);
-      return {
-        success: false,
-        code: "invalid_shell",
-        error: "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).",
-      };
+      return null;
     }
 
     // Validate and resolve working directory
@@ -457,12 +439,10 @@ export class TerminalService extends EventEmitter {
     try {
       pty = await loadPtyModule();
     } catch (loadErr) {
+      // Native module couldn't be loaded (common in Bun binaries without proper setup)
+      // Return null for graceful degradation - routes will return 503
       console.error(`[terminal] Failed to load PTY module: ${loadErr}`);
-      return {
-        success: false,
-        code: "pty_load_failed",
-        error: "Terminal service unavailable. The PTY module could not be loaded.",
-      };
+      return null;
     }
 
     // Build PTY spawn options
@@ -484,11 +464,7 @@ export class TerminalService extends EventEmitter {
       ptyProcess = pty.spawn(shell, shellArgs, ptyOptions);
     } catch (spawnError) {
       console.error(`[createSession] PTY spawn failed:`, spawnError);
-      return {
-        success: false,
-        code: "pty_spawn_failed",
-        error: "Failed to start terminal shell process.",
-      };
+      return null;
     }
 
     const session: TerminalSession = {
@@ -554,7 +530,7 @@ export class TerminalService extends EventEmitter {
     });
 
     console.info(`Session ${id} created successfully`);
-    return { success: true, session };
+    return session;
   }
 
   /**

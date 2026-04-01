@@ -1,9 +1,8 @@
-// @vitest-environment node
-
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import express from "express";
+import http from "node:http";
 import { createServer } from "./server.js";
 import type { TaskStore } from "@fusion/core";
-import { get as performGet, request as performRequest } from "./test-request.js";
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
@@ -24,43 +23,63 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
     updateIssueInfo: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
-    getMissionStore: vi.fn().mockReturnValue({
-      listMissions: vi.fn().mockReturnValue([]),
-      createMission: vi.fn(),
-      getMissionWithHierarchy: vi.fn(),
-      updateMission: vi.fn(),
-      getMission: vi.fn(),
-      deleteMission: vi.fn(),
-      listMilestonesByMission: vi.fn().mockReturnValue([]),
-      createMilestone: vi.fn(),
-      updateMilestone: vi.fn(),
-      getMilestone: vi.fn(),
-      deleteMilestone: vi.fn(),
-      listTasksByMilestone: vi.fn().mockReturnValue([]),
-      createMissionTask: vi.fn(),
-      updateMissionTask: vi.fn(),
-      getMissionTask: vi.fn(),
-      deleteMissionTask: vi.fn(),
-    }),
     on: vi.fn(),
     off: vi.fn(),
     ...overrides,
   } as unknown as TaskStore;
 }
 
-async function GET(app: ReturnType<typeof createServer>, path: string): Promise<{ status: number; body: unknown; headers: Record<string, unknown> }> {
-  const res = await performGet(app, path);
-  return res;
+/** Helper: send GET and return { status, body, headers } */
+async function GET(app: express.Express, path: string): Promise<{ status: number; body: unknown; headers: http.IncomingHttpHeaders }> {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(0, () => {
+      const addr = server.address() as { port: number };
+      http.get(`http://127.0.0.1:${addr.port}${path}`, (res) => {
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => {
+          server.close();
+          try {
+            resolve({ status: res.statusCode!, body: JSON.parse(data), headers: res.headers });
+          } catch {
+            resolve({ status: res.statusCode!, body: data, headers: res.headers });
+          }
+        });
+      }).on("error", (err) => { server.close(); reject(err); });
+    });
+  });
 }
 
 async function REQUEST(
-  app: ReturnType<typeof createServer>,
+  app: express.Express,
   method: string,
   path: string,
   body?: string,
   headers?: Record<string, string>,
-): Promise<{ status: number; body: unknown; headers: Record<string, unknown> }> {
-  return performRequest(app, method, path, body, headers);
+): Promise<{ status: number; body: unknown; headers: http.IncomingHttpHeaders }> {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(0, () => {
+      const addr = server.address() as { port: number };
+      const req = http.request(
+        { hostname: "127.0.0.1", port: addr.port, path, method, headers },
+        (res) => {
+          let data = "";
+          res.on("data", (chunk) => (data += chunk));
+          res.on("end", () => {
+            server.close();
+            try {
+              resolve({ status: res.statusCode!, body: JSON.parse(data), headers: res.headers });
+            } catch {
+              resolve({ status: res.statusCode!, body: data, headers: res.headers });
+            }
+          });
+        },
+      );
+      req.on("error", (err) => { server.close(); reject(err); });
+      if (body) req.write(body);
+      req.end();
+    });
+  });
 }
 
 describe("API Error Handling Middleware", () => {

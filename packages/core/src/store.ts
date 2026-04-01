@@ -133,7 +133,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       blockedBy: row.blockedBy || undefined,
       paused: row.paused ? true : undefined,
       baseBranch: row.baseBranch || undefined,
-      baseCommitSha: row.baseCommitSha || undefined,
       modelPresetId: row.modelPresetId || undefined,
       modelProvider: row.modelProvider || undefined,
       modelId: row.modelId || undefined,
@@ -150,6 +149,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       steps: fromJson<import("./types.js").TaskStep[]>(row.steps) || [],
       log: fromJson<import("./types.js").TaskLogEntry[]>(row.log) || [],
       attachments: (() => { const a = fromJson<TaskAttachment[]>(row.attachments); return a && a.length > 0 ? a : undefined; })(),
+      steeringComments: (() => { const s = fromJson<import("./types.js").SteeringComment[]>(row.steeringComments); return s && s.length > 0 ? s : undefined; })(),
       comments: (() => { const c = fromJson<import("./types.js").TaskComment[]>(row.comments); return c && c.length > 0 ? c : undefined; })(),
       workflowStepResults: (() => { const w = fromJson<import("./types.js").WorkflowStepResult[]>(row.workflowStepResults); return w && w.length > 0 ? w : undefined; })(),
       prInfo: fromJson<import("./types.js").PrInfo>(row.prInfo),
@@ -157,7 +157,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       mergeDetails: fromJson<import("./types.js").MergeDetails>(row.mergeDetails),
       breakIntoSubtasks: row.breakIntoSubtasks ? true : undefined,
       enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return e && e.length > 0 ? e : undefined; })(),
-      modifiedFiles: (() => { const m = fromJson<string[]>(row.modifiedFiles); return m && m.length > 0 ? m : undefined; })(),
     };
   }
 
@@ -168,15 +167,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.db.prepare(`
       INSERT OR REPLACE INTO tasks (
         id, title, description, "column", status, size, reviewLevel, currentStep,
-        worktree, blockedBy, paused, baseBranch, baseCommitSha, modelPresetId, modelProvider,
+        worktree, blockedBy, paused, baseBranch, modelPresetId, modelProvider,
         modelId, validatorModelProvider, validatorModelId, mergeRetries, error,
         summary, thinkingLevel, createdAt, updatedAt, columnMovedAt,
-        dependencies, steps, log, attachments,
+        dependencies, steps, log, attachments, steeringComments,
         comments, workflowStepResults, prInfo, issueInfo, mergeDetails,
-        breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles
+        breakIntoSubtasks, enabledWorkflowSteps
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `).run(
       task.id,
@@ -191,7 +190,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.blockedBy ?? null,
       task.paused ? 1 : 0,
       task.baseBranch ?? null,
-      task.baseCommitSha ?? null,
       task.modelPresetId ?? null,
       task.modelProvider ?? null,
       task.modelId ?? null,
@@ -208,6 +206,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       toJson(task.steps || []),
       toJson(task.log || []),
       toJson(task.attachments || []),
+      toJson(task.steeringComments || []),
       toJson(task.comments || []),
       toJson(task.workflowStepResults || []),
       toJsonNullable(task.prInfo),
@@ -215,7 +214,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       toJsonNullable(task.mergeDetails),
       task.breakIntoSubtasks ? 1 : 0,
       toJson(task.enabledWorkflowSteps || []),
-      toJson(task.modifiedFiles || []),
     );
     this.db.bumpLastModified();
   }
@@ -689,7 +687,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       createdAt: now,
       updatedAt: now,
       // Explicitly NOT copied: worktree, status, blockedBy, paused, baseBranch,
-      // attachments, comments, prInfo, agent logs, size, reviewLevel
+      // attachments, steeringComments, prInfo, agent logs, size, reviewLevel
     };
 
     const newDir = this.taskDir(newId);
@@ -877,7 +875,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; baseCommitSha?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Validate that task doesn't depend on itself
@@ -927,7 +925,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
       if (updates.paused !== undefined) task.paused = updates.paused || undefined;
       if (updates.baseBranch !== undefined) task.baseBranch = updates.baseBranch;
-      if (updates.baseCommitSha !== undefined) task.baseCommitSha = updates.baseCommitSha;
       if (updates.size !== undefined) task.size = updates.size;
       if (updates.reviewLevel !== undefined) task.reviewLevel = updates.reviewLevel;
       if (updates.mergeRetries !== undefined) task.mergeRetries = updates.mergeRetries;
@@ -965,11 +962,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.workflowStepResults = undefined;
       } else if (updates.workflowStepResults !== undefined) {
         task.workflowStepResults = updates.workflowStepResults;
-      }
-      if (updates.modifiedFiles === null) {
-        task.modifiedFiles = undefined;
-      } else if (updates.modifiedFiles !== undefined) {
-        task.modifiedFiles = updates.modifiedFiles;
       }
       task.updatedAt = new Date().toISOString();
 
@@ -1473,10 +1465,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           breakIntoSubtasks: task.breakIntoSubtasks,
           paused: task.paused,
           baseBranch: task.baseBranch,
-          baseCommitSha: task.baseCommitSha,
           mergeRetries: task.mergeRetries,
           error: task.error,
-          modifiedFiles: task.modifiedFiles,
         };
 
         // Write to archivedTasks table in SQLite
@@ -2023,17 +2013,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
-   * Add a comment to a task.
-   * Comments are injected into the AI execution context.
-   * When a comment is added to a task in the "done" column by a user,
+   * Add a steering comment to a task.
+   * Steering comments are user-provided feedback injected into the AI execution context.
+   * When a steering comment is added to a task in the "done" column by a user,
    * automatically creates a refinement task with the comment text as feedback.
    */
-  async addComment(
+  async addSteeringComment(
     id: string,
     text: string,
     author: "user" | "agent" = "user",
   ): Promise<Task> {
-    // Phase 1: Add comment under lock
+    // Phase 1: Add steering comment under lock
     const task = await this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
@@ -2046,22 +2036,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // Generate unique ID: timestamp + random suffix for collision resistance
       const commentId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      const comment: import("./types.js").TaskComment = {
+      const comment: import("./types.js").SteeringComment = {
         id: commentId,
         text,
-        author,
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        author,
       };
 
-      if (!task.comments) {
-        task.comments = [];
+      if (!task.steeringComments) {
+        task.steeringComments = [];
       }
-      task.comments.push(comment);
+      task.steeringComments.push(comment);
       task.updatedAt = new Date().toISOString();
       task.log.push({
         timestamp: task.updatedAt,
-        action: "Comment added",
+        action: "Steering comment added",
         outcome: `by ${author}`,
       });
 
@@ -2079,7 +2068,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         await this.refineTask(id, text);
       } catch {
         // Silently ignore - refinement is best-effort and shouldn't fail
-        // the comment addition. refineTask already validates
+        // the steering comment addition. refineTask already validates
         // feedback text, so empty/whitespace comments won't create refinements.
       }
     }
@@ -2306,10 +2295,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         breakIntoSubtasks: task.breakIntoSubtasks,
         paused: task.paused,
         baseBranch: task.baseBranch,
-        baseCommitSha: task.baseCommitSha,
         mergeRetries: task.mergeRetries,
         error: task.error,
-        modifiedFiles: task.modifiedFiles,
       };
 
       // Write to archivedTasks table
@@ -2372,8 +2359,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       validatorModelProvider: entry.validatorModelProvider,
       validatorModelId: entry.validatorModelId,
       breakIntoSubtasks: entry.breakIntoSubtasks,
-      modifiedFiles: entry.modifiedFiles,
-      // Intentionally NOT restoring: worktree, status, blockedBy, paused, baseBranch, baseCommitSha, error, comments
+      // Intentionally NOT restoring: worktree, status, blockedBy, paused, baseBranch, error, steeringComments
     };
 
     // Write task.json
@@ -2713,98 +2699,5 @@ ${notificationsSection}`;
       this.missionStore = new MissionStore(this.kbDir, this.db);
     }
     return this.missionStore;
-  }
-
-  // ── Backward Compatibility (Multi-Project Support) ────────────────────────
-
-  /**
-   * Get or create a TaskStore for a project, supporting backward-compatible
-   * single-project mode and multi-project resolution.
-   *
-   * Resolution logic:
-   * - If `projectId` provided: look up in central registry, create store for that path
-   * - If no `projectId` and single project registered: use that project
-   * - If no `projectId` and multiple projects: throw requiring explicit selection
-   * - If no central DB available: fall back to legacy behavior (current directory)
-   *
-   * @param projectId — Optional project ID to resolve
-   * @param centralCore — Optional CentralCore instance (creates new if not provided)
-   * @returns TaskStore initialized for the resolved project
-   * @throws Error if project resolution fails or multiple projects require explicit selection
-   */
-  static async getOrCreateForProject(
-    projectId?: string,
-    centralCore?: import("./central-core.js").CentralCore
-  ): Promise<TaskStore> {
-    // If no centralCore provided, try to create one
-    let core = centralCore;
-    let shouldCleanupCore = false;
-    
-    if (!core) {
-      try {
-        const { CentralCore } = await import("./central-core.js");
-        core = new CentralCore();
-        await core.init();
-        shouldCleanupCore = true;
-      } catch {
-        // Central core not available - fall back to legacy mode
-      }
-    }
-
-    // Legacy mode: no central core available
-    if (!core) {
-      const store = new TaskStore(process.cwd());
-      await store.init();
-      return store;
-    }
-
-    try {
-      // If projectId provided, look it up directly
-      if (projectId) {
-        const project = await core.getProject(projectId);
-        if (!project) {
-          // Try to find by name
-          const allProjects = await core.listProjects();
-          const byName = allProjects.find(p => p.name === projectId);
-          if (!byName) {
-            throw new Error(`Project "${projectId}" not found`);
-          }
-          const store = new TaskStore(byName.path);
-          await store.init();
-          return store;
-        }
-        const store = new TaskStore(project.path);
-        await store.init();
-        return store;
-      }
-
-      // No projectId provided - check registered projects
-      const projects = await core.listProjects();
-
-      if (projects.length === 0) {
-        // No projects registered - fall back to legacy mode (current directory)
-        const store = new TaskStore(process.cwd());
-        await store.init();
-        return store;
-      }
-
-      if (projects.length === 1) {
-        // Exactly one project - use it
-        const store = new TaskStore(projects[0].path);
-        await store.init();
-        return store;
-      }
-
-      // Multiple projects - require explicit selection
-      const projectList = projects.map(p => `  - ${p.name}: ${p.path}`).join("\n");
-      throw new Error(
-        `Multiple projects registered. Use --project <name> to specify one.\n\nAvailable projects:\n${projectList}`
-      );
-    } finally {
-      // Clean up the central core if we created it
-      if (shouldCleanupCore && core) {
-        await core.close();
-      }
-    }
   }
 }

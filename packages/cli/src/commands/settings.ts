@@ -1,5 +1,4 @@
 import { TaskStore, type Settings, DEFAULT_SETTINGS } from "@fusion/core";
-import { getStore } from "../project-resolver.js";
 
 // Settings that can be updated via CLI
 export const VALID_SETTINGS = [
@@ -38,6 +37,12 @@ const NUMBER_RANGES: Record<string, { min: number; max: number }> = {
   maxConcurrent: { min: 1, max: 10 },
   maxWorktrees: { min: 1, max: 20 },
 };
+
+async function getStore(): Promise<TaskStore> {
+  const store = new TaskStore(process.cwd());
+  await store.init();
+  return store;
+}
 
 /**
  * Parse and validate a setting value based on its key's expected type
@@ -154,8 +159,8 @@ function getSettingLabel(key: string): string {
 /**
  * Run settings show command - displays all settings
  */
-export async function runSettingsShow(projectName?: string): Promise<void> {
-  const store = await getStore(projectName);
+export async function runSettingsShow(): Promise<void> {
+  const store = await getStore();
   const settings = await store.getSettings();
 
   console.log();
@@ -212,7 +217,7 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
 /**
  * Run settings set command - updates a single setting
  */
-export async function runSettingsSet(key: string, value: string, projectName?: string): Promise<void> {
+export async function runSettingsSet(key: string, value: string): Promise<void> {
   // Validate the setting key is allowed
   if (!VALID_SETTINGS.includes(key as ValidSettingKey)) {
     console.error(`Error: Unknown setting "${key}"`);
@@ -221,7 +226,7 @@ export async function runSettingsSet(key: string, value: string, projectName?: s
     return; // Required for tests where process.exit is mocked
   }
 
-  const store = await getStore(projectName);
+  const store = await getStore();
 
   try {
     const parsedValue = parseValue(key as ValidSettingKey, value);

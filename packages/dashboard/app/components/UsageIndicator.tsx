@@ -241,21 +241,6 @@ export function UsageIndicator({ isOpen, onClose }: UsageIndicatorProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState<'used' | 'remaining'>('used');
   const contentRef = useRef<HTMLDivElement>(null);
-  const wasOpenRef = useRef(isOpen);
-
-  // Trigger refresh when modal opens (isOpen transitions from false to true)
-  useEffect(() => {
-    // Only refresh when transitioning from closed to open
-    if (!wasOpenRef.current && isOpen) {
-      // Skip if data is fresh (within 5 seconds) to avoid duplicate requests
-      if (!lastUpdated || Date.now() - lastUpdated.getTime() > 5000) {
-        refresh();
-      }
-    }
-    
-    // Update ref for next render
-    wasOpenRef.current = isOpen;
-  }, [isOpen, lastUpdated, refresh]);
 
   // Load view mode preference from localStorage on mount
   useEffect(() => {

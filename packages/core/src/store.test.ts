@@ -856,18 +856,18 @@ describe("TaskStore", () => {
       expect(fetched.steps[0].status).toBe("in-progress");
     });
 
-    it("addComment recreates missing task directory before persisting metadata", async () => {
+    it("addSteeringComment recreates missing task directory before persisting metadata", async () => {
       const task = await createTestTask();
       const dir = await deleteTaskDir(task.id);
 
-      const updated = await store.addComment(task.id, "Please recover from missing directory");
+      const updated = await store.addSteeringComment(task.id, "Please recover from missing directory");
 
-      expect(updated.comments).toHaveLength(1);
+      expect(updated.steeringComments).toHaveLength(1);
       expect(existsSync(dir)).toBe(true);
       expect(existsSync(join(dir, "task.json"))).toBe(true);
 
       const fetched = await store.getTask(task.id);
-      expect(fetched.comments).toHaveLength(1);
+      expect(fetched.steeringComments).toHaveLength(1);
     });
 
     it("appendAgentLog recreates missing task directory before writing agent.log", async () => {
@@ -1276,68 +1276,68 @@ describe("TaskStore", () => {
       );
     });
 
-    it("unifies task comments and steering comments into single comments field", async () => {
+    it("persists task comments independently from steering comments", async () => {
       const task = await createTestTask();
       await store.addTaskComment(task.id, "General note", "alice");
-      await store.addComment(task.id, "Execution note");
+      await store.addSteeringComment(task.id, "Execution note");
 
       const reopened = await store.getTask(task.id);
-      // Both comments should now be in the unified comments field
-      expect(reopened.comments).toHaveLength(2);
+      expect(reopened.comments).toHaveLength(1);
       expect(reopened.comments![0].text).toBe("General note");
-      expect(reopened.comments![1].text).toBe("Execution note");
+      expect(reopened.steeringComments).toHaveLength(1);
+      expect(reopened.steeringComments![0].text).toBe("Execution note");
     });
   });
 
-  describe("addComment", () => {
+  describe("addSteeringComment", () => {
     it("adds a steering comment to a task", async () => {
       const task = await createTestTask();
-      const updated = await store.addComment(task.id, "Please handle the edge case");
+      const updated = await store.addSteeringComment(task.id, "Please handle the edge case");
 
-      expect(updated.comments).toHaveLength(1);
-      expect(updated.comments![0].text).toBe("Please handle the edge case");
-      expect(updated.comments![0].author).toBe("user");
-      expect(updated.comments![0].id).toBeDefined();
-      expect(updated.comments![0].createdAt).toBeDefined();
+      expect(updated.steeringComments).toHaveLength(1);
+      expect(updated.steeringComments![0].text).toBe("Please handle the edge case");
+      expect(updated.steeringComments![0].author).toBe("user");
+      expect(updated.steeringComments![0].id).toBeDefined();
+      expect(updated.steeringComments![0].createdAt).toBeDefined();
     });
 
     it("accepts agent as author", async () => {
       const task = await createTestTask();
-      const updated = await store.addComment(task.id, "Note from agent", "agent");
+      const updated = await store.addSteeringComment(task.id, "Note from agent", "agent");
 
-      expect(updated.comments).toHaveLength(1);
-      expect(updated.comments![0].author).toBe("agent");
+      expect(updated.steeringComments).toHaveLength(1);
+      expect(updated.steeringComments![0].author).toBe("agent");
     });
 
-    it("initializes comments array if undefined", async () => {
+    it("initializes steeringComments array if undefined", async () => {
       const task = await createTestTask();
-      expect(task.comments).toBeUndefined();
+      expect(task.steeringComments).toBeUndefined();
 
-      const updated = await store.addComment(task.id, "First comment");
-      expect(updated.comments).toBeDefined();
-      expect(updated.comments).toHaveLength(1);
+      const updated = await store.addSteeringComment(task.id, "First comment");
+      expect(updated.steeringComments).toBeDefined();
+      expect(updated.steeringComments).toHaveLength(1);
     });
 
     it("appends multiple comments in order", async () => {
       const task = await createTestTask();
-      await store.addComment(task.id, "First comment");
-      await store.addComment(task.id, "Second comment");
-      await store.addComment(task.id, "Third comment");
+      await store.addSteeringComment(task.id, "First comment");
+      await store.addSteeringComment(task.id, "Second comment");
+      await store.addSteeringComment(task.id, "Third comment");
 
       const fetched = await store.getTask(task.id);
-      expect(fetched.comments).toHaveLength(3);
-      expect(fetched.comments![0].text).toBe("First comment");
-      expect(fetched.comments![1].text).toBe("Second comment");
-      expect(fetched.comments![2].text).toBe("Third comment");
+      expect(fetched.steeringComments).toHaveLength(3);
+      expect(fetched.steeringComments![0].text).toBe("First comment");
+      expect(fetched.steeringComments![1].text).toBe("Second comment");
+      expect(fetched.steeringComments![2].text).toBe("Third comment");
     });
 
     it("generates unique IDs for each comment", async () => {
       const task = await createTestTask();
-      const updated1 = await store.addComment(task.id, "Comment 1");
-      const updated2 = await store.addComment(task.id, "Comment 2");
+      const updated1 = await store.addSteeringComment(task.id, "Comment 1");
+      const updated2 = await store.addSteeringComment(task.id, "Comment 2");
 
-      const id1 = updated1.comments![0].id;
-      const id2 = updated2.comments![1].id;
+      const id1 = updated1.steeringComments![0].id;
+      const id2 = updated2.steeringComments![1].id;
       expect(id1).not.toBe(id2);
     });
 
@@ -1346,28 +1346,28 @@ describe("TaskStore", () => {
       const events: any[] = [];
       store.on("task:updated", (t) => events.push(t));
 
-      await store.addComment(task.id, "Test comment");
+      await store.addSteeringComment(task.id, "Test comment");
 
       expect(events).toHaveLength(1);
-      expect(events[0].comments).toHaveLength(1);
-      expect(events[0].comments![0].text).toBe("Test comment");
+      expect(events[0].steeringComments).toHaveLength(1);
+      expect(events[0].steeringComments![0].text).toBe("Test comment");
     });
 
     it("persists to disk and round-trips correctly", async () => {
       const task = await createTestTask();
-      await store.addComment(task.id, "Persisted comment");
+      await store.addSteeringComment(task.id, "Persisted comment");
 
       const fetched = await store.getTask(task.id);
-      expect(fetched.comments).toHaveLength(1);
-      expect(fetched.comments![0].text).toBe("Persisted comment");
-      expect(fetched.comments![0].author).toBe("user");
+      expect(fetched.steeringComments).toHaveLength(1);
+      expect(fetched.steeringComments![0].text).toBe("Persisted comment");
+      expect(fetched.steeringComments![0].author).toBe("user");
     });
 
     it("adds log entry for the action", async () => {
       const task = await createTestTask();
-      const updated = await store.addComment(task.id, "Comment with log");
+      const updated = await store.addSteeringComment(task.id, "Comment with log");
 
-      expect(updated.log.some((l) => l.action === "Comment added")).toBe(true);
+      expect(updated.log.some((l) => l.action === "Steering comment added")).toBe(true);
       expect(updated.log.some((l) => l.outcome === "by user")).toBe(true);
     });
 
@@ -1376,7 +1376,7 @@ describe("TaskStore", () => {
       const before = task.updatedAt;
       await new Promise((r) => setTimeout(r, 10)); // Ensure time passes
 
-      const updated = await store.addComment(task.id, "Timestamp test");
+      const updated = await store.addSteeringComment(task.id, "Timestamp test");
       expect(updated.updatedAt).not.toBe(before);
     });
 
@@ -1389,7 +1389,7 @@ describe("TaskStore", () => {
 
       const allTasksBefore = await store.listTasks();
 
-      await store.addComment(task.id, "Need to fix edge case");
+      await store.addSteeringComment(task.id, "Need to fix edge case");
 
       const allTasksAfter = await store.listTasks();
       expect(allTasksAfter).toHaveLength(allTasksBefore.length + 1);
@@ -1406,7 +1406,7 @@ describe("TaskStore", () => {
 
       const allTasksBefore = await store.listTasks();
 
-      await store.addComment(task.id, "Some feedback");
+      await store.addSteeringComment(task.id, "Some feedback");
 
       const allTasksAfter = await store.listTasks();
       expect(allTasksAfter).toHaveLength(allTasksBefore.length);
@@ -1419,7 +1419,7 @@ describe("TaskStore", () => {
 
       const allTasksBefore = await store.listTasks();
 
-      await store.addComment(task.id, "Some feedback");
+      await store.addSteeringComment(task.id, "Some feedback");
 
       const allTasksAfter = await store.listTasks();
       expect(allTasksAfter).toHaveLength(allTasksBefore.length);
@@ -1433,7 +1433,7 @@ describe("TaskStore", () => {
 
       const allTasksBefore = await store.listTasks();
 
-      await store.addComment(task.id, "Some feedback");
+      await store.addSteeringComment(task.id, "Some feedback");
 
       const allTasksAfter = await store.listTasks();
       expect(allTasksAfter).toHaveLength(allTasksBefore.length);
@@ -1446,10 +1446,10 @@ describe("TaskStore", () => {
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
 
-      const updated = await store.addComment(task.id, "Need to fix edge case");
+      const updated = await store.addSteeringComment(task.id, "Need to fix edge case");
 
-      expect(updated.comments).toHaveLength(1);
-      expect(updated.comments![0].text).toBe("Need to fix edge case");
+      expect(updated.steeringComments).toHaveLength(1);
+      expect(updated.steeringComments![0].text).toBe("Need to fix edge case");
     });
 
     it("refinement task has correct dependency on original done task", async () => {
@@ -1459,7 +1459,7 @@ describe("TaskStore", () => {
       await store.moveTask(task.id, "in-review");
       await store.moveTask(task.id, "done");
 
-      await store.addComment(task.id, "Need to fix edge case");
+      await store.addSteeringComment(task.id, "Need to fix edge case");
 
       const allTasks = await store.listTasks();
       const refinement = allTasks.find((t) => t.id !== task.id && t.dependencies?.includes(task.id));
@@ -1477,7 +1477,7 @@ describe("TaskStore", () => {
 
       const allTasksBefore = await store.listTasks();
 
-      await store.addComment(task.id, "Agent feedback", "agent");
+      await store.addSteeringComment(task.id, "Agent feedback", "agent");
 
       const allTasksAfter = await store.listTasks();
       expect(allTasksAfter).toHaveLength(allTasksBefore.length);
@@ -1491,10 +1491,10 @@ describe("TaskStore", () => {
       await store.moveTask(task.id, "done");
 
       // Should not throw - refineTask will reject empty feedback but we catch it
-      const updated = await store.addComment(task.id, "   ");
+      const updated = await store.addSteeringComment(task.id, "   ");
 
-      expect(updated.comments).toHaveLength(1);
-      expect(updated.comments![0].text).toBe("   ");
+      expect(updated.steeringComments).toHaveLength(1);
+      expect(updated.steeringComments![0].text).toBe("   ");
     });
   });
 
@@ -1504,7 +1504,7 @@ describe("TaskStore", () => {
       const reopened = await store.getTask(task.id);
 
       expect(reopened.comments).toBeUndefined();
-      expect(reopened.comments).toBeUndefined();
+      expect(reopened.steeringComments).toBeUndefined();
     });
 
     it("supports the task comment and merge details shapes", async () => {
@@ -2240,11 +2240,11 @@ describe("TaskStore", () => {
 
     it("does NOT copy steering comments", async () => {
       const task = await store.createTask({ description: "Test task" });
-      await store.addComment(task.id, "Test comment");
+      await store.addSteeringComment(task.id, "Test comment");
 
       const duplicated = await store.duplicateTask(task.id);
 
-      expect(duplicated.comments).toBeUndefined();
+      expect(duplicated.steeringComments).toBeUndefined();
     });
 
     it("emits task:created event", async () => {

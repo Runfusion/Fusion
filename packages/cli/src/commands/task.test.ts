@@ -29,16 +29,6 @@ vi.mock("@fusion/core", () => {
     TaskStore: vi.fn(),
     COLUMNS,
     COLUMN_LABELS,
-    CentralCore: vi.fn().mockImplementation(function() {
-      return {
-        init: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn().mockResolvedValue(undefined),
-        listProjects: vi.fn().mockResolvedValue([]),
-        getProject: vi.fn().mockResolvedValue(undefined),
-        getProjectByPath: vi.fn().mockResolvedValue(undefined),
-        registerProject: vi.fn().mockResolvedValue({ id: "proj_test", name: "test", path: "/test" }),
-      };
-    }),
   };
 });
 
@@ -57,19 +47,6 @@ vi.mock("@fusion/core/gh-cli", () => ({
   isGhAvailable: vi.fn(),
   isGhAuthenticated: vi.fn(),
   getCurrentRepo: vi.fn(),
-}));
-
-// Mock project-context
-vi.mock("../project-context.js", () => ({
-  resolveProject: vi.fn().mockResolvedValue({
-    projectId: "proj_test",
-    projectPath: "/test",
-    projectName: "test",
-    store: {},
-  }),
-  getStore: vi.fn().mockResolvedValue({}),
-  getDefaultProject: vi.fn().mockResolvedValue(undefined),
-  setDefaultProject: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { createInterface } from "node:readline/promises";

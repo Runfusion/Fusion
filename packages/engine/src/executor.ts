@@ -221,12 +221,12 @@ export class TaskExecutor {
       // Handle steering comments - inject new ones into the running session
       // Only process if session is active (activeSessions check is sufficient
       // since entries are only added when a task is in-progress)
-      if (this.activeSessions.has(task.id) && task.comments) {
+      if (this.activeSessions.has(task.id) && task.steeringComments) {
         const activeSession = this.activeSessions.get(task.id)!;
         const { session, seenSteeringIds } = activeSession;
 
         // Find new steering comments that haven't been seen yet
-        const newComments = task.comments.filter(c => !seenSteeringIds.has(c.id));
+        const newComments = task.steeringComments.filter(c => !seenSteeringIds.has(c.id));
 
         if (newComments.length > 0) {
           for (const comment of newComments) {
@@ -237,21 +237,21 @@ export class TaskExecutor {
             // Mark as seen BEFORE attempting injection to prevent retry loops on failure
             seenSteeringIds.add(comment.id);
 
-            // Format and inject the comment
-            const commentMessage = formatCommentForInjection(comment);
+            // Format and inject the steering comment
+            const steeringMessage = formatSteeringCommentForInjection(comment);
             try {
-              executorLog.log(`Injecting comment into ${task.id}: ${summary}`);
-              await session.steer(commentMessage);
-              executorLog.log(`Successfully injected comment into ${task.id}`);
+              executorLog.log(`Injecting steering comment into ${task.id}: ${summary}`);
+              await session.steer(steeringMessage);
+              executorLog.log(`Successfully injected steering comment into ${task.id}`);
 
-              // Log to the task that comment was received
+              // Log to the task that steering was received
               await this.store.logEntry(
                 task.id,
-                `Comment received mid-execution: ${summary}`,
+                `Steering comment received mid-execution: ${summary}`,
                 `by ${comment.author}`
               );
             } catch (err) {
-              executorLog.error(`Failed to inject comment for ${task.id}:`, err);
+              executorLog.error(`Failed to inject steering comment for ${task.id}:`, err);
               // Comment is already marked as seen - we won't retry to avoid spamming
               // the agent with failed injections. The error is logged for debugging.
             }
@@ -449,29 +449,10 @@ export class TaskExecutor {
             }
           }
         }
-      } else if (task.worktree) {
-        // Task already had a worktree assigned and it exists on disk — reuse it
-        executorLog.log(`Reusing existing worktree: ${worktreePath}`);
       } else {
-        // Directory exists at generated path but task has no worktree — create via normal flow
+        worktreePath = task.worktree || join(this.rootDir, ".worktrees", generateWorktreeName(this.rootDir));
+        isResume = existsSync(worktreePath);
         worktreePath = await this.createWorktree(branchName, worktreePath, task.id);
-      }
-
-      // Capture the base commit SHA for diff computation
-      // This is done after worktree creation when we're on the new branch
-      if (!task.baseCommitSha) {
-        try {
-          const baseCommitSha = execSync("git rev-parse HEAD", {
-            cwd: worktreePath,
-            stdio: "pipe",
-            encoding: "utf-8",
-          }).trim();
-          await this.store.updateTask(task.id, { baseCommitSha });
-          executorLog.log(`${task.id}: captured baseCommitSha ${baseCommitSha.slice(0, 7)}`);
-        } catch (err: any) {
-          executorLog.log(`Failed to capture baseCommitSha for ${task.id}: ${err.message}`);
-          // Non-fatal: task can continue without baseCommitSha
-        }
       }
 
       this.activeWorktrees.set(task.id, worktreePath);
@@ -551,10 +532,10 @@ export class TaskExecutor {
         sessionRef.current = session;
 
         // Register session so the pause listener can terminate it
-        // Initialize with empty set of seen comments
+        // Initialize with empty set of seen steering comments
         const seenSteeringIds = new Set<string>();
-        if (detail.comments) {
-          for (const comment of detail.comments) {
+        if (detail.steeringComments) {
+          for (const comment of detail.steeringComments) {
             seenSteeringIds.add(comment.id);
           }
         }
@@ -588,14 +569,6 @@ export class TaskExecutor {
           }
 
           if (taskDone) {
-            // Capture modified files before running workflow steps
-            const updatedTask = await this.store.getTask(task.id);
-            const modifiedFiles = this.captureModifiedFiles(worktreePath, updatedTask.baseCommitSha);
-            if (modifiedFiles.length > 0) {
-              await this.store.updateTask(task.id, { modifiedFiles });
-              executorLog.log(`${task.id}: captured ${modifiedFiles.length} modified files`);
-            }
-
             // Run workflow steps before moving to in-review
             const workflowSuccess = await this.runWorkflowSteps(task, worktreePath, settings);
             if (!workflowSuccess) {
@@ -1090,61 +1063,6 @@ export class TaskExecutor {
     await this.store.updateTask(taskId, { worktree: undefined, status: undefined });
     await this.store.moveTask(taskId, "triage");
     await this.store.logEntry(taskId, "Execution stopped — work discarded, moved to triage for re-specification");
-  }
-
-  /**
-   * Capture the list of files modified during agent execution.
-   * Uses git diff against the stored baseCommitSha to determine what changed.
-   * Returns an empty array if no changes or if git commands fail.
-   */
-  private captureModifiedFiles(worktreePath: string, baseCommitSha?: string): string[] {
-    try {
-      // Determine the base reference for diff
-      // If baseCommitSha is stored, use it; otherwise fall back to merge-base with HEAD
-      let baseRef = baseCommitSha;
-      if (!baseRef) {
-        // Try to find merge-base with main/master as fallback
-        try {
-          baseRef = execSync("git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main", {
-            cwd: worktreePath,
-            stdio: "pipe",
-            encoding: "utf-8",
-          }).trim();
-        } catch {
-          // If merge-base fails, use HEAD~1 as last resort
-          try {
-            baseRef = execSync("git rev-parse HEAD~1", {
-              cwd: worktreePath,
-              stdio: "pipe",
-              encoding: "utf-8",
-            }).trim();
-          } catch {
-            executorLog.log(`Could not determine base commit for diff in ${worktreePath}`);
-            return [];
-          }
-        }
-      }
-
-      if (!baseRef) {
-        return [];
-      }
-
-      // Get list of modified files using git diff --name-only
-      const output = execSync(`git diff --name-only ${baseRef}..HEAD`, {
-        cwd: worktreePath,
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim();
-
-      if (!output) {
-        return [];
-      }
-
-      return output.split("\n").filter(Boolean);
-    } catch (err: any) {
-      executorLog.log(`Failed to capture modified files: ${err.message}`);
-      return [];
-    }
   }
 
   // ── Worktree management ────────────────────────────────────────────
@@ -1822,15 +1740,15 @@ git log --oneline
     commandsSection = "\n" + lines.join("\n") + "\n";
   }
 
-  // Build comments section (last 10 comments only to avoid context bloat)
-  let commentsSection = "";
-  if (task.comments && task.comments.length > 0) {
-    const recentComments = [...task.comments].slice(-10);
+  // Build steering comments section (last 10 comments only to avoid context bloat)
+  let steeringSection = "";
+  if (task.steeringComments && task.steeringComments.length > 0) {
+    const recentComments = [...task.steeringComments].slice(-10);
     const lines = [
       "",
-      "## Comments",
+      "## Steering Comments",
       "",
-      "The following comments were added during execution. Consider adjusting your approach or replanning remaining steps based on this feedback.",
+      "The following steering comments were added by the user during execution. Consider adjusting your approach or replanning remaining steps based on this feedback.",
       "",
     ];
     for (const comment of recentComments) {
@@ -1839,7 +1757,7 @@ git log --oneline
       lines.push(`> ${comment.text}`);
       lines.push("");
     }
-    commentsSection = lines.join("\n");
+    steeringSection = lines.join("\n");
   }
 
   return `Execute this task.
@@ -1851,7 +1769,7 @@ ${task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}`
 ## PROMPT.md
 
 ${task.prompt}
-${attachmentsSection}${commandsSection}${progressSection}${commentsSection}
+${attachmentsSection}${commandsSection}${progressSection}${steeringSection}
 ## Review level: ${reviewLevel}
 
 ${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}
@@ -1874,10 +1792,10 @@ When all steps are complete: call \`task_done()\``;
 }
 
 /**
- * Format a comment for injection into a running agent session.
+ * Format a steering comment for injection into a running agent session.
  * Used for real-time steering during task execution.
  */
-function formatCommentForInjection(comment: import("@fusion/core").TaskComment): string {
+function formatSteeringCommentForInjection(comment: import("@fusion/core").SteeringComment): string {
   const timestamp = formatTimestamp(comment.createdAt);
-  return `📣 **New feedback** — ${timestamp} (${comment.author}):\n\n${comment.text}\n\nPlease adjust your approach based on this feedback.`;
+  return `📣 **New steering feedback** — ${timestamp} (${comment.author}):\n\n${comment.text}\n\nPlease adjust your approach based on this feedback.`;
 }

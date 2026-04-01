@@ -45,9 +45,6 @@ const { runSettingsExport } = await import("./commands/settings-export.js");
 const { runSettingsImport } = await import("./commands/settings-import.js");
 const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
 const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
-const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice } = await import("./commands/mission.js");
-const { runProjectList, runProjectAdd, runProjectRemove, runProjectInfo } = await import("./commands/project.js");
-const { getResolvedProject } = await import("./project-resolver.js");
 
 const HELP = `
 fn — AI-orchestrated task board
@@ -82,10 +79,10 @@ Usage:
   fn task pr-create <id> [--title <title>] [--base <branch>] [--body <body>]
                          Create a GitHub PR for an in-review task
   fn task import <owner/repo> [opts]  Import GitHub issues as tasks
-  fn project list [--json]   List all registered projects
-  fn project add [dir] [--name <name>] [--isolation <mode>]  Register a project
-  fn project remove <name> [--force]  Unregister a project
-  fn project info [name]     Show project details
+  fn settings                          Show current Fusion configuration
+  fn settings set <key> <value>        Update a configuration setting
+  fn settings export [opts]              Export settings to a JSON file
+  fn settings import <file> [opts]       Import settings from a JSON file
 
   fn git status              Show current branch, commit, dirty state, ahead/behind
   fn git push                Push current branch
@@ -95,16 +92,8 @@ Usage:
   fn backup --list           List all database backups
   fn backup --restore <file> Restore database from a backup file
   fn backup --cleanup        Remove old backups exceeding retention limit
-  fn mission create [title] [description]  Create a new mission
-  fn mission list                       List all missions
-  fn mission show <id>                  Show mission with hierarchy
-  fn mission delete <id> [--force]      Delete mission
-  fn mission activate-slice <slice-id>  Activate a pending slice
-  fn mission delete <id> [--force]      Delete a mission
-  fn mission activate-slice <slice-id>  Activate a pending slice
 
 Options:
-  --project <name>           Target a specific project (for task/settings commands)
   --port, -p <port>          Dashboard port (default: 4040)
   --interactive              Interactive mode (port selection for dashboard, issue selection for import)
   --paused                   Start with engine paused (automation disabled)
@@ -126,73 +115,14 @@ Requires configured API keys — run "pi" first to set up authentication.
 `.trim();
 
 async function main() {
-  let args = process.argv.slice(2);
+  const args = process.argv.slice(2);
 
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     console.log(HELP);
     process.exit(0);
   }
 
-  // Extract --project flag before command routing
-  let projectName: string | undefined;
-  const projectFlagIdx = args.indexOf("--project");
-  const projectFlagShortIdx = args.indexOf("-P");
-  const projectIdx = projectFlagIdx !== -1 ? projectFlagIdx : projectFlagShortIdx;
-  if (projectIdx !== -1 && projectIdx + 1 < args.length) {
-    projectName = args[projectIdx + 1];
-    // Remove --project and its value from args
-    args.splice(projectIdx, 2);
-  }
-  // Store for subcommands to access via resolveProject
-  if (projectName) {
-    process.env.FN_PROJECT = projectName;
-  }
-
-  // Extract command early (needed for migration check)
   const command = args[0];
-
-  // ── First-Run Auto-Migration ─────────────────────────────────────────────
-  // Check if this is a fresh installation or if projects need to be migrated
-  // Skip migration check for 'project' commands to avoid circular issues
-  if (command !== "project" && !process.env.KB_SKIP_MIGRATION) {
-    try {
-      const { createMigrationOrchestrator, createFirstRunExperience, CentralCore } = await import("@fusion/core");
-      
-      const centralCore = new CentralCore();
-      await centralCore.init();
-
-      const migration = createMigrationOrchestrator(centralCore);
-
-      if (await migration.needsMigration()) {
-        const firstRun = createFirstRunExperience(centralCore);
-        const state = await firstRun.getSetupState();
-
-        if (state.isFirstRun && state.hasDetectedProjects) {
-          console.log("[kb] First run detected. Auto-registering projects...");
-          const result = await migration.runMigration({ 
-            startPath: process.cwd(),
-            autoRegister: true 
-          });
-          
-          if (result.projectsRegistered.length > 0) {
-            console.log(`[kb] Auto-registered ${result.projectsRegistered.length} project(s):`);
-            for (const p of result.projectsRegistered) {
-              console.log(`       - ${p.name}: ${p.path}`);
-            }
-          }
-          
-          if (result.projectsSkipped.length > 0) {
-            console.log(`[kb] Skipped ${result.projectsSkipped.length} project(s) (already registered or invalid)`);
-          }
-        }
-      }
-
-      await centralCore.close();
-    } catch (err) {
-      // Migration is best-effort: log warning but don't block command execution
-      console.warn("[kb] Warning: Migration check failed:", (err as Error).message);
-    }
-  }
 
   try {
     switch (command) {
@@ -212,51 +142,6 @@ async function main() {
         const dev = args.includes("--dev");
         const interactive = args.includes("--interactive");
         await runDashboard(port, { paused, dev, interactive });
-        break;
-      }
-
-      case "project": {
-        const subcommand = args[1];
-        switch (subcommand) {
-          case "list":
-          case "ls": {
-            const json = args.includes("--json");
-            await runProjectList({ json });
-            break;
-          }
-          case "add": {
-            const dir = args[2];
-            const nameIdx = args.indexOf("--name");
-            const name = nameIdx !== -1 && nameIdx + 1 < args.length ? args[nameIdx + 1] : undefined;
-            const isolationIdx = args.indexOf("--isolation");
-            const isolation = isolationIdx !== -1 && isolationIdx + 1 < args.length
-              ? args[isolationIdx + 1] as "in-process" | "child-process"
-              : undefined;
-            await runProjectAdd(dir, { name, isolation });
-            break;
-          }
-          case "remove":
-          case "rm": {
-            const name = args[2];
-            if (!name) {
-              console.error("Usage: fn project remove <name> [--force]");
-              process.exit(1);
-            }
-            const force = args.includes("--force");
-            await runProjectRemove(name, { force });
-            break;
-          }
-          case "info":
-          case "show": {
-            const name = args[2];
-            await runProjectInfo(name);
-            break;
-          }
-          default:
-            console.error(`Unknown subcommand: project ${subcommand || ""}`);
-            console.error("Try: fn project list | add [dir] | remove <name> | info [name]");
-            process.exit(1);
-        }
         break;
       }
 
@@ -280,7 +165,7 @@ async function main() {
               }
             }
             const title = descParts.join(" ");
-            await runTaskCreate(title || undefined, attachFiles.length > 0 ? attachFiles : undefined, dependsIds.length > 0 ? dependsIds : undefined, projectName);
+            await runTaskCreate(title || undefined, attachFiles.length > 0 ? attachFiles : undefined, dependsIds.length > 0 ? dependsIds : undefined);
             break;
           }
           case "plan": {
@@ -295,12 +180,12 @@ async function main() {
               }
             }
             const initialPlan = descParts.join(" ");
-            await runTaskPlan(initialPlan || undefined, yesFlag, projectName);
+            await runTaskPlan(initialPlan || undefined, yesFlag);
             break;
           }
           case "list":
           case "ls":
-            await runTaskList(projectName);
+            await runTaskList();
             break;
           case "move": {
             const id = args[2];
@@ -309,13 +194,13 @@ async function main() {
               console.error("Usage: fn task move <id> <column>");
               process.exit(1);
             }
-            await runTaskMove(id, column, projectName);
+            await runTaskMove(id, column);
             break;
           }
           case "show": {
             const id = args[2];
             if (!id) { console.error("Usage: fn task show <id>"); process.exit(1); }
-            await runTaskShow(id, projectName);
+            await runTaskShow(id);
             break;
           }
           case "update": {
@@ -325,13 +210,13 @@ async function main() {
               console.error("Status: pending | in-progress | done | skipped");
               process.exit(1);
             }
-            await runTaskUpdate(id, step, status, projectName);
+            await runTaskUpdate(id, step, status);
             break;
           }
           case "log": {
             const id = args[2], message = args.slice(3).join(" ");
             if (!id || !message) { console.error("Usage: fn task log <id> <message>"); process.exit(1); }
-            await runTaskLog(id, message, undefined, projectName);
+            await runTaskLog(id, message);
             break;
           }
           case "logs": {
@@ -356,19 +241,19 @@ async function main() {
               type = args[typeIdx + 1];
             }
             
-            await runTaskLogs(id, { follow, limit, type: type as "text" | "thinking" | "tool" | "tool_result" | "tool_error" | undefined }, projectName);
+            await runTaskLogs(id, { follow, limit, type: type as "text" | "thinking" | "tool" | "tool_result" | "tool_error" | undefined });
             break;
           }
           case "merge": {
             const id = args[2];
             if (!id) { console.error("Usage: fn task merge <id>"); process.exit(1); }
-            await runTaskMerge(id, projectName);
+            await runTaskMerge(id);
             break;
           }
           case "duplicate": {
             const id = args[2];
             if (!id) { console.error("Usage: fn task duplicate <id>"); process.exit(1); }
-            await runTaskDuplicate(id, projectName);
+            await runTaskDuplicate(id);
             break;
           }
           case "refine": {
@@ -379,26 +264,26 @@ async function main() {
             const feedback = feedbackIdx !== -1 && feedbackIdx + 1 < args.length
               ? args[feedbackIdx + 1]
               : undefined;
-            await runTaskRefine(id, feedback, projectName);
+            await runTaskRefine(id, feedback);
             break;
           }
           case "archive": {
             const id = args[2];
             if (!id) { console.error("Usage: fn task archive <id>"); process.exit(1); }
-            await runTaskArchive(id, projectName);
+            await runTaskArchive(id);
             break;
           }
           case "unarchive": {
             const id = args[2];
             if (!id) { console.error("Usage: fn task unarchive <id>"); process.exit(1); }
-            await runTaskUnarchive(id, projectName);
+            await runTaskUnarchive(id);
             break;
           }
           case "delete": {
             const id = args[2];
             if (!id) { console.error("Usage: fn task delete <id> [--force]"); process.exit(1); }
             const force = args.includes("--force");
-            await runTaskDelete(id, force, projectName);
+            await runTaskDelete(id, force);
             break;
           }
           case "attach": {
@@ -407,19 +292,19 @@ async function main() {
               console.error("Usage: fn task attach <id> <file>");
               process.exit(1);
             }
-            await runTaskAttach(id, file, projectName);
+            await runTaskAttach(id, file);
             break;
           }
           case "pause": {
             const id = args[2];
             if (!id) { console.error("Usage: fn task pause <id>"); process.exit(1); }
-            await runTaskPause(id, projectName);
+            await runTaskPause(id);
             break;
           }
           case "unpause": {
             const id = args[2];
             if (!id) { console.error("Usage: fn task unpause <id>"); process.exit(1); }
-            await runTaskUnpause(id, projectName);
+            await runTaskUnpause(id);
             break;
           }
           case "comment": {
@@ -432,20 +317,20 @@ async function main() {
               return absoluteIndex !== authorIdx && absoluteIndex !== authorIdx + 1;
             });
             const message = messageParts.join(" ");
-            await runTaskComment(id, message || undefined, author || process.env.USER || "user", projectName);
+            await runTaskComment(id, message || undefined, author || process.env.USER || "user");
             break;
           }
           case "comments": {
             const id = args[2];
             if (!id) { console.error("Usage: fn task comments <id>"); process.exit(1); }
-            await runTaskComments(id, projectName);
+            await runTaskComments(id);
             break;
           }
           case "steer": {
             const id = args[2];
             const message = args.slice(3).join(" ");
             if (!id) { console.error("Usage: fn task steer <id> [message]"); process.exit(1); }
-            await runTaskSteer(id, message || undefined, projectName);
+            await runTaskSteer(id, message || undefined);
             break;
           }
           case "retry": {
@@ -454,7 +339,7 @@ async function main() {
               console.error("Usage: fn task retry <id>");
               process.exit(1);
             }
-            await runTaskRetry(id, projectName);
+            await runTaskRetry(id);
             break;
           }
           case "pr-create": {
@@ -484,7 +369,7 @@ async function main() {
               body = args[bodyIdx + 1];
             }
 
-            await runTaskPrCreate(id, { title, base, body }, projectName);
+            await runTaskPrCreate(id, { title, base, body });
             break;
           }
           case "import": {
@@ -522,9 +407,9 @@ async function main() {
 
             if (interactive) {
               const { runTaskImportGitHubInteractive } = await import("./commands/task.js");
-              await runTaskImportGitHubInteractive(ownerRepo, { limit, labels }, projectName);
+              await runTaskImportGitHubInteractive(ownerRepo, { limit, labels });
             } else {
-              await runTaskImportFromGitHub(ownerRepo, { limit, labels }, projectName);
+              await runTaskImportFromGitHub(ownerRepo, { limit, labels });
             }
             break;
           }
@@ -539,7 +424,7 @@ async function main() {
       case "settings": {
         const subcommand = args[1];
         if (!subcommand || subcommand === "show") {
-          await runSettingsShow(projectName);
+          await runSettingsShow();
           break;
         }
         if (subcommand === "set") {
@@ -550,7 +435,7 @@ async function main() {
             console.error("Example: fn settings set maxConcurrent 4");
             process.exit(1);
           }
-          await runSettingsSet(key, value, projectName);
+          await runSettingsSet(key, value);
           break;
         }
         if (subcommand === "export") {
@@ -597,21 +482,21 @@ async function main() {
         const subcommand = args[1];
         switch (subcommand) {
           case "status":
-            await runGitStatus(projectName);
+            await runGitStatus();
             break;
           case "fetch": {
             const remote = args[2];
-            await runGitFetch(remote, projectName);
+            await runGitFetch(remote);
             break;
           }
           case "pull": {
             const skipConfirm = args.includes("--yes");
-            await runGitPull({ skipConfirm, projectName });
+            await runGitPull({ skipConfirm });
             break;
           }
           case "push": {
             const skipConfirm = args.includes("--yes");
-            await runGitPush({ skipConfirm, projectName });
+            await runGitPush({ skipConfirm });
             break;
           }
           default:
@@ -630,80 +515,16 @@ async function main() {
         const restoreFile = restoreIdx !== -1 && restoreIdx + 1 < args.length ? args[restoreIdx + 1] : undefined;
 
         if (create) {
-          await runBackupCreate(projectName);
+          await runBackupCreate();
         } else if (list) {
-          await runBackupList(projectName);
+          await runBackupList();
         } else if (cleanup) {
-          await runBackupCleanup(projectName);
+          await runBackupCleanup();
         } else if (restoreFile) {
-          await runBackupRestore(restoreFile, projectName);
+          await runBackupRestore(restoreFile);
         } else {
           console.error("Usage: fn backup --create | --list | --cleanup | --restore <filename>");
           process.exit(1);
-        }
-        break;
-      }
-
-      case "mission": {
-        const subcommand = args[1];
-        switch (subcommand) {
-          case "create": {
-            const titleParts: string[] = [];
-            for (let i = 2; i < args.length; i++) {
-              titleParts.push(args[i]);
-            }
-            const fullInput = titleParts.join(" ");
-            // Split on first space to separate title and description if provided
-            const firstSpaceIdx = fullInput.indexOf(" ");
-            let title: string | undefined;
-            let description: string | undefined;
-            if (firstSpaceIdx > 0) {
-              title = fullInput.slice(0, firstSpaceIdx);
-              description = fullInput.slice(firstSpaceIdx + 1).trim();
-            } else {
-              title = fullInput || undefined;
-            }
-            await runMissionCreate(title, description, projectName);
-            break;
-          }
-          case "list":
-          case "ls":
-            await runMissionList(projectName);
-            break;
-          case "show":
-          case "info": {
-            const id = args[2];
-            if (!id) {
-              console.error("Usage: fn mission show <id>");
-              process.exit(1);
-            }
-            await runMissionShow(id, projectName);
-            break;
-          }
-          case "delete":
-          case "rm": {
-            const id = args[2];
-            if (!id) {
-              console.error("Usage: fn mission delete <id> [--force]");
-              process.exit(1);
-            }
-            const force = args.includes("--force");
-            await runMissionDelete(id, force, projectName);
-            break;
-          }
-          case "activate-slice": {
-            const id = args[2];
-            if (!id) {
-              console.error("Usage: fn mission activate-slice <slice-id>");
-              process.exit(1);
-            }
-            await runMissionActivateSlice(id, projectName);
-            break;
-          }
-          default:
-            console.error(`Unknown subcommand: mission ${subcommand || ""}`);
-            console.error("Try: fn mission create | list | show <id> | delete <id> | activate-slice <id>");
-            process.exit(1);
         }
         break;
       }

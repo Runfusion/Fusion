@@ -86,7 +86,7 @@ describe("Database", () => {
     });
 
     it("seeds schema version", () => {
-      expect(db.getSchemaVersion()).toBe(5);
+      expect(db.getSchemaVersion()).toBe(3);
     });
 
     it("seeds lastModified", () => {
@@ -109,7 +109,7 @@ describe("Database", () => {
 
     it("is idempotent - calling init() twice does not fail", () => {
       expect(() => db.init()).not.toThrow();
-      expect(db.getSchemaVersion()).toBe(5);
+      expect(db.getSchemaVersion()).toBe(3);
     });
 
     it("does not overwrite existing config on re-init", () => {
@@ -683,8 +683,8 @@ describe("schema migrations", () => {
     // Now run init() which should trigger migration
     db.init();
 
-    // Verify version bumped to 4 (includes v1→v2, v2→v3, and v3→v4 migrations)
-    expect(db.getSchemaVersion()).toBe(5);
+    // Verify version bumped to 3 (includes both v1→v2 and v2→v3 migrations)
+    expect(db.getSchemaVersion()).toBe(3);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -709,11 +709,11 @@ describe("schema migrations", () => {
     const db = new Database(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(5);
+    expect(db.getSchemaVersion()).toBe(3);
 
     // Re-init should not fail
     db.init();
-    expect(db.getSchemaVersion()).toBe(5);
+    expect(db.getSchemaVersion()).toBe(3);
 
     db.close();
   });
@@ -804,11 +804,11 @@ describe("schema migrations", () => {
     // Insert a task on the v2 schema
     db.exec(`INSERT INTO tasks (id, description, "column", createdAt, updatedAt) VALUES ('KB-2', 'test v2', 'triage', '2025-01-01', '2025-01-01')`);
 
-    // Now run init() which should trigger migrations v2→v3→v4
+    // Now run init() which should trigger v2→v3 migration
     db.init();
 
-    // Verify version bumped to 4
-    expect(db.getSchemaVersion()).toBe(5);
+    // Verify version bumped to 3
+    expect(db.getSchemaVersion()).toBe(3);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -864,7 +864,7 @@ describe("createDatabase factory", () => {
     const db = createDatabase(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(5);
+    expect(db.getSchemaVersion()).toBe(3);
     expect(db.getLastModified()).toBeGreaterThan(0);
 
     db.close();

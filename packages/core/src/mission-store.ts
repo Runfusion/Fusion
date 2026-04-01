@@ -725,29 +725,6 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     return updated;
   }
 
-  /**
-   * Find the next pending slice in a mission.
-   * Iterates milestones by orderIndex, then slices by orderIndex,
-   * and returns the first slice with status "pending".
-   *
-   * @param missionId - Mission ID
-   * @returns The next pending slice, or undefined if none found
-   */
-  findNextPendingSlice(missionId: string): Slice | undefined {
-    const milestones = this.listMilestones(missionId);
-
-    for (const milestone of milestones) {
-      const slices = this.listSlices(milestone.id);
-      for (const slice of slices) {
-        if (slice.status === "pending") {
-          return slice;
-        }
-      }
-    }
-
-    return undefined;
-  }
-
   // ── Feature Operations ─────────────────────────────────────────────
 
   /**
@@ -945,29 +922,6 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       taskId: undefined,
       status: "defined",
     });
-
-    // Recompute slice status
-    this.recomputeSliceStatus(updated.sliceId);
-
-    return updated;
-  }
-
-  /**
-   * Update a feature's status.
-   * Recomputes slice status after update.
-   *
-   * @param featureId - Feature ID
-   * @param status - New status
-   * @returns The updated feature
-   * @throws Error if feature not found
-   */
-  updateFeatureStatus(featureId: string, status: FeatureStatus): MissionFeature {
-    const feature = this.getFeature(featureId);
-    if (!feature) {
-      throw new Error(`Feature ${featureId} not found`);
-    }
-
-    const updated = this.updateFeature(featureId, { status });
 
     // Recompute slice status
     this.recomputeSliceStatus(updated.sliceId);
