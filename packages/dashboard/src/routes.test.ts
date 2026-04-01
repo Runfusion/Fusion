@@ -4731,9 +4731,13 @@ describe("Terminal session routes", () => {
   });
 
   describe("POST /api/terminal/sessions", () => {
-    it("returns 503 when max sessions reached (session is null)", async () => {
+    it("returns 503 when max sessions reached", async () => {
       const mockService = {
-        createSession: vi.fn().mockResolvedValue(null),
+        createSession: vi.fn().mockResolvedValue({
+          success: false,
+          code: "max_sessions",
+          error: "Maximum terminal sessions reached. Please close an existing terminal and try again.",
+        }),
       };
       vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
 
@@ -4746,7 +4750,102 @@ describe("Terminal session routes", () => {
       );
 
       expect(res.status).toBe(503);
-      expect(res.body.error).toContain("Max sessions");
+      expect(res.body.error).toBe("Maximum terminal sessions reached. Please close an existing terminal and try again.");
+
+      vi.restoreAllMocks();
+    });
+
+    it("returns 400 when shell is not allowed", async () => {
+      const mockService = {
+        createSession: vi.fn().mockResolvedValue({
+          success: false,
+          code: "invalid_shell",
+          error: "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).",
+        }),
+      };
+      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/terminal/sessions",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).");
+
+      vi.restoreAllMocks();
+    });
+
+    it("returns 503 when PTY module fails to load", async () => {
+      const mockService = {
+        createSession: vi.fn().mockResolvedValue({
+          success: false,
+          code: "pty_load_failed",
+          error: "Terminal service unavailable. The PTY module could not be loaded.",
+        }),
+      };
+      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/terminal/sessions",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe("Terminal service unavailable. The PTY module could not be loaded.");
+
+      vi.restoreAllMocks();
+    });
+
+    it("returns 500 when PTY spawn fails", async () => {
+      const mockService = {
+        createSession: vi.fn().mockResolvedValue({
+          success: false,
+          code: "pty_spawn_failed",
+          error: "Failed to start terminal shell process.",
+        }),
+      };
+      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/terminal/sessions",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to start terminal shell process.");
+
+      vi.restoreAllMocks();
+    });
+
+    it("returns 201 when session creation succeeds", async () => {
+      const mockService = {
+        createSession: vi.fn().mockResolvedValue({
+          success: true,
+          session: { id: "term-123", shell: "/bin/zsh", cwd: "/test" },
+        }),
+      };
+      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/terminal/sessions",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual({ sessionId: "term-123", shell: "/bin/zsh", cwd: "/test" });
 
       vi.restoreAllMocks();
     });

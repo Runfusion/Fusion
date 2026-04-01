@@ -4221,21 +4221,28 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { cwd, cols, rows } = req.body;
       const terminalService = getTerminalService(store.getRootDir());
 
-      const session = await terminalService.createSession({
+      const result = await terminalService.createSession({
         cwd,
         cols: typeof cols === "number" ? cols : undefined,
         rows: typeof rows === "number" ? rows : undefined,
       });
 
-      if (!session) {
-        res.status(503).json({ error: "Failed to create session. Max sessions may be reached." });
+      if (!result.success) {
+        const statusByCode = {
+          max_sessions: 503,
+          invalid_shell: 400,
+          pty_load_failed: 503,
+          pty_spawn_failed: 500,
+        } as const;
+
+        res.status(statusByCode[result.code]).json({ error: result.error });
         return;
       }
 
       res.status(201).json({
-        sessionId: session.id,
-        shell: session.shell,
-        cwd: session.cwd,
+        sessionId: result.session.id,
+        shell: result.session.shell,
+        cwd: result.session.cwd,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to create terminal session" });

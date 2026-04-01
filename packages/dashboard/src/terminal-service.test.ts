@@ -47,38 +47,51 @@ describe("TerminalService", () => {
 
   describe("createSession", () => {
     it("creates session with detected shell", async () => {
-      const session = await service.createSession();
-      
-      expect(session).toBeTruthy();
-      expect(session?.id).toMatch(/^term-\d+-/);
-      expect(session?.cwd).toBe(projectRoot);
+      const result = await service.createSession();
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error("Expected terminal session creation to succeed");
+      }
+      expect(result.session.id).toMatch(/^term-\d+-/);
+      expect(result.session.cwd).toBe(projectRoot);
     });
 
-    it("returns null when session limit reached", async () => {
+    it("returns max_sessions error when session limit reached", async () => {
       const limitedService = new TerminalService(projectRoot, 1);
-      
-      const session1 = await limitedService.createSession();
-      expect(session1).toBeTruthy();
-      
-      const session2 = await limitedService.createSession();
-      expect(session2).toBeNull();
-      
+
+      const result1 = await limitedService.createSession();
+      expect(result1.success).toBe(true);
+
+      const result2 = await limitedService.createSession();
+      expect(result2).toEqual({
+        success: false,
+        code: "max_sessions",
+        error: "Maximum terminal sessions reached. Please close an existing terminal and try again.",
+      });
+
       limitedService.cleanup();
     });
 
     it("rejects shells not in allowlist", async () => {
-      const session = await service.createSession({ shell: "/tmp/evil-shell" });
-      expect(session).toBeNull();
+      const result = await service.createSession({ shell: "/tmp/evil-shell" });
+      expect(result).toEqual({
+        success: false,
+        code: "invalid_shell",
+        error: "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).",
+      });
     });
   });
 
   describe("write", () => {
     it("sends data to PTY", async () => {
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
-      
-      const result = service.write(session!.id, "ls -la\n");
-      
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
+      const result = service.write(session.id, "ls -la\n");
+
       expect(result).toBe(true);
       expect(mockPtyProcess.write).toHaveBeenCalledWith("ls -la\n");
     });
@@ -89,21 +102,25 @@ describe("TerminalService", () => {
     });
 
     it("rejects data with null bytes", async () => {
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
-      
-      const result = service.write(session!.id, "test\0malicious");
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
+      const result = service.write(session.id, "test\0malicious");
       expect(result).toBe(false);
     });
   });
 
   describe("resize", () => {
     it("updates PTY dimensions", async () => {
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
-      
-      const result = service.resize(session!.id, 120, 40);
-      
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
+      const result = service.resize(session.id, 120, 40);
+
       expect(result).toBe(true);
       expect(mockPtyProcess.resize).toHaveBeenCalledWith(120, 40);
     });
@@ -116,11 +133,13 @@ describe("TerminalService", () => {
 
   describe("killSession", () => {
     it("terminates session", async () => {
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
-      
-      const result = service.killSession(session!.id);
-      
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
+      const result = service.killSession(session.id);
+
       expect(result).toBe(true);
       expect(mockPtyProcess.kill).toHaveBeenCalledWith("SIGTERM");
     });
@@ -134,51 +153,62 @@ describe("TerminalService", () => {
   describe("session management", () => {
     it("enforces session limit", async () => {
       const limitedService = new TerminalService(projectRoot, 2);
-      
+
       const session1 = await limitedService.createSession();
       const session2 = await limitedService.createSession();
       const session3 = await limitedService.createSession();
-      
-      expect(session1).toBeTruthy();
-      expect(session2).toBeTruthy();
-      expect(session3).toBeNull();
-      
+
+      expect(session1.success).toBe(true);
+      expect(session2.success).toBe(true);
+      expect(session3).toEqual({
+        success: false,
+        code: "max_sessions",
+        error: "Maximum terminal sessions reached. Please close an existing terminal and try again.",
+      });
+
       limitedService.cleanup();
     });
 
     it("lists active sessions", async () => {
-      const session1 = await service.createSession();
-      const session2 = await service.createSession();
-      
+      const result1 = await service.createSession();
+      const result2 = await service.createSession();
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+      if (!result1.success || !result2.success) throw new Error("Expected terminal session creation to succeed");
+
       const sessions = service.getAllSessions();
-      
+
       expect(sessions).toHaveLength(2);
-      expect(sessions.some((s: { id: string }) => s.id === session1?.id)).toBe(true);
-      expect(sessions.some((s: { id: string }) => s.id === session2?.id)).toBe(true);
+      expect(sessions.some((s: { id: string }) => s.id === result1.session.id)).toBe(true);
+      expect(sessions.some((s: { id: string }) => s.id === result2.session.id)).toBe(true);
     });
 
     it("cleans up all sessions", async () => {
-      await service.createSession();
-      await service.createSession();
-      
+      const result1 = await service.createSession();
+      const result2 = await service.createSession();
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+
       expect(service.getSessionCount()).toBe(2);
-      
+
       service.cleanup();
-      
+
       expect(service.getSessionCount()).toBe(0);
     });
   });
 
   describe("scrollback buffer", () => {
     it("maintains scrollback buffer", async () => {
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
-      
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
       mockPtyProcess._onDataCallback?.("output line 1\n");
       mockPtyProcess._onDataCallback?.("output line 2\n");
-      
-      const scrollback = service.getScrollback(session!.id);
-      
+
+      const scrollback = service.getScrollback(session.id);
+
       expect(scrollback).toContain("output line 1");
       expect(scrollback).toContain("output line 2");
     });
@@ -194,38 +224,42 @@ describe("TerminalService", () => {
       const dataMock = vi.fn();
       service.onData(dataMock);
 
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
 
       mockPtyProcess._onDataCallback?.("test data");
       await new Promise((resolve) => setTimeout(resolve, 25));
 
-      expect(dataMock).toHaveBeenCalledWith(session!.id, "test data");
+      expect(dataMock).toHaveBeenCalledWith(session.id, "test data");
     });
 
     it("emits exit events", async () => {
       const exitMock = vi.fn();
       service.onExit(exitMock);
-      
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
-      
+
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
       mockPtyProcess._onExitCallback?.({ exitCode: 0 });
-      
-      expect(exitMock).toHaveBeenCalledWith(session!.id, 0);
+
+      expect(exitMock).toHaveBeenCalledWith(session.id, 0);
     });
 
     it("allows unsubscribing from events", async () => {
       const dataMock = vi.fn();
       const unsub = service.onData(dataMock);
-      
+
       unsub();
-      
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
-      
+
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+
       mockPtyProcess._onDataCallback?.("test");
-      
+
       expect(dataMock).not.toHaveBeenCalled();
     });
   });
@@ -271,31 +305,35 @@ describe("TerminalService", () => {
   describe("activity tracking", () => {
     it("sets lastActivityAt on session creation", async () => {
       const before = new Date();
-      const session = await service.createSession();
+      const createResult = await service.createSession();
       const after = new Date();
 
-      expect(session).toBeTruthy();
-      expect(session!.lastActivityAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
-      expect(session!.lastActivityAt.getTime()).toBeLessThanOrEqual(after.getTime());
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      expect(createResult.session.lastActivityAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+      expect(createResult.session.lastActivityAt.getTime()).toBeLessThanOrEqual(after.getTime());
     });
 
     it("updates lastActivityAt on write", async () => {
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
 
-      const initialActivity = session!.lastActivityAt.getTime();
+      const initialActivity = session.lastActivityAt.getTime();
 
       // Small delay to ensure time difference
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      service.write(session!.id, "hello");
+      service.write(session.id, "hello");
 
-      const updatedSession = service.getSession(session!.id);
+      const updatedSession = service.getSession(session.id);
       expect(updatedSession!.lastActivityAt.getTime()).toBeGreaterThan(initialActivity);
     });
 
     it("includes lastActivityAt in getAllSessions", async () => {
-      await service.createSession();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
       const sessions = service.getAllSessions();
 
       expect(sessions).toHaveLength(1);
@@ -305,37 +343,41 @@ describe("TerminalService", () => {
 
   describe("stale session detection", () => {
     it("returns empty array when no sessions are stale", async () => {
-      await service.createSession();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
       const stale = service.getStaleSessions(300_000);
       expect(stale).toHaveLength(0);
     });
 
     it("returns sessions older than threshold", async () => {
-      const session = await service.createSession();
-      expect(session).toBeTruthy();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
 
       // Manually backdate the lastActivityAt
-      session!.lastActivityAt = new Date(Date.now() - 600_000); // 10 min ago
+      session.lastActivityAt = new Date(Date.now() - 600_000); // 10 min ago
 
       const stale = service.getStaleSessions(300_000); // 5 min threshold
       expect(stale).toHaveLength(1);
-      expect(stale[0].id).toBe(session!.id);
+      expect(stale[0].id).toBe(session.id);
     });
 
     it("sorts stale sessions oldest first", async () => {
-      const session1 = await service.createSession();
-      const session2 = await service.createSession();
-      expect(session1).toBeTruthy();
-      expect(session2).toBeTruthy();
+      const result1 = await service.createSession();
+      const result2 = await service.createSession();
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+      if (!result1.success || !result2.success) throw new Error("Expected terminal session creation to succeed");
 
       // session1 is older (more stale)
-      session1!.lastActivityAt = new Date(Date.now() - 700_000);
-      session2!.lastActivityAt = new Date(Date.now() - 600_000);
+      result1.session.lastActivityAt = new Date(Date.now() - 700_000);
+      result2.session.lastActivityAt = new Date(Date.now() - 600_000);
 
       const stale = service.getStaleSessions(300_000);
       expect(stale).toHaveLength(2);
-      expect(stale[0].id).toBe(session1!.id);
-      expect(stale[1].id).toBe(session2!.id);
+      expect(stale[0].id).toBe(result1.session.id);
+      expect(stale[1].id).toBe(result2.session.id);
     });
   });
 
@@ -350,7 +392,10 @@ describe("TerminalService", () => {
 
       const sessions = [];
       for (let i = 0; i < 5; i++) {
-        sessions.push(await svc.createSession());
+        const result = await svc.createSession();
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected terminal session creation to succeed");
+        sessions.push(result.session);
       }
       expect(svc.getSessionCount()).toBe(5);
 
@@ -377,7 +422,10 @@ describe("TerminalService", () => {
       // Create 4 sessions (80% of 5)
       const sessions = [];
       for (let i = 0; i < 4; i++) {
-        sessions.push(await svc.createSession());
+        const result = await svc.createSession();
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected terminal session creation to succeed");
+        sessions.push(result.session);
       }
       expect(svc.getSessionCount()).toBe(4);
 
@@ -387,7 +435,7 @@ describe("TerminalService", () => {
 
       // Creating a new session should trigger eviction first
       const newSession = await svc.createSession();
-      expect(newSession).toBeTruthy();
+      expect(newSession.success).toBe(true);
       // Should have evicted stale sessions, then created a new one
       // After eviction, we target <= 4 (80%), evict oldest stale sessions
       // Then create the new session
@@ -400,7 +448,8 @@ describe("TerminalService", () => {
       const svc = new TerminalService(projectRoot, 5);
 
       for (let i = 0; i < 5; i++) {
-        await svc.createSession();
+        const result = await svc.createSession();
+        expect(result.success).toBe(true);
       }
       // All sessions are fresh, no stale ones
       const evicted = svc.evictStaleSessions(300_000);
