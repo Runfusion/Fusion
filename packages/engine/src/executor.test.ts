@@ -4008,3 +4008,423 @@ describe("Workflow Steps Execution", () => {
   });
 });
 
+describe("Real-time steering injection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("initializes seenSteeringIds with existing comments at session start", async () => {
+    const store = createMockStore();
+    const steerFn = vi.fn().mockResolvedValue(undefined);
+
+    // Mock session with steer method
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Simulate execution running
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }),
+        dispose: vi.fn(),
+        steer: steerFn,
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const existingComment = {
+      id: "1234567890-abc123",
+      text: "Existing comment",
+      createdAt: new Date().toISOString(),
+      author: "user" as const,
+    };
+
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments: [existingComment],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait for execution to complete
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // No steer calls should be made for existing comments
+    expect(steerFn).not.toHaveBeenCalled();
+  });
+
+  it("injects new steering comments via session.steer() on task:updated", async () => {
+    const store = createMockStore();
+    const steerFn = vi.fn().mockResolvedValue(undefined);
+    let promptResolve: () => void;
+    const promptPromise = new Promise<void>(resolve => { promptResolve = resolve; });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Wait for signal to complete
+          await promptPromise;
+        }),
+        dispose: vi.fn(),
+        steer: steerFn,
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Start execution
+    const executePromise = executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait for agent to start
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    // Simulate adding a steering comment mid-execution
+    const newComment = {
+      id: "9876543210-def456",
+      text: "Please use a different approach",
+      createdAt: new Date().toISOString(),
+      author: "user" as const,
+    };
+
+    store._trigger("task:updated", {
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments: [newComment],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait for steer to be called
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    // Verify steer was called with the formatted message
+    expect(steerFn).toHaveBeenCalledOnce();
+    expect(steerFn.mock.calls[0][0]).toContain("📣 **New steering feedback**");
+    expect(steerFn.mock.calls[0][0]).toContain("Please use a different approach");
+
+    // Verify log entry was created
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "KB-001",
+      expect.stringContaining("Steering comment received mid-execution"),
+      "by user"
+    );
+
+    // Complete the execution
+    promptResolve!();
+    await executePromise;
+  });
+
+  it("does not re-inject already seen steering comments", async () => {
+    const store = createMockStore();
+    const steerFn = vi.fn().mockResolvedValue(undefined);
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        steer: steerFn,
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const commentId = "1111111111-aaa111";
+
+    // Start execution with one comment
+    await executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments: [{
+        id: commentId,
+        text: "Original comment",
+        createdAt: new Date().toISOString(),
+        author: "user" as const,
+      }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait for execution to start
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    // Trigger task:updated with the SAME comment (simulating a non-steering update)
+    store._trigger("task:updated", {
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments: [{
+        id: commentId,
+        text: "Original comment",
+        createdAt: new Date().toISOString(),
+        author: "user" as const,
+      }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait and verify steer was not called again
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(steerFn).not.toHaveBeenCalled();
+  });
+
+  it("marks comment as seen even if steer() throws", async () => {
+    const store = createMockStore();
+    const steerFn = vi.fn().mockRejectedValue(new Error("Session disconnected"));
+    let resolvePrompt: () => void;
+    const promptPromise = new Promise<void>(resolve => { resolvePrompt = resolve; });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(() => promptPromise),
+        dispose: vi.fn(),
+        steer: steerFn,
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const commentId = "2222222222-bbb222";
+
+    // Start execution (don't await yet)
+    const executePromise = executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait for execution to start
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    // Add a new comment that will fail to inject
+    store._trigger("task:updated", {
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments: [{
+        id: commentId,
+        text: "Comment that fails",
+        createdAt: new Date().toISOString(),
+        author: "user" as const,
+      }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait for processing
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    // Verify steer was called (and failed)
+    expect(steerFn).toHaveBeenCalledOnce();
+
+    // Trigger task:updated again with the same comment
+    store._trigger("task:updated", {
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments: [{
+        id: commentId,
+        text: "Comment that fails",
+        createdAt: new Date().toISOString(),
+        author: "user" as const,
+      }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait and verify steer was NOT called again (comment marked as seen)
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(steerFn).toHaveBeenCalledTimes(1);
+
+    // Complete execution
+    resolvePrompt!();
+    await executePromise;
+  });
+
+  it("does not inject steering comments for tasks not in activeSessions", async () => {
+    const store = createMockStore();
+    const steerFn = vi.fn().mockResolvedValue(undefined);
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        steer: steerFn,
+      },
+    } as any);
+
+    new TaskExecutor(store, "/tmp/test");
+
+    // Trigger task:updated for a task that is not in activeSessions
+    store._trigger("task:updated", {
+      id: "KB-NOT-EXECUTING",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments: [{
+        id: "3333333333-ccc333",
+        text: "Should not be injected",
+        createdAt: new Date().toISOString(),
+        author: "user" as const,
+      }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait and verify steer was not called
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(steerFn).not.toHaveBeenCalled();
+  });
+
+  it("handles multiple new steering comments in a single task:updated", async () => {
+    const store = createMockStore();
+    const steerFn = vi.fn().mockResolvedValue(undefined);
+    let resolvePrompt: () => void;
+    const promptPromise = new Promise<void>(resolve => { resolvePrompt = resolve; });
+
+    // Set up getTask to return the task with existing steering comment
+    store.getTask.mockResolvedValue({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      steeringComments: [{
+        id: "existing-comment",
+        text: "Original",
+        createdAt: new Date().toISOString(),
+        author: "user",
+      }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(() => promptPromise),
+        dispose: vi.fn(),
+        steer: steerFn,
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Start execution (don't await yet)
+    const executePromise = executor.execute({
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait for execution to start
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    // Add two new comments at once
+    store._trigger("task:updated", {
+      id: "KB-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments: [
+        {
+          id: "existing-comment",
+          text: "Original",
+          createdAt: new Date().toISOString(),
+          author: "user",
+        },
+        {
+          id: "new-comment-1",
+          text: "First new comment",
+          createdAt: new Date().toISOString(),
+          author: "user",
+        },
+        {
+          id: "new-comment-2",
+          text: "Second new comment",
+          createdAt: new Date().toISOString(),
+          author: "user",
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait for processing
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    // Verify steer was called twice (once for each new comment)
+    expect(steerFn).toHaveBeenCalledTimes(2);
+
+    // Complete execution
+    resolvePrompt!();
+    await executePromise;
+  });
+});
+

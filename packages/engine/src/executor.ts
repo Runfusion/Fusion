@@ -160,8 +160,11 @@ export interface TaskExecutorOptions {
 export class TaskExecutor {
   private activeWorktrees = new Map<string, string>();
   private executing = new Set<string>();
-  /** Active agent sessions per task, used to terminate on pause. */
-  private activeSessions = new Map<string, { dispose: () => void }>();
+  /** Active agent sessions per task, used to terminate on pause and inject steering. */
+  private activeSessions = new Map<string, {
+    session: AgentSession;
+    seenSteeringIds: Set<string>;
+  }>();
   /** Tasks that were paused mid-execution (to avoid marking them as "failed"). */
   private pausedAborted = new Set<string>();
   /** Tasks that had a dependency added mid-execution (abort + discard worktree). */
@@ -195,20 +198,72 @@ export class TaskExecutor {
     });
 
     // When a task is paused while executing, terminate the agent session.
-    store.on("task:updated", (task) => {
+    // When steering comments are added during execution, inject them into the running session.
+    //
+    // Real-time steering comment injection mechanism:
+    // 1. When execution starts, we initialize seenSteeringIds with all existing comment IDs
+    // 2. On each task:updated event, we check if there are new comments not in seenSteeringIds
+    // 3. New comments are injected via session.steer() which queues them for delivery
+    //    after the current assistant turn completes (before the next LLM call)
+    // 4. Comments are marked as seen BEFORE injection to prevent retry loops on failure
+    // 5. Each injection is logged to the task for user visibility
+    store.on("task:updated", async (task) => {
+      // Handle pause - terminate the agent session
       if (task.paused && this.activeSessions.has(task.id)) {
         executorLog.log(`Pausing ${task.id} — terminating agent session`);
         this.pausedAborted.add(task.id);
         this.options.stuckTaskDetector?.untrackTask(task.id);
-        const session = this.activeSessions.get(task.id);
-        session?.dispose();
+        const { session } = this.activeSessions.get(task.id)!;
+        session.dispose();
+        return;
+      }
+
+      // Handle steering comments - inject new ones into the running session
+      // Only process if session is active (activeSessions check is sufficient
+      // since entries are only added when a task is in-progress)
+      if (this.activeSessions.has(task.id) && task.steeringComments) {
+        const activeSession = this.activeSessions.get(task.id)!;
+        const { session, seenSteeringIds } = activeSession;
+
+        // Find new steering comments that haven't been seen yet
+        const newComments = task.steeringComments.filter(c => !seenSteeringIds.has(c.id));
+
+        if (newComments.length > 0) {
+          for (const comment of newComments) {
+            const summary = comment.text.length > 80
+              ? comment.text.slice(0, 80) + "..."
+              : comment.text;
+
+            // Mark as seen BEFORE attempting injection to prevent retry loops on failure
+            seenSteeringIds.add(comment.id);
+
+            // Format and inject the steering comment
+            const steeringMessage = formatSteeringCommentForInjection(comment);
+            try {
+              executorLog.log(`Injecting steering comment into ${task.id}: ${summary}`);
+              await session.steer(steeringMessage);
+              executorLog.log(`Successfully injected steering comment into ${task.id}`);
+
+              // Log to the task that steering was received
+              await this.store.logEntry(
+                task.id,
+                `Steering comment received mid-execution: ${summary}`,
+                `by ${comment.author}`
+              );
+            } catch (err) {
+              executorLog.error(`Failed to inject steering comment for ${task.id}:`, err);
+              // Comment is already marked as seen - we won't retry to avoid spamming
+              // the agent with failed injections. The error is logged for debugging.
+            }
+          }
+        }
       }
     });
 
     // When globalPause transitions from false → true, terminate all active agent sessions.
     store.on("settings:updated", ({ settings, previous }) => {
       if (settings.globalPause && !previous.globalPause) {
-        for (const [taskId, session] of this.activeSessions) {
+        for (const [taskId, { session }] of this.activeSessions) {
           executorLog.log(`Global pause — terminating agent session for ${taskId}`);
           this.pausedAborted.add(taskId);
           this.options.stuckTaskDetector?.untrackTask(taskId);
@@ -477,7 +532,14 @@ export class TaskExecutor {
         sessionRef.current = session;
 
         // Register session so the pause listener can terminate it
-        this.activeSessions.set(task.id, session);
+        // Initialize with empty set of seen steering comments
+        const seenSteeringIds = new Set<string>();
+        if (detail.steeringComments) {
+          for (const comment of detail.steeringComments) {
+            seenSteeringIds.add(comment.id);
+          }
+        }
+        this.activeSessions.set(task.id, { session, seenSteeringIds });
 
         // Register with stuck task detector for heartbeat monitoring
         stuckDetector?.trackTask(task.id, session);
@@ -763,8 +825,8 @@ export class TaskExecutor {
 
         // Trigger abort flow (same pattern as pausedAborted)
         this.depAborted.add(taskId);
-        const session = this.activeSessions.get(taskId);
-        session?.dispose();
+        const activeSession = this.activeSessions.get(taskId);
+        activeSession?.session.dispose();
 
         return {
           content: [{
@@ -1683,4 +1745,13 @@ Use \`task_log\` for important actions and decisions.
 Use \`task_create\` if you find out-of-scope work that needs doing.
 Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"\`
 When all steps are complete: call \`task_done()\``;
+}
+
+/**
+ * Format a steering comment for injection into a running agent session.
+ * Used for real-time steering during task execution.
+ */
+function formatSteeringCommentForInjection(comment: import("@fusion/core").SteeringComment): string {
+  const timestamp = formatTimestamp(comment.createdAt);
+  return `📣 **New steering feedback** — ${timestamp} (${comment.author}):\n\n${comment.text}\n\nPlease adjust your approach based on this feedback.`;
 }
