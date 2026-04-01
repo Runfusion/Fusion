@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as https from "node:https";
 import * as child_process from "node:child_process";
-import { promisify } from "node:util";
+
 
 /**
  * Pace information for weekly usage windows
@@ -228,26 +228,20 @@ function readClaudeKeychainCredentials(): any | null {
   }
 }
 
-/** Max number of retries for transient 429 responses */
-const CLAUDE_MAX_RETRIES = 3;
-/** Initial retry delay in ms (doubles each attempt) */
-const CLAUDE_INITIAL_RETRY_MS = 1000;
-
 /**
- * Sleep for the given duration. Exported for test mocking.
+ * Fetch Claude usage data by spawning the `claude` CLI.
+ *
+ * Uses `claude usage --json` to retrieve usage information. The CLI manages
+ * its own caching and rate-limiting, avoiding the 429 errors that occurred
+ * with direct HTTPS requests to api.anthropic.com/api/oauth/usage.
+ *
+ * Credential files and the macOS keychain are still read for plan/tier
+ * detection (subscriptionType, rateLimitTier) since the CLI output may
+ * not include subscription metadata.
+ *
+ * If the CLI is not installed or the `usage` subcommand is unavailable,
+ * the function returns an error status with a descriptive message.
  */
-export const _sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-// Allow tests to swap the sleep implementation
-let sleepFn = _sleep;
-export function _setSleepFn(fn: typeof _sleep): void {
-  sleepFn = fn;
-}
-export function _resetSleepFn(): void {
-  sleepFn = _sleep;
-}
-
 async function fetchClaudeUsage(): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Claude",
@@ -256,7 +250,7 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
     windows: [],
   };
 
-  // Load Claude CLI credentials
+  // ── Credential reading for plan detection & auth check ──────────────
   const credPaths = [
     path.join(process.env.HOME || "~", ".claude", ".credentials.json"),
     path.join(process.env.HOME || "~", ".config", "claude", ".credentials.json"),
@@ -288,7 +282,7 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
     return usage;
   }
 
-  // Infer plan from rateLimitTier
+  // Infer plan from credential metadata (CLI handles auth for the API call)
   if (oauthCreds.subscriptionType) {
     usage.plan = oauthCreds.subscriptionType.charAt(0).toUpperCase() + oauthCreds.subscriptionType.slice(1);
   } else if (oauthCreds.rateLimitTier) {
@@ -299,66 +293,15 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
     else usage.plan = oauthCreds.rateLimitTier;
   }
 
+  // ── Fetch usage via Claude CLI ──────────────────────────────────────
   try {
-    // Retry loop for transient 429 responses
-    let res: { status: number; headers: Record<string, string>; body: string } | undefined;
-    let lastStatus = 0;
+    const cliOutput = child_process.execFileSync(
+      "claude",
+      ["usage", "--json"],
+      { encoding: "utf-8", timeout: 15000 }
+    );
 
-    for (let attempt = 0; attempt < CLAUDE_MAX_RETRIES; attempt++) {
-      res = await httpsRequest("https://api.anthropic.com/api/oauth/usage", {
-        method: "GET",
-        headers: {
-          authorization: `Bearer ${oauthCreds.accessToken}`,
-        },
-      });
-
-      lastStatus = res.status;
-
-      // Auth errors are not transient — fail immediately
-      if (res.status === 401 || res.status === 403) {
-        usage.status = "error";
-        usage.error = "Auth expired — run 'claude' to re-login";
-        return usage;
-      }
-
-      // 429 is potentially transient — retry with exponential backoff
-      if (res.status === 429) {
-        if (attempt < CLAUDE_MAX_RETRIES - 1) {
-          // Use retry-after header if available, otherwise exponential backoff
-          const retryAfter = res.headers["retry-after"];
-          let delayMs: number;
-          if (retryAfter && !isNaN(Number(retryAfter))) {
-            delayMs = Number(retryAfter) * 1000;
-          } else {
-            delayMs = CLAUDE_INITIAL_RETRY_MS * Math.pow(2, attempt);
-          }
-          await sleepFn(delayMs);
-          continue;
-        }
-        // All retries exhausted
-        usage.status = "error";
-        usage.error = "Rate limited — try again later";
-        return usage;
-      }
-
-      // Any other non-200 status — fail immediately (not transient)
-      if (res.status !== 200) {
-        usage.status = "error";
-        usage.error = `HTTP ${res.status}`;
-        return usage;
-      }
-
-      // Success — break out of retry loop
-      break;
-    }
-
-    if (!res || lastStatus !== 200) {
-      usage.status = "error";
-      usage.error = `HTTP ${lastStatus}`;
-      return usage;
-    }
-
-    const data = JSON.parse(res.body);
+    const data = JSON.parse(cliOutput.trim());
     usage.status = "ok";
 
     const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
@@ -399,8 +342,17 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
     if (sonnet) usage.windows.push(sonnet);
     if (opus) usage.windows.push(opus);
   } catch (e: any) {
-    usage.status = "error";
-    usage.error = e.message || "Failed to fetch";
+    // Distinguish CLI-not-found from other errors
+    if (e.code === "ENOENT") {
+      usage.status = "error";
+      usage.error = "Claude CLI not found — install from https://claude.ai/download";
+    } else if (e.message?.includes("ETIMEDOUT") || e.killed) {
+      usage.status = "error";
+      usage.error = "Claude CLI timed out — try again later";
+    } else {
+      usage.status = "error";
+      usage.error = e.message || "Failed to fetch usage via Claude CLI";
+    }
   }
 
   return usage;

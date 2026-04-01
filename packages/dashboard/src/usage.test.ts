@@ -4,8 +4,6 @@ import {
   clearUsageCache,
   ProviderUsage,
   calculatePace,
-  _setSleepFn,
-  _resetSleepFn,
 } from "./usage.js";
 
 // Mock the https module
@@ -93,6 +91,47 @@ describe("usage", () => {
   });
 
   describe("Claude provider", () => {
+    /**
+     * Helper to set up mocks for Claude tests.
+     * - mockExecFileSync needs to handle BOTH keychain reads ("security") AND
+     *   CLI usage calls ("claude") since they share the same mock.
+     * - mockReadFileSync handles credential file reads.
+     */
+    function setupClaudeMocks(options: {
+      /** Credential file content (null = file not found) */
+      credFileContent?: any;
+      /** Keychain credential content (null = keychain error) */
+      keychainContent?: any;
+      /** CLI usage output (string JSON) or Error to throw */
+      cliOutput?: string | Error;
+    }) {
+      const { credFileContent = null, keychainContent = null, cliOutput } = options;
+
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes("claude") && credFileContent !== null) {
+          return JSON.stringify(credFileContent);
+        }
+        throw new Error("File not found");
+      });
+
+      mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+        // Keychain read via `security` command
+        if (cmd === "security") {
+          if (keychainContent !== null) {
+            return JSON.stringify(keychainContent);
+          }
+          throw new Error("Keychain item not found");
+        }
+        // Claude CLI usage call
+        if (cmd === "claude") {
+          if (cliOutput instanceof Error) throw cliOutput;
+          if (cliOutput !== undefined) return cliOutput;
+          throw new Error("Command failed");
+        }
+        throw new Error(`Unexpected command: ${cmd}`);
+      });
+    }
+
     it("detects no auth when credentials file doesn't exist", async () => {
       mockReadFileSync.mockImplementation(() => {
         throw new Error("File not found");
@@ -110,7 +149,7 @@ describe("usage", () => {
     });
 
     it("reads credentials from macOS keychain when file paths fail", async () => {
-      const mockResponse = {
+      const cliResponse = JSON.stringify({
         five_hour: {
           utilization: 30.0,
           resets_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
@@ -119,46 +158,17 @@ describe("usage", () => {
           utilization: 15.0,
           resets_at: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString(),
         },
-      };
-
-      // File paths fail
-      mockReadFileSync.mockImplementation(() => {
-        throw new Error("File not found");
       });
 
-      // Keychain succeeds
-      mockExecFileSync.mockImplementation(() => {
-        return JSON.stringify({
+      setupClaudeMocks({
+        keychainContent: {
           claudeAiOauth: {
             accessToken: "keychain-token",
             scopes: ["user:profile"],
             subscriptionType: "pro",
           },
-        });
-      });
-
-      // Mock https request
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from(JSON.stringify(mockResponse)));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
+        },
+        cliOutput: cliResponse,
       });
 
       const providers = await fetchAllProviderUsage();
@@ -173,6 +183,13 @@ describe("usage", () => {
         "security",
         ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
         { encoding: "utf-8", timeout: 5000 }
+      );
+
+      // Verify CLI was called
+      expect(mockExecFileSync).toHaveBeenCalledWith(
+        "claude",
+        ["usage", "--json"],
+        { encoding: "utf-8", timeout: 15000 }
       );
     });
 
@@ -192,49 +209,22 @@ describe("usage", () => {
     });
 
     it("parses keychain credentials with rateLimitTier for plan detection", async () => {
-      const mockResponse = {
+      const cliResponse = JSON.stringify({
         five_hour: {
           utilization: 25.0,
           resets_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
         },
-      };
-
-      mockReadFileSync.mockImplementation(() => {
-        throw new Error("File not found");
       });
 
-      // Keychain with rateLimitTier instead of subscriptionType
-      mockExecFileSync.mockImplementation(() => {
-        return JSON.stringify({
+      setupClaudeMocks({
+        keychainContent: {
           claudeAiOauth: {
             accessToken: "keychain-token",
             scopes: ["user:profile"],
             rateLimitTier: "default_claude_max_20x",
           },
-        });
-      });
-
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from(JSON.stringify(mockResponse)));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
+        },
+        cliOutput: cliResponse,
       });
 
       const providers = await fetchAllProviderUsage();
@@ -245,8 +235,8 @@ describe("usage", () => {
     });
 
     it("detects missing scope error", async () => {
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes("claude")) {
           return JSON.stringify({
             accessToken: "test-token",
             scopes: ["other:scope"], // missing user:profile
@@ -265,51 +255,25 @@ describe("usage", () => {
       expect(claude!.error).toContain("user:profile scope");
     });
 
-    it("parses usage data from API response", async () => {
-      const mockResponse = {
+    it("parses usage data from CLI JSON output", async () => {
+      const cliResponse = JSON.stringify({
         five_hour: {
           utilization: 45.5,
-          resets_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), // 2 hours
+          resets_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
         },
         seven_day: {
           utilization: 23.0,
-          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(), // 5 days
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
         },
-      };
-
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
-          return JSON.stringify({
-            accessToken: "test-token",
-            scopes: ["user:profile"],
-            subscriptionType: "pro",
-          });
-        }
-        throw new Error("File not found");
       });
 
-      // Mock https request
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from(JSON.stringify(mockResponse)));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+        cliOutput: cliResponse,
       });
 
       const providers = await fetchAllProviderUsage();
@@ -326,417 +290,171 @@ describe("usage", () => {
       expect(sessionWindow!.resetText).toContain("resets in");
     });
 
-    it("handles 401 auth error", async () => {
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
-          return JSON.stringify({
-            accessToken: "expired-token",
-            scopes: ["user:profile"],
-          });
-        }
-        throw new Error("File not found");
-      });
-
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 401,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from('{"error": "unauthorized"}'));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
-      const providers = await fetchAllProviderUsage();
-      const claude = providers.find((p) => p.name === "Claude")!;
-
-      expect(claude.status).toBe("error");
-      expect(claude.error).toContain("Auth expired");
-    });
-
-    it("does not send anthropic-beta header in requests", async () => {
-      const mockResponse = {
-        five_hour: { utilization: 10.0 },
-      };
-
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
-          return JSON.stringify({
-            accessToken: "test-token",
-            scopes: ["user:profile"],
-          });
-        }
-        throw new Error("File not found");
-      });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
-      });
-
-      let capturedHeaders: Record<string, string> = {};
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        capturedHeaders = options.headers || {};
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from(JSON.stringify(mockResponse)));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
-      await fetchAllProviderUsage();
-
-      // Verify no anthropic-beta header is sent
-      expect(capturedHeaders).not.toHaveProperty("anthropic-beta");
-    });
-
-    it("retries on 429 and succeeds after transient rate limit", async () => {
-      const noopSleep = vi.fn().mockResolvedValue(undefined);
-      _setSleepFn(noopSleep);
-
-      const mockResponse = {
+    it("parses all four usage windows from CLI output", async () => {
+      const cliResponse = JSON.stringify({
         five_hour: {
-          utilization: 20.0,
-          resets_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+          utilization: 40.0,
+          resets_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
         },
-      };
-
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
-          return JSON.stringify({
-            accessToken: "test-token",
-            scopes: ["user:profile"],
-          });
-        }
-        throw new Error("File not found");
+        seven_day: {
+          utilization: 20.0,
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        seven_day_sonnet: {
+          utilization: 15.0,
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        seven_day_opus: {
+          utilization: 5.0,
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
       });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
-      });
 
-      let callCount = 0;
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        callCount++;
-        const is429 = callCount <= 2; // First 2 calls return 429, third succeeds
-        const mockRes = {
-          statusCode: is429 ? 429 : 200,
-          headers: is429 ? { "retry-after": "1" } : {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              const body = is429
-                ? '{"error":"rate_limited"}'
-                : JSON.stringify(mockResponse);
-              handler(Buffer.from(body));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "max",
+        },
+        cliOutput: cliResponse,
       });
 
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
       expect(claude.status).toBe("ok");
-      expect(claude.windows).toHaveLength(1);
-      expect(claude.windows[0].percentUsed).toBe(20);
-
-      // Verify sleep was called for retries (2 retry sleeps)
-      expect(noopSleep).toHaveBeenCalledTimes(2);
-
-      _resetSleepFn();
+      expect(claude.windows).toHaveLength(4);
+      expect(claude.windows.map((w) => w.label)).toEqual([
+        "Session (5h)",
+        "Weekly",
+        "Weekly (Sonnet)",
+        "Weekly (Opus)",
+      ]);
     });
 
-    it("reports rate limited after all retries exhausted on 429", async () => {
-      const noopSleep = vi.fn().mockResolvedValue(undefined);
-      _setSleepFn(noopSleep);
+    it("handles CLI not found (ENOENT)", async () => {
+      const enoentError = new Error("spawn claude ENOENT") as any;
+      enoentError.code = "ENOENT";
 
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
-          return JSON.stringify({
-            accessToken: "test-token",
-            scopes: ["user:profile"],
-          });
-        }
-        throw new Error("File not found");
-      });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
-      });
-
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      // Always return 429
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 429,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from('{"error":"rate_limited"}'));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+        },
+        cliOutput: enoentError,
       });
 
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
       expect(claude.status).toBe("error");
-      expect(claude.error).toBe("Rate limited — try again later");
-
-      // Verify retries happened (2 sleeps for 3 attempts)
-      expect(noopSleep).toHaveBeenCalledTimes(2);
-
-      _resetSleepFn();
+      expect(claude.error).toContain("Claude CLI not found");
     });
 
-    it("uses exponential backoff delays when retry-after header is absent", async () => {
-      const noopSleep = vi.fn().mockResolvedValue(undefined);
-      _setSleepFn(noopSleep);
+    it("handles CLI timeout (killed process)", async () => {
+      const timeoutError = new Error("Process timed out") as any;
+      timeoutError.killed = true;
 
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
-          return JSON.stringify({
-            accessToken: "test-token",
-            scopes: ["user:profile"],
-          });
-        }
-        throw new Error("File not found");
-      });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
-      });
-
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      // Always return 429 without retry-after
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 429,
-          headers: {}, // No retry-after header
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from('{"error":"rate_limited"}'));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
-      await fetchAllProviderUsage();
-
-      // Exponential backoff: 1000ms * 2^0 = 1000, 1000ms * 2^1 = 2000
-      expect(noopSleep).toHaveBeenCalledTimes(2);
-      expect(noopSleep).toHaveBeenNthCalledWith(1, 1000);
-      expect(noopSleep).toHaveBeenNthCalledWith(2, 2000);
-
-      _resetSleepFn();
-    });
-
-    it("respects retry-after header value for delay", async () => {
-      const noopSleep = vi.fn().mockResolvedValue(undefined);
-      _setSleepFn(noopSleep);
-
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
-          return JSON.stringify({
-            accessToken: "test-token",
-            scopes: ["user:profile"],
-          });
-        }
-        throw new Error("File not found");
-      });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
-      });
-
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      // 429 with retry-after: 5 seconds
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 429,
-          headers: { "retry-after": "5" },
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from('{"error":"rate_limited"}'));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
-      await fetchAllProviderUsage();
-
-      // Should use retry-after value (5s = 5000ms) for both retries
-      expect(noopSleep).toHaveBeenCalledTimes(2);
-      expect(noopSleep).toHaveBeenNthCalledWith(1, 5000);
-      expect(noopSleep).toHaveBeenNthCalledWith(2, 5000);
-
-      _resetSleepFn();
-    });
-
-    it("does not retry on 401 auth errors", async () => {
-      const noopSleep = vi.fn().mockResolvedValue(undefined);
-      _setSleepFn(noopSleep);
-
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
-          return JSON.stringify({
-            accessToken: "expired-token",
-            scopes: ["user:profile"],
-          });
-        }
-        throw new Error("File not found");
-      });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
-      });
-
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 401,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from('{"error": "unauthorized"}'));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+        },
+        cliOutput: timeoutError,
       });
 
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
       expect(claude.status).toBe("error");
-      expect(claude.error).toContain("Auth expired");
-      // No retries should happen for auth errors
-      expect(noopSleep).not.toHaveBeenCalled();
-
-      _resetSleepFn();
+      expect(claude.error).toContain("timed out");
     });
 
-    it("does not retry on 403 auth errors", async () => {
-      const noopSleep = vi.fn().mockResolvedValue(undefined);
-      _setSleepFn(noopSleep);
+    it("handles CLI non-zero exit code", async () => {
+      const exitError = new Error("Command failed with exit code 1") as any;
+      exitError.status = 1;
 
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
-          return JSON.stringify({
-            accessToken: "forbidden-token",
-            scopes: ["user:profile"],
-          });
-        }
-        throw new Error("File not found");
-      });
-      mockExecFileSync.mockImplementation(() => {
-        throw new Error("Keychain item not found");
-      });
-
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 403,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from('{"error": "forbidden"}'));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+        },
+        cliOutput: exitError,
       });
 
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
       expect(claude.status).toBe("error");
-      expect(claude.error).toContain("Auth expired");
-      // No retries should happen for auth errors
-      expect(noopSleep).not.toHaveBeenCalled();
+      expect(claude.error).toContain("Command failed");
+    });
 
-      _resetSleepFn();
+    it("handles malformed JSON output from CLI", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+        },
+        cliOutput: "not valid json {{{",
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("error");
+      expect(claude.error).toBeDefined();
+    });
+
+    it("handles empty JSON object from CLI gracefully", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+        cliOutput: "{}",
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      expect(claude.plan).toBe("Pro");
+      expect(claude.windows).toHaveLength(0);
+    });
+
+    it("preserves plan detection from subscriptionType in credentials", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "team",
+        },
+        cliOutput: JSON.stringify({ five_hour: { utilization: 10 } }),
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.plan).toBe("Team");
+    });
+
+    it("preserves plan detection from rateLimitTier for Pro", async () => {
+      setupClaudeMocks({
+        keychainContent: {
+          claudeAiOauth: {
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+            rateLimitTier: "default_claude_pro_5x",
+          },
+        },
+        cliOutput: JSON.stringify({ five_hour: { utilization: 10 } }),
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.plan).toBe("Pro");
     });
   });
 
@@ -1389,9 +1107,9 @@ describe("usage", () => {
   });
 
   describe("error handling", () => {
-    it("handles network errors gracefully", async () => {
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
+    it("handles Claude CLI errors gracefully", async () => {
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes("claude")) {
           return JSON.stringify({
             accessToken: "test-token",
             scopes: ["user:profile"],
@@ -1400,29 +1118,22 @@ describe("usage", () => {
         throw new Error("File not found");
       });
 
-      mockRequest.mockImplementation(() => {
-        const mockReq = {
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "error") {
-              handler(new Error("Network error"));
-            }
-          }),
-          write: vi.fn(),
-          end: vi.fn(),
-        };
-        return mockReq;
+      mockExecFileSync.mockImplementation((cmd: string) => {
+        if (cmd === "security") throw new Error("Keychain item not found");
+        if (cmd === "claude") throw new Error("CLI error: something went wrong");
+        throw new Error("Unknown command");
       });
 
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
       expect(claude.status).toBe("error");
-      expect(claude.error).toContain("Network error");
+      expect(claude.error).toContain("something went wrong");
     });
 
-    it("handles timeout errors gracefully", async () => {
-      mockReadFileSync.mockImplementation((path: string) => {
-        if (path.includes("claude")) {
+    it("handles Claude CLI ETIMEDOUT error", async () => {
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes("claude")) {
           return JSON.stringify({
             accessToken: "test-token",
             scopes: ["user:profile"],
@@ -1431,24 +1142,18 @@ describe("usage", () => {
         throw new Error("File not found");
       });
 
-      mockRequest.mockImplementation(() => {
-        const mockReq = {
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "timeout") {
-              handler();
-            }
-          }),
-          write: vi.fn(),
-          end: vi.fn(),
-          destroy: vi.fn(),
-        };
-        return mockReq;
+      const timeoutError = new Error("connect ETIMEDOUT") as any;
+      mockExecFileSync.mockImplementation((cmd: string) => {
+        if (cmd === "security") throw new Error("Keychain item not found");
+        if (cmd === "claude") throw timeoutError;
+        throw new Error("Unknown command");
       });
 
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
       expect(claude.status).toBe("error");
+      expect(claude.error).toContain("timed out");
     });
   });
 
