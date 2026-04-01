@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
 import type { Task, TaskCreateInput } from "@fusion/core";
 import type { ModelInfo, RefinementType } from "../api";
@@ -648,18 +649,23 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         </div>
       )}
 
-      <ModelSelectionModal
-        isOpen={isModelModalOpen}
-        onClose={() => setIsModelModalOpen(false)}
-        models={loadedModels}
-        executorValue={executorSelectionValue}
-        validatorValue={validatorSelectionValue}
-        onExecutorChange={handleExecutorChange}
-        onValidatorChange={handleValidatorChange}
-        modelsLoading={modelsLoading}
-        modelsError={modelsError}
-        onRetry={loadModels}
-      />
+      {typeof document !== "undefined"
+        ? createPortal(
+            <ModelSelectionModal
+              isOpen={isModelModalOpen}
+              onClose={() => setIsModelModalOpen(false)}
+              models={loadedModels}
+              executorValue={executorSelectionValue}
+              validatorValue={validatorSelectionValue}
+              onExecutorChange={handleExecutorChange}
+              onValidatorChange={handleValidatorChange}
+              modelsLoading={modelsLoading}
+              modelsError={modelsError}
+              onRetry={loadModels}
+            />,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

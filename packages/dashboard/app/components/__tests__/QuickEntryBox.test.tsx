@@ -560,7 +560,7 @@ describe("QuickEntryBox", () => {
 
     it("opens model modal when clicking models button", () => {
 
-      renderQuickEntryBox();
+      const { container } = renderQuickEntryBox();
 
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
@@ -573,8 +573,11 @@ describe("QuickEntryBox", () => {
       // Click the models button
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
-      // Modal should now be visible
-      expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+      // Modal should now be visible via portal outside the component container
+      const modal = screen.getByTestId("model-selection-modal");
+      expect(modal).toBeTruthy();
+      expect(container.contains(modal)).toBe(false);
+      expect(document.body.contains(modal)).toBe(true);
     });
 
     it("modal receives correct props (models, loading state, etc.)", () => {
