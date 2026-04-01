@@ -1,15 +1,14 @@
 {
   "id": "KB-661",
   "description": "Pull latest changes them push to gsxdsm remote",
-  "column": "in-review",
+  "column": "done",
   "size": "S",
   "reviewLevel": 0,
   "currentStep": 3,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/hazy-tiger",
   "summary": "Successfully synchronized the repository with upstream. Fetched from dustinbyrne/kb, merged the thinkingLevel feature commit, resolved a merge conflict in types.ts (preserved local summarize field), and pushed 117 commits to gsxdsm/kb origin. Both main branches are now in sync at commit c2c830da.",
   "createdAt": "2026-04-01T02:43:13.268Z",
-  "updatedAt": "2026-04-01T05:45:36.810Z",
-  "columnMovedAt": "2026-04-01T05:45:36.810Z",
+  "updatedAt": "2026-04-01T05:46:17.400Z",
+  "columnMovedAt": "2026-04-01T05:46:17.400Z",
   "dependencies": [],
   "steps": [
     {

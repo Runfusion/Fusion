@@ -4,20 +4,20 @@
   "column": "in-progress",
   "size": "M",
   "reviewLevel": 2,
-  "currentStep": 0,
+  "currentStep": 1,
   "worktree": "/Users/eclipxe/Projects/kb/.worktrees/noble-badger",
   "createdAt": "2026-03-31T23:26:05.506Z",
-  "updatedAt": "2026-04-01T05:46:10.152Z",
+  "updatedAt": "2026-04-01T05:46:36.532Z",
   "columnMovedAt": "2026-04-01T05:46:07.886Z",
   "dependencies": [],
   "steps": [
     {
       "name": "Core Types and Store Updates",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "name": "Capture Modified Files in Executor",
-      "status": "pending"
+      "status": "in-progress"
     },
     {
       "name": "API Endpoint for Task Diffs",
@@ -69,6 +69,28 @@
     {
       "timestamp": "2026-04-01T05:46:10.152Z",
       "action": "Step 0 (Core Types and Store Updates) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T05:46:18.436Z",
+      "action": "Step 0 (Core Types and Store Updates) → done"
+    },
+    {
+      "timestamp": "2026-04-01T05:46:18.437Z",
+      "action": "Completed Step 0 (Preflight). Read all context files: types.ts, store.ts, executor.ts, routes.ts, TaskDetailModal.tsx, api.ts. Understood the Task type, store operations, executor flow, and dashboard UI structure.",
+      "outcome": "Ready to implement Step 1"
+    },
+    {
+      "timestamp": "2026-04-01T05:46:21.352Z",
+      "action": "plan review requested for Step 1 (Core Types and Store Updates)"
+    },
+    {
+      "timestamp": "2026-04-01T05:46:33.573Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the minimal changes needed to add the `modifiedFiles` field to the core data model. It follows the established patterns in the codebase for JSON array columns (like `dependencies` and `enabledWorkflowSteps`). The step is appropriately scoped and will achieve its stated outcomes."
+    },
+    {
+      "timestamp": "2026-04-01T05:46:36.532Z",
+      "action": "Step 1 (Capture Modified Files in Executor) → in-progress"
     }
   ]
 }

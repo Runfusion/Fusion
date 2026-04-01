@@ -1,0 +1,17 @@
+{
+  "id": "FN-663",
+  "description": "Ntfy notifications should link to the",
+  "column": "triage",
+  "dependencies": [],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-04-01T05:46:40.436Z",
+      "action": "Task created"
+    }
+  ],
+  "columnMovedAt": "2026-04-01T05:46:40.436Z",
+  "createdAt": "2026-04-01T05:46:40.436Z",
+  "updatedAt": "2026-04-01T05:46:40.436Z"
+}

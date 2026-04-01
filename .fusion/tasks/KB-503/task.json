@@ -4,10 +4,10 @@
   "column": "in-progress",
   "size": "M",
   "reviewLevel": 2,
-  "currentStep": 2,
+  "currentStep": 4,
   "worktree": "/Users/eclipxe/Projects/kb/.worktrees/merry-otter",
   "createdAt": "2026-03-31T21:01:18.283Z",
-  "updatedAt": "2026-04-01T05:43:38.745Z",
+  "updatedAt": "2026-04-01T05:46:18.909Z",
   "columnMovedAt": "2026-04-01T03:17:36.670Z",
   "dependencies": [
     "KB-501"
@@ -23,11 +23,11 @@
     },
     {
       "name": "Project Subcommand Implementation",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "name": "CLI Argument Parsing Updates",
-      "status": "pending"
+      "status": "done"
     },
     {
       "name": "Add --project Flag to Task Commands",
@@ -210,6 +210,32 @@
       "timestamp": "2026-04-01T05:43:38.745Z",
       "action": "code review Step 2: REVISE",
       "outcome": "The project command implementations are well-structured and follow the existing CLI patterns. However, there's a critical test gap: the tests expect thrown errors but the implementation calls `process.exit(1)` which terminates rather than throws. This will cause tests to fail. Additionally, there's code duplication for `getDefaultProject` that should be cleaned up."
+    },
+    {
+      "timestamp": "2026-04-01T05:44:00.692Z",
+      "action": "code review requested for Step 2 (Project Subcommand Implementation)"
+    },
+    {
+      "timestamp": "2026-04-01T05:44:49.695Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation of Step 2 is solid and follows the task specification closely. All 6 required project subcommands are implemented (`list`, `add`, `remove`, `show`, `set-default`, `detect`), along with the project context utilities for resolution and store management. The code properly integrates with the CentralCore API from KB-500 and follows existing CLI patterns."
+    },
+    {
+      "timestamp": "2026-04-01T05:44:51.037Z",
+      "action": "Step 2 (Project Subcommand Implementation) → done"
+    },
+    {
+      "timestamp": "2026-04-01T05:44:55.092Z",
+      "action": "plan review requested for Step 3 (CLI Argument Parsing Updates)"
+    },
+    {
+      "timestamp": "2026-04-01T05:45:19.188Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and aligns with the existing codebase patterns. The dependencies (Step 1's `project-context.ts` and Step 2's `project.ts`) are already implemented with full test coverage. The plan correctly identifies the needed changes to `bin.ts` for argument parsing and the project subcommand routing."
+    },
+    {
+      "timestamp": "2026-04-01T05:46:18.909Z",
+      "action": "Step 3 (CLI Argument Parsing Updates) → done"
     }
   ]
 }

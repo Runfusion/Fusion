@@ -1,17 +1,33 @@
 {
   "id": "KB-656",
   "description": "Don't auto expand the quick add view in list view",
-  "column": "todo",
-  "status": "queued",
+  "column": "in-progress",
   "size": "S",
   "reviewLevel": 1,
   "currentStep": 0,
-  "blockedBy": "KB-655",
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/sandy-orbit",
   "createdAt": "2026-04-01T02:38:16.858Z",
-  "updatedAt": "2026-04-01T05:46:08.129Z",
-  "columnMovedAt": "2026-04-01T02:45:53.690Z",
+  "updatedAt": "2026-04-01T05:46:38.103Z",
+  "columnMovedAt": "2026-04-01T05:46:37.896Z",
   "dependencies": [],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Add autoExpand Prop to QuickEntryBox",
+      "status": "pending"
+    },
+    {
+      "name": "Update ListView to Disable Auto-Expand",
+      "status": "pending"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
   "log": [
     {
       "timestamp": "2026-04-01T02:38:16.858Z",
@@ -25,6 +41,14 @@
       "timestamp": "2026-04-01T02:45:52.170Z",
       "action": "Spec review: APPROVE",
       "outcome": "The specification is well-crafted and technically accurate. It correctly identifies the minimal change needed—adding an `autoExpand` prop to QuickEntryBox with default `true` for backward compatibility, passing `autoExpand={false}` in ListView, and leaving Column.tsx unchanged. File references, function names, and testing requirements are all correct."
+    },
+    {
+      "timestamp": "2026-04-01T05:46:38.101Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sandy-orbit"
+    },
+    {
+      "timestamp": "2026-04-01T05:46:38.103Z",
+      "action": "Step 0 (Add autoExpand Prop to QuickEntryBox) → pending"
     }
   ]
 }

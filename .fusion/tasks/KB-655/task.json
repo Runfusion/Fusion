@@ -1,15 +1,14 @@
 {
   "id": "KB-655",
   "description": "Hide done by default on list view",
-  "column": "in-review",
+  "column": "done",
   "size": "S",
   "reviewLevel": 0,
   "currentStep": 4,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/solar-breeze",
   "summary": "Changed the default value of `hideDoneTasks` state in ListView component from `false` to `true`. Done and archived tasks are now hidden by default when users view the list view for the first time. Updated all 98 tests in ListView.test.tsx to reflect the new default behavior, including adding localStorage.clear() to test beforeEach hooks to ensure consistent test isolation.",
   "createdAt": "2026-04-01T02:38:03.605Z",
-  "updatedAt": "2026-04-01T05:45:44.996Z",
-  "columnMovedAt": "2026-04-01T05:45:44.996Z",
+  "updatedAt": "2026-04-01T05:46:32.421Z",
+  "columnMovedAt": "2026-04-01T05:46:32.421Z",
   "dependencies": [],
   "steps": [
     {
