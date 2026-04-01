@@ -73,3 +73,6 @@ export const ipcLog = createLogger("ipc");
 
 /** Logger for the project manager subsystem. */
 export const projectManagerLog = createLogger("project-manager");
+
+/** Logger for the hybrid executor subsystem. */
+export const hybridExecutorLog = createLogger("hybrid-executor");

@@ -1,0 +1,30 @@
+{
+  "id": "FN-669",
+  "description": "Support deep link to view task modal from ntfy notification with a setting for the host name to use",
+  "column": "todo",
+  "status": "queued",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-622",
+  "createdAt": "2026-04-01T06:19:48.553Z",
+  "updatedAt": "2026-04-01T06:42:55.408Z",
+  "columnMovedAt": "2026-04-01T06:20:51.769Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T06:19:48.553Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T06:20:35.369Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T06:20:49.134Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. All referenced files exist at the specified paths with the expected interfaces and functions. The mission is clear, steps have verifiable outcomes, and the testing strategy is appropriate. Minor naming discrepancy in the API client (Step 4 references `fetchTask` but the actual function is `fetchTaskDetail`) should be corrected during implementation."
+    }
+  ]
+}

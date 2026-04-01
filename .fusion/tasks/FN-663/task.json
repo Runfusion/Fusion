@@ -1,17 +1,30 @@
 {
   "id": "FN-663",
-  "description": "Ntfy notifications should link to the",
-  "column": "triage",
+  "description": "Ntfy notifications should link to the board. Let users specify a base url. Let links deep link and show a task modal",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "blockedBy": "KB-622",
+  "createdAt": "2026-04-01T05:46:40.436Z",
+  "updatedAt": "2026-04-01T05:59:08.261Z",
+  "columnMovedAt": "2026-04-01T05:48:02.618Z",
   "dependencies": [],
   "steps": [],
-  "currentStep": 0,
   "log": [
     {
       "timestamp": "2026-04-01T05:46:40.436Z",
       "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T05:47:44.533Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T05:48:00.578Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, focused specification for a small feature addition. The spec correctly identifies all affected files, follows existing patterns in the codebase, and includes concrete, verifiable outcomes for each step. Testing requirements are explicit with specific test cases. The file scope and implementation approach are accurate based on my verification of the source files."
     }
-  ],
-  "columnMovedAt": "2026-04-01T05:46:40.436Z",
-  "createdAt": "2026-04-01T05:46:40.436Z",
-  "updatedAt": "2026-04-01T05:46:40.436Z"
+  ]
 }

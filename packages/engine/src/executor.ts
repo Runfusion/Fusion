@@ -221,12 +221,12 @@ export class TaskExecutor {
       // Handle steering comments - inject new ones into the running session
       // Only process if session is active (activeSessions check is sufficient
       // since entries are only added when a task is in-progress)
-      if (this.activeSessions.has(task.id) && task.steeringComments) {
+      if (this.activeSessions.has(task.id) && task.comments) {
         const activeSession = this.activeSessions.get(task.id)!;
         const { session, seenSteeringIds } = activeSession;
 
         // Find new steering comments that haven't been seen yet
-        const newComments = task.steeringComments.filter(c => !seenSteeringIds.has(c.id));
+        const newComments = task.comments.filter(c => !seenSteeringIds.has(c.id));
 
         if (newComments.length > 0) {
           for (const comment of newComments) {
@@ -1822,15 +1822,15 @@ git log --oneline
     commandsSection = "\n" + lines.join("\n") + "\n";
   }
 
-  // Build steering comments section (last 10 comments only to avoid context bloat)
-  let steeringSection = "";
-  if (task.steeringComments && task.steeringComments.length > 0) {
-    const recentComments = [...task.steeringComments].slice(-10);
+  // Build comments section (last 10 comments only to avoid context bloat)
+  let commentsSection = "";
+  if (task.comments && task.comments.length > 0) {
+    const recentComments = [...task.comments].slice(-10);
     const lines = [
       "",
-      "## Steering Comments",
+      "## Comments",
       "",
-      "The following steering comments were added by the user during execution. Consider adjusting your approach or replanning remaining steps based on this feedback.",
+      "The following comments were added during execution. Consider adjusting your approach or replanning remaining steps based on this feedback.",
       "",
     ];
     for (const comment of recentComments) {
@@ -1839,7 +1839,7 @@ git log --oneline
       lines.push(`> ${comment.text}`);
       lines.push("");
     }
-    steeringSection = lines.join("\n");
+    commentsSection = lines.join("\n");
   }
 
   return `Execute this task.
@@ -1851,7 +1851,7 @@ ${task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}`
 ## PROMPT.md
 
 ${task.prompt}
-${attachmentsSection}${commandsSection}${progressSection}${steeringSection}
+${attachmentsSection}${commandsSection}${progressSection}${commentsSection}
 ## Review level: ${reviewLevel}
 
 ${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}

@@ -7,8 +7,8 @@
   "currentStep": 11,
   "summary": "Completed KB-618 Dashboard Multi-Project UX Steps 2-4 and added missing server-side routes:\n\n1. **ProjectCard Component** (Step 2): Created comprehensive project card with health metrics (active tasks, agents, completed count), status badges (active/paused/errored/initializing), relative timestamps, and action buttons (pause/resume/open/remove). Includes 22 passing tests.\n\n2. **ActivityFeed Component** (Step 3): Built unified activity feed with date-grouped entries, project badges, event type icons, relative time formatting, loading/error/empty states. Includes 13 passing tests.\n\n3. **SetupWizard Component** (Step 4): Implemented 5-step project creation wizard with directory selection, auto-suggested name, isolation mode options (in-process/child-process), validation, and summary. Includes 14 passing tests.\n\n4. **Server Routes** (missing from Step 1): Added 9 project management endpoints to routes.ts including GET/POST/DELETE /projects, /projects/:id/health, /projects/:id/pause|resume, /activity-feed, /global-concurrency, and /first-run-status.\n\nAll 49 component tests pass. Total: 5 commits, ~1,500 lines added across components, tests, styles, and server routes.",
   "createdAt": "2026-03-31T23:26:20.160Z",
-  "updatedAt": "2026-04-01T05:46:03.552Z",
-  "columnMovedAt": "2026-04-01T05:46:03.552Z",
+  "updatedAt": "2026-04-01T06:19:08.105Z",
+  "columnMovedAt": "2026-04-01T06:19:08.105Z",
   "dependencies": [
     "KB-616"
   ],

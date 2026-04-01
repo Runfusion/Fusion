@@ -1,21 +1,42 @@
 {
   "id": "KB-659",
   "description": "Add a toggle in the same selector as board and list view to view agent view",
-  "column": "todo",
-  "status": "queued",
+  "column": "done",
   "size": "S",
   "reviewLevel": 1,
-  "currentStep": 0,
-  "blockedBy": "KB-618",
+  "currentStep": 5,
+  "baseCommitSha": "6bdb75e316a603c36f54bfb866d5d02968d94123",
   "modelProvider": "anthropic",
   "modelId": "claude-sonnet-4-6",
+  "summary": "The agents view toggle was already fully implemented in commit 6bdb75e3. All changes are present: (1) App.tsx updated with \"agents\" in the view type union, AgentsView import, and conditional rendering; (2) Header.tsx updated with the Bot icon agents button in the view toggle; (3) New AgentsView.tsx component created with full agent list/board functionality; (4) Header.test.tsx updated with agents view button tests; (5) New AgentsView.test.tsx with 26 tests covering rendering, view toggle, filtering, create, state changes, and delete. All 83 tests pass.",
   "createdAt": "2026-04-01T02:40:10.133Z",
-  "updatedAt": "2026-04-01T05:45:52.892Z",
-  "columnMovedAt": "2026-04-01T02:47:33.715Z",
+  "updatedAt": "2026-04-01T06:25:35.279Z",
+  "columnMovedAt": "2026-04-01T06:25:35.279Z",
   "dependencies": [
     "KB-646"
   ],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Extend View Type and Header Toggle",
+      "status": "done"
+    },
+    {
+      "name": "Create AgentsView Component",
+      "status": "done"
+    },
+    {
+      "name": "Integrate AgentsView in App.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
   "log": [
     {
       "timestamp": "2026-04-01T02:40:10.133Z",
@@ -29,6 +50,54 @@
       "timestamp": "2026-04-01T02:47:31.876Z",
       "action": "Spec review: APPROVE",
       "outcome": "This is a well-crafted specification for a small UI enhancement. The mission is clear, steps are concrete and verifiable, file references match real code, and testing requirements are appropriately rigorous. The spec correctly identifies that this is a view-layer refactoring that extracts existing AgentListModal patterns into a first-class inline view alongside board and list views."
+    },
+    {
+      "timestamp": "2026-04-01T06:21:20.881Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/plush-olive"
+    },
+    {
+      "timestamp": "2026-04-01T06:21:20.955Z",
+      "action": "Step 0 (Extend View Type and Header Toggle) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T06:21:45.040Z",
+      "action": "Step 0 (Extend View Type and Header Toggle) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T06:22:01.525Z",
+      "action": "Preflight complete. All main files already exist and appear to be mostly implemented. App.tsx, Header.tsx, AgentsView.tsx all have the \"agents\" view support. Header.test.tsx already has tests for agents view toggle. Need to check if AgentsView.test.tsx exists and run tests to verify current state."
+    },
+    {
+      "timestamp": "2026-04-01T06:22:10.993Z",
+      "action": "Found that commit 6bdb75e3 already implemented this task. All components exist. Let me run the tests to verify everything passes."
+    },
+    {
+      "timestamp": "2026-04-01T06:24:23.965Z",
+      "action": "All tests pass (57 Header tests + 26 AgentsView tests = 83 total). Implementation is already committed in 6bdb75e3. The task is complete."
+    },
+    {
+      "timestamp": "2026-04-01T06:24:27.336Z",
+      "action": "Step 0 (Extend View Type and Header Toggle) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:24:30.000Z",
+      "action": "Step 1 (Create AgentsView Component) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:24:33.548Z",
+      "action": "Step 2 (Integrate AgentsView in App.tsx) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:24:37.389Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:24:39.698Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:24:44.883Z",
+      "action": "Task marked done by agent"
     }
   ]
 }

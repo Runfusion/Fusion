@@ -1,14 +1,15 @@
 {
   "id": "KB-662",
   "description": "When dashboard becomes visible refresh data",
-  "column": "in-progress",
+  "column": "done",
   "size": "S",
   "reviewLevel": 1,
-  "currentStep": 2,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/fresh-mesa",
+  "currentStep": 3,
+  "baseCommitSha": "4c0cee8c6c8326cee0748cc0ab7aa8ea2b035a10",
+  "summary": "The dashboard visibility change feature was already fully implemented in useTasks.ts with:\n\n1. **Implementation**: A useEffect hook that listens for `visibilitychange` events on document, debounces refetching (1 second minimum), and updates local state with normalized task data when the tab becomes visible.\n\n2. **Tests**: All 26 useTasks tests pass, including 4 visibility-specific tests covering:\n   - Refetch when visibility changes from hidden to visible\n   - No refetch when visibility changes to hidden  \n   - Debouncing of rapid visibility changes (minimum 1 second between fetches)\n   - Cleanup of the event listener on unmount\n\n3. **Fixes**: Resolved pre-existing merge conflicts in types.ts (summarize field) and SettingsModal.tsx (duplicate activeSectionScope declaration) to ensure clean build and tests.\n\nBuild passes and all relevant tests pass. The feature works as specified - dashboard automatically refreshes data when the tab becomes visible after being hidden.",
   "createdAt": "2026-04-01T05:35:18.262Z",
-  "updatedAt": "2026-04-01T05:46:39.760Z",
-  "columnMovedAt": "2026-04-01T05:45:52.895Z",
+  "updatedAt": "2026-04-01T06:32:12.122Z",
+  "columnMovedAt": "2026-04-01T06:32:12.122Z",
   "dependencies": [],
   "steps": [
     {
@@ -21,7 +22,7 @@
     },
     {
       "name": "Documentation & Delivery",
-      "status": "in-progress"
+      "status": "done"
     }
   ],
   "log": [
@@ -39,49 +40,45 @@
       "outcome": "The specification is well-crafted for a small, focused change. It correctly identifies the target files, describes concrete implementation steps with verifiable outcomes, and specifies appropriate testing requirements. The mission is clear, the file scope is accurate, and the sizing (S, Review Level 1) is appropriate for this low-blast-radius feature."
     },
     {
-      "timestamp": "2026-04-01T05:45:53.083Z",
-      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fresh-mesa"
+      "timestamp": "2026-04-01T06:24:35.728Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gilt-frost"
     },
     {
-      "timestamp": "2026-04-01T05:45:53.085Z",
+      "timestamp": "2026-04-01T06:24:35.770Z",
       "action": "Step 0 (Add Visibility Change Listener) → pending"
     },
     {
-      "timestamp": "2026-04-01T05:45:55.642Z",
+      "timestamp": "2026-04-01T06:24:44.812Z",
       "action": "Step 0 (Add Visibility Change Listener) → in-progress"
     },
     {
-      "timestamp": "2026-04-01T05:46:07.258Z",
+      "timestamp": "2026-04-01T06:31:25.770Z",
       "action": "Step 0 (Add Visibility Change Listener) → done"
     },
     {
-      "timestamp": "2026-04-01T05:46:07.259Z",
+      "timestamp": "2026-04-01T06:31:27.880Z",
       "action": "plan review requested for Step 1 (Add Visibility Change Listener)"
     },
     {
-      "timestamp": "2026-04-01T05:46:27.938Z",
+      "timestamp": "2026-04-01T06:31:47.206Z",
       "action": "plan review Step 1: APPROVE",
-      "outcome": "The plan for Step 1 is well-structured and will achieve its stated outcomes. It correctly identifies the key implementation points: adding a `useEffect` for the `visibilitychange` event, calling `api.fetchTasks()` on visibility restore, normalizing results, debouncing, and cleanup. The approach aligns with the existing patterns in `useTasks.ts`."
+      "outcome": "The step's checkboxes WILL achieve the stated outcomes. However, the worker should be aware that **the visibility change feature is already fully implemented and tested** in the codebase. The implementation exists at `packages/dashboard/app/hooks/useTasks.ts:34-66` and comprehensive tests exist at `packages/dashboard/app/hooks/__tests__/useTasks.test.ts:813-938`."
     },
     {
-      "timestamp": "2026-04-01T05:46:32.414Z",
-      "action": "Step 1 (Testing & Verification) → in-progress"
-    },
-    {
-      "timestamp": "2026-04-01T05:46:32.421Z",
-      "action": "Starting implementation of visibility change listener in useTasks.ts"
-    },
-    {
-      "timestamp": "2026-04-01T05:46:39.758Z",
+      "timestamp": "2026-04-01T06:31:48.132Z",
       "action": "Step 1 (Testing & Verification) → done"
     },
     {
-      "timestamp": "2026-04-01T05:46:39.759Z",
-      "action": "Step 2 (Documentation & Delivery) → in-progress"
+      "timestamp": "2026-04-01T06:31:49.713Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
     },
     {
-      "timestamp": "2026-04-01T05:46:39.760Z",
-      "action": "Step 1 complete. Starting Step 2 - adding tests for visibility change listener"
+      "timestamp": "2026-04-01T06:31:59.053Z",
+      "action": "Task marked done by agent"
     }
+  ],
+  "modifiedFiles": [
+    "packages/core/src/types.ts",
+    "packages/dashboard/app/components/SettingsModal.tsx"
   ]
 }

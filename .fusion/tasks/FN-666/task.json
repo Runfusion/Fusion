@@ -1,0 +1,133 @@
+{
+  "id": "FN-666",
+  "description": "I’m getting a rate limit error on the Claude usage tracker.",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 4,
+  "summary": "Successfully implemented retry logic with exponential backoff for the Claude usage tracker. Added `sleep()` helper, wrapped API request in retry loop with max 3 attempts, implemented exponential backoff delays (1s, 2s, 4s) for 429 errors only. Auth errors (401/403) and server errors (5xx) fail immediately without retry. Added 6 new unit tests covering retry success, max retry exhaustion, no-retry on auth/5xx errors, and exponential backoff verification. All 42 tests pass. Added comprehensive JSDoc documentation explaining the retry behavior and user-friendly error message \"Rate limited by Anthropic API — please try again in a few moments\".",
+  "createdAt": "2026-04-01T05:51:18.239Z",
+  "updatedAt": "2026-04-01T05:59:01.275Z",
+  "columnMovedAt": "2026-04-01T05:59:01.275Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Implement Retry Logic with Exponential Backoff",
+      "status": "done"
+    },
+    {
+      "name": "Add Unit Tests for Retry Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T05:51:18.239Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T05:52:27.846Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T05:52:41.040Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, accurate, and complete. The mission is clearly defined, steps have concrete verifiable outcomes, file scope references are accurate, and testing requirements demand real automated tests. The Size S and Review Level 1 (Plan Only) are appropriate for this localized retry logic fix."
+    },
+    {
+      "timestamp": "2026-04-01T05:55:53.205Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/plush-oak"
+    },
+    {
+      "timestamp": "2026-04-01T05:55:53.206Z",
+      "action": "Step 0 (Implement Retry Logic with Exponential Backoff) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T05:55:55.231Z",
+      "action": "Step 0 (Implement Retry Logic with Exponential Backoff) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T05:55:58.908Z",
+      "action": "Step 0 (Implement Retry Logic with Exponential Backoff) → done"
+    },
+    {
+      "timestamp": "2026-04-01T05:55:58.909Z",
+      "action": "Read usage.ts and usage.test.ts. Current fetchClaudeUsage() handles 429 by returning immediate error. Need to add retry logic with exponential backoff (1s, 2s, 4s) for max 3 attempts. Other errors (401, 403, 5xx) should fail immediately without retry.",
+      "outcome": "Ready to implement Step 1"
+    },
+    {
+      "timestamp": "2026-04-01T05:56:00.837Z",
+      "action": "Step 1 (Add Unit Tests for Retry Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T05:56:00.838Z",
+      "action": "plan review requested for Step 1 (Implement Retry Logic with Exponential Backoff)"
+    },
+    {
+      "timestamp": "2026-04-01T05:56:10.154Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-scoped and addresses the specific issue: the `fetchClaudeUsage()` function currently fails immediately on 429 responses without retrying. The plan correctly identifies the need for exponential backoff (1s, 2s, 4s) limited to 429 errors only, while preserving parallel execution across other providers. The approach aligns with the existing code structure where providers fetch independently via `Promise.allSettled()`."
+    },
+    {
+      "timestamp": "2026-04-01T05:56:29.991Z",
+      "action": "Step 1 (Add Unit Tests for Retry Behavior) → done"
+    },
+    {
+      "timestamp": "2026-04-01T05:56:29.992Z",
+      "action": "Implemented retry logic with exponential backoff in fetchClaudeUsage(). Added sleep() helper, MAX_RETRIES=3, BASE_DELAY_MS=1000. On 429: waits 1s, 2s, 4s then retries. On other errors: fails immediately. User-friendly error message on max retries.",
+      "outcome": "Step 1 complete, tests passing"
+    },
+    {
+      "timestamp": "2026-04-01T05:56:31.673Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T05:56:31.674Z",
+      "action": "plan review requested for Step 2 (Add Unit Tests for Retry Behavior)"
+    },
+    {
+      "timestamp": "2026-04-01T05:56:41.526Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan's test coverage is comprehensive and aligns well with the already-implemented retry logic in `fetchClaudeUsage()`. The test cases cover all critical retry scenarios: exponential backoff timing, success after retry, max retry exhaustion, and proper fail-fast behavior for non-429 errors. The existing test infrastructure in `usage.test.ts` provides a solid foundation with its `mockRequest` pattern."
+    },
+    {
+      "timestamp": "2026-04-01T05:57:56.023Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T05:57:56.026Z",
+      "action": "Added 6 new tests for Claude usage retry behavior: succeeds on second attempt, fails after max retries, no retry on 401/403/5xx, and exponential backoff verification. All 42 tests pass.",
+      "outcome": "Step 2 complete"
+    },
+    {
+      "timestamp": "2026-04-01T05:57:59.061Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T05:58:25.190Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T05:58:25.193Z",
+      "action": "Step 3 verification complete. All 42 usage tests pass. No new TypeScript errors introduced in usage.ts. Pre-existing build errors in mission-routes.ts are unrelated to this task.",
+      "outcome": "Step 3 complete"
+    },
+    {
+      "timestamp": "2026-04-01T05:58:37.053Z",
+      "action": "Step 4 complete. Added comprehensive JSDoc comment explaining the retry behavior. Error message is user-friendly: \"Rate limited by Anthropic API — please try again in a few moments\". All 42 tests pass.",
+      "outcome": "Documentation updated"
+    },
+    {
+      "timestamp": "2026-04-01T05:58:39.787Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

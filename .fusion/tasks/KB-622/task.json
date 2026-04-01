@@ -1,17 +1,50 @@
 {
   "id": "KB-622",
   "description": "Merge steering and comments into a single field just called comments. Agents and humans can post comments and these should be injected into the context",
-  "column": "todo",
-  "status": "queued",
+  "column": "in-progress",
   "size": "M",
   "reviewLevel": 2,
-  "currentStep": 0,
-  "blockedBy": "KB-617",
+  "currentStep": 2,
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/pale-lark",
+  "baseCommitSha": "1098a1e4e8fae480c794999d60d9988e7a0d6267",
   "createdAt": "2026-03-31T23:28:36.515Z",
-  "updatedAt": "2026-04-01T05:46:37.889Z",
-  "columnMovedAt": "2026-03-31T23:35:26.160Z",
+  "updatedAt": "2026-04-01T06:42:59.217Z",
+  "columnMovedAt": "2026-04-01T06:31:22.155Z",
   "dependencies": [],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Type System Updates",
+      "status": "done"
+    },
+    {
+      "name": "Database Migration",
+      "status": "in-progress"
+    },
+    {
+      "name": "Store Layer Updates",
+      "status": "in-progress"
+    },
+    {
+      "name": "Executor Updates",
+      "status": "pending"
+    },
+    {
+      "name": "Dashboard API Updates",
+      "status": "pending"
+    },
+    {
+      "name": "Dashboard UI Updates",
+      "status": "pending"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
   "log": [
     {
       "timestamp": "2026-03-31T23:28:36.515Z",
@@ -25,6 +58,49 @@
       "timestamp": "2026-03-31T23:35:23.200Z",
       "action": "Spec review: APPROVE",
       "outcome": "This is a well-structured, comprehensive specification for merging two comment systems. The spec correctly identifies the affected interfaces (`SteeringComment` vs `TaskComment`), database schema changes needed, store method consolidation, execution context injection, and UI/API updates. The migration strategy is sound and the file scope is accurate."
+    },
+    {
+      "timestamp": "2026-04-01T06:31:23.042Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pale-lark"
+    },
+    {
+      "timestamp": "2026-04-01T06:31:23.062Z",
+      "action": "Step 0 (Type System Updates) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T06:31:25.848Z",
+      "action": "Step 0 (Type System Updates) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T06:31:37.891Z",
+      "action": "Step 0 (Type System Updates) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:31:37.892Z",
+      "action": "Step 1 (Database Migration) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T06:31:57.159Z",
+      "action": "plan review requested for Step 1 (Type System Updates)"
+    },
+    {
+      "timestamp": "2026-04-01T06:32:31.925Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the goal (unifying steering and regular comments), but the specific checkboxes describe a fictional state where `SteeringComment` interface and `steeringComments` Task field exist as formal types. In reality, these are runtime-only fields added by store.ts. The work itself is correct—just the checkbox descriptions need alignment with actual current state."
+    },
+    {
+      "timestamp": "2026-04-01T06:35:12.018Z",
+      "action": "Completed core changes for unifying steeringComments into comments field",
+      "outcome": "Updated types, database schema, migration logic, store methods, executor, and dashboard UI"
+    },
+    {
+      "timestamp": "2026-04-01T06:42:59.215Z",
+      "action": "Step 2 (Store Layer Updates) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T06:42:59.217Z",
+      "action": "Build passes after fixing pre-existing test file syntax errors and adding missing hybridExecutorLog export",
+      "outcome": "Tests have some failures unrelated to comment changes. Need to re-apply core package changes that were lost."
     }
   ]
 }

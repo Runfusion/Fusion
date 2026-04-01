@@ -1117,10 +1117,10 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     mockedExecSync.mockImplementation((cmd: any) => {
       if (typeof cmd === "string" && cmd.includes("git worktree add") && cmd.includes("-b")) {
         const err: any = new Error(
-          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}',
+          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}'`
         );
         err.stderr = Buffer.from(
-          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}',
+          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}'`
         );
         throw err;
       }
@@ -1615,9 +1615,9 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("## Project Commands");
   });
 
-  it("includes Steering Comments section when steeringComments has entries", () => {
+  it("includes Comments section when steeringComments has entries", () => {
     const task = createMockTaskDetail({
-      steeringComments: [
+      comments: [
         {
           id: "1",
           text: "Please handle the edge case",
@@ -1628,16 +1628,16 @@ describe("buildExecutionPrompt", () => {
     });
     const result = buildExecutionPrompt(task);
 
-    expect(result).toContain("## Steering Comments");
+    expect(result).toContain("## Comments");
     expect(result).toContain("**user**");
     expect(result).toContain("> Please handle the edge case");
-    expect(result).toContain("The following steering comments were added by the user");
+    expect(result).toContain("The following comments were added by the user");
   });
 
-  it("formats multiple steering comments correctly", () => {
+  it("formats multiple comments correctly", () => {
     const now = new Date();
     const task = createMockTaskDetail({
-      steeringComments: [
+      comments: [
         {
           id: "1",
           text: "First comment",
@@ -1660,21 +1660,21 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("> Second comment");
   });
 
-  it("omits Steering Comments section when steeringComments is empty", () => {
-    const task = createMockTaskDetail({ steeringComments: [] });
+  it("omits Comments section when steeringComments is empty", () => {
+    const task = createMockTaskDetail({ comments: [] });
     const result = buildExecutionPrompt(task);
 
-    expect(result).not.toContain("## Steering Comments");
+    expect(result).not.toContain("## Comments");
   });
 
-  it("omits Steering Comments section when steeringComments is undefined", () => {
+  it("omits Comments section when steeringComments is undefined", () => {
     const task = createMockTaskDetail();
     const result = buildExecutionPrompt(task);
 
-    expect(result).not.toContain("## Steering Comments");
+    expect(result).not.toContain("## Comments");
   });
 
-  it("includes only the 10 most recent steering comments", () => {
+  it("includes only the 10 most recent comments", () => {
     const steeringComments = Array.from({ length: 15 }, (_, i) => ({
       id: `${i}`,
       text: `Comment ${i}`,
@@ -1692,12 +1692,12 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("> Comment 4");
   });
 
-  it("end-to-end: steering comments are fully injected into execution prompt with correct format", () => {
+  it("end-to-end: comments are fully injected into execution prompt with correct format", () => {
     const now = new Date();
     const task = createMockTaskDetail({
       id: "FN-123",
       title: "Verify Steering Feature",
-      steeringComments: [
+      comments: [
         {
           id: "sc-001",
           text: "Please ensure all edge cases are handled in the validation logic",
@@ -1722,10 +1722,10 @@ describe("buildExecutionPrompt", () => {
     const result = buildExecutionPrompt(task, "/project", { testCommand: "pnpm test" } as any);
 
     // Verify section header exists
-    expect(result).toContain("## Steering Comments");
+    expect(result).toContain("## Comments");
 
     // Verify explanatory header text
-    expect(result).toContain("The following steering comments were added by the user during execution");
+    expect(result).toContain("The following comments were added by the user during execution");
     expect(result).toContain("Consider adjusting your approach or replanning remaining steps based on this feedback");
 
     // Verify all three comments appear with correct author badges
@@ -1742,7 +1742,7 @@ describe("buildExecutionPrompt", () => {
     expect(result).toMatch(/\*\*user\*\* — \d+m? ago/);
 
     // Verify the section appears in the expected location (after progress section, before review level)
-    const steeringSectionIndex = result.indexOf("## Steering Comments");
+    const steeringSectionIndex = result.indexOf("## Comments");
     const reviewLevelIndex = result.indexOf("## Review level");
     expect(steeringSectionIndex).toBeGreaterThan(0);
     expect(reviewLevelIndex).toBeGreaterThan(steeringSectionIndex);
@@ -4127,7 +4127,7 @@ describe("Workflow Steps Execution", () => {
   });
 });
 
-describe("Real-time steering injection", () => {
+describe("Real-time comment injection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -4165,7 +4165,7 @@ describe("Real-time steering injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      steeringComments: [existingComment],
+      comments: [existingComment],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -4177,7 +4177,7 @@ describe("Real-time steering injection", () => {
     expect(steerFn).not.toHaveBeenCalled();
   });
 
-  it("injects new steering comments via session.steer() on task:updated", async () => {
+  it("injects new comments via session.steer() on task:updated", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
     let promptResolve: () => void;
@@ -4213,7 +4213,7 @@ describe("Real-time steering injection", () => {
     // Wait for agent to start
     await new Promise(resolve => setTimeout(resolve, 20));
 
-    // Simulate adding a steering comment mid-execution
+    // Simulate adding a comment mid-execution
     const newComment = {
       id: "9876543210-def456",
       text: "Please use a different approach",
@@ -4230,7 +4230,7 @@ describe("Real-time steering injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      steeringComments: [newComment],
+      comments: [newComment],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -4240,13 +4240,13 @@ describe("Real-time steering injection", () => {
 
     // Verify steer was called with the formatted message
     expect(steerFn).toHaveBeenCalledOnce();
-    expect(steerFn.mock.calls[0][0]).toContain("📣 **New steering feedback**");
+    expect(steerFn.mock.calls[0][0]).toContain("📣 **New feedback**");
     expect(steerFn.mock.calls[0][0]).toContain("Please use a different approach");
 
     // Verify log entry was created
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      expect.stringContaining("Steering comment received mid-execution"),
+      expect.stringContaining("Comment received mid-execution"),
       "by user"
     );
 
@@ -4255,7 +4255,7 @@ describe("Real-time steering injection", () => {
     await executePromise;
   });
 
-  it("does not re-inject already seen steering comments", async () => {
+  it("does not re-inject already seen comments", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
 
@@ -4280,7 +4280,7 @@ describe("Real-time steering injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      steeringComments: [{
+      comments: [{
         id: commentId,
         text: "Original comment",
         createdAt: new Date().toISOString(),
@@ -4303,7 +4303,7 @@ describe("Real-time steering injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      steeringComments: [{
+      comments: [{
         id: commentId,
         text: "Original comment",
         createdAt: new Date().toISOString(),
@@ -4345,7 +4345,7 @@ describe("Real-time steering injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      steeringComments: [],
+      comments: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -4363,7 +4363,7 @@ describe("Real-time steering injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      steeringComments: [{
+      comments: [{
         id: commentId,
         text: "Comment that fails",
         createdAt: new Date().toISOString(),
@@ -4389,7 +4389,7 @@ describe("Real-time steering injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      steeringComments: [{
+      comments: [{
         id: commentId,
         text: "Comment that fails",
         createdAt: new Date().toISOString(),
@@ -4408,7 +4408,7 @@ describe("Real-time steering injection", () => {
     await executePromise;
   });
 
-  it("does not inject steering comments for tasks not in activeSessions", async () => {
+  it("does not inject comments for tasks not in activeSessions", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
 
@@ -4432,7 +4432,7 @@ describe("Real-time steering injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      steeringComments: [{
+      comments: [{
         id: "3333333333-ccc333",
         text: "Should not be injected",
         createdAt: new Date().toISOString(),
@@ -4447,13 +4447,13 @@ describe("Real-time steering injection", () => {
     expect(steerFn).not.toHaveBeenCalled();
   });
 
-  it("handles multiple new steering comments in a single task:updated", async () => {
+  it("handles multiple new comments in a single task:updated", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
     let resolvePrompt: () => void;
     const promptPromise = new Promise<void>(resolve => { resolvePrompt = resolve; });
 
-    // Set up getTask to return the task with existing steering comment
+    // Set up getTask to return the task with existing comment
     store.getTask.mockResolvedValue({
       id: "FN-001",
       title: "Test",
@@ -4464,7 +4464,7 @@ describe("Real-time steering injection", () => {
       currentStep: 0,
       log: [],
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
-      steeringComments: [{
+      comments: [{
         id: "existing-comment",
         text: "Original",
         createdAt: new Date().toISOString(),
@@ -4511,7 +4511,7 @@ describe("Real-time steering injection", () => {
       steps: [],
       currentStep: 0,
       log: [],
-      steeringComments: [
+      comments: [
         {
           id: "existing-comment",
           text: "Original",

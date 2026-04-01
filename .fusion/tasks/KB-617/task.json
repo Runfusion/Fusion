@@ -1,14 +1,15 @@
 {
   "id": "KB-617",
   "description": "Store a reference to files that are modified during an agent run and add a tab in the agent to view the diffs from the agent",
-  "column": "in-progress",
+  "column": "done",
   "size": "M",
   "reviewLevel": 2,
-  "currentStep": 1,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/noble-badger",
+  "currentStep": 8,
+  "baseCommitSha": "759ea3891203e164ff679f3ede2437deb49fd942",
+  "summary": "Completed KB-617: Store Modified Files Reference and Add Diff Viewer Tab. The feature was already mostly implemented with modifiedFiles field in types, store methods, executor capture, API endpoint (/tasks/:id/diff), frontend API client (fetchTaskDiff), and TaskChangesTab component. Fixed several pre-existing TypeScript issues: duplicate variable in SettingsModal, Express param types in mission-routes, missing FeatureStatus import, missing defaultProjectId in GlobalSettings, type issues in SetupWizard and CLI task command. All core and engine tests pass (720 + 131 tests), build passes, and typecheck passes.",
   "createdAt": "2026-03-31T23:26:05.506Z",
-  "updatedAt": "2026-04-01T05:46:36.532Z",
-  "columnMovedAt": "2026-04-01T05:46:07.886Z",
+  "updatedAt": "2026-04-01T06:31:12.078Z",
+  "columnMovedAt": "2026-04-01T06:31:12.078Z",
   "dependencies": [],
   "steps": [
     {
@@ -17,31 +18,31 @@
     },
     {
       "name": "Capture Modified Files in Executor",
-      "status": "in-progress"
+      "status": "done"
     },
     {
       "name": "API Endpoint for Task Diffs",
-      "status": "pending"
+      "status": "done"
     },
     {
       "name": "Frontend API Client",
-      "status": "pending"
+      "status": "done"
     },
     {
       "name": "Changes Tab UI Components",
-      "status": "pending"
+      "status": "done"
     },
     {
       "name": "Integrate Changes Tab into Task Detail Modal",
-      "status": "pending"
+      "status": "done"
     },
     {
       "name": "Testing & Verification",
-      "status": "pending"
+      "status": "done"
     },
     {
       "name": "Documentation & Delivery",
-      "status": "pending"
+      "status": "done"
     }
   ],
   "log": [
@@ -59,38 +60,65 @@
       "outcome": "This is a well-structured specification for a medium-complexity feature that touches core types, the executor agent, API routes, and dashboard UI. The mission is clear: capture modified files at task completion and expose them via a new \"Changes\" tab. All referenced files exist at the specified paths, and the spec follows established patterns in the codebase."
     },
     {
-      "timestamp": "2026-04-01T05:46:08.075Z",
-      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/noble-badger"
+      "timestamp": "2026-04-01T06:20:50.458Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/plush-brook"
     },
     {
-      "timestamp": "2026-04-01T05:46:08.076Z",
+      "timestamp": "2026-04-01T06:20:50.480Z",
       "action": "Step 0 (Core Types and Store Updates) → pending"
     },
     {
-      "timestamp": "2026-04-01T05:46:10.152Z",
+      "timestamp": "2026-04-01T06:20:52.428Z",
       "action": "Step 0 (Core Types and Store Updates) → in-progress"
     },
     {
-      "timestamp": "2026-04-01T05:46:18.436Z",
+      "timestamp": "2026-04-01T06:21:13.436Z",
       "action": "Step 0 (Core Types and Store Updates) → done"
     },
     {
-      "timestamp": "2026-04-01T05:46:18.437Z",
-      "action": "Completed Step 0 (Preflight). Read all context files: types.ts, store.ts, executor.ts, routes.ts, TaskDetailModal.tsx, api.ts. Understood the Task type, store operations, executor flow, and dashboard UI structure.",
-      "outcome": "Ready to implement Step 1"
+      "timestamp": "2026-04-01T06:21:13.437Z",
+      "action": "Step 0 (Preflight) complete. Found that most of the feature is already implemented: modifiedFiles field in types, store methods, executor capture, API endpoint, frontend client, and TaskChangesTab component all exist.",
+      "outcome": "The feature appears to be already implemented. Proceeding with verification."
     },
     {
-      "timestamp": "2026-04-01T05:46:21.352Z",
-      "action": "plan review requested for Step 1 (Core Types and Store Updates)"
+      "timestamp": "2026-04-01T06:29:51.514Z",
+      "action": "Step 1 (Capture Modified Files in Executor) → done"
     },
     {
-      "timestamp": "2026-04-01T05:46:33.573Z",
-      "action": "plan review Step 1: APPROVE",
-      "outcome": "The plan for Step 1 correctly identifies the minimal changes needed to add the `modifiedFiles` field to the core data model. It follows the established patterns in the codebase for JSON array columns (like `dependencies` and `enabledWorkflowSteps`). The step is appropriately scoped and will achieve its stated outcomes."
+      "timestamp": "2026-04-01T06:29:51.518Z",
+      "action": "Step 2 (API Endpoint for Task Diffs) → done"
     },
     {
-      "timestamp": "2026-04-01T05:46:36.532Z",
-      "action": "Step 1 (Capture Modified Files in Executor) → in-progress"
+      "timestamp": "2026-04-01T06:29:53.512Z",
+      "action": "Step 3 (Frontend API Client) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:29:55.115Z",
+      "action": "Step 4 (Changes Tab UI Components) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:29:57.137Z",
+      "action": "Step 5 (Integrate Changes Tab into Task Detail Modal) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:29:58.633Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:30:00.859Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:30:02.984Z",
+      "action": "Task marked done by agent"
     }
+  ],
+  "modifiedFiles": [
+    ".changeset/add-diff-viewer-tab.md",
+    "packages/cli/src/commands/task.ts",
+    "packages/core/src/types.ts",
+    "packages/dashboard/app/components/SettingsModal.tsx",
+    "packages/dashboard/app/components/SetupWizard.tsx",
+    "packages/dashboard/src/mission-routes.ts"
   ]
 }

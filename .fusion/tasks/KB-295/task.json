@@ -2,6 +2,13 @@
   "id": "KB-295",
   "description": "Add a way to star a model as a favorite so it appears top of model lists",
   "column": "done",
+  "size": "M",
+  "reviewLevel": 1,
+  "currentStep": 8,
+  "summary": "Successfully implemented the Favorite Models feature (KB-295). Added `favoriteModels` field to GlobalSettings in the core types, created three new API endpoints (GET/POST/DELETE /api/models/favorites), implemented frontend API functions with proper error handling, updated CustomModelDropdown with star buttons and favorites section, added CSS styling for the favorite buttons, integrated favorites support in ModelSelectorTab with toast notifications, and added comprehensive tests. All 332 core tests and 267 dashboard routes tests pass. Updated AGENTS.md documentation and created a minor changeset for the new feature.",
+  "createdAt": "2026-03-31T16:30:14.154Z",
+  "updatedAt": "2026-04-01T05:49:16.680Z",
+  "columnMovedAt": "2026-03-31T17:06:21.101Z",
   "dependencies": [],
   "steps": [
     {
@@ -37,7 +44,6 @@
       "status": "done"
     }
   ],
-  "currentStep": 8,
   "log": [
     {
       "timestamp": "2026-03-31T16:30:14.154Z",
@@ -172,12 +178,11 @@
     {
       "timestamp": "2026-03-31T17:05:14.722Z",
       "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-04-01T05:49:16.680Z",
+      "action": "Refinement requested",
+      "outcome": "This isn’t working"
     }
-  ],
-  "columnMovedAt": "2026-03-31T17:06:21.101Z",
-  "createdAt": "2026-03-31T16:30:14.154Z",
-  "updatedAt": "2026-03-31T17:06:21.101Z",
-  "size": "M",
-  "reviewLevel": 1,
-  "summary": "Successfully implemented the Favorite Models feature (KB-295). Added `favoriteModels` field to GlobalSettings in the core types, created three new API endpoints (GET/POST/DELETE /api/models/favorites), implemented frontend API functions with proper error handling, updated CustomModelDropdown with star buttons and favorites section, added CSS styling for the favorite buttons, integrated favorites support in ModelSelectorTab with toast notifications, and added comprehensive tests. All 332 core tests and 267 dashboard routes tests pass. Updated AGENTS.md documentation and created a minor changeset for the new feature."
+  ]
 }

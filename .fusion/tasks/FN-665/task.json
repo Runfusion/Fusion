@@ -1,0 +1,33 @@
+{
+  "id": "FN-665",
+  "title": "Refinement: KB-295",
+  "description": "This isn’t working\n\nRefines: KB-295",
+  "column": "todo",
+  "status": "queued",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-657",
+  "createdAt": "2026-04-01T05:49:16.679Z",
+  "updatedAt": "2026-04-01T05:59:08.263Z",
+  "columnMovedAt": "2026-04-01T05:50:40.770Z",
+  "dependencies": [
+    "KB-295"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T05:49:16.679Z",
+      "action": "Created as refinement of KB-295"
+    },
+    {
+      "timestamp": "2026-04-01T05:50:07.787Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T05:50:37.198Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and technically sound. The approach correctly identifies the appropriate files, follows existing patterns for global settings storage, and integrates cleanly with the current model dropdown architecture. The scope is appropriately bounded (M size) and the testing strategy aligns with project conventions."
+    }
+  ]
+}

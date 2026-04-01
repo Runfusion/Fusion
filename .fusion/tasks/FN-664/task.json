@@ -1,0 +1,32 @@
+{
+  "id": "FN-664",
+  "description": "KB-503 Follow-up: Complete --project flag integration for remaining commands\n\nComplete the --project flag integration for all remaining commands:\n\n## Task Commands (remaining)\n- runTaskMove - Add projectName parameter\n- runTaskUpdate - Add projectName parameter  \n- runTaskLog - Add projectName parameter\n- runTaskLogs - Add projectName parameter\n- runTaskMerge - Add projectName parameter\n- runTaskDuplicate - Add projectName parameter\n- runTaskArchive - Add projectName parameter\n- runTaskUnarchive - Add projectName parameter\n- runTaskDelete - Add projectName parameter\n- runTaskPause - Add projectName parameter\n- runTaskUnpause - Add projectName parameter\n- runTaskRetry - Add projectName parameter\n- runTaskComment - Add projectName parameter\n- runTaskSteer - Add projectName parameter\n- runTaskAttach - Add projectName parameter\n- runTaskPrCreate - Add projectName parameter\n- runTaskImportFromGitHub - Add projectName parameter\n- runTaskRefine - Add projectName parameter\n- runTaskPlan - Add projectName parameter\n\n## Other Commands\n- Update settings commands (runSettingsShow, runSettingsSet) with --project support\n- Update git commands with --project support\n- Update backup commands with --project support\n\n## CLI Integration\n- Add --project/-P flag extraction in bin.ts main() function\n- Pass projectName to all command handlers\n- Add tests for cross-project operations\n\n## Documentation\n- Update AGENTS.md with multi-project CLI usage examples\n- Create changeset for the feature\n\nPattern: Import getStore from project-context.js, add projectName?: string parameter, pass to getStore(projectName).",
+  "column": "todo",
+  "status": "queued",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-619",
+  "createdAt": "2026-04-01T05:46:49.556Z",
+  "updatedAt": "2026-04-01T05:59:08.262Z",
+  "columnMovedAt": "2026-04-01T05:49:27.046Z",
+  "dependencies": [
+    "KB-503"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T05:46:49.556Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T05:49:06.021Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T05:49:24.723Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive, accurate, and ready for implementation. The task correctly identifies the pattern from KB-503 (`getStore(projectName)` from `project-context.ts`) and systematically applies it to ~20 task commands plus settings, git, and backup commands. File references are accurate, line numbers are approximately correct, and the implementation patterns are clearly documented."
+    }
+  ]
+}

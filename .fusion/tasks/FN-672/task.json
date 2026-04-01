@@ -1,0 +1,30 @@
+{
+  "id": "FN-672",
+  "description": "Terminal still fails with Failed to create session. Max sessions may be reached.",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "blockedBy": "KB-622",
+  "createdAt": "2026-04-01T06:22:17.166Z",
+  "updatedAt": "2026-04-01T06:42:55.413Z",
+  "columnMovedAt": "2026-04-01T06:23:28.408Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T06:22:17.166Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T06:23:02.528Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T06:23:25.605Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted and ready for implementation. It accurately identifies the current problem (misleading generic error messages), proposes a clean discriminated union solution for error handling, and correctly maps out all affected files and test locations. The sizing (S) and review level (1) are appropriate for this surgical diagnostic improvement."
+    }
+  ]
+}

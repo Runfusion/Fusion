@@ -1,17 +1,30 @@
 {
   "id": "KB-658",
   "description": "Reduce size of id column so the title column takes up more space",
-  "column": "todo",
-  "status": "queued",
+  "column": "done",
   "size": "S",
   "reviewLevel": 0,
-  "currentStep": 0,
-  "blockedBy": "KB-654",
+  "currentStep": 3,
+  "baseCommitSha": "4dcdf4a6bcb9a03f112951e10de505c320adc1d5",
+  "summary": "Task KB-658 complete. The List View CSS was already correctly configured with the ID column at 70px width and the Title column set to expand with ellipsis truncation. All 98 ListView tests pass. Pre-existing TypeScript errors in mission-routes.ts are unrelated to this CSS-only change.",
   "createdAt": "2026-04-01T02:39:26.901Z",
-  "updatedAt": "2026-04-01T05:46:08.130Z",
-  "columnMovedAt": "2026-04-01T02:46:42.115Z",
+  "updatedAt": "2026-04-01T06:25:48.393Z",
+  "columnMovedAt": "2026-04-01T06:25:48.393Z",
   "dependencies": [],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Adjust List View Column Widths",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
   "log": [
     {
       "timestamp": "2026-04-01T02:39:26.901Z",
@@ -25,6 +38,57 @@
       "timestamp": "2026-04-01T02:46:40.748Z",
       "action": "Spec review: APPROVE",
       "outcome": "The specification is well-structured, accurate, and ready for implementation. It correctly identifies the CSS-only nature of the change, references real files and line numbers that exist, and provides concrete, verifiable outcomes for each step. The review level (0 - None) and size (S) are appropriate for this pure CSS layout adjustment."
+    },
+    {
+      "timestamp": "2026-04-01T06:21:05.455Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gilt-robin"
+    },
+    {
+      "timestamp": "2026-04-01T06:21:05.484Z",
+      "action": "Step 0 (Adjust List View Column Widths) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T06:21:07.518Z",
+      "action": "Step 0 (Adjust List View Column Widths) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T06:21:34.731Z",
+      "action": "Step 0 (Adjust List View Column Widths) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:21:34.732Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T06:21:34.732Z",
+      "action": "Step 0 complete: CSS already configured correctly with 70px width on ID column and title column set to expand with ellipsis truncation",
+      "outcome": "No CSS changes needed - current implementation matches requirements"
+    },
+    {
+      "timestamp": "2026-04-01T06:21:42.355Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:21:42.356Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T06:25:12.523Z",
+      "action": "Step 2 verification complete - ListView CSS is correct and all 98 ListView tests pass",
+      "outcome": "Pre-existing TypeScript errors in mission-routes.ts block full typecheck/build but are unrelated to this CSS-only task"
+    },
+    {
+      "timestamp": "2026-04-01T06:25:12.524Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T06:25:14.907Z",
+      "action": "Step 3 complete - No documentation updates needed for this UI polish change",
+      "outcome": "Task complete - CSS already configured correctly with reduced ID column width and expanded title column"
+    },
+    {
+      "timestamp": "2026-04-01T06:25:17.475Z",
+      "action": "Task marked done by agent"
     }
   ]
 }

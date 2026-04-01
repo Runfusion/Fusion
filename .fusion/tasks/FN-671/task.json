@@ -1,0 +1,34 @@
+{
+  "id": "FN-671",
+  "description": "Add a disclosure to see quick add dashboard icons and options for both board view and list view",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "FN-667",
+  "createdAt": "2026-04-01T06:21:39.049Z",
+  "updatedAt": "2026-04-01T06:42:55.411Z",
+  "columnMovedAt": "2026-04-01T06:24:26.579Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T06:21:39.049Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T06:22:38.451Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-04-01T06:24:03.740Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T06:24:24.692Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive and accurate. It correctly identifies the target component (`QuickEntryBox`), the current implementation patterns (focus-based expansion via `isExpanded`, `showExpandedControls` gating), and the required persistence mechanism (`localStorage`). The mission is clear, steps have verifiable outcomes, and testing requirements demand real assertions."
+    }
+  ]
+}

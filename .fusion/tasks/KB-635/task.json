@@ -6,9 +6,9 @@
   "size": "L",
   "reviewLevel": 2,
   "currentStep": 0,
-  "blockedBy": "KB-503",
+  "blockedBy": "KB-620",
   "createdAt": "2026-04-01T01:05:35.675Z",
-  "updatedAt": "2026-04-01T05:46:37.891Z",
+  "updatedAt": "2026-04-01T06:42:55.373Z",
   "columnMovedAt": "2026-04-01T01:10:33.211Z",
   "dependencies": [
     "KB-632"
