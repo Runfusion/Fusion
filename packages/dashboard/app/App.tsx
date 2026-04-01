@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@fusion/core";
-import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, fetchModels, fetchTaskDetail } from "./api";
+import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, fetchModels } from "./api";
 import type { ModelInfo } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
@@ -108,27 +108,6 @@ function AppInner() {
       .catch(() => {/* keep empty array on failure */});
   }, []);
   const { toasts, addToast, removeToast } = useToast();
-
-  // Handle deep link to task on mount
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const taskId = params.get("task");
-    if (!taskId) return;
-
-    // Clean URL immediately without reloading
-    const url = new URL(window.location.href);
-    url.searchParams.delete("task");
-    window.history.replaceState({}, "", url.toString());
-
-    // Load and open the task directly
-    fetchTaskDetail(taskId)
-      .then((task) => {
-        handleDetailOpen(task);
-      })
-      .catch(() => {
-        addToast(`Task ${taskId} not found`, "error");
-      });
-  }, []);
 
   // Persist view preference to localStorage
   useEffect(() => {
