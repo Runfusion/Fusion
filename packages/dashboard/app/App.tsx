@@ -454,8 +454,6 @@ function AppInner() {
           searchQuery={searchQuery}
           availableModels={availableModels}
           onOpenFilesForTask={handleOpenChangedFiles}
-          projectId={currentProject?.id}
-          projectName={currentProject?.name}
         />
       );
     }
@@ -473,8 +471,6 @@ function AppInner() {
         onPlanningMode={handleNewTaskPlanningMode}
         onSubtaskBreakdown={handleSubtaskBreakdown}
         availableModels={availableModels}
-        projectId={currentProject?.id}
-        projectName={currentProject?.name}
       />
     );
   };

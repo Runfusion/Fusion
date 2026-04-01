@@ -330,4 +330,10 @@ describe("Board", () => {
       expect(todoTasks).toHaveLength(1);
     });
   });
+
+  it("does not render a .board-project-context badge", () => {
+    renderBoard();
+    const badge = document.querySelector(".board-project-context");
+    expect(badge).toBeNull();
+  });
 });

@@ -4,7 +4,6 @@ import { Column } from "./Column";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useBatchBadgeFetch } from "../hooks/useBatchBadgeFetch";
-import { Folder } from "lucide-react";
 import type { ModelInfo } from "../api";
 
 interface BoardProps {
@@ -36,9 +35,6 @@ interface BoardProps {
    */
   onSubtaskBreakdown?: (description: string) => void;
   onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
-  /** Project context for multi-project mode */
-  projectId?: string;
-  projectName?: string;
 }
 
 function sortTasksForColumn(tasks: Task[]): Task[] {
@@ -57,7 +53,7 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, projectId, projectName }: BoardProps) {
+export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const { fetchBatch } = useBatchBadgeFetch();
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -149,15 +145,6 @@ export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast
 
   return (
     <>
-      {/* Project context badge */}
-      {projectId && projectName && (
-        <div className="board-project-context">
-          <span className="board-project-badge">
-            <Folder size={14} />
-            {projectName}
-          </span>
-        </div>
-      )}
       <main className="board" id="board">
         {COLUMNS.map((col) => (
           <Column

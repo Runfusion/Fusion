@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "react";
-import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Search, Link, Columns3, EyeOff, Eye, ChevronRight, Folder } from "lucide-react";
+import { LayoutGrid, List as ListIcon, ArrowUpDown, ArrowUp, ArrowDown, Search, Link, Columns3, EyeOff, Eye, ChevronRight } from "lucide-react";
 import type { Task, TaskDetail, Column, TaskStep, TaskCreateInput } from "@fusion/core";
 import { COLUMN_LABELS, COLUMNS } from "@fusion/core";
 import { fetchTaskDetail, batchUpdateTaskModels } from "../api";
@@ -48,9 +48,6 @@ interface ListViewProps {
    * Allows parent to refresh task list or handle optimistically.
    */
   onTasksUpdated?: (updatedTasks: Task[]) => void;
-  /** Project context for multi-project mode */
-  projectId?: string;
-  projectName?: string;
 }
 
 function getStepProgress(steps: TaskStep[]): string {
@@ -77,8 +74,6 @@ export function ListView({
   onPlanningMode,
   onSubtaskBreakdown,
   onTasksUpdated,
-  projectId,
-  projectName,
 }: ListViewProps) {
   const [sortField, setSortField] = useState<SortField>("id");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -569,15 +564,6 @@ export function ListView({
 
   return (
     <div className="list-view">
-      {/* Project context badge */}
-      {projectId && projectName && (
-        <div className="list-project-context">
-          <span className="list-project-badge">
-            <Folder size={14} />
-            {projectName}
-          </span>
-        </div>
-      )}
       <div className="list-toolbar">
         <div className="list-filter">
           <Search size={14} className="filter-icon" />
