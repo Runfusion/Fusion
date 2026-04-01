@@ -724,6 +724,7 @@ export function ListView({
             availableModels={availableModels}
             onPlanningMode={onPlanningMode}
             onSubtaskBreakdown={onSubtaskBreakdown}
+            autoExpand={false}
           />
         </div>
         {filteredCount === 0 ? (
