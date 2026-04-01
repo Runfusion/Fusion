@@ -1,6 +1,6 @@
-# @kb/dashboard
+# @fusion/dashboard
 
-Web-based dashboard for managing kb tasks. Provides a visual kanban board, list view, and git repository management tools.
+Web-based dashboard for managing fusion tasks. Provides a visual kanban board, list view, and git repository management tools.
 
 ## Features
 
