@@ -1378,6 +1378,37 @@ export function SettingsModal({
                 </button>
               </div>
             )}
+            {form.ntfyEnabled && (
+              <div className="form-group">
+                <label htmlFor="ntfyDashboardHost">Dashboard Hostname</label>
+                <input
+                  id="ntfyDashboardHost"
+                  type="text"
+                  placeholder="http://localhost:3000"
+                  value={form.ntfyDashboardHost || ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setForm((f) => ({ ...f, ntfyDashboardHost: val || undefined }));
+                  }}
+                />
+                <small>
+                  Base URL for deep links in notifications. When set, clicking a notification
+                  will open the dashboard directly to the task. Example: http://localhost:3000
+                  or https://fusion.example.com
+                </small>
+                {form.ntfyDashboardHost && (
+                  !/^https?:\/\/.+/.test(form.ntfyDashboardHost) ? (
+                    <small className="field-error">
+                      Must be a valid URL starting with http:// or https://
+                    </small>
+                  ) : form.ntfyDashboardHost.includes("?") || form.ntfyDashboardHost.includes("#") ? (
+                    <small className="field-error">
+                      URL should not include query parameters or fragments
+                    </small>
+                  ) : null
+                )}
+              </div>
+            )}
           </>
         );
       case "authentication":

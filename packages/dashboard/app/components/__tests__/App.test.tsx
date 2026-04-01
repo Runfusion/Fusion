@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { App } from "../../App";
 import type { Settings } from "@fusion/core";
@@ -35,6 +35,19 @@ vi.mock("../../api", async (importOriginal) => {
     logoutProvider: vi.fn(() => Promise.resolve({ success: true })),
     fetchModels: vi.fn(() => Promise.resolve([])),
     fetchGitRemotes: vi.fn(() => Promise.resolve([])),
+    fetchTaskDetail: vi.fn((id: string) => Promise.resolve({
+      id,
+      title: `Task ${id}`,
+      description: "Deep linked task",
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      log: [],
+      prompt: "",
+    })),
   };
 });
 
@@ -49,10 +62,83 @@ vi.mock("../../hooks/useTasks", () => ({
   }),
 }));
 
-import { fetchAuthStatus, fetchSettings, updateSettings } from "../../api";
+import { fetchAuthStatus, fetchSettings, fetchTaskDetail, updateSettings } from "../../api";
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("App deep link handling", () => {
+  const originalLocation = window.location;
+  const originalReplaceState = window.history.replaceState;
+
+  beforeEach(() => {
+    window.history.replaceState = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/"),
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
+    window.history.replaceState = originalReplaceState;
+  });
+
+  it("fetches and opens the task modal when task query param is present", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?task=FN-123"),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchTaskDetail).toHaveBeenCalledWith("FN-123");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Task FN-123")).toBeTruthy();
+    });
+
+    expect(window.history.replaceState).toHaveBeenCalledWith(
+      {},
+      "",
+      "http://localhost:3000/",
+    );
+  });
+
+  it("shows an error toast when the deep-linked task cannot be loaded", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?task=FN-404"),
+    });
+    (fetchTaskDetail as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Not found"));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchTaskDetail).toHaveBeenCalledWith("FN-404");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Task FN-404 not found")).toBeTruthy();
+    });
+  });
+
+  it("does nothing when no task query param is present", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+    });
+
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
+    expect(window.history.replaceState).not.toHaveBeenCalled();
+  });
 });
 
 describe("App auto-open Settings on unauthenticated", () => {

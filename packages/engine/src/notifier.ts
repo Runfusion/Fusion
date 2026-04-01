@@ -33,6 +33,7 @@ interface NtfyNotifierStore {
 interface NtfyConfig {
   enabled: boolean;
   topic: string | undefined;
+  dashboardHost: string | undefined;
 }
 
 /** Event types for notification deduplication */
@@ -50,7 +51,7 @@ type NotificationEventType = "in-review" | "merged" | "failed";
  * - Configurable notification events (hardcoded defaults)
  */
 export class NtfyNotifier {
-  private config: NtfyConfig = { enabled: false, topic: undefined };
+  private config: NtfyConfig = { enabled: false, topic: undefined, dashboardHost: undefined };
   private ntfyBaseUrl: string;
   /** Tracks which (taskId, eventType) pairs have been notified to prevent duplicates */
   private notifiedEvents: Set<string> = new Set();
@@ -116,12 +117,14 @@ export class NtfyNotifier {
 
     // Notify when task moves to in-review (completed work, ready for review)
     if (to === "in-review") {
+      const clickUrl = this.buildTaskUrl(task.id);
       this.maybeNotify(task.id, "in-review", () =>
         this.sendNotification(
           this.config.topic!,
           `Task ${task.id} completed`,
           `Task "${formatTaskIdentifier(task)}" is ready for review`,
           "default",
+          clickUrl,
         ),
       );
     }
@@ -135,12 +138,14 @@ export class NtfyNotifier {
 
     // Notify when task fails
     if (task.status === "failed") {
+      const clickUrl = this.buildTaskUrl(task.id);
       this.maybeNotify(task.id, "failed", () =>
         this.sendNotification(
           this.config.topic!,
           `Task ${task.id} failed`,
           `Task "${formatTaskIdentifier(task)}" has failed and needs attention`,
           "high",
+          clickUrl,
         ),
       );
     }
@@ -151,12 +156,14 @@ export class NtfyNotifier {
 
     // Only notify on successful merges
     if (result.merged) {
+      const clickUrl = this.buildTaskUrl(result.task.id);
       this.maybeNotify(result.task.id, "merged", () =>
         this.sendNotification(
           this.config.topic!,
           `Task ${result.task.id} merged`,
           `Task "${formatTaskIdentifier(result.task)}" has been merged to main`,
           "default",
+          clickUrl,
         ),
       );
     }
@@ -167,7 +174,8 @@ export class NtfyNotifier {
 
     // Check if ntfy settings changed
     if (settings.ntfyEnabled !== previous.ntfyEnabled ||
-        settings.ntfyTopic !== previous.ntfyTopic) {
+        settings.ntfyTopic !== previous.ntfyTopic ||
+        settings.ntfyDashboardHost !== previous.ntfyDashboardHost) {
       const wasEnabled = this.config.enabled;
       this.loadConfig(settings);
 
@@ -177,6 +185,8 @@ export class NtfyNotifier {
         schedulerLog.log("NtfyNotifier disabled");
       } else if (this.config.topic !== previous.ntfyTopic) {
         schedulerLog.log("NtfyNotifier topic updated");
+      } else if (this.config.dashboardHost !== previous.ntfyDashboardHost) {
+        schedulerLog.log("NtfyNotifier dashboard host updated");
       }
     }
   };
@@ -185,7 +195,21 @@ export class NtfyNotifier {
     this.config = {
       enabled: settings.ntfyEnabled ?? false,
       topic: settings.ntfyTopic,
+      dashboardHost: settings.ntfyDashboardHost,
     };
+  }
+
+  /**
+   * Build a dashboard URL for deep linking to a task.
+   * Returns undefined if dashboardHost is not configured.
+   */
+  private buildTaskUrl(taskId: string): string | undefined {
+    if (!this.config.dashboardHost) {
+      return undefined;
+    }
+    // Strip trailing slash from hostname if present
+    const host = this.config.dashboardHost.replace(/\/$/, "");
+    return `${host}/?task=${encodeURIComponent(taskId)}`;
   }
 
   /**
@@ -219,18 +243,26 @@ export class NtfyNotifier {
     title: string,
     message: string,
     priority: "low" | "default" | "high" | "urgent" = "default",
+    clickUrl?: string,
   ): Promise<void> {
     const url = `${this.ntfyBaseUrl}/${topic}`;
     const signal = this.abortController?.signal;
 
     try {
+      const headers: Record<string, string> = {
+        "Title": title,
+        "Priority": priority,
+        "Content-Type": "text/plain",
+      };
+
+      // Add Click header for deep linking if URL is provided
+      if (clickUrl) {
+        headers["Click"] = clickUrl;
+      }
+
       const response = await fetch(url, {
         method: "POST",
-        headers: {
-          "Title": title,
-          "Priority": priority,
-          "Content-Type": "text/plain",
-        },
+        headers,
         body: message,
         signal,
       });

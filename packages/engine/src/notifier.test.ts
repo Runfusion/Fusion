@@ -15,6 +15,12 @@ interface MockTaskStoreEvents {
   "settings:updated": [{ settings: Settings; previous: Settings }];
 }
 
+async function flushAsyncWork(): Promise<void> {
+  await vi.waitFor(() => {
+    expect(true).toBe(true);
+  });
+}
+
 class MockTaskStore extends EventEmitter<MockTaskStoreEvents> {
   private settings: Settings = {
     maxConcurrent: 2,
@@ -91,7 +97,7 @@ describe("NtfyNotifier", () => {
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
 
       // Wait for any async operations
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -103,7 +109,7 @@ describe("NtfyNotifier", () => {
 
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -121,7 +127,7 @@ describe("NtfyNotifier", () => {
 
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock).toHaveBeenCalledWith(
@@ -143,7 +149,7 @@ describe("NtfyNotifier", () => {
 
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-review", "done");
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // handleTaskMoved should NOT send notification for "done" - that's handleTaskMerged's job
       expect(fetchMock).not.toHaveBeenCalled();
@@ -156,7 +162,7 @@ describe("NtfyNotifier", () => {
       const failedTask = createTask("FN-001", "Test Task", "failed");
       store.triggerTaskUpdated(failedTask);
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock).toHaveBeenCalledWith(
@@ -185,7 +191,7 @@ describe("NtfyNotifier", () => {
       };
       store.triggerTaskMerged(mergeResult);
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock).toHaveBeenCalledWith(
@@ -215,7 +221,7 @@ describe("NtfyNotifier", () => {
       };
       store.triggerTaskMerged(mergeResult);
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -227,7 +233,7 @@ describe("NtfyNotifier", () => {
       const taskWithoutTitle = { ...createTask("FN-001"), description: "Implement user authentication flow" };
       store.triggerTaskMoved(taskWithoutTitle, "in-progress", "in-review");
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).toHaveBeenCalledWith(
         "https://ntfy.sh/test-topic",
@@ -245,7 +251,7 @@ describe("NtfyNotifier", () => {
       const taskWithoutTitle = { ...createTask("FN-001"), description: longDescription };
       store.triggerTaskMoved(taskWithoutTitle, "in-progress", "in-review");
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       const expectedSnippet = "A".repeat(200) + "...";
       expect(fetchMock).toHaveBeenCalledWith(
@@ -264,12 +270,174 @@ describe("NtfyNotifier", () => {
       const taskWithoutTitle = { ...createTask("FN-001"), description: exactDescription };
       store.triggerTaskMoved(taskWithoutTitle, "in-progress", "in-review");
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).toHaveBeenCalledWith(
         "https://ntfy.sh/test-topic",
         expect.objectContaining({
           body: `Task "FN-001: ${exactDescription}" is ready for review`,
+        })
+      );
+    });
+  });
+
+  describe("deep link (Click header)", () => {
+    beforeEach(() => {
+      fetchMock.mockResolvedValue({ ok: true });
+    });
+
+    it("includes Click header with task URL when ntfyDashboardHost is set", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "https://fusion.example.com",
+      });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "https://fusion.example.com/?task=FN-001",
+          }),
+        })
+      );
+    });
+
+    it("does not include Click header when ntfyDashboardHost is not set", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: undefined,
+      });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      const callArgs = fetchMock.mock.calls[0][1];
+      expect(callArgs.headers).not.toHaveProperty("Click");
+    });
+
+    it("handles hostname with trailing slash correctly", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "http://localhost:3000/",
+      });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-042", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "http://localhost:3000/?task=FN-042",
+          }),
+        })
+      );
+    });
+
+    it("handles hostname without trailing slash correctly", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "http://localhost:3000",
+      });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-042", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "http://localhost:3000/?task=FN-042",
+          }),
+        })
+      );
+    });
+
+    it("includes Click header for failed task notifications when dashboard host is set", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "https://fusion.example.com",
+      });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      const failedTask = createTask("FN-001", "Test Task", "failed");
+      store.triggerTaskUpdated(failedTask);
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "https://fusion.example.com/?task=FN-001",
+          }),
+        })
+      );
+    });
+
+    it("includes Click header for merged task notifications when dashboard host is set", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "https://fusion.example.com",
+      });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      const mergeResult: MergeResult = {
+        task: createTask("FN-001", "Test Task"),
+        branch: "fusion/fn-001",
+        merged: true,
+        worktreeRemoved: true,
+        branchDeleted: true,
+      };
+      store.triggerTaskMerged(mergeResult);
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "https://fusion.example.com/?task=FN-001",
+          }),
+        })
+      );
+    });
+
+    it("encodes task IDs with special characters in Click URL", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "http://localhost:3000",
+      });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-001/test", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "http://localhost:3000/?task=FN-001%2Ftest",
+          }),
         })
       );
     });
@@ -283,7 +451,7 @@ describe("NtfyNotifier", () => {
 
       // Initially disabled
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
       expect(fetchMock).not.toHaveBeenCalled();
 
       // Enable at runtime
@@ -291,7 +459,7 @@ describe("NtfyNotifier", () => {
       store.setSettings({ ntfyEnabled: true });
 
       store.triggerTaskMoved(createTask("FN-002", "Test Task 2"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
@@ -303,14 +471,14 @@ describe("NtfyNotifier", () => {
 
       // Initially enabled
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
       expect(fetchMock).toHaveBeenCalledTimes(1);
 
       // Disable at runtime
       store.setSettings({ ntfyEnabled: false });
 
       store.triggerTaskMoved(createTask("FN-002", "Test Task 2"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
       expect(fetchMock).toHaveBeenCalledTimes(1); // No new calls
     });
 
@@ -321,14 +489,14 @@ describe("NtfyNotifier", () => {
       await notifier.start();
 
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
       expect(fetchMock).toHaveBeenCalledWith("https://ntfy.sh/old-topic", expect.any(Object));
 
       // Change topic
       store.setSettings({ ntfyTopic: "new-topic" });
 
       store.triggerTaskMoved(createTask("FN-002", "Test Task 2"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
       expect(fetchMock).toHaveBeenLastCalledWith("https://ntfy.sh/new-topic", expect.any(Object));
     });
   });
@@ -343,7 +511,7 @@ describe("NtfyNotifier", () => {
 
       // Should not throw
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).toHaveBeenCalled();
     });
@@ -357,7 +525,7 @@ describe("NtfyNotifier", () => {
 
       // Should not throw
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).toHaveBeenCalled();
     });
@@ -380,7 +548,7 @@ describe("NtfyNotifier", () => {
       store.triggerTaskMoved(task, "in-progress", "in-review");
       store.triggerTaskMoved(task, "in-progress", "in-review");
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // Should only send one notification due to deduplication
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -394,7 +562,7 @@ describe("NtfyNotifier", () => {
 
       // First: in-review notification
       store.triggerTaskMoved(task, "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
       expect(fetchMock).toHaveBeenCalledTimes(1);
 
       // Second: merged notification (different event type - should be allowed)
@@ -406,7 +574,7 @@ describe("NtfyNotifier", () => {
         branchDeleted: true,
       };
       store.triggerTaskMerged(mergeResult);
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // Should have two notifications now
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -429,7 +597,7 @@ describe("NtfyNotifier", () => {
       store.triggerTaskMoved(task, "in-review", "done");
       store.triggerTaskMerged(mergeResult);
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock).toHaveBeenCalledWith(
@@ -463,7 +631,7 @@ describe("NtfyNotifier", () => {
       store.triggerTaskMerged(mergeResult);
       store.triggerTaskMerged(mergeResult);
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // Should only send one notification
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -479,7 +647,7 @@ describe("NtfyNotifier", () => {
       store.triggerTaskMoved(task1, "in-progress", "in-review");
       store.triggerTaskMoved(task2, "in-progress", "in-review");
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // Different tasks should each get their own notification
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -496,7 +664,7 @@ describe("NtfyNotifier", () => {
 
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).toHaveBeenCalledWith(
         "https://my-ntfy.example.com/test-topic",
@@ -514,13 +682,13 @@ describe("NtfyNotifier", () => {
       await notifier.start();
 
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
       expect(fetchMock).toHaveBeenCalledTimes(1);
 
       notifier.stop();
 
       store.triggerTaskMoved(createTask("FN-002", "Test Task 2"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // Should not increase after stop
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -538,13 +706,13 @@ describe("NtfyNotifier", () => {
 
       // First: in-review notification
       store.triggerTaskMoved(task, "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
       expect(fetchMock).toHaveBeenCalledTimes(1);
 
       // Second: failed notification (different event type - should be allowed)
       const failedTask = { ...task, status: "failed" };
       store.triggerTaskUpdated(failedTask);
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // Should have two notifications
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -558,15 +726,15 @@ describe("NtfyNotifier", () => {
 
       // Move to todo - should not notify
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "triage", "todo");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // Move to in-progress - should not notify
       store.triggerTaskMoved(createTask("FN-002", "Test Task 2"), "todo", "in-progress");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // Move to done - should not notify (merged notification comes from task:merged)
       store.triggerTaskMoved(createTask("FN-003", "Test Task 3"), "in-review", "done");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -579,7 +747,7 @@ describe("NtfyNotifier", () => {
 
       const task = createTask("FN-001", "Test Task", "in-progress");
       store.triggerTaskUpdated(task);
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -591,7 +759,7 @@ describe("NtfyNotifier", () => {
       await notifier.start();
 
       store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushAsyncWork();
 
       // Empty topic should be treated as no topic
       expect(fetchMock).not.toHaveBeenCalled();
