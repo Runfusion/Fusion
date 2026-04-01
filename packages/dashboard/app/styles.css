@@ -4050,6 +4050,11 @@ body {
   padding-right: 8px;
 }
 
+/* Set width on ID column header to match data cells */
+.list-table th:nth-child(2).list-header-cell {
+  width: 70px;
+}
+
 .list-header-cell:hover {
   color: var(--text);
 }
@@ -4111,6 +4116,7 @@ body {
 }
 
 .list-cell-id {
+  width: 70px;
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
@@ -4120,7 +4126,6 @@ body {
 }
 
 .list-cell-title {
-  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4380,7 +4385,9 @@ body {
   }
 
   .list-cell-title {
-    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .list-cell-date {
