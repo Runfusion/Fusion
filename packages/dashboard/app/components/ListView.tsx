@@ -116,7 +116,7 @@ export function ListView({
         // Invalid localStorage data - fall through to default
       }
     }
-    return false; // Default: show done tasks
+    return true; // Default: hide done tasks
   });
 
   // Collapsed sections state - initialize from localStorage
