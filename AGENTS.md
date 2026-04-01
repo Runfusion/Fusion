@@ -1157,6 +1157,75 @@ When you add a template:
 2. The new step is enabled by default
 3. You can edit the step after creation to customize the prompt
 
+## Multi-Project Migration
+
+kb supports multi-project mode through a central infrastructure that coordinates across multiple kb projects. When upgrading from single-project to multi-project mode, the system provides automatic migration.
+
+### Auto-Migration on First Run
+
+When a user runs kb after the multi-project update, the system:
+
+1. **Detects** existing `.kb/kb.db` files in the current directory and subdirectories (up to 5 levels deep)
+2. **Auto-registers** valid kb projects in the central registry with `isolationMode: 'in-process'`
+3. **Skips** projects that are already registered or lack valid databases
+4. **Generates unique names** for projects (appending `-2`, `-3` for conflicts)
+
+### Migration Behavior
+
+```bash
+# First run after update - auto-migration triggers automatically
+fn task list
+# [kb] First run detected. Auto-registering projects...
+# [kb] Auto-registered 3 project(s):
+#        - my-app: /Users/me/projects/my-app
+#        - api-service: /Users/me/projects/api-service
+#        - docs: /Users/me/projects/docs
+```
+
+### Backward Compatibility
+
+Single-project workflows continue to work seamlessly:
+
+- **Existing constructor**: `new TaskStore(rootDir)` works unchanged
+- **Auto-resolution**: CLI commands resolve the project from `--project` flag, CWD, or default project
+- **Fallback mode**: If central database is unavailable, kb falls back to single-project mode
+
+### Manual Migration
+
+If auto-migration is skipped or fails, projects can be registered manually:
+
+```bash
+# Register current directory
+fn project add .
+
+# Register specific path
+fn project add ~/projects/my-app
+
+# List registered projects
+fn project list
+```
+
+### First-Run Wizard
+
+For new users (or fresh installs), the dashboard shows a first-run wizard when no projects are registered:
+
+1. **Detection**: Scans for existing kb projects
+2. **Selection**: User selects which projects to register
+3. **Completion**: Projects are registered and ready for use
+
+### Environment Variables
+
+- `KB_SKIP_MIGRATION=1` — Disable auto-migration
+- `FN_PROJECT=<name>` — Target specific project (set by `--project` flag)
+
+### Recovery
+
+If migration causes issues:
+
+1. **Disable auto-migration**: Set `KB_SKIP_MIGRATION=1`
+2. **Reset central DB**: Delete `~/.pi/kb/kb-central.db` (projects are preserved)
+3. **Manual registration**: Use `fn project add <path>` after reset
+
 ## Multi-Project Dashboard
 
 The kb dashboard supports managing multiple projects simultaneously. This enables teams to track tasks across multiple repositories from a single dashboard view.

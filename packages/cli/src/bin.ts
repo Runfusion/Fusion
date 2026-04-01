@@ -47,6 +47,7 @@ const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./co
 const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
 const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice } = await import("./commands/mission.js");
 const { runProjectList, runProjectAdd, runProjectRemove, runProjectInfo } = await import("./commands/project.js");
+const { getResolvedProject } = await import("./project-resolver.js");
 
 const HELP = `
 fn — AI-orchestrated task board
@@ -145,7 +146,51 @@ async function main() {
     process.env.FN_PROJECT = projectName;
   }
 
+  // Extract command early (needed for migration check)
   const command = args[0];
+
+  // ── First-Run Auto-Migration ─────────────────────────────────────────────
+  // Check if this is a fresh installation or if projects need to be migrated
+  // Skip migration check for 'project' commands to avoid circular issues
+  if (command !== "project" && !process.env.KB_SKIP_MIGRATION) {
+    try {
+      const { createMigrationOrchestrator, createFirstRunExperience, CentralCore } = await import("@fusion/core");
+      
+      const centralCore = new CentralCore();
+      await centralCore.init();
+
+      const migration = createMigrationOrchestrator(centralCore);
+
+      if (await migration.needsMigration()) {
+        const firstRun = createFirstRunExperience(centralCore);
+        const state = await firstRun.getSetupState();
+
+        if (state.isFirstRun && state.hasDetectedProjects) {
+          console.log("[kb] First run detected. Auto-registering projects...");
+          const result = await migration.runMigration({ 
+            startPath: process.cwd(),
+            autoRegister: true 
+          });
+          
+          if (result.projectsRegistered.length > 0) {
+            console.log(`[kb] Auto-registered ${result.projectsRegistered.length} project(s):`);
+            for (const p of result.projectsRegistered) {
+              console.log(`       - ${p.name}: ${p.path}`);
+            }
+          }
+          
+          if (result.projectsSkipped.length > 0) {
+            console.log(`[kb] Skipped ${result.projectsSkipped.length} project(s) (already registered or invalid)`);
+          }
+        }
+      }
+
+      await centralCore.close();
+    } catch (err) {
+      // Migration is best-effort: log warning but don't block command execution
+      console.warn("[kb] Warning: Migration check failed:", (err as Error).message);
+    }
+  }
 
   try {
     switch (command) {
