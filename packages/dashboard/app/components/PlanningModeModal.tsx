@@ -42,6 +42,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
   const [error, setError] = useState<string | null>(null);
   const [responseHistory, setResponseHistory] = useState<QuestionResponse[]>([]);
   const [editedSummary, setEditedSummary] = useState<PlanningSummary | null>(null);
+  const [hasProgress, setHasProgress] = useState(false);
   // Use ref instead of state for hasAutoStarted to handle React StrictMode double-render.
   // In StrictMode, components render twice but state persists across renders,
   // which would skip auto-start on the second (committed) render. Refs are
@@ -77,6 +78,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
             session: { sessionId, currentQuestion: question, summary: null },
           });
           setStreamingOutput("");
+          setHasProgress(true);
         },
         onSummary: (summary) => {
           setView({
@@ -86,6 +88,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
           });
           setEditedSummary(summary);
           setStreamingOutput("");
+          setHasProgress(true);
         },
         onError: (message) => {
           setError(message);
@@ -166,7 +169,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (view.type === "question" || view.type === "summary") {
+        if (hasProgress) {
           if (confirm("Are you sure you want to close? Your planning progress will be lost.")) {
             handleCancel();
           }
@@ -178,7 +181,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, view]);
+  }, [isOpen, hasProgress, handleCancel]);
 
   const handleSubmitResponse = useCallback(
     async (responses: QuestionResponse) => {
@@ -201,6 +204,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
         // Submit response - AI will broadcast events via the already-connected stream
         await respondToPlanning(sessionId, responses);
         setResponseHistory((prev) => [...prev, responses]);
+        setHasProgress(true);
         // Events (question/summary) will arrive via the existing SSE stream
       } catch (err: any) {
         setError(err.message || "Failed to submit response");
@@ -211,6 +215,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
   );
 
   const handleCancel = useCallback(async () => {
+    // Show confirmation if user has made progress
+    if (hasProgress) {
+      if (!confirm("Are you sure you want to close? Your planning progress will be lost.")) {
+        return;
+      }
+    }
+
     // Always close the stream connection
     streamConnectionRef.current?.close();
     streamConnectionRef.current = null;
@@ -228,9 +239,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
     setResponseHistory([]);
     setEditedSummary(null);
     setStreamingOutput("");
+    setHasProgress(false);
     currentSessionIdRef.current = null;
     onClose();
-  }, [view, onClose]);
+  }, [hasProgress, view, onClose]);
 
   const handleCreateTask = useCallback(async () => {
     if (view.type !== "summary") return;
