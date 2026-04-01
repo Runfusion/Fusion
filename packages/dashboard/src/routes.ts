@@ -4978,7 +4978,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       } = await import("@fusion/core");
 
       // Debug logging
-      if (process.env.KB_DEBUG_AI) {
+      if (process.env.FUSION_DEBUG_AI) {
         console.log(`[ai-summarize] Request from ${ip}, description length: ${description?.length || 0}`);
       }
 
@@ -5022,7 +5022,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         (settings.planningProvider && settings.planningModelId ? settings.planningModelId : undefined) ||
         (settings.defaultProvider && settings.defaultModelId ? settings.defaultModelId : undefined);
 
-      if (process.env.KB_DEBUG_AI) {
+      if (process.env.FUSION_DEBUG_AI) {
         console.log(`[ai-summarize] Resolved model: ${resolvedProvider || "auto"}/${resolvedModelId || "auto"}`);
       }
 
