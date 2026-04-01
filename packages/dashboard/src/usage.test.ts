@@ -4,6 +4,8 @@ import {
   clearUsageCache,
   ProviderUsage,
   calculatePace,
+  _setSleepFn,
+  _resetSleepFn,
 } from "./usage.js";
 
 // Mock the https module
@@ -363,6 +365,378 @@ describe("usage", () => {
 
       expect(claude.status).toBe("error");
       expect(claude.error).toContain("Auth expired");
+    });
+
+    it("does not send anthropic-beta header in requests", async () => {
+      const mockResponse = {
+        five_hour: { utilization: 10.0 },
+      };
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      let capturedHeaders: Record<string, string> = {};
+      const mockReq = {
+        on: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+      };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        capturedHeaders = options.headers || {};
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from(JSON.stringify(mockResponse)));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      await fetchAllProviderUsage();
+
+      // Verify no anthropic-beta header is sent
+      expect(capturedHeaders).not.toHaveProperty("anthropic-beta");
+    });
+
+    it("retries on 429 and succeeds after transient rate limit", async () => {
+      const noopSleep = vi.fn().mockResolvedValue(undefined);
+      _setSleepFn(noopSleep);
+
+      const mockResponse = {
+        five_hour: {
+          utilization: 20.0,
+          resets_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+        },
+      };
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      let callCount = 0;
+      const mockReq = {
+        on: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+      };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        callCount++;
+        const is429 = callCount <= 2; // First 2 calls return 429, third succeeds
+        const mockRes = {
+          statusCode: is429 ? 429 : 200,
+          headers: is429 ? { "retry-after": "1" } : {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              const body = is429
+                ? '{"error":"rate_limited"}'
+                : JSON.stringify(mockResponse);
+              handler(Buffer.from(body));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      expect(claude.windows).toHaveLength(1);
+      expect(claude.windows[0].percentUsed).toBe(20);
+
+      // Verify sleep was called for retries (2 retry sleeps)
+      expect(noopSleep).toHaveBeenCalledTimes(2);
+
+      _resetSleepFn();
+    });
+
+    it("reports rate limited after all retries exhausted on 429", async () => {
+      const noopSleep = vi.fn().mockResolvedValue(undefined);
+      _setSleepFn(noopSleep);
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = {
+        on: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+      };
+
+      // Always return 429
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 429,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error":"rate_limited"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("error");
+      expect(claude.error).toBe("Rate limited — try again later");
+
+      // Verify retries happened (2 sleeps for 3 attempts)
+      expect(noopSleep).toHaveBeenCalledTimes(2);
+
+      _resetSleepFn();
+    });
+
+    it("uses exponential backoff delays when retry-after header is absent", async () => {
+      const noopSleep = vi.fn().mockResolvedValue(undefined);
+      _setSleepFn(noopSleep);
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = {
+        on: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+      };
+
+      // Always return 429 without retry-after
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 429,
+          headers: {}, // No retry-after header
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error":"rate_limited"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      await fetchAllProviderUsage();
+
+      // Exponential backoff: 1000ms * 2^0 = 1000, 1000ms * 2^1 = 2000
+      expect(noopSleep).toHaveBeenCalledTimes(2);
+      expect(noopSleep).toHaveBeenNthCalledWith(1, 1000);
+      expect(noopSleep).toHaveBeenNthCalledWith(2, 2000);
+
+      _resetSleepFn();
+    });
+
+    it("respects retry-after header value for delay", async () => {
+      const noopSleep = vi.fn().mockResolvedValue(undefined);
+      _setSleepFn(noopSleep);
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = {
+        on: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+      };
+
+      // 429 with retry-after: 5 seconds
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 429,
+          headers: { "retry-after": "5" },
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error":"rate_limited"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      await fetchAllProviderUsage();
+
+      // Should use retry-after value (5s = 5000ms) for both retries
+      expect(noopSleep).toHaveBeenCalledTimes(2);
+      expect(noopSleep).toHaveBeenNthCalledWith(1, 5000);
+      expect(noopSleep).toHaveBeenNthCalledWith(2, 5000);
+
+      _resetSleepFn();
+    });
+
+    it("does not retry on 401 auth errors", async () => {
+      const noopSleep = vi.fn().mockResolvedValue(undefined);
+      _setSleepFn(noopSleep);
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "expired-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = {
+        on: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+      };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 401,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error": "unauthorized"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("error");
+      expect(claude.error).toContain("Auth expired");
+      // No retries should happen for auth errors
+      expect(noopSleep).not.toHaveBeenCalled();
+
+      _resetSleepFn();
+    });
+
+    it("does not retry on 403 auth errors", async () => {
+      const noopSleep = vi.fn().mockResolvedValue(undefined);
+      _setSleepFn(noopSleep);
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "forbidden-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = {
+        on: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+      };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 403,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error": "forbidden"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("error");
+      expect(claude.error).toContain("Auth expired");
+      // No retries should happen for auth errors
+      expect(noopSleep).not.toHaveBeenCalled();
+
+      _resetSleepFn();
     });
   });
 
