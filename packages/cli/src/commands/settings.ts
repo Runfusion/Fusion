@@ -1,5 +1,5 @@
 import { TaskStore, type Settings, DEFAULT_SETTINGS } from "@fusion/core";
-import { getStore as getStoreFromContext } from "../project-context.js";
+import { getStore } from "../project-resolver.js";
 
 // Settings that can be updated via CLI
 export const VALID_SETTINGS = [
@@ -38,15 +38,6 @@ const NUMBER_RANGES: Record<string, { min: number; max: number }> = {
   maxConcurrent: { min: 1, max: 10 },
   maxWorktrees: { min: 1, max: 20 },
 };
-
-async function getStore(projectName?: string): Promise<TaskStore> {
-  if (projectName) {
-    return getStoreFromContext(projectName);
-  }
-  const store = new TaskStore(process.cwd());
-  await store.init();
-  return store;
-}
 
 /**
  * Parse and validate a setting value based on its key's expected type

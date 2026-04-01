@@ -15,13 +15,74 @@ vi.mock("@fusion/core", () => {
     githubTokenConfigured: false,
   };
 
+  // Mock CentralCore for project-resolver
+  const mockCentralCore = vi.fn().mockImplementation(() => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    listProjects: vi.fn().mockResolvedValue([]),
+    getProject: vi.fn().mockResolvedValue(undefined),
+    getProjectByPath: vi.fn().mockResolvedValue(undefined),
+    registerProject: vi.fn(),
+    unregisterProject: vi.fn(),
+    getProjectHealth: vi.fn().mockResolvedValue(undefined),
+    isInitialized: vi.fn().mockReturnValue(true),
+  }));
+
   return {
     TaskStore: vi.fn(),
+    CentralCore: mockCentralCore,
     DEFAULT_SETTINGS,
   };
 });
 
+// Mock project-resolver to return a simple getStore that returns a mock store
+vi.mock("../project-resolver.js", async () => {
+  // Create a mock store with the methods tests expect
+  const createMockStore = () => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    getSettings: vi.fn().mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      autoResolveConflicts: true,
+      smartConflictResolution: true,
+      requirePlanApproval: false,
+      ntfyEnabled: false,
+      taskPrefix: undefined,
+      ntfyTopic: undefined,
+      worktreeNaming: "random",
+      githubTokenConfigured: false,
+      defaultProvider: undefined,
+      defaultModelId: undefined,
+      defaultThinkingLevel: undefined,
+    }),
+    updateSettings: vi.fn().mockResolvedValue(undefined),
+  });
+
+  return {
+    getStore: vi.fn().mockImplementation(createMockStore),
+    resolveProject: vi.fn().mockRejectedValue(new Error("Not implemented in mock")),
+    ProjectResolutionError: class ProjectResolutionError extends Error {
+      code: string;
+      context?: Record<string, unknown>;
+      constructor(message: string, code: string, context?: Record<string, unknown>) {
+        super(message);
+        this.name = "ProjectResolutionError";
+        this.code = code;
+        this.context = context;
+      }
+    },
+    getCentralCore: vi.fn(),
+    getProjectManager: vi.fn(),
+    findKbDir: vi.fn().mockReturnValue(null),
+    isKbProject: vi.fn().mockReturnValue(true),
+    suggestProjectName: vi.fn().mockReturnValue("test-project"),
+    formatLastActivity: vi.fn().mockReturnValue("just now"),
+    resetProjectResolution: vi.fn(),
+  };
+});
+
 import { TaskStore, DEFAULT_SETTINGS } from "@fusion/core";
+import { getStore } from "../project-resolver.js";
 import {
   runSettingsShow,
   runSettingsSet,
@@ -223,10 +284,10 @@ describe("runSettingsShow", () => {
       taskPrefix: "CUSTOM",
     });
 
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    (getStore as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       init: vi.fn(),
       getSettings: vi.fn().mockResolvedValue(mockSettings),
-    }));
+    });
 
     await runSettingsShow();
 
@@ -254,10 +315,10 @@ describe("runSettingsShow", () => {
       githubTokenConfigured: true,
     });
 
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    (getStore as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       init: vi.fn(),
       getSettings: vi.fn().mockResolvedValue(mockSettings),
-    }));
+    });
 
     await runSettingsShow();
 
@@ -272,10 +333,10 @@ describe("runSettingsShow", () => {
       githubTokenConfigured: false,
     });
 
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    (getStore as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       init: vi.fn(),
       getSettings: vi.fn().mockResolvedValue(mockSettings),
-    }));
+    });
 
     await runSettingsShow();
 
@@ -302,7 +363,7 @@ describe("runSettingsSet", () => {
       maxWorktrees: 4,
     });
 
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    (getStore as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       init: vi.fn(),
       updateSettings: mockUpdateSettings,
       getSettings: vi.fn().mockResolvedValue({
@@ -310,7 +371,7 @@ describe("runSettingsSet", () => {
         maxWorktrees: 4,
         taskPrefix: "TEST",
       }),
-    }));
+    });
   });
 
   afterEach(() => {

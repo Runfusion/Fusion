@@ -99,9 +99,13 @@ Usage:
   fn backup --list           List all database backups
   fn backup --restore <file> Restore database from a backup file
   fn backup --cleanup        Remove old backups exceeding retention limit
+  fn project list [--json]   List all registered projects
+  fn project add [dir] [--name <name>] [--isolation <mode>]  Register a project
+  fn project remove <name> [--force]  Unregister a project
+  fn project info [name]     Show project details
 
 Options:
-  --project, -P <name>       Target a specific project (bypasses CWD detection)
+  --project, -P <name>       Target a specific project (for task/settings commands)
   --port, -p <port>          Dashboard port (default: 4040)
   --interactive              Interactive mode (port selection for dashboard, issue selection for import)
   --paused                   Start with engine paused (automation disabled)
@@ -123,7 +127,20 @@ Requires configured API keys — run "pi" first to set up authentication.
 `.trim();
 
 async function main() {
-  const args = process.argv.slice(2);
+  let args = process.argv.slice(2);
+
+  // Extract --project flag before command dispatch
+  let projectFlag: string | undefined;
+  const projectIdx = args.indexOf("--project");
+  if (projectIdx !== -1 && projectIdx + 1 < args.length) {
+    projectFlag = args[projectIdx + 1];
+    // Remove --project and its value from args so subcommands don't see it
+    args.splice(projectIdx, 2);
+  }
+  // Store for subcommands to access via resolveProject
+  if (projectFlag) {
+    process.env.FN_PROJECT = projectFlag;
+  }
 
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     console.log(HELP);
@@ -591,6 +608,51 @@ async function main() {
         } else {
           console.error("Usage: fn backup --create | --list | --cleanup | --restore <filename>");
           process.exit(1);
+        }
+        break;
+      }
+
+      case "project": {
+        const subcommand = args[1];
+        switch (subcommand) {
+          case "list":
+          case "ls": {
+            const json = args.includes("--json");
+            await runProjectList({ json });
+            break;
+          }
+          case "add": {
+            const dir = args[2];
+            const nameIdx = args.indexOf("--name");
+            const name = nameIdx !== -1 && nameIdx + 1 < args.length ? args[nameIdx + 1] : undefined;
+            const isolationIdx = args.indexOf("--isolation");
+            const isolation = isolationIdx !== -1 && isolationIdx + 1 < args.length
+              ? args[isolationIdx + 1] as "in-process" | "child-process"
+              : undefined;
+            await runProjectAdd(dir, { name, isolation });
+            break;
+          }
+          case "remove":
+          case "rm": {
+            const name = args[2];
+            if (!name) {
+              console.error("Usage: fn project remove <name> [--force]");
+              process.exit(1);
+            }
+            const force = args.includes("--force");
+            await runProjectRemove(name, { force });
+            break;
+          }
+          case "info":
+          case "show": {
+            const name = args[2];
+            await runProjectInfo(name);
+            break;
+          }
+          default:
+            console.error(`Unknown subcommand: project ${subcommand || ""}`);
+            console.error("Try: fn project list | add [dir] | remove <name> | info [name]");
+            process.exit(1);
         }
         break;
       }

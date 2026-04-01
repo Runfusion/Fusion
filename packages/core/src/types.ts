@@ -521,9 +521,9 @@ export interface GlobalSettings {
   /** ntfy.sh topic name for push notifications. When set along with ntfyEnabled,
    *  notifications are sent to https://ntfy.sh/{topic} when tasks complete or fail. */
   ntfyTopic?: string;
-  /** The default project ID for CLI operations when --project flag is not provided.
-   *  Used to determine which project to operate on when not in a project directory.
-   *  Set via `kb project set-default <name>`. */
+  /** Default project ID to use when no explicit project is specified and
+   *  no project can be auto-detected from the current directory.
+   *  Used for multi-project CLI workflows. */
   defaultProjectId?: string;
 }
 

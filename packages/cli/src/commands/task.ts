@@ -7,17 +7,15 @@ import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node
 import { join } from "node:path";
 import { GitHubClient } from "@fusion/dashboard";
 import { isGhAvailable, isGhAuthenticated, getCurrentRepo } from "@fusion/core/gh-cli";
-import { resolveProject, getStore as getStoreFromContext } from "../project-context.js";
+import { getStore as getStoreFromResolver, resolveProject } from "../project-resolver.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
 async function getStore(projectName?: string): Promise<TaskStore> {
   if (projectName) {
-    return getStoreFromContext(projectName);
+    return getStoreFromResolver({ project: projectName });
   }
-  const store = new TaskStore(process.cwd());
-  await store.init();
-  return store;
+  return getStoreFromResolver();
 }
 
 export async function runTaskCreate(descriptionArg?: string, attachFiles?: string[], depends?: string[], projectName?: string) {
