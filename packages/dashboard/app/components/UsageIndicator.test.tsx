@@ -882,48 +882,136 @@ describe("UsageIndicator", () => {
     expect(paceRow).toHaveTextContent("20% over pace");
   });
 
-  it("verifies pace appears for weekly windows with valid backend timing data", () => {
-    // This test verifies the full data flow: backend calculates pace when both
-    // resetMs and windowDurationMs are present, frontend displays the indicator
+  // Refresh-on-open behavior tests
+  it("calls refresh when isOpen transitions from false to true", () => {
     mockUseUsageData.mockReturnValue({
-      providers: [
-        {
-          name: "TestProvider",
-          icon: "🧪",
-          status: "ok",
-          windows: [
-            { 
-              label: "Weekly", 
-              percentUsed: 40, 
-              percentLeft: 60, 
-              resetText: "resets in 4d",
-              resetMs: 345600000, // 4 days remaining
-              windowDurationMs: 604800000, // 7 days total
-              // Pace should be calculated by backend and included in response
-              pace: {
-                status: "behind",
-                percentElapsed: 43,
-                message: "3% under pace",
-              },
-            },
-          ],
-        },
-      ],
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: null, // No recent update, should refresh
+      refresh: mockRefresh,
+    });
+
+    const { rerender } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} />);
+
+    // Initially isOpen is false, refresh should not be called
+    expect(mockRefresh).not.toHaveBeenCalled();
+
+    // Open the modal - isOpen transitions to true
+    rerender(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    // refresh should be called when modal opens
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call refresh when isOpen is already true on mount", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
     });
 
+    // Render with isOpen=true initially
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
 
-    // Pace marker should be rendered
-    const paceMarker = document.querySelector('[data-testid="pace-marker"]');
-    expect(paceMarker).toBeInTheDocument();
+    // refresh should NOT be called on initial mount when isOpen is already true
+    // (the hook will handle initial data fetch)
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
 
-    // Pace row should show status
-    const paceRow = screen.getByTestId("pace-row");
-    expect(paceRow).toBeInTheDocument();
-    expect(paceRow).toHaveTextContent("under pace");
+  it("does not call refresh when isOpen becomes false (modal closes)", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    const { rerender } = render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    // Clear any calls from initial render
+    mockRefresh.mockClear();
+
+    // Close the modal - isOpen transitions to false
+    rerender(<UsageIndicator isOpen={false} onClose={mockOnClose} />);
+
+    // refresh should NOT be called when modal closes
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  it("skips refresh if data was updated within last 5 seconds", () => {
+    // Data was just updated (within 5 seconds)
+    const recentUpdate = new Date(Date.now() - 2000); // 2 seconds ago
+
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: recentUpdate,
+      refresh: mockRefresh,
+    });
+
+    const { rerender } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} />);
+
+    // Clear any calls from initial render
+    mockRefresh.mockClear();
+
+    // Open the modal
+    rerender(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    // refresh should NOT be called because data is fresh (within 5 seconds)
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  it("calls refresh when modal opens if data is stale (older than 5 seconds)", () => {
+    // Data was updated 10 seconds ago (stale)
+    const staleUpdate = new Date(Date.now() - 10000); // 10 seconds ago
+
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: staleUpdate,
+      refresh: mockRefresh,
+    });
+
+    const { rerender } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} />);
+
+    // Clear any calls from initial render
+    mockRefresh.mockClear();
+
+    // Open the modal
+    rerender(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    // refresh should be called because data is stale (older than 5 seconds)
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls refresh again when modal reopens after being closed", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: null,
+      refresh: mockRefresh,
+    });
+
+    const { rerender } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} />);
+
+    // Open the modal first time
+    rerender(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+
+    // Close the modal
+    rerender(<UsageIndicator isOpen={false} onClose={mockOnClose} />);
+
+    // Reopen the modal
+    rerender(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    // refresh should be called again on reopen
+    expect(mockRefresh).toHaveBeenCalledTimes(2);
   });
 });
