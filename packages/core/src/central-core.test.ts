@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -268,7 +268,13 @@ describe("CentralCore", () => {
 
   describe("project queries", () => {
     beforeEach(async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-04-01T12:00:00.000Z"));
       await central.init();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
     });
 
     it("should get project by id", async () => {
@@ -339,8 +345,7 @@ describe("CentralCore", () => {
         path: projectPath,
       });
 
-      // Add small delay to ensure different timestamp
-      await new Promise((r) => setTimeout(r, 10));
+      vi.setSystemTime(new Date("2026-04-01T12:00:01.000Z"));
 
       const updated = await central.updateProject(project.id, {
         name: "Updated",
@@ -507,7 +512,13 @@ describe("CentralCore", () => {
 
   describe("unified activity feed", () => {
     beforeEach(async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-04-01T12:00:00.000Z"));
       await central.init();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
     });
 
     it("should log activity with auto-generated id", async () => {
@@ -544,8 +555,7 @@ describe("CentralCore", () => {
 
       const beforeActivity = project.lastActivityAt;
 
-      // Small delay
-      await new Promise((r) => setTimeout(r, 10));
+      vi.setSystemTime(new Date("2026-04-01T12:00:01.000Z"));
 
       await central.logActivity({
         type: "task:moved",
@@ -711,10 +721,8 @@ describe("CentralCore", () => {
       expect(projectCount).toBe(5);
     });
 
-    it("should cleanup old activity entries", async () => {
+    it("should cleanup only activity entries older than the cutoff", async () => {
       vi.useFakeTimers();
-      const now = new Date("2026-01-15T12:00:00.000Z");
-      vi.setSystemTime(now);
 
       try {
         const projectPath = join(tempDir, "cleanup-activity");
@@ -726,19 +734,39 @@ describe("CentralCore", () => {
           path: projectPath,
         });
 
+        vi.setSystemTime(new Date("2026-04-01T12:00:00.000Z"));
         await central.logActivity({
           type: "task:created",
           projectId: project.id,
           projectName: project.name,
-          timestamp: now.toISOString(),
-          details: "Recent",
+          timestamp: "2026-03-31T11:59:59.999Z",
+          details: "Older than cutoff",
         });
 
-        const deleted = await central.cleanupOldActivity(-1);
-        expect(deleted).toBe(0);
+        await central.logActivity({
+          type: "task:created",
+          projectId: project.id,
+          projectName: project.name,
+          timestamp: "2026-03-31T12:00:00.000Z",
+          details: "Exactly at cutoff",
+        });
 
-        const countAfter = await central.getActivityCount();
-        expect(countAfter).toBe(1);
+        await central.logActivity({
+          type: "task:created",
+          projectId: project.id,
+          projectName: project.name,
+          timestamp: "2026-03-31T12:00:00.001Z",
+          details: "Newer than cutoff",
+        });
+
+        const deleted = await central.cleanupOldActivity(1);
+        expect(deleted).toBe(1);
+
+        const remaining = await central.getRecentActivity({ limit: 10, projectId: project.id });
+        expect(remaining.map((entry) => entry.details)).toEqual([
+          "Newer than cutoff",
+          "Exactly at cutoff",
+        ]);
       } finally {
         vi.useRealTimers();
       }
