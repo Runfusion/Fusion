@@ -11,6 +11,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
+import { DEFAULT_PROJECT_SETTINGS } from "./types.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -283,10 +284,10 @@ export class Database {
     // Run schema migrations
     this.migrate();
 
-    // Seed config row idempotently
+    // Seed config row idempotently with default settings
     const configNow = new Date().toISOString();
     this.db.exec(
-      `INSERT OR IGNORE INTO config (id, nextId, nextWorkflowStepId, settings, workflowSteps, updatedAt) VALUES (1, 1, 1, '{}', '[]', '${configNow}')`,
+      `INSERT OR IGNORE INTO config (id, nextId, nextWorkflowStepId, settings, workflowSteps, updatedAt) VALUES (1, 1, 1, '${JSON.stringify(DEFAULT_PROJECT_SETTINGS)}', '[]', '${configNow}')`,
     );
   }
 

@@ -153,7 +153,7 @@ describe("kb pi extension", () => {
 
       expect(result.details.taskId).toBe("FN-002");
       expect(result.details.dependencies).toEqual(["FN-001"]);
-      expect(result.content[0].text).toContain("Dependencies: KB-001");
+      expect(result.content[0].text).toContain("Dependencies: FN-001");
     });
   });
 
@@ -315,7 +315,7 @@ describe("kb pi extension", () => {
         makeCtx(tmpDir),
       );
 
-      expect(result.content[0].text).toContain("Attached to KB-001");
+      expect(result.content[0].text).toContain("Attached to FN-001");
       expect(result.content[0].text).toContain("test.txt");
       expect(result.details.attachment).toBeDefined();
       expect(result.details.attachment.originalName).toBe("test.txt");
@@ -366,7 +366,7 @@ describe("kb pi extension", () => {
         undefined,
         makeCtx(tmpDir),
       );
-      expect(pauseResult.content[0].text).toContain("Paused KB-001");
+      expect(pauseResult.content[0].text).toContain("Paused FN-001");
 
       // Verify it's paused
       const showTool = api.tools.get("kb_task_show")!;
@@ -388,7 +388,7 @@ describe("kb pi extension", () => {
         undefined,
         makeCtx(tmpDir),
       );
-      expect(unpauseResult.content[0].text).toContain("Unpaused KB-001");
+      expect(unpauseResult.content[0].text).toContain("Unpaused FN-001");
     });
   });
 });

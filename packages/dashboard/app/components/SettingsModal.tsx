@@ -454,7 +454,7 @@ export function SettingsModal({
               <input
                 id="taskPrefix"
                 type="text"
-                placeholder="KB"
+                placeholder="FN"
                 value={form.taskPrefix || ""}
                 onChange={(e) => {
                   const val = e.target.value;

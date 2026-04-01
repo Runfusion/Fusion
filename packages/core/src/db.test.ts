@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Database, createDatabase, toJson, toJsonNullable, fromJson } from "./db.js";
+import { DEFAULT_PROJECT_SETTINGS } from "./types.js";
 import { mkdtempSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -99,7 +100,7 @@ describe("Database", () => {
       expect(row).toBeDefined();
       expect(row.nextId).toBe(1);
       expect(row.nextWorkflowStepId).toBe(1);
-      expect(row.settings).toBe("{}");
+      expect(row.settings).toBe(JSON.stringify(DEFAULT_PROJECT_SETTINGS));
       expect(row.workflowSteps).toBe("[]");
       expect(row.updatedAt).toBeTruthy();
       // updatedAt should be a valid ISO timestamp
