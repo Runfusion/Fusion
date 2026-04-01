@@ -175,10 +175,31 @@ function createMockMissionStore() {
       return updated;
     }),
 
+    updateFeature: vi.fn((id: string, updates: Partial<MissionFeature>) => {
+      const feature = features.get(id);
+      if (!feature) throw new Error("Feature " + id + " not found");
+      const updated = { ...feature, ...updates, updatedAt: new Date().toISOString() };
+      features.set(id, updated);
+      return updated;
+    }),
+
+    deleteFeature: vi.fn((id: string) => {
+      if (!features.has(id)) throw new Error("Feature " + id + " not found");
+      features.delete(id);
+    }),
+
     linkFeatureToTask: vi.fn((featureId: string, taskId: string) => {
       const feature = features.get(featureId);
       if (!feature) throw new Error("Feature " + featureId + " not found");
       const updated = { ...feature, taskId, status: "triaged" as const, updatedAt: new Date().toISOString() };
+      features.set(featureId, updated);
+      return updated;
+    }),
+
+    unlinkFeatureFromTask: vi.fn((featureId: string) => {
+      const feature = features.get(featureId);
+      if (!feature) throw new Error("Feature " + featureId + " not found");
+      const updated = { ...feature, taskId: undefined, status: "defined" as const, updatedAt: new Date().toISOString() };
       features.set(featureId, updated);
       return updated;
     }),
@@ -391,7 +412,56 @@ describe("Mission API", () => {
     });
   });
 
-  describe("Feature linking", () => {
+  describe("Feature routes", () => {
+    it("should patch a feature status using a normalized featureId string", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Test Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Test Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Test Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Test Feature" });
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/features/${feature.id}`,
+        JSON.stringify({ status: "triaged", acceptanceCriteria: "Shippable" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe(feature.id);
+      expect(res.body.status).toBe("triaged");
+      expect(res.body.acceptanceCriteria).toBe("Shippable");
+      expect(missionStore.updateFeature).toHaveBeenCalledWith(feature.id, {
+        status: "triaged",
+        acceptanceCriteria: "Shippable",
+      });
+    });
+
+    it("should reject invalid feature status values", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Test Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Test Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Test Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Test Feature" });
+
+      app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+        res.status(500).json({ error: err.message });
+      });
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/features/${feature.id}`,
+        JSON.stringify({ status: "complete" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toContain("Invalid status");
+      expect(missionStore.updateFeature).not.toHaveBeenCalled();
+    });
+
     it("should link feature to task", async () => {
       const { app, missionStore } = buildApp();
       const mission = missionStore.createMission({ title: "Test Mission" });

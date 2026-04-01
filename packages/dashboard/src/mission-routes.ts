@@ -23,10 +23,6 @@ import type {
   MilestoneCreateInput,
   SliceCreateInput,
   FeatureCreateInput,
-  MissionStatus,
-  MilestoneStatus,
-  SliceStatus,
-  FeatureStatus,
   InterviewState,
 } from "@fusion/core";
 import {
@@ -83,14 +79,14 @@ function validateDescription(desc: unknown): string | undefined {
   return desc.trim() || undefined;
 }
 
-function validateStatus(status: unknown, allowedStatuses: readonly string[]): string {
+function validateStatus<TStatus extends string>(status: unknown, allowedStatuses: readonly TStatus[]): TStatus {
   if (!status || typeof status !== "string") {
     throw new Error(`Status is required and must be one of: ${allowedStatuses.join(", ")}`);
   }
-  if (!allowedStatuses.includes(status)) {
+  if (!allowedStatuses.includes(status as TStatus)) {
     throw new Error(`Invalid status. Must be one of: ${allowedStatuses.join(", ")}`);
   }
-  return status;
+  return status as TStatus;
 }
 
 function validateInterviewState(state: unknown): InterviewState {
@@ -228,7 +224,7 @@ export function createMissionRouter(store: TaskStore): Router {
         updates.description = validateDescription(description);
       }
       if (status !== undefined) {
-        updates.status = validateStatus(status, MISSION_STATUSES) as MissionStatus;
+        updates.status = validateStatus(status, MISSION_STATUSES);
       }
 
       if (Object.keys(updates).length === 0) {
@@ -510,7 +506,7 @@ export function createMissionRouter(store: TaskStore): Router {
         updates.description = validateDescription(description);
       }
       if (status !== undefined) {
-        updates.status = validateStatus(status, MILESTONE_STATUSES) as MilestoneStatus;
+        updates.status = validateStatus(status, MILESTONE_STATUSES);
       }
       if (dependencies !== undefined) {
         updates.dependencies = validateStringArray(dependencies, "dependencies");
@@ -768,7 +764,7 @@ export function createMissionRouter(store: TaskStore): Router {
         updates.description = validateDescription(description);
       }
       if (status !== undefined) {
-        updates.status = validateStatus(status, SLICE_STATUSES) as SliceStatus;
+        updates.status = validateStatus(status, SLICE_STATUSES);
       }
 
       if (Object.keys(updates).length === 0) {
@@ -955,7 +951,7 @@ export function createMissionRouter(store: TaskStore): Router {
         updates.acceptanceCriteria = validateDescription(acceptanceCriteria);
       }
       if (status !== undefined) {
-        updates.status = validateStatus(status, FEATURE_STATUSES) as FeatureStatus;
+        updates.status = validateStatus(status, FEATURE_STATUSES);
       }
 
       if (Object.keys(updates).length === 0) {
