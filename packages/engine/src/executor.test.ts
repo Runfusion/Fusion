@@ -709,6 +709,106 @@ describe("TaskExecutor worktree recovery", () => {
     expect(onError).toHaveBeenCalled();
   });
 
+  it("recovers from 'already used by worktree' error in createFromExistingBranch fallback", async () => {
+    const store = createMockStore();
+    let callCount = 0;
+
+    // First createWithBranch fails with "branch already exists" (not "already used")
+    // Then createFromExistingBranch fails with "already used by worktree"
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command.includes("git worktree add")) {
+        callCount++;
+        if (command.includes("-b")) {
+          // First attempt: createWithBranch fails with branch already exists
+          const error: any = new Error(
+            "fatal: A branch named 'kb/fn-050' already exists.",
+          );
+          error.stderr = Buffer.from(
+            "fatal: A branch named 'kb/fn-050' already exists.",
+          );
+          throw error;
+        } else {
+          // Fallback createFromExistingBranch fails with already used
+          const error: any = new Error(
+            "fatal: 'kb/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          );
+          error.stderr = Buffer.from(
+            "fatal: 'kb/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          );
+          throw error;
+        }
+      }
+      if (command.includes("git worktree remove")) {
+        return Buffer.from("");
+      }
+      if (command.includes("git branch -D")) {
+        return Buffer.from("");
+      }
+      return Buffer.from("");
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Mock the second call to tryCreateWorktree to succeed
+    // by making subsequent calls succeed after cleanup
+    let secondAttempt = false;
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command.includes("git worktree add")) {
+        if (secondAttempt) {
+          return Buffer.from(""); // Second attempt succeeds
+        }
+        if (command.includes("-b")) {
+          const error: any = new Error(
+            "fatal: A branch named 'kb/fn-050' already exists.",
+          );
+          error.stderr = Buffer.from(
+            "fatal: A branch named 'kb/fn-050' already exists.",
+          );
+          throw error;
+        } else {
+          const error: any = new Error(
+            "fatal: 'kb/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          );
+          error.stderr = Buffer.from(
+            "fatal: 'kb/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+          );
+          throw error;
+        }
+      }
+      if (command.includes("git worktree remove")) {
+        secondAttempt = true; // After cleanup, next add will succeed
+        return Buffer.from("");
+      }
+      if (command.includes("git branch -D")) {
+        return Buffer.from("");
+      }
+      return Buffer.from("");
+    });
+
+    await executor.execute(makeTask());
+
+    // Should have cleaned up the conflicting worktree
+    expect(mockedExecSync).toHaveBeenCalledWith(
+      expect.stringContaining('git worktree remove "/tmp/test/.worktrees/green-sage" --force'),
+      expect.any(Object),
+    );
+
+    // Should have logged the cleanup
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("Cleaned up conflicting worktree, retrying"),
+      expect.any(String),
+    );
+
+    // Task should eventually succeed
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-050",
+      expect.objectContaining({ worktree: expect.any(String) }),
+    );
+  });
+
   it("generates new worktree name when conflicting worktree belongs to active task", async () => {
     const store = createMockStore();
     store.listTasks.mockResolvedValue([

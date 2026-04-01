@@ -1363,31 +1363,16 @@ If issues are found that need attention, describe them clearly.`;
 
       // Handle "already used by worktree" conflict
       if (conflictInfo.type === "already-used" && conflictInfo.path) {
-        const shouldGenerateNewName = await this.shouldGenerateNewWorktreeName(
-          conflictInfo.path,
-          taskId,
-        );
-
-        if (shouldGenerateNewName) {
-          // Conflicting worktree belongs to an active task - generate new name
-          const newPath = join(this.rootDir, ".worktrees", generateWorktreeName(this.rootDir));
-          await this.store.logEntry(
-            taskId,
-            `Conflicting worktree in use by active task, trying new path`,
-            newPath,
-          );
-          return this.tryCreateWorktree(branch, newPath, taskId, startPoint, attemptNumber);
-        }
-
-        // Safe to clean up - conflicting worktree is not in use
-        const cleanupSuccess = await this.cleanupConflictingWorktree(
+        const result = await this.handleWorktreeConflict(
           conflictInfo.path,
           branch,
+          path,
           taskId,
+          startPoint,
+          attemptNumber,
         );
-        if (cleanupSuccess) {
-          await this.store.logEntry(taskId, `Cleaned up conflicting worktree, retrying`, path);
-          return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber);
+        if (result) {
+          return result;
         }
         throw new Error(
           `Worktree conflict at ${conflictInfo.path}: automatic cleanup failed`,
@@ -1419,10 +1404,69 @@ If issues are found that need attention, describe them clearly.`;
         createFromExistingBranch();
         executorLog.log(`Worktree created from existing branch: ${path}`);
         return path;
-      } catch (e: any) {
-        throw new Error(`Failed to create worktree: ${e.message}`);
+      } catch (fallbackError: any) {
+        // Check if the fallback also hit an "already used" conflict
+        const fallbackConflictInfo = this.extractWorktreeConflictInfo(fallbackError);
+        if (fallbackConflictInfo.type === "already-used" && fallbackConflictInfo.path) {
+          const result = await this.handleWorktreeConflict(
+            fallbackConflictInfo.path,
+            branch,
+            path,
+            taskId,
+            startPoint,
+            attemptNumber,
+          );
+          if (result) {
+            return result;
+          }
+          throw new Error(
+            `Worktree conflict at ${fallbackConflictInfo.path}: automatic cleanup failed`,
+          );
+        }
+        throw new Error(`Failed to create worktree: ${fallbackError.message}`);
       }
     }
+  }
+
+  /**
+   * Handle "already used by worktree" conflict.
+   * Either generates a new worktree name (if conflicting worktree is in use by active task)
+   * or cleans up the conflicting worktree and retries.
+   * 
+   * @returns The worktree path if recovery succeeded, null if recovery failed
+   */
+  private async handleWorktreeConflict(
+    conflictPath: string,
+    branch: string,
+    path: string,
+    taskId: string,
+    startPoint?: string,
+    attemptNumber?: number,
+  ): Promise<string | null> {
+    const shouldGenerateNewName = await this.shouldGenerateNewWorktreeName(
+      conflictPath,
+      taskId,
+    );
+
+    if (shouldGenerateNewName) {
+      // Conflicting worktree belongs to an active task - generate new name
+      const newPath = join(this.rootDir, ".worktrees", generateWorktreeName(this.rootDir));
+      await this.store.logEntry(
+        taskId,
+        `Conflicting worktree in use by active task, trying new path`,
+        newPath,
+      );
+      return this.tryCreateWorktree(branch, newPath, taskId, startPoint, attemptNumber);
+    }
+
+    // Safe to clean up - conflicting worktree is not in use
+    const cleanupSuccess = await this.cleanupConflictingWorktree(conflictPath, branch, taskId);
+    if (cleanupSuccess) {
+      await this.store.logEntry(taskId, `Cleaned up conflicting worktree, retrying`, path);
+      return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber);
+    }
+
+    return null;
   }
 
   /**
