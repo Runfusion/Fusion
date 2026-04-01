@@ -51,3 +51,43 @@ export type {
   ImportSettingsOptions,
   ImportResult,
 } from "./settings-export.js";
+
+// ── Mission Hierarchy Types ────────────────────────────────────────────
+
+export {
+  MISSION_STATUSES,
+  MILESTONE_STATUSES,
+  SLICE_STATUSES,
+  FEATURE_STATUSES,
+  INTERVIEW_STATES,
+} from "./mission-types.js";
+export type {
+  MissionStatus,
+  MilestoneStatus,
+  SliceStatus,
+  FeatureStatus,
+  InterviewState,
+  Mission,
+  Milestone,
+  Slice,
+  MissionFeature,
+  MissionCreateInput,
+  MilestoneCreateInput,
+  SliceCreateInput,
+  FeatureCreateInput,
+  MissionWithHierarchy,
+  MilestoneWithSlices,
+  SliceWithFeatures,
+  MissionEventPayload,
+  MissionDeletedPayload,
+  MilestoneEventPayload,
+  MilestoneDeletedPayload,
+  SliceEventPayload,
+  SliceDeletedPayload,
+  SliceActivatedPayload,
+  FeatureEventPayload,
+  FeatureDeletedPayload,
+  FeatureLinkedPayload,
+} from "./mission-types.js";
+export { MissionStore } from "./mission-store.js";
+export type { MissionStoreEvents } from "./mission-store.js";

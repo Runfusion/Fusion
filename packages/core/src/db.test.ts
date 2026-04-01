@@ -63,6 +63,11 @@ describe("Database", () => {
       expect(tableNames).toContain("agents");
       expect(tableNames).toContain("agentHeartbeats");
       expect(tableNames).toContain("__meta");
+      // Mission hierarchy tables
+      expect(tableNames).toContain("missions");
+      expect(tableNames).toContain("milestones");
+      expect(tableNames).toContain("slices");
+      expect(tableNames).toContain("mission_features");
     });
 
     it("creates all expected indexes", () => {
@@ -80,7 +85,7 @@ describe("Database", () => {
     });
 
     it("seeds schema version", () => {
-      expect(db.getSchemaVersion()).toBe(2);
+      expect(db.getSchemaVersion()).toBe(3);
     });
 
     it("seeds lastModified", () => {
@@ -103,7 +108,7 @@ describe("Database", () => {
 
     it("is idempotent - calling init() twice does not fail", () => {
       expect(() => db.init()).not.toThrow();
-      expect(db.getSchemaVersion()).toBe(2);
+      expect(db.getSchemaVersion()).toBe(3);
     });
 
     it("does not overwrite existing config on re-init", () => {
@@ -677,8 +682,8 @@ describe("schema migrations", () => {
     // Now run init() which should trigger migration
     db.init();
 
-    // Verify version bumped
-    expect(db.getSchemaVersion()).toBe(2);
+    // Verify version bumped to 3 (includes both v1→v2 and v2→v3 migrations)
+    expect(db.getSchemaVersion()).toBe(3);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -703,11 +708,130 @@ describe("schema migrations", () => {
     const db = new Database(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(2);
+    expect(db.getSchemaVersion()).toBe(3);
 
     // Re-init should not fail
     db.init();
-    expect(db.getSchemaVersion()).toBe(2);
+    expect(db.getSchemaVersion()).toBe(3);
+
+    db.close();
+  });
+
+  it("migrates a v2 database by adding missionId and sliceId columns", () => {
+    tmpDir = makeTmpDir();
+    const kbDir = join(tmpDir, ".kb");
+
+    // Create a v2 database manually (without missionId and sliceId columns)
+    const db = new Database(kbDir);
+    // Create tables without the new columns (matching v2 schema)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        status TEXT,
+        size TEXT,
+        reviewLevel INTEGER,
+        currentStep INTEGER DEFAULT 0,
+        worktree TEXT,
+        blockedBy TEXT,
+        paused INTEGER DEFAULT 0,
+        baseBranch TEXT,
+        modelPresetId TEXT,
+        modelProvider TEXT,
+        modelId TEXT,
+        validatorModelProvider TEXT,
+        validatorModelId TEXT,
+        mergeRetries INTEGER,
+        error TEXT,
+        summary TEXT,
+        thinkingLevel TEXT,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        columnMovedAt TEXT,
+        dependencies TEXT DEFAULT '[]',
+        steps TEXT DEFAULT '[]',
+        log TEXT DEFAULT '[]',
+        attachments TEXT DEFAULT '[]',
+        steeringComments TEXT DEFAULT '[]',
+        comments TEXT DEFAULT '[]',
+        workflowStepResults TEXT DEFAULT '[]',
+        prInfo TEXT,
+        issueInfo TEXT,
+        mergeDetails TEXT,
+        breakIntoSubtasks INTEGER DEFAULT 0,
+        enabledWorkflowSteps TEXT DEFAULT '[]'
+      );
+      CREATE TABLE IF NOT EXISTS config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        nextId INTEGER DEFAULT 1,
+        nextWorkflowStepId INTEGER DEFAULT 1,
+        settings TEXT DEFAULT '{}',
+        workflowSteps TEXT DEFAULT '[]',
+        updatedAt TEXT
+      );
+      CREATE TABLE IF NOT EXISTS activityLog (
+        id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, type TEXT NOT NULL,
+        taskId TEXT, taskTitle TEXT, details TEXT NOT NULL, metadata TEXT
+      );
+      CREATE TABLE IF NOT EXISTS archivedTasks (id TEXT PRIMARY KEY, data TEXT NOT NULL, archivedAt TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS automations (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+        scheduleType TEXT NOT NULL, cronExpression TEXT NOT NULL, command TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1, timeoutMs INTEGER, steps TEXT,
+        nextRunAt TEXT, lastRunAt TEXT, lastRunResult TEXT,
+        runCount INTEGER DEFAULT 0, runHistory TEXT DEFAULT '[]',
+        createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS agents (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'idle', taskId TEXT,
+        createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL,
+        lastHeartbeatAt TEXT, metadata TEXT DEFAULT '{}'
+      );
+      CREATE TABLE IF NOT EXISTS agentHeartbeats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agentId TEXT NOT NULL, timestamp TEXT NOT NULL, status TEXT NOT NULL, runId TEXT NOT NULL,
+        FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+      );
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '2')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+
+    // Insert a task on the v2 schema
+    db.exec(`INSERT INTO tasks (id, description, "column", createdAt, updatedAt) VALUES ('KB-2', 'test v2', 'triage', '2025-01-01', '2025-01-01')`);
+
+    // Now run init() which should trigger v2→v3 migration
+    db.init();
+
+    // Verify version bumped to 3
+    expect(db.getSchemaVersion()).toBe(3);
+
+    // Verify new columns exist and existing data is intact
+    const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    const colNames = cols.map((c) => c.name);
+    expect(colNames).toContain("missionId");
+    expect(colNames).toContain("sliceId");
+
+    // Existing task should still be readable
+    const task = db.prepare("SELECT * FROM tasks WHERE id = 'KB-2'").get() as any;
+    expect(task.description).toBe("test v2");
+
+    // New columns should have null defaults
+    expect(task.missionId).toBeNull();
+    expect(task.sliceId).toBeNull();
+
+    // Mission tables should be created
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).all() as { name: string }[];
+    const tableNames = tables.map((t) => t.name);
+    expect(tableNames).toContain("missions");
+    expect(tableNames).toContain("milestones");
+    expect(tableNames).toContain("slices");
+    expect(tableNames).toContain("mission_features");
 
     db.close();
   });
@@ -739,7 +863,7 @@ describe("createDatabase factory", () => {
     const db = createDatabase(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(2);
+    expect(db.getSchemaVersion()).toBe(3);
     expect(db.getLastModified()).toBeGreaterThan(0);
 
     db.close();

@@ -57,7 +57,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const SCHEMA_SQL = `
 -- Tasks table with JSON columns for nested data
@@ -184,6 +184,61 @@ CREATE TABLE IF NOT EXISTS __meta (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+-- Missions table (hierarchical project planning)
+CREATE TABLE IF NOT EXISTS missions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL,
+  interviewState TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
+-- Milestones table (phases within a mission)
+CREATE TABLE IF NOT EXISTS milestones (
+  id TEXT PRIMARY KEY,
+  missionId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL,
+  orderIndex INTEGER NOT NULL,
+  interviewState TEXT NOT NULL,
+  dependencies TEXT DEFAULT '[]',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (missionId) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+-- Slices table (work units within a milestone)
+CREATE TABLE IF NOT EXISTS slices (
+  id TEXT PRIMARY KEY,
+  milestoneId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL,
+  orderIndex INTEGER NOT NULL,
+  activatedAt TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (milestoneId) REFERENCES milestones(id) ON DELETE CASCADE
+);
+
+-- Mission features table (features within a slice that can link to tasks)
+CREATE TABLE IF NOT EXISTS mission_features (
+  id TEXT PRIMARY KEY,
+  sliceId TEXT NOT NULL,
+  taskId TEXT,
+  title TEXT NOT NULL,
+  description TEXT,
+  acceptanceCriteria TEXT,
+  status TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (sliceId) REFERENCES slices(id) ON DELETE CASCADE,
+  FOREIGN KEY (taskId) REFERENCES tasks(id) ON DELETE SET NULL
+);
 `;
 
 // ── Database Class ───────────────────────────────────────────────────
@@ -255,6 +310,14 @@ export class Database {
       this.applyMigration(2, () => {
         this.addColumnIfMissing("tasks", "comments", "TEXT DEFAULT '[]'");
         this.addColumnIfMissing("tasks", "mergeDetails", "TEXT");
+      });
+    }
+
+    if (version < 3) {
+      this.applyMigration(3, () => {
+        // Add mission hierarchy columns to tasks for linking tasks to slices
+        this.addColumnIfMissing("tasks", "missionId", "TEXT");
+        this.addColumnIfMissing("tasks", "sliceId", "TEXT");
       });
     }
 
