@@ -1,15 +1,33 @@
 {
   "id": "KB-655",
   "description": "Hide done by default on list view",
-  "column": "todo",
+  "column": "in-progress",
   "size": "S",
   "reviewLevel": 0,
-  "currentStep": 0,
+  "currentStep": 2,
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/solar-breeze",
   "createdAt": "2026-04-01T02:38:03.605Z",
-  "updatedAt": "2026-04-01T02:45:21.246Z",
-  "columnMovedAt": "2026-04-01T02:45:21.246Z",
+  "updatedAt": "2026-04-01T05:42:52.387Z",
+  "columnMovedAt": "2026-04-01T05:42:22.877Z",
   "dependencies": [],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Change Default Value",
+      "status": "pending"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "in-progress"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
   "log": [
     {
       "timestamp": "2026-04-01T02:38:03.605Z",
@@ -23,6 +41,30 @@
       "timestamp": "2026-04-01T02:45:20.252Z",
       "action": "Spec review: APPROVE",
       "outcome": "The specification is clear, appropriately scoped, and correctly identifies the files and behavior to change. The task is a simple default value change from `false` to `true` for the `hideDoneTasks` state, with clear test requirements. The review level of 0 (None) and size S are appropriate for this low-risk, reversible change."
+    },
+    {
+      "timestamp": "2026-04-01T05:42:23.099Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/solar-breeze"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:23.101Z",
+      "action": "Step 0 (Change Default Value) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:26.646Z",
+      "action": "Step 1 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:49.885Z",
+      "action": "Step 1 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:49.887Z",
+      "action": "Step 1 complete: Changed default value from false to true in ListView.tsx"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:52.387Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
     }
   ]
 }

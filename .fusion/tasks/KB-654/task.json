@@ -1,17 +1,29 @@
 {
   "id": "KB-654",
   "description": "On some devices the bottom of the board is off screen",
-  "column": "todo",
-  "status": "queued",
+  "column": "in-progress",
   "size": "S",
   "reviewLevel": 0,
-  "currentStep": 0,
-  "blockedBy": "KB-625",
+  "currentStep": 2,
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/quiet-robin",
   "createdAt": "2026-04-01T02:37:34.562Z",
-  "updatedAt": "2026-04-01T03:01:51.779Z",
-  "columnMovedAt": "2026-04-01T02:46:01.322Z",
+  "updatedAt": "2026-04-01T05:42:10.485Z",
+  "columnMovedAt": "2026-04-01T05:41:52.873Z",
   "dependencies": [],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Update Board Height CSS",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "in-progress"
+    }
+  ],
   "log": [
     {
       "timestamp": "2026-04-01T02:37:34.562Z",
@@ -25,6 +37,42 @@
       "timestamp": "2026-04-01T02:45:59.669Z",
       "action": "Spec review: APPROVE",
       "outcome": "The specification is accurate and complete. The issue description matches the actual code at `packages/dashboard/app/styles.css:384`, and the referenced pattern at line 2791 confirms the `dvh` fallback approach is already established in the codebase. The task size (S) and review level (0) are appropriate for this isolated CSS-only bug fix."
+    },
+    {
+      "timestamp": "2026-04-01T05:41:53.114Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-robin"
+    },
+    {
+      "timestamp": "2026-04-01T05:41:53.117Z",
+      "action": "Step 0 (Update Board Height CSS) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T05:41:57.266Z",
+      "action": "Step 0 (Update Board Height CSS) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:00.636Z",
+      "action": "Step 0 (Update Board Height CSS) → done"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:00.637Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:00.638Z",
+      "action": "Starting Step 1: Update Board Height CSS. Will change 100vh to 100dvh with fallback pattern."
+    },
+    {
+      "timestamp": "2026-04-01T05:42:10.484Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:10.484Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T05:42:10.485Z",
+      "action": "Starting Step 2: Testing & Verification. Running dashboard tests and build."
     }
   ]
 }

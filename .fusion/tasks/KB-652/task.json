@@ -1,15 +1,14 @@
 {
   "id": "KB-652",
   "description": "Openai-codex in model selector should use the openai logo",
-  "column": "in-review",
+  "column": "done",
   "size": "S",
   "reviewLevel": 0,
   "currentStep": 4,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/eager-eagle",
   "summary": "Successfully added `openai-codex` provider alias to display the OpenAI logo in the model selector. Added the mapping in `providerConfig` (ProviderIcon.tsx) with the same OpenAI icon and green color (#10a37f) as the `openai` entry. Added comprehensive test coverage including icon rendering and color verification tests. All 26 ProviderIcon tests pass, and the vite client build succeeds.",
   "createdAt": "2026-04-01T02:36:05.138Z",
-  "updatedAt": "2026-04-01T05:40:50.420Z",
-  "columnMovedAt": "2026-04-01T05:40:50.420Z",
+  "updatedAt": "2026-04-01T05:42:04.870Z",
+  "columnMovedAt": "2026-04-01T05:42:04.870Z",
   "dependencies": [],
   "steps": [
     {
