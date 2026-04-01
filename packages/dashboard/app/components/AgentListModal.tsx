@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { JSX } from "react";
-import { X, Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot } from "lucide-react";
+import { X, Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
 import { fetchAgents, createAgent, updateAgentState, deleteAgent } from "../api";
 
@@ -33,6 +33,16 @@ export function AgentListModal({ isOpen, onClose, addToast }: AgentListModalProp
   const [newAgentName, setNewAgentName] = useState("");
   const [newAgentRole, setNewAgentRole] = useState<AgentCapability>("custom");
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
+  const [view, setView] = useState<"board" | "list">(() => {
+    if (typeof window === "undefined") return "list";
+    const saved = localStorage.getItem("kb-agent-view");
+    return (saved === "board" || saved === "list") ? saved : "list";
+  });
+
+  // Persist view preference to localStorage
+  useEffect(() => {
+    localStorage.setItem("kb-agent-view", view);
+  }, [view]);
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true);
@@ -120,6 +130,26 @@ export function AgentListModal({ isOpen, onClose, addToast }: AgentListModalProp
             Agents
           </h2>
           <div className="modal-actions">
+            <div className="view-toggle">
+              <button
+                className={`view-toggle-btn${view === "board" ? " active" : ""}`}
+                onClick={() => setView("board")}
+                title="Board view"
+                aria-label="Board view"
+                aria-pressed={view === "board"}
+              >
+                <LayoutGrid size={16} />
+              </button>
+              <button
+                className={`view-toggle-btn${view === "list" ? " active" : ""}`}
+                onClick={() => setView("list")}
+                title="List view"
+                aria-label="List view"
+                aria-pressed={view === "list"}
+              >
+                <List size={16} />
+              </button>
+            </div>
             <button
               className="btn-icon"
               onClick={() => void loadAgents()}
@@ -188,14 +218,101 @@ export function AgentListModal({ isOpen, onClose, addToast }: AgentListModalProp
           )}
 
           {/* Agent List */}
-          <div className="agent-list">
+          <div className={view === "board" ? "agent-board" : "agent-list"}>
             {agents.length === 0 ? (
               <div className="agent-empty">
                 <Bot size={48} opacity={0.3} />
                 <p>No agents found</p>
                 <p className="text-secondary">Create an agent to get started</p>
               </div>
+            ) : view === "board" ? (
+              // Board view: compact grid layout
+              agents.map(agent => {
+                const health = getHealthStatus(agent);
+                const stateStyle = STATE_COLORS[agent.state];
+                return (
+                  <div key={agent.id} className="agent-board-card" style={{ borderColor: stateStyle.border }}>
+                    <div className="agent-board-header">
+                      <span className="agent-board-icon">{getRoleIcon(agent.role)}</span>
+                      <span
+                        className="agent-board-badge"
+                        style={{
+                          background: stateStyle.bg,
+                          color: stateStyle.text,
+                          border: `1px solid ${stateStyle.border}`,
+                        }}
+                      >
+                        {agent.state}
+                      </span>
+                      <span className="agent-board-health" style={{ color: health.color }} title={health.label}>
+                        {health.icon}
+                      </span>
+                    </div>
+                    <div className="agent-board-name" title={agent.name}>
+                      {agent.name}
+                    </div>
+                    <div className="agent-board-id">{agent.id}</div>
+                    <div className="agent-board-actions">
+                      {agent.state === "idle" && (
+                        <button
+                          className="btn btn--sm"
+                          onClick={() => void handleStateChange(agent.id, "active")}
+                          title="Activate"
+                        >
+                          <Play size={14} />
+                        </button>
+                      )}
+                      {agent.state === "active" && (
+                        <>
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleStateChange(agent.id, "paused")}
+                            title="Pause"
+                          >
+                            <Pause size={14} />
+                          </button>
+                          <button
+                            className="btn btn--sm btn--danger"
+                            onClick={() => void handleStateChange(agent.id, "terminated")}
+                            title="Stop"
+                          >
+                            <Square size={14} />
+                          </button>
+                        </>
+                      )}
+                      {agent.state === "paused" && (
+                        <>
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleStateChange(agent.id, "active")}
+                            title="Resume"
+                          >
+                            <Play size={14} />
+                          </button>
+                          <button
+                            className="btn btn--sm btn--danger"
+                            onClick={() => void handleStateChange(agent.id, "terminated")}
+                            title="Stop"
+                          >
+                            <Square size={14} />
+                          </button>
+                        </>
+                      )}
+                      {agent.state === "terminated" && (
+                        <button
+                          className="btn btn--sm btn--danger"
+                          onClick={() => void handleDelete(agent.id, agent.name)}
+                          title="Delete"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
             ) : (
+              // List view: detailed card layout
               agents.map(agent => {
                 const health = getHealthStatus(agent);
                 const stateStyle = STATE_COLORS[agent.state];
@@ -364,6 +481,81 @@ export function AgentListModal({ isOpen, onClose, addToast }: AgentListModalProp
           display: flex;
           flex-direction: column;
           gap: 12px;
+        }
+
+        .agent-board {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+          gap: 16px;
+        }
+
+        .agent-board-card {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding: 12px;
+          background: var(--bg-primary);
+          border: 1px solid var(--border);
+          border-top-width: 3px;
+          border-radius: 8px;
+          transition: background var(--transition-fast), border-color var(--transition-fast);
+        }
+
+        .agent-board-card:hover {
+          background: var(--card-hover);
+          border-color: var(--text-muted);
+        }
+
+        .agent-board-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .agent-board-icon {
+          font-size: 20px;
+          line-height: 1;
+        }
+
+        .agent-board-badge {
+          font-size: 10px;
+          font-weight: 600;
+          text-transform: uppercase;
+          padding: 2px 6px;
+          border-radius: 4px;
+          margin-left: auto;
+        }
+
+        .agent-board-health {
+          display: flex;
+          align-items: center;
+        }
+
+        .agent-board-name {
+          font-weight: 600;
+          font-size: 14px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .agent-board-id {
+          font-size: 11px;
+          font-family: var(--font-mono);
+          color: var(--text-secondary);
+        }
+
+        .agent-board-actions {
+          display: flex;
+          gap: 6px;
+          margin-top: 4px;
+          padding-top: 8px;
+          border-top: 1px solid var(--border);
+        }
+
+        .agent-board-actions .btn {
+          flex: 1;
+          justify-content: center;
         }
 
         .agent-empty {

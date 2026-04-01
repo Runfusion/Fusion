@@ -751,4 +751,174 @@ describe("AgentListModal", () => {
       expect(styleTag?.textContent).toContain("--state-error-bg");
     });
   });
+
+  describe("view toggle", () => {
+    beforeEach(() => {
+      // Clear localStorage before each test
+      localStorage.clear();
+    });
+
+    it("toggles between board and list views", async () => {
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Agents")).toBeTruthy();
+      });
+
+      // Initially should show list view (default)
+      const boardButton = screen.getByTitle("Board view");
+      const listButton = screen.getByTitle("List view");
+
+      expect(boardButton).toBeTruthy();
+      expect(listButton).toBeTruthy();
+
+      // Click board view button
+      fireEvent.click(boardButton);
+
+      // Should now show board layout (agent-board class)
+      await waitFor(() => {
+        const boardContainer = document.querySelector(".agent-board");
+        expect(boardContainer).toBeTruthy();
+      });
+
+      // Click list view button
+      fireEvent.click(listButton);
+
+      // Should now show list layout (agent-list class)
+      await waitFor(() => {
+        const listContainer = document.querySelector(".agent-list");
+        expect(listContainer).toBeTruthy();
+      });
+    });
+
+    it("persists view preference to localStorage", async () => {
+      const { unmount } = render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Agents")).toBeTruthy();
+      });
+
+      // Click board view button
+      fireEvent.click(screen.getByTitle("Board view"));
+
+      await waitFor(() => {
+        expect(localStorage.getItem("kb-agent-view")).toBe("board");
+      });
+
+      // Unmount and remount to test persistence
+      unmount();
+
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        // Should restore board view from localStorage
+        const boardContainer = document.querySelector(".agent-board");
+        expect(boardContainer).toBeTruthy();
+      });
+    });
+
+    it("board view shows compact agent cards", async () => {
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Agents")).toBeTruthy();
+      });
+
+      // Switch to board view
+      fireEvent.click(screen.getByTitle("Board view"));
+
+      await waitFor(() => {
+        // Board view should render compact cards
+        const boardCards = document.querySelectorAll(".agent-board-card");
+        expect(boardCards.length).toBe(mockAgents.length);
+      });
+
+      // Check that board view elements are present
+      expect(document.querySelector(".agent-board-icon")).toBeTruthy();
+      expect(document.querySelector(".agent-board-name")).toBeTruthy();
+      expect(document.querySelector(".agent-board-badge")).toBeTruthy();
+
+      // Board view should NOT have the detailed card body elements
+      const cardBodies = document.querySelectorAll(".agent-card-body");
+      expect(cardBodies.length).toBe(0);
+    });
+
+    it("board view cards show action buttons", async () => {
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Agents")).toBeTruthy();
+      });
+
+      // Switch to board view
+      fireEvent.click(screen.getByTitle("Board view"));
+
+      await waitFor(() => {
+        const boardCards = document.querySelectorAll(".agent-board-card");
+        expect(boardCards.length).toBeGreaterThan(0);
+      });
+
+      // Find an idle agent card and verify Start button exists
+      const startButtons = document.querySelectorAll(".agent-board-actions .btn");
+      expect(startButtons.length).toBeGreaterThan(0);
+
+      // Click a start button to verify it works
+      const firstStartButton = startButtons[0] as HTMLElement;
+      fireEvent.click(firstStartButton);
+
+      await waitFor(() => {
+        expect(mockUpdateAgentState).toHaveBeenCalled();
+      });
+    });
+
+    it("defaults to list view when no localStorage preference exists", async () => {
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        // Should default to list view (detailed card layout)
+        const listContainer = document.querySelector(".agent-list");
+        expect(listContainer).toBeTruthy();
+
+        // Detailed cards should be present
+        const agentCards = document.querySelectorAll(".agent-card");
+        expect(agentCards.length).toBe(mockAgents.length);
+      });
+    });
+  });
 });
