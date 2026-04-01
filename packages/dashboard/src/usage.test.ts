@@ -176,6 +176,280 @@ describe("usage", () => {
       expect(sessionWindow!.resetText).toContain("resets in");
     });
 
+    it("handles 429 rate limit with retry - succeeds on second attempt", async () => {
+      // Use fake timers for controlled retry delays
+      vi.useFakeTimers();
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+
+      const mockResponse = {
+        five_hour: { utilization: 50, resets_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() },
+      };
+
+      let requestCount = 0;
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        requestCount++;
+        const mockRes = {
+          statusCode: requestCount === 1 ? 429 : 200, // First request fails with 429
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from(JSON.stringify(requestCount === 1 ? { error: "rate limited" } : mockResponse)));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providersPromise = fetchAllProviderUsage();
+      
+      // Advance timers to let retry delays complete (1s for first retry)
+      await vi.advanceTimersByTimeAsync(1000);
+      
+      const providers = await providersPromise;
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(requestCount).toBe(2); // Initial + 1 retry
+      expect(claude.status).toBe("ok");
+      expect(claude.windows).toHaveLength(1);
+
+      vi.useRealTimers();
+    });
+
+    it("fails after max retries exhausted on 429", async () => {
+      vi.useFakeTimers();
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+
+      let requestCount = 0;
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        requestCount++;
+        const mockRes = {
+          statusCode: 429, // Always rate limited
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error": "rate limited"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providersPromise = fetchAllProviderUsage();
+      
+      // Advance through all retry delays: 1s + 2s + 4s = 7s
+      await vi.advanceTimersByTimeAsync(7000);
+      
+      const providers = await providersPromise;
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(requestCount).toBe(3); // Max 3 attempts
+      expect(claude.status).toBe("error");
+      expect(claude.error).toContain("Rate limited by Anthropic API");
+      expect(claude.error).toContain("please try again in a few moments");
+
+      vi.useRealTimers();
+    });
+
+    it("does not retry on 401 auth errors - fails immediately", async () => {
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "expired-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+
+      let requestCount = 0;
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        requestCount++;
+        const mockRes = {
+          statusCode: 401,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error": "unauthorized"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(requestCount).toBe(1); // No retries
+      expect(claude.status).toBe("error");
+      expect(claude.error).toContain("Auth expired");
+    });
+
+    it("does not retry on 403 auth errors - fails immediately", async () => {
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "forbidden-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+
+      let requestCount = 0;
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        requestCount++;
+        const mockRes = {
+          statusCode: 403,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error": "forbidden"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(requestCount).toBe(1); // No retries
+      expect(claude.status).toBe("error");
+      expect(claude.error).toContain("Auth expired");
+    });
+
+    it("does not retry on 5xx server errors - fails immediately", async () => {
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+
+      let requestCount = 0;
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        requestCount++;
+        const mockRes = {
+          statusCode: 503, // Service unavailable
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error": "service unavailable"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(requestCount).toBe(1); // No retries
+      expect(claude.status).toBe("error");
+      expect(claude.error).toBe("HTTP 503");
+    });
+
+    it("retries with exponential backoff delays (1s, 2s, 4s)", async () => {
+      vi.useFakeTimers();
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+
+      let requestCount = 0;
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        requestCount++;
+        const mockRes = {
+          statusCode: 429,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") {
+              handler(Buffer.from('{"error": "rate limited"}'));
+            }
+            if (event === "end") {
+              handler();
+            }
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providersPromise = fetchAllProviderUsage();
+
+      // Advance through all retry delays: 1s + 2s + 4s = 7s
+      await vi.advanceTimersByTimeAsync(7000);
+
+      const providers = await providersPromise;
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      // Should make 3 attempts (initial + 2 retries) with exponential backoff
+      expect(requestCount).toBe(3);
+      expect(claude.status).toBe("error");
+      expect(claude.error).toContain("Rate limited by Anthropic API");
+
+      vi.useRealTimers();
+    });
+
     it("handles 401 auth error", async () => {
       mockReadFileSync.mockImplementation((path: string) => {
         if (path.includes("claude")) {
