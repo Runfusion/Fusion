@@ -387,6 +387,10 @@ export interface Task {
    *  unmerged branch. The executor reads this to branch from the
    *  dependency's branch instead of HEAD. Cleared after worktree creation. */
   baseBranch?: string;
+  /** Commit SHA of the base branch at worktree creation time.
+   *  Used for computing file diffs when reviewing task changes.
+   *  Set by the executor when creating the worktree. */
+  baseCommitSha?: string;
   attachments?: TaskAttachment[];
   steeringComments?: SteeringComment[];
   comments?: TaskComment[];
@@ -428,6 +432,8 @@ export interface Task {
   error?: string;
   /** Optional summary of what was changed/fixed when task is completed */
   summary?: string;
+  /** Files modified during agent execution, captured at task completion time */
+  modifiedFiles?: string[];
   /** ISO-8601 timestamp of when the task last entered its current column.
    *  Used to sort cards within a column so that recently-moved cards appear at the top. */
   columnMovedAt?: string;
@@ -523,6 +529,9 @@ export interface GlobalSettings {
   /** ntfy.sh topic name for push notifications. When set along with ntfyEnabled,
    *  notifications are sent to https://ntfy.sh/{topic} when tasks complete or fail. */
   ntfyTopic?: string;
+  /** Default project ID for the current user. Used to automatically select
+   *  the default project when opening the dashboard without a specific project. */
+  defaultProjectId?: string;
 }
 
 /**
@@ -682,6 +691,7 @@ export const DEFAULT_GLOBAL_SETTINGS: Required<Pick<GlobalSettings, "themeMode" 
   defaultThinkingLevel: undefined,
   ntfyEnabled: false,
   ntfyTopic: undefined,
+  defaultProjectId: undefined,
 };
 
 /** Default values for project-level settings. */
@@ -740,6 +750,7 @@ export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<keyof GlobalSettings> = [
   "defaultThinkingLevel",
   "ntfyEnabled",
   "ntfyTopic",
+  "defaultProjectId",
 ] as const;
 
 /** Keys that belong to the project settings scope. */
@@ -861,8 +872,11 @@ export interface ArchivedTaskEntry {
   breakIntoSubtasks?: boolean;
   paused?: boolean;
   baseBranch?: string;
+  baseCommitSha?: string;
   mergeRetries?: number;
   error?: string;
+  /** Files modified during agent execution, captured at task completion time */
+  modifiedFiles?: string[];
 }
 
 /** Type of planning question presented to the user */

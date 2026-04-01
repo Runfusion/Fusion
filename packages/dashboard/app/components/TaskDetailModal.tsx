@@ -13,6 +13,7 @@ import { ModelSelectorTab } from "./ModelSelectorTab";
 import { PrSection } from "./PrSection";
 import { TaskComments } from "./TaskComments";
 import { MergeDetails } from "./MergeDetails";
+import { TaskChangesTab } from "./TaskChangesTab";
 
 interface ModelSelection {
   provider?: string;
@@ -105,7 +106,7 @@ export function TaskDetailModal({
   addToast,
   githubTokenConfigured,
 }: TaskDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "steering" | "comments" | "model">("definition");
+  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "changes" | "steering" | "comments" | "model">("definition");
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
@@ -671,6 +672,14 @@ export function TaskDetailModal({
             >
               Agent Log
             </button>
+            {(task.column === "in-progress" || task.column === "in-review" || task.column === "done") && (
+              <button
+                className={`detail-tab${activeTab === "changes" ? " detail-tab-active" : ""}`}
+                onClick={() => setActiveTab("changes")}
+              >
+                Changes
+              </button>
+            )}
             <button
               className={`detail-tab${activeTab === "steering" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("steering")}
@@ -703,6 +712,8 @@ export function TaskDetailModal({
                 validatorModel={getValidatorSelection(task)}
               />
             </div>
+          ) : activeTab === "changes" ? (
+            <TaskChangesTab taskId={task.id} worktree={task.worktree} />
           ) : activeTab === "steering" ? (
             <SteeringTab task={task} addToast={addToast} />
           ) : activeTab === "comments" ? (

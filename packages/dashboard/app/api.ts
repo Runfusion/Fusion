@@ -1722,3 +1722,160 @@ export async function summarizeTitle(
 
   return data.title;
 }
+
+// ── Project Management API (Multi-Project Support) ───────────────────────
+
+/** Project information returned by project endpoints */
+export interface ProjectInfo {
+  id: string;
+  name: string;
+  path: string;
+  status: "active" | "paused" | "errored" | "initializing";
+  isolationMode: "in-process" | "child-process";
+  createdAt: string;
+  updatedAt: string;
+  lastActivityAt?: string;
+}
+
+/** Project health metrics */
+export interface ProjectHealth {
+  projectId: string;
+  status: "active" | "paused" | "errored" | "initializing";
+  activeTaskCount: number;
+  inFlightAgentCount: number;
+  lastActivityAt?: string;
+  lastErrorAt?: string;
+  lastErrorMessage?: string;
+  totalTasksCompleted: number;
+  totalTasksFailed: number;
+  averageTaskDurationMs?: number;
+  updatedAt: string;
+}
+
+/** Unified activity feed entry */
+export interface ActivityFeedEntry {
+  id: string;
+  timestamp: string;
+  type: "task:created" | "task:moved" | "task:updated" | "task:deleted" | "task:merged" | "task:failed" | "settings:updated";
+  projectId: string;
+  projectName: string;
+  taskId?: string;
+  taskTitle?: string;
+  details: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Input for creating a new project */
+export interface ProjectCreateInput {
+  name: string;
+  path: string;
+  isolationMode?: "in-process" | "child-process";
+}
+
+/** Options for fetching activity feed */
+export interface FeedOptions {
+  limit?: number;
+  since?: string;
+  projectId?: string;
+  type?: ActivityFeedEntry["type"];
+}
+
+/** Global concurrency state across all projects */
+export interface GlobalConcurrencyState {
+  globalMaxConcurrent: number;
+  currentlyActive: number;
+  queuedCount: number;
+  projectsActive: Record<string, number>;
+}
+
+/** First run status response */
+export interface FirstRunStatus {
+  hasProjects: boolean;
+  singleProjectPath: string | null;
+}
+
+/** Fetch all registered projects */
+export function fetchProjects(): Promise<ProjectInfo[]> {
+  return api<ProjectInfo[]>("/projects");
+}
+
+/** Register a new project */
+export function registerProject(input: ProjectCreateInput): Promise<ProjectInfo> {
+  return api<ProjectInfo>("/projects", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Unregister a project */
+export function unregisterProject(id: string): Promise<void> {
+  return api<void>(`/projects/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+/** Fetch health metrics for a specific project */
+export function fetchProjectHealth(id: string): Promise<ProjectHealth> {
+  return api<ProjectHealth>(`/projects/${encodeURIComponent(id)}/health`);
+}
+
+/** Fetch unified activity feed */
+export function fetchActivityFeed(options?: FeedOptions): Promise<ActivityFeedEntry[]> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set("limit", String(options.limit));
+  if (options?.since) params.set("since", options.since);
+  if (options?.projectId) params.set("projectId", options.projectId);
+  if (options?.type) params.set("type", options.type);
+  
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<ActivityFeedEntry[]>(`/activity-feed${query}`);
+}
+
+/** Pause a project */
+export function pauseProject(id: string): Promise<ProjectInfo> {
+  return api<ProjectInfo>(`/projects/${encodeURIComponent(id)}/pause`, {
+    method: "POST",
+  });
+}
+
+/** Resume a paused project */
+export function resumeProject(id: string): Promise<ProjectInfo> {
+  return api<ProjectInfo>(`/projects/${encodeURIComponent(id)}/resume`, {
+    method: "POST",
+  });
+}
+
+/** Fetch first run status to detect if user needs setup wizard */
+export function fetchFirstRunStatus(): Promise<FirstRunStatus> {
+  return api<FirstRunStatus>("/first-run-status");
+}
+
+/** Fetch global concurrency state */
+export function fetchGlobalConcurrency(): Promise<GlobalConcurrencyState> {
+  return api<GlobalConcurrencyState>("/global-concurrency");
+}
+
+/** Fetch tasks for a specific project */
+export function fetchProjectTasks(projectId: string, limit?: number, offset?: number): Promise<Task[]> {
+  const params = new URLSearchParams();
+  params.set("projectId", projectId);
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (offset !== undefined) params.set("offset", String(offset));
+  return api<Task[]>(`/tasks?${params.toString()}`);
+}
+
+/** Fetch project-specific config */
+export function fetchProjectConfig(projectId: string): Promise<{ maxConcurrent: number; rootDir: string }> {
+  return api<{ maxConcurrent: number; rootDir: string }>(`/projects/${encodeURIComponent(projectId)}/config`);
+}
+
+/** Diff information for a task */
+export interface TaskDiff {
+  files: string[];
+  diffs: Record<string, { stat: string; patch: string }>;
+}
+
+/** Fetch diff information for a task */
+export function fetchTaskDiff(taskId: string): Promise<TaskDiff> {
+  return api<TaskDiff>(`/tasks/${encodeURIComponent(taskId)}/diff`);
+}
