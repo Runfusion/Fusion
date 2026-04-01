@@ -11,7 +11,7 @@ Source files that have no corresponding test file (checked both co-located `*.te
 
 | File | Lines | Category | Priority | Notes |
 |------|-------|----------|----------|-------|
-| `agent-store.ts` | 597 | Business Logic | **High** | Agent state management store — critical runtime component with no test coverage |
+| `agent-store.ts` | 597 | Business Logic | ~~High~~ ✅ | Agent state management store — **covered by FN-704** (62 tests in `agent-store.test.ts`) |
 | `automation.ts` | 143 | Types/Constants | Low | Pure type definitions and constant mappings — tested indirectly via `automation-store.test.ts` |
 | `mission-types.ts` | 253 | Types/Constants | Low | Type definitions for missions — tested indirectly via `mission-store.test.ts` |
 | `types.ts` | 1228 | Types/Constants | Low | Core type definitions — no runtime logic to test |
