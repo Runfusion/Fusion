@@ -2761,11 +2761,20 @@ body {
     padding: 12px 14px;
   }
 
+  .detail-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .detail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
   .detail-tab {
     padding: 8px 12px;
     font-size: 13px;
-    flex: 1;
-    text-align: center;
+    flex-shrink: 0;
   }
 
   /* Settings modal: stack sidebar above content for mobile */
