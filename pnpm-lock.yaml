@@ -224,6 +224,9 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.62.0
         version: 0.62.0(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@sinclair/typebox':
+        specifier: ^0.34.48
+        version: 0.34.48
     devDependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0

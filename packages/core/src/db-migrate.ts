@@ -12,7 +12,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { readFile, readdir, rename, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Database } from "./db.js";
-import { toJson, toJsonNullable } from "./db.js";
+import { toJson, toJsonNullable, normalizeTaskComments } from "./db.js";
 import type { Task, BoardConfig, ActivityLogEntry, ArchivedTaskEntry } from "./types.js";
 import type { ScheduledTask } from "./automation.js";
 
@@ -184,20 +184,10 @@ async function migrateTasks(kbDir: string, db: Database): Promise<void> {
       const raw = await readFile(taskJsonPath, "utf-8");
       const task: Task = JSON.parse(raw);
 
-      const steeringComments = Array.isArray((task as any).steeringComments)
-        ? (task as any).steeringComments
-        : [];
-      const comments = Array.isArray(task.comments) ? task.comments : [];
-      const mergedComments = [
-        ...steeringComments.map((comment: any) => ({
-          id: comment.id,
-          text: comment.text,
-          author: comment.author,
-          createdAt: comment.createdAt,
-          updatedAt: comment.updatedAt ?? comment.createdAt,
-        })),
-        ...comments,
-      ];
+      const normalizedComments = normalizeTaskComments(
+        task.steeringComments,
+        task.comments,
+      );
 
       insertStmt.run(
         task.id,
@@ -229,8 +219,8 @@ async function migrateTasks(kbDir: string, db: Database): Promise<void> {
         toJson(task.steps || []),
         toJson(task.log || []),
         toJson(task.attachments || []),
-        "[]",
-        toJson(mergedComments),
+        toJson(normalizedComments.steeringComments),
+        toJson(normalizedComments.comments),
         toJson(task.workflowStepResults || []),
         toJsonNullable(task.prInfo),
         toJsonNullable(task.issueInfo),

@@ -466,6 +466,47 @@ describe("migrateFromLegacy", () => {
     });
   });
 
+  describe("comment migration", () => {
+    it("deduplicates overlapping steeringComments and comments during legacy import", async () => {
+      const tasksDir = join(kbDir, "tasks");
+      const taskDir = join(tasksDir, "FN-002");
+      await mkdir(taskDir, { recursive: true });
+
+      await writeFile(
+        join(taskDir, "task.json"),
+        JSON.stringify({
+          id: "FN-002",
+          description: "Comment overlap",
+          column: "todo",
+          dependencies: [],
+          steps: [],
+          currentStep: 0,
+          log: [],
+          steeringComments: [
+            { id: "c1", text: "Use TypeScript", createdAt: "2025-01-01T00:00:00.000Z", author: "user" },
+          ],
+          comments: [
+            { id: "c1", text: "Use TypeScript", createdAt: "2025-01-01T00:00:00.000Z", author: "user", updatedAt: "2025-01-02T00:00:00.000Z" },
+            { id: "c2", text: "General note", createdAt: "2025-01-03T00:00:00.000Z", author: "alice" },
+          ],
+          createdAt: "2025-01-01T00:00:00.000Z",
+          updatedAt: "2025-01-01T00:00:00.000Z",
+        }),
+      );
+
+      await migrateFromLegacy(kbDir, db);
+
+      const row = db.prepare("SELECT steeringComments, comments FROM tasks WHERE id = 'FN-002'").get() as any;
+      expect(JSON.parse(row.steeringComments)).toEqual([
+        { id: "c1", text: "Use TypeScript", createdAt: "2025-01-01T00:00:00.000Z", author: "user" },
+      ]);
+      expect(JSON.parse(row.comments)).toEqual([
+        { id: "c1", text: "Use TypeScript", createdAt: "2025-01-01T00:00:00.000Z", author: "user", updatedAt: "2025-01-02T00:00:00.000Z" },
+        { id: "c2", text: "General note", createdAt: "2025-01-03T00:00:00.000Z", author: "alice" },
+      ]);
+    });
+  });
+
   describe("data integrity", () => {
     it("preserves all task fields through migration", async () => {
       const tasksDir = join(kbDir, "tasks");
@@ -541,9 +582,10 @@ describe("migrateFromLegacy", () => {
       expect(JSON.parse(row.steps)).toHaveLength(2);
       expect(JSON.parse(row.log)).toHaveLength(1);
       expect(JSON.parse(row.attachments)).toHaveLength(1);
-      // steeringComments are merged into comments during migration
-      expect(JSON.parse(row.steeringComments)).toEqual([]); // Now empty - merged into comments
-      expect(JSON.parse(row.comments)).toHaveLength(1); // Migrated from steeringComments
+      expect(JSON.parse(row.steeringComments)).toHaveLength(1);
+      expect(JSON.parse(row.comments)).toEqual([
+        { id: "c1", text: "Fix this", createdAt: "2025-01-01", author: "user" },
+      ]);
       expect(JSON.parse(row.workflowStepResults)).toHaveLength(1);
       expect(JSON.parse(row.prInfo).number).toBe(1);
       expect(JSON.parse(row.issueInfo).number).toBe(10);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { Database, createDatabase, toJson, toJsonNullable, fromJson } from "./db.js";
+import { Database, createDatabase, toJson, toJsonNullable, fromJson, normalizeTaskComments } from "./db.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./types.js";
 import { mkdtempSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -491,6 +491,26 @@ describe("Database", () => {
   });
 });
 
+describe("comment normalization", () => {
+  it("merges overlapping legacy and unified comments exactly once", () => {
+    const normalized = normalizeTaskComments(
+      [{ id: "c1", text: "Legacy note", author: "user", createdAt: "2025-01-01T00:00:00.000Z" }],
+      [{ id: "c1", text: "Legacy note", author: "user", createdAt: "2025-01-01T00:00:00.000Z", updatedAt: "2025-01-02T00:00:00.000Z" }],
+    );
+
+    expect(normalized.comments).toEqual([
+      {
+        id: "c1",
+        text: "Legacy note",
+        author: "user",
+        createdAt: "2025-01-01T00:00:00.000Z",
+        updatedAt: "2025-01-02T00:00:00.000Z",
+      },
+    ]);
+    expect(normalized.steeringComments).toHaveLength(1);
+  });
+});
+
 describe("JSON helpers", () => {
   describe("toJson", () => {
     it("stringifies arrays", () => {
@@ -683,7 +703,7 @@ describe("schema migrations", () => {
     // Now run init() which should trigger migration
     db.init();
 
-    // Verify version bumped to 4 (includes v1→v2, v2→v3, and v3→v4 migrations)
+    // Verify version bumped to 5 (includes v1→v2, v2→v3, v3→v4, and v4→v5 migrations)
     expect(db.getSchemaVersion()).toBe(5);
 
     // Verify new columns exist and existing data is intact
@@ -807,7 +827,7 @@ describe("schema migrations", () => {
     // Now run init() which should trigger migrations v2→v3→v4
     db.init();
 
-    // Verify version bumped to 4
+    // Verify version bumped to 5
     expect(db.getSchemaVersion()).toBe(5);
 
     // Verify new columns exist and existing data is intact
@@ -833,6 +853,159 @@ describe("schema migrations", () => {
     expect(tableNames).toContain("milestones");
     expect(tableNames).toContain("slices");
     expect(tableNames).toContain("mission_features");
+
+    db.close();
+  });
+
+  it("migrates pre-comments databases by copying steering comments into unified comments exactly once", () => {
+    tmpDir = makeTmpDir();
+    const kbDir = join(tmpDir, ".fusion");
+
+    const db = new Database(kbDir);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        steeringComments TEXT DEFAULT '[]'
+      );
+      CREATE TABLE IF NOT EXISTS config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        nextId INTEGER DEFAULT 1,
+        nextWorkflowStepId INTEGER DEFAULT 1,
+        settings TEXT DEFAULT '{}',
+        workflowSteps TEXT DEFAULT '[]',
+        updatedAt TEXT
+      );
+      CREATE TABLE IF NOT EXISTS activityLog (
+        id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, type TEXT NOT NULL,
+        taskId TEXT, taskTitle TEXT, details TEXT NOT NULL, metadata TEXT
+      );
+      CREATE TABLE IF NOT EXISTS archivedTasks (id TEXT PRIMARY KEY, data TEXT NOT NULL, archivedAt TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS automations (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+        scheduleType TEXT NOT NULL, cronExpression TEXT NOT NULL, command TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1, timeoutMs INTEGER, steps TEXT,
+        nextRunAt TEXT, lastRunAt TEXT, lastRunResult TEXT,
+        runCount INTEGER DEFAULT 0, runHistory TEXT DEFAULT '[]',
+        createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS agents (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'idle', taskId TEXT,
+        createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL,
+        lastHeartbeatAt TEXT, metadata TEXT DEFAULT '{}'
+      );
+      CREATE TABLE IF NOT EXISTS agentHeartbeats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agentId TEXT NOT NULL, timestamp TEXT NOT NULL, status TEXT NOT NULL, runId TEXT NOT NULL,
+        FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+      );
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '1')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.prepare("INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt, steeringComments) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(
+        "FN-100",
+        "legacy comments",
+        "todo",
+        "2025-01-01T00:00:00.000Z",
+        "2025-01-01T00:00:00.000Z",
+        JSON.stringify([{ id: "legacy-1", text: "Use TypeScript", author: "user", createdAt: "2025-01-01T00:00:00.000Z" }]),
+      );
+
+    db.init();
+
+    const row = db.prepare("SELECT steeringComments, comments FROM tasks WHERE id = 'FN-100'").get() as any;
+    expect(JSON.parse(row.steeringComments)).toHaveLength(1);
+    expect(JSON.parse(row.comments)).toEqual([
+      {
+        id: "legacy-1",
+        text: "Use TypeScript",
+        author: "user",
+        createdAt: "2025-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    db.close();
+  });
+
+  it("deduplicates overlapping steeringComments and comments during schema upgrade", () => {
+    tmpDir = makeTmpDir();
+    const kbDir = join(tmpDir, ".fusion");
+
+    const db = new Database(kbDir);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        steeringComments TEXT DEFAULT '[]',
+        comments TEXT DEFAULT '[]',
+        mergeDetails TEXT
+      );
+      CREATE TABLE IF NOT EXISTS config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        nextId INTEGER DEFAULT 1,
+        nextWorkflowStepId INTEGER DEFAULT 1,
+        settings TEXT DEFAULT '{}',
+        workflowSteps TEXT DEFAULT '[]',
+        updatedAt TEXT
+      );
+      CREATE TABLE IF NOT EXISTS activityLog (
+        id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, type TEXT NOT NULL,
+        taskId TEXT, taskTitle TEXT, details TEXT NOT NULL, metadata TEXT
+      );
+      CREATE TABLE IF NOT EXISTS archivedTasks (id TEXT PRIMARY KEY, data TEXT NOT NULL, archivedAt TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS automations (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+        scheduleType TEXT NOT NULL, cronExpression TEXT NOT NULL, command TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1, timeoutMs INTEGER, steps TEXT,
+        nextRunAt TEXT, lastRunAt TEXT, lastRunResult TEXT,
+        runCount INTEGER DEFAULT 0, runHistory TEXT DEFAULT '[]',
+        createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS agents (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'idle', taskId TEXT,
+        createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL,
+        lastHeartbeatAt TEXT, metadata TEXT DEFAULT '{}'
+      );
+      CREATE TABLE IF NOT EXISTS agentHeartbeats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agentId TEXT NOT NULL, timestamp TEXT NOT NULL, status TEXT NOT NULL, runId TEXT NOT NULL,
+        FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
+      );
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '4')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.prepare("INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt, steeringComments, comments) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(
+        "FN-101",
+        "mixed comments",
+        "todo",
+        "2025-01-01T00:00:00.000Z",
+        "2025-01-01T00:00:00.000Z",
+        JSON.stringify([{ id: "c1", text: "Keep it simple", author: "user", createdAt: "2025-01-01T00:00:00.000Z" }]),
+        JSON.stringify([
+          { id: "c1", text: "Keep it simple", author: "user", createdAt: "2025-01-01T00:00:00.000Z", updatedAt: "2025-01-02T00:00:00.000Z" },
+          { id: "c2", text: "Already unified", author: "alice", createdAt: "2025-01-03T00:00:00.000Z" },
+        ]),
+      );
+
+    db.init();
+
+    const row = db.prepare("SELECT comments FROM tasks WHERE id = 'FN-101'").get() as any;
+    expect(JSON.parse(row.comments)).toEqual([
+      { id: "c1", text: "Keep it simple", author: "user", createdAt: "2025-01-01T00:00:00.000Z", updatedAt: "2025-01-02T00:00:00.000Z" },
+      { id: "c2", text: "Already unified", author: "alice", createdAt: "2025-01-03T00:00:00.000Z" },
+    ]);
 
     db.close();
   });

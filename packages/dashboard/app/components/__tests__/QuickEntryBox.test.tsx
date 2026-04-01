@@ -183,9 +183,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("does NOT expand on focus", () => {
-
-    renderQuickEntryBox();
-
+    renderQuickEntryBox({}, { startCollapsed: true });
     const textarea = screen.getByTestId("quick-entry-input");
 
     fireEvent.focus(textarea);
@@ -196,8 +194,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("toggle button expands the view", () => {
-    renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
     const textarea = screen.getByTestId("quick-entry-input");
 
     // Initially not expanded
@@ -221,7 +218,8 @@ describe("QuickEntryBox", () => {
   });
 
   it("toggle button collapses the view when expanded", () => {
-    renderQuickEntryBox();
+    renderQuickEntryBox({}, { startCollapsed: true });
+      // Component starts with disclosure expanded by default
     const textarea = screen.getByTestId("quick-entry-input");
 
     // Expand first
@@ -236,7 +234,8 @@ describe("QuickEntryBox", () => {
   });
 
   it("does NOT collapse on blur when empty", async () => {
-    renderQuickEntryBox();
+    renderQuickEntryBox({}, { startCollapsed: true });
+      // Component starts with disclosure expanded by default
     const textarea = screen.getByTestId("quick-entry-input");
 
     // Expand manually
@@ -255,9 +254,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("does NOT collapse on blur when has content", async () => {
-
-    renderQuickEntryBox();
-
+    renderQuickEntryBox({}, { startCollapsed: true });
     const textarea = screen.getByTestId("quick-entry-input");
 
     // Expand manually and add content
@@ -294,9 +291,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("allows Shift+Enter to insert newline when expanded", () => {
-
-    renderQuickEntryBox();
-
+    renderQuickEntryBox({}, { startCollapsed: true });
     expandQuickEntry();
     const textarea = screen.getByTestId("quick-entry-input");
 
@@ -405,9 +400,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("collapses and blurs on Escape key", () => {
-
-    renderQuickEntryBox();
-
+    renderQuickEntryBox({}, { startCollapsed: true });
     expandQuickEntry();
     const textarea = screen.getByTestId("quick-entry-input");
 
@@ -498,7 +491,7 @@ describe("QuickEntryBox", () => {
   describe("Rich creation features", () => {
 
     it("shows dependency button when expanded", () => {
-      renderQuickEntryBox();
+      renderQuickEntryBox({}, { startCollapsed: true });
 
       // Initially, no controls are visible
       expect(screen.queryByTestId("quick-entry-deps-button")).toBeNull();
@@ -515,7 +508,7 @@ describe("QuickEntryBox", () => {
 
 
     it("shows model selector button when expanded", () => {
-      renderQuickEntryBox();
+      renderQuickEntryBox({}, { startCollapsed: true });
 
 
     // Initially, no controls are visible
@@ -534,7 +527,7 @@ describe("QuickEntryBox", () => {
 
 
     it("shows Plan and Subtask buttons when expanded", () => {
-      renderQuickEntryBox();
+      renderQuickEntryBox({}, { startCollapsed: true });
 
 
     // Initially, no controls are visible
@@ -554,9 +547,7 @@ describe("QuickEntryBox", () => {
   });
 
     it("opens dependency dropdown when clicking deps button", () => {
-
-      renderQuickEntryBox();
-
+      renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -569,9 +560,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("opens model modal when clicking models button", () => {
-
-      const { container } = renderQuickEntryBox();
-
+      const { container } = renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -591,9 +580,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("modal receives correct props (models, loading state, etc.)", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -612,9 +599,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("selects dependencies and includes them in submit payload", async () => {
-
-      const { props } = renderQuickEntryBox();
-
+      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -642,7 +627,6 @@ describe("QuickEntryBox", () => {
     it("calls onPlanningMode and clears input when Plan clicked", async () => {
       const onPlanningMode = vi.fn();
       const { props } = renderQuickEntryBox({ onPlanningMode });
-      expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Plan this task" } });
@@ -659,7 +643,6 @@ describe("QuickEntryBox", () => {
     it("calls onSubtaskBreakdown and clears input when Subtask clicked", async () => {
       const onSubtaskBreakdown = vi.fn();
       const { props } = renderQuickEntryBox({ onSubtaskBreakdown });
-      expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Break this down" } });
@@ -674,9 +657,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("disables Plan and Subtask buttons when description is empty", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -702,9 +683,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("Plan button prevents textarea blur on mousedown", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -722,9 +701,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("Subtask button prevents textarea blur on mousedown", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -762,9 +739,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("includes selected models in submit payload", async () => {
-
-      const { props } = renderQuickEntryBox();
-
+      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -795,9 +770,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("closes modal on Escape when open", async () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -818,9 +791,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("clears all state on second Escape after dropdowns are closed", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -837,10 +808,8 @@ describe("QuickEntryBox", () => {
       expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
     });
 
-
-    it("resets all state after successful creation", async () => {
-      const { props } = renderQuickEntryBox();
-
+    it("resets all state after successful creation (preserves disclosure preference)", async () => {
+      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -991,9 +960,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("clears localStorage when Escape clears non-empty input", async () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1012,9 +979,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("does not clear localStorage on first Escape when closing dropdowns", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1036,8 +1001,7 @@ describe("QuickEntryBox", () => {
 
   describe("AI Refine feature", () => {
     it("shows refine button when expanded and text is entered", () => {
-
-      renderQuickEntryBox();
+      renderQuickEntryBox({}, { startCollapsed: true });
 
 
       // Initially, refine button is not visible
@@ -1053,9 +1017,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("refine button is hidden when textarea is empty", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1074,9 +1036,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("opens refine menu on button click", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1091,9 +1051,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("closes refine menu on Escape key", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1115,9 +1073,7 @@ describe("QuickEntryBox", () => {
       const { refineText } = await import("../../api");
       vi.mocked(refineText).mockResolvedValueOnce("Refined description");
 
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1140,9 +1096,7 @@ describe("QuickEntryBox", () => {
       const { refineText } = await import("../../api");
       vi.mocked(refineText).mockResolvedValueOnce("Refined description");
 
-
-      const { props } = renderQuickEntryBox();
-
+      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1171,9 +1125,7 @@ describe("QuickEntryBox", () => {
 
       const { getRefineErrorMessage } = await import("../../api");
 
-
-      const { props } = renderQuickEntryBox();
-
+      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1194,9 +1146,7 @@ describe("QuickEntryBox", () => {
       // Slow down the promise to see loading state
       vi.mocked(refineText).mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 100)));
 
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1218,9 +1168,7 @@ describe("QuickEntryBox", () => {
       const { refineText } = await import("../../api");
       vi.mocked(refineText).mockResolvedValueOnce("Refined description with much more content here");
 
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1237,9 +1185,7 @@ describe("QuickEntryBox", () => {
       const { refineText } = await import("../../api");
       vi.mocked(refineText).mockResolvedValueOnce("Refined text");
 
-
-      const { props } = renderQuickEntryBox();
-
+      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1263,8 +1209,7 @@ describe("QuickEntryBox", () => {
 
   describe("Save button", () => {
     it("shows save button when expanded and text is entered", () => {
-
-      renderQuickEntryBox();
+      renderQuickEntryBox({}, { startCollapsed: true });
 
 
       // Initially, save button is not visible
@@ -1280,9 +1225,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("save button is disabled when textarea is empty", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1324,9 +1267,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("clicking save button persists to localStorage", async () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1342,9 +1283,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("clicking save button creates the task", async () => {
-
-      const { props } = renderQuickEntryBox();
-
+      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1365,9 +1304,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("save button has correct test id", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1379,9 +1316,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("save button has correct title attribute", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1392,9 +1327,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("save button prevents textarea blur on mousedown", () => {
-
-      renderQuickEntryBox();
-
+renderQuickEntryBox({}, { startCollapsed: true });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 

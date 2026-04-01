@@ -1704,18 +1704,21 @@ describe("aiMergeTask — build verification", () => {
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(capturedSystemPrompt).toContain("## Build verification");
-    expect(capturedSystemPrompt).toContain("If a build command is configured for this project, you MUST run it");
-    expect(capturedSystemPrompt).toContain("BUILD FAILED:");
+    expect(capturedSystemPrompt).toContain("build verification is a hard gate");
+    expect(capturedSystemPrompt).toContain("Do not assume the build passes");
+    expect(capturedSystemPrompt).toContain("report_build_failure");
   });
 
   it("includes build command in merge prompt when configured", async () => {
     let capturedArgs: any;
+    let capturedPrompt: string | undefined;
     mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
       capturedArgs = opts;
       // Simulate agent committing by returning session that results in clean state
       return {
         session: {
-          prompt: vi.fn().mockImplementation(async () => {
+          prompt: vi.fn().mockImplementation(async (prompt: string) => {
+            capturedPrompt = prompt;
             // Simulate commit happening by making staged check return "0" (clean)
             mockedExecSync.mockImplementation((cmd: any) => {
               const cmdStr = String(cmd);
@@ -1749,6 +1752,10 @@ describe("aiMergeTask — build verification", () => {
     // Verify custom tool was passed
     expect(capturedArgs.customTools).toBeDefined();
     expect(capturedArgs.customTools.some((t: any) => t.name === "report_build_failure")).toBe(true);
+    expect(capturedPrompt).toContain("Build command: `pnpm build`");
+    expect(capturedPrompt).toContain("This command is mandatory before commit.");
+    expect(capturedPrompt).toContain("Only commit if it exits 0.");
+    expect(capturedPrompt).toContain("call `report_build_failure`");
   });
 
   it("merge succeeds when build passes (agent reports success)", async () => {

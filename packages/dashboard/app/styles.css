@@ -10309,8 +10309,32 @@ html .column.drag-over * {
   height: 32px;
   width: 32px;
   flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
 
+.quick-entry-toggle:hover {
+  background: var(--card-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
 
+.quick-entry-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Expanded state - normal padding */
+.quick-entry-box--expanded {
+  padding: 8px 10px;
+}
+
+.quick-entry-box--expanded .quick-entry-input {
+  min-height: 36px;
 }
 
 /* Collapsed state - minimal padding */
@@ -10327,7 +10351,30 @@ html .column.drag-over * {
   border-bottom-color: var(--triage);
 }
 
+/* Responsive adjustments for quick entry */
+@media (max-width: 640px) {
+  .quick-entry-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
 
+  .quick-entry-controls-left {
+    width: 100%;
+  }
+
+  .quick-entry-hint {
+    margin-left: 0;
+    width: 100%;
+    text-align: center;
+  }
+
+  .quick-entry-toggle {
+    height: 28px;
+    width: 28px;
+    padding: 4px;
+  }
+}
 
 /* === New Task Modal === */
 .new-task-modal {

@@ -140,7 +140,13 @@ model, read-only access) to independently assess your work.
 ## Completion
 After all steps are done, tests pass, and docs are updated:
 \`\`\`bash
-Call \`task_done()\` to signal completion.`;
+Call \`task_done()\` to signal completion.
+\`\`\`
+
+If a project build command is listed in the prompt, it is a hard completion gate:
+- Run the exact build command in the current worktree before \`task_done()\`
+- Do not claim the build passes unless you actually ran it and got exit code 0
+- If the build fails, do NOT call \`task_done()\`; keep working until it passes`;
 
 export interface TaskExecutorOptions {
   semaphore?: AgentSemaphore;
@@ -1892,7 +1898,8 @@ Use \`task_create\` if you find out-of-scope work that needs doing.
 Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"\`
 When all steps are complete: call \`task_done()\`
 
-Verify build passes using the configured build command before calling \`task_done()\`.`;
+If a build command is configured, run that exact command in this worktree before calling \`task_done()\`.
+Treat a non-zero exit code as a blocking failure. Do not claim success without a real passing run.`;
 }
 
 /**

@@ -477,13 +477,17 @@ Base the message on the ACTUAL work done in the branch commits.
 
 ## Build verification
 
-If a build command is configured for this project, you MUST run it before committing.
+If a build command is configured for this project, build verification is a hard gate.
+You MUST run the exact configured build command in this worktree before committing.
+Do not assume the build passes. Do not describe it as passing unless you actually ran it
+and the bash tool returned exit code 0.
 
 1. Run the build command (shown in the prompt context below)
 2. If the build succeeds (exit code 0), proceed with the commit
 3. If the build fails (non-zero exit code), DO NOT commit. Instead:
-   - Respond with "BUILD FAILED: <error details>" 
-   - Stop and do not proceed further
+   - Call the \`report_build_failure\` tool with the real error details
+   - Stop immediately and do not run \`git commit\`
+   - Do not claim success in plain text
 
 The merge will only be completed if the build passes or no build command is configured.`;
 }
@@ -1254,7 +1258,10 @@ function buildMergePrompt(params: MergePromptParams): string {
       "## Build command",
       `Build command: \`${buildCommand}\``,
       "",
-      "Run this command via bash tool before committing to verify the build passes.",
+      "This command is mandatory before commit.",
+      "Run it with the bash tool in the current worktree and inspect the actual exit code.",
+      "Only commit if it exits 0.",
+      "If it exits non-zero, call `report_build_failure` with the concrete error output and stop without committing.",
     );
   }
 

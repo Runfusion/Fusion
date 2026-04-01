@@ -1993,43 +1993,45 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       let files: TaskFileDiff[] = [];
 
       const parseNameStatus = (output: string): TaskFileDiff[] => {
-        return output
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line) => {
-            const parts = line.split("\t");
-            const rawStatus = parts[0] ?? "M";
-            const statusCode = rawStatus[0];
+        const entries: TaskFileDiff[] = [];
 
-            if (statusCode === "R") {
-              const oldPath = parts[1];
-              const path = parts[2];
-              return path
-                ? {
-                    path,
-                    oldPath,
-                    status: "renamed" as const,
-                    diff: "",
-                  }
-                : null;
-            }
+        for (const rawLine of output.split("\n")) {
+          const line = rawLine.trim();
+          if (!line) continue;
 
-            const path = parts[1];
-            return path
-              ? {
-                  path,
-                  status:
-                    statusCode === "A"
-                      ? ("added" as const)
-                      : statusCode === "D"
-                        ? ("deleted" as const)
-                        : ("modified" as const),
-                  diff: "",
-                }
-              : null;
-          })
-          .filter((entry): entry is TaskFileDiff => entry !== null);
+          const parts = line.split("\t");
+          const rawStatus = parts[0] ?? "M";
+          const statusCode = rawStatus[0];
+
+          if (statusCode === "R") {
+            const oldPath = parts[1];
+            const path = parts[2];
+            if (!path) continue;
+            entries.push({
+              path,
+              oldPath,
+              status: "renamed",
+              diff: "",
+            });
+            continue;
+          }
+
+          const path = parts[1];
+          if (!path) continue;
+
+          entries.push({
+            path,
+            status:
+              statusCode === "A"
+                ? "added"
+                : statusCode === "D"
+                  ? "deleted"
+                  : "modified",
+            diff: "",
+          });
+        }
+
+        return entries;
       };
 
       try {

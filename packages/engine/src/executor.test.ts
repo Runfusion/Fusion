@@ -1587,6 +1587,8 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("## Project Commands");
     expect(result).toContain("- **Build:** `pnpm build`");
     expect(result).not.toContain("- **Test:**");
+    expect(result).toContain("run that exact command in this worktree before calling `task_done()`");
+    expect(result).toContain("Do not claim success without a real passing run");
   });
 
   it("includes both commands when both are set", () => {

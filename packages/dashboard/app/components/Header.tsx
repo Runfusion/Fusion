@@ -539,6 +539,24 @@ export function Header({
             </button>
             <button
               className="mobile-overflow-item"
+              onClick={() => handleOverflowAction(onToggleTerminal)}
+              role="menuitem"
+              data-testid="overflow-terminal-btn"
+            >
+              <Terminal size={16} />
+              <span>Open Terminal</span>
+            </button>
+            <button
+              className="mobile-overflow-item"
+              onClick={() => handleOverflowAction(onOpenSchedules)}
+              role="menuitem"
+              data-testid="overflow-schedules-btn"
+            >
+              <Clock size={16} />
+              <span>Scheduled Tasks</span>
+            </button>
+            <button
+              className="mobile-overflow-item"
               onClick={() => handleOverflowAction(onOpenSettings)}
               role="menuitem"
             >
