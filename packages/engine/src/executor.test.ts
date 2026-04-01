@@ -381,8 +381,6 @@ describe("TaskExecutor worktree naming", () => {
     ...(worktree ? { worktree } : {}),
   });
 
-  const mockedGenerateWorktreeName = vi.mocked(generateWorktreeName);
-
   beforeEach(() => {
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(false);
