@@ -29,7 +29,7 @@ describe("runTaskSteer", () => {
   let mockConsoleError: ReturnType<typeof vi.spyOn>;
   const mockQuestion = vi.fn();
   const mockClose = vi.fn();
-  const mockAddSteeringComment = vi.fn();
+  const mockAddComment = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -50,21 +50,21 @@ describe("runTaskSteer", () => {
   function setupTaskStoreMock(overrides: Record<string, unknown> = {}) {
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn().mockResolvedValue(undefined),
-      addSteeringComment: mockAddSteeringComment,
+      addComment: mockAddComment,
       ...overrides,
     }));
   }
 
   it("adds steering comment with message argument", async () => {
     setupTaskStoreMock();
-    mockAddSteeringComment.mockResolvedValueOnce({
+    mockAddComment.mockResolvedValueOnce({
       id: "FN-001",
       title: "Test Task",
     });
 
     await runTaskSteer("FN-001", "Focus on error handling");
 
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-001", "Focus on error handling", "user");
+    expect(mockAddComment).toHaveBeenCalledWith("FN-001", "Focus on error handling", "user");
     expect(mockConsoleLog).toHaveBeenCalledWith(
       expect.stringContaining("Steering comment added to FN-001")
     );
@@ -72,7 +72,7 @@ describe("runTaskSteer", () => {
 
   it("reads message from stdin when not provided as argument", async () => {
     setupTaskStoreMock();
-    mockAddSteeringComment.mockResolvedValueOnce({
+    mockAddComment.mockResolvedValueOnce({
       id: "FN-002",
       title: "Another Task",
     });
@@ -82,7 +82,7 @@ describe("runTaskSteer", () => {
     await runTaskSteer("FN-002", undefined);
 
     expect(mockQuestion).toHaveBeenCalledWith("Message: ");
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-002", "This is a steering comment from stdin", "user");
+    expect(mockAddComment).toHaveBeenCalledWith("FN-002", "This is a steering comment from stdin", "user");
     expect(mockClose).toHaveBeenCalled();
   });
 
@@ -99,7 +99,7 @@ describe("runTaskSteer", () => {
     expect(mockConsoleError).toHaveBeenCalledWith(
       expect.stringContaining("Message must be between 1 and 2000 characters")
     );
-    expect(mockAddSteeringComment).not.toHaveBeenCalled();
+    expect(mockAddComment).not.toHaveBeenCalled();
 
     exitSpy.mockRestore();
   });
@@ -115,7 +115,7 @@ describe("runTaskSteer", () => {
     expect(mockConsoleError).toHaveBeenCalledWith(
       expect.stringContaining("Message is required")
     );
-    expect(mockAddSteeringComment).not.toHaveBeenCalled();
+    expect(mockAddComment).not.toHaveBeenCalled();
 
     exitSpy.mockRestore();
   });
@@ -131,7 +131,7 @@ describe("runTaskSteer", () => {
     expect(mockConsoleError).toHaveBeenCalledWith(
       expect.stringContaining("Message is required")
     );
-    expect(mockAddSteeringComment).not.toHaveBeenCalled();
+    expect(mockAddComment).not.toHaveBeenCalled();
 
     exitSpy.mockRestore();
   });
@@ -144,7 +144,7 @@ describe("runTaskSteer", () => {
 
     const error = new Error("Task not found") as Error & { code: string };
     error.code = "ENOENT";
-    mockAddSteeringComment.mockRejectedValueOnce(error);
+    mockAddComment.mockRejectedValueOnce(error);
 
     await expect(runTaskSteer("KB-999", "Some message")).rejects.toThrow();
 
@@ -157,7 +157,7 @@ describe("runTaskSteer", () => {
 
   it("shows success output with preview for short messages", async () => {
     setupTaskStoreMock();
-    mockAddSteeringComment.mockResolvedValueOnce({
+    mockAddComment.mockResolvedValueOnce({
       id: "FN-006",
       title: "Short Message Task",
     });
@@ -171,7 +171,7 @@ describe("runTaskSteer", () => {
 
   it("truncates long messages in success preview", async () => {
     setupTaskStoreMock();
-    mockAddSteeringComment.mockResolvedValueOnce({
+    mockAddComment.mockResolvedValueOnce({
       id: "FN-007",
       title: "Long Message Task",
     });
@@ -188,31 +188,31 @@ describe("runTaskSteer", () => {
 
   it("trims whitespace from messages", async () => {
     setupTaskStoreMock();
-    mockAddSteeringComment.mockResolvedValueOnce({
+    mockAddComment.mockResolvedValueOnce({
       id: "FN-008",
       title: "Trim Test Task",
     });
 
     await runTaskSteer("FN-008", "  Some message with whitespace  ");
 
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-008", "Some message with whitespace", "user");
+    expect(mockAddComment).toHaveBeenCalledWith("FN-008", "Some message with whitespace", "user");
   });
 
   it("accepts messages at boundary lengths (1 and 2000 chars)", async () => {
     setupTaskStoreMock();
-    mockAddSteeringComment.mockResolvedValueOnce({
+    mockAddComment.mockResolvedValueOnce({
       id: "FN-009",
       title: "Boundary Test",
     });
 
     // Test 1 character
     await runTaskSteer("FN-009", "x");
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-009", "x", "user");
+    expect(mockAddComment).toHaveBeenCalledWith("FN-009", "x", "user");
 
     // Reset mock for next test
     vi.clearAllMocks();
     setupTaskStoreMock();
-    mockAddSteeringComment.mockResolvedValueOnce({
+    mockAddComment.mockResolvedValueOnce({
       id: "FN-010",
       title: "Boundary Test 2",
     });
@@ -220,14 +220,14 @@ describe("runTaskSteer", () => {
     // Test exactly 2000 characters
     const exact2000 = "b".repeat(2000);
     await runTaskSteer("FN-010", exact2000);
-    expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-010", exact2000, "user");
+    expect(mockAddComment).toHaveBeenCalledWith("FN-010", exact2000, "user");
   });
 
   it("rethrows non-ENOENT errors", async () => {
     setupTaskStoreMock();
 
     const error = new Error("Database error");
-    mockAddSteeringComment.mockRejectedValueOnce(error);
+    mockAddComment.mockRejectedValueOnce(error);
 
     await expect(runTaskSteer("FN-011", "Message")).rejects.toThrow("Database error");
   });
@@ -246,7 +246,7 @@ describe("runTaskSteer", () => {
     expect(mockConsoleError).toHaveBeenCalledWith(
       expect.stringContaining("Message is required")
     );
-    expect(mockAddSteeringComment).not.toHaveBeenCalled();
+    expect(mockAddComment).not.toHaveBeenCalled();
 
     exitSpy.mockRestore();
   });

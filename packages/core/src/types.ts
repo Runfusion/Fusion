@@ -327,13 +327,6 @@ export interface TaskAttachment {
   createdAt: string;
 }
 
-export interface SteeringComment {
-  id: string;
-  text: string;
-  createdAt: string;
-  author: "user" | "agent";
-}
-
 export interface TaskComment {
   id: string;
   text: string;
@@ -392,7 +385,6 @@ export interface Task {
    *  Set by the executor when creating the worktree. */
   baseCommitSha?: string;
   attachments?: TaskAttachment[];
-  steeringComments?: SteeringComment[];
   comments?: TaskComment[];
   /** PR information for tasks linked to GitHub pull requests */
   prInfo?: PrInfo;

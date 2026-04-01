@@ -2114,7 +2114,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "text must be between 1 and 2000 characters" });
         return;
       }
-      const task = await store.addSteeringComment(req.params.id, text, "user");
+      const task = await store.addComment(req.params.id, text, "user");
       res.json(task);
     } catch (err: any) {
       const status = err.code === "ENOENT" ? 404 : 500;

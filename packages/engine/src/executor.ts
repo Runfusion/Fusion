@@ -237,21 +237,21 @@ export class TaskExecutor {
             // Mark as seen BEFORE attempting injection to prevent retry loops on failure
             seenSteeringIds.add(comment.id);
 
-            // Format and inject the steering comment
-            const steeringMessage = formatSteeringCommentForInjection(comment);
+            // Format and inject the comment
+            const commentMessage = formatCommentForInjection(comment);
             try {
-              executorLog.log(`Injecting steering comment into ${task.id}: ${summary}`);
-              await session.steer(steeringMessage);
-              executorLog.log(`Successfully injected steering comment into ${task.id}`);
+              executorLog.log(`Injecting comment into ${task.id}: ${summary}`);
+              await session.steer(commentMessage);
+              executorLog.log(`Successfully injected comment into ${task.id}`);
 
-              // Log to the task that steering was received
+              // Log to the task that comment was received
               await this.store.logEntry(
                 task.id,
-                `Steering comment received mid-execution: ${summary}`,
+                `Comment received mid-execution: ${summary}`,
                 `by ${comment.author}`
               );
             } catch (err) {
-              executorLog.error(`Failed to inject steering comment for ${task.id}:`, err);
+              executorLog.error(`Failed to inject comment for ${task.id}:`, err);
               // Comment is already marked as seen - we won't retry to avoid spamming
               // the agent with failed injections. The error is logged for debugging.
             }
@@ -551,10 +551,10 @@ export class TaskExecutor {
         sessionRef.current = session;
 
         // Register session so the pause listener can terminate it
-        // Initialize with empty set of seen steering comments
+        // Initialize with empty set of seen comments
         const seenSteeringIds = new Set<string>();
-        if (detail.steeringComments) {
-          for (const comment of detail.steeringComments) {
+        if (detail.comments) {
+          for (const comment of detail.comments) {
             seenSteeringIds.add(comment.id);
           }
         }
@@ -1874,10 +1874,10 @@ When all steps are complete: call \`task_done()\``;
 }
 
 /**
- * Format a steering comment for injection into a running agent session.
+ * Format a comment for injection into a running agent session.
  * Used for real-time steering during task execution.
  */
-function formatSteeringCommentForInjection(comment: import("@fusion/core").SteeringComment): string {
+function formatCommentForInjection(comment: import("@fusion/core").TaskComment): string {
   const timestamp = formatTimestamp(comment.createdAt);
-  return `📣 **New steering feedback** — ${timestamp} (${comment.author}):\n\n${comment.text}\n\nPlease adjust your approach based on this feedback.`;
+  return `📣 **New feedback** — ${timestamp} (${comment.author}):\n\n${comment.text}\n\nPlease adjust your approach based on this feedback.`;
 }

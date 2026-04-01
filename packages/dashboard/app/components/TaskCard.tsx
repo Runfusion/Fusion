@@ -109,7 +109,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.reviewLevel === nextTask.reviewLevel &&
     previousTask.mergeRetries === nextTask.mergeRetries &&
     JSON.stringify(previousTask.attachments ?? []) === JSON.stringify(nextTask.attachments ?? []) &&
-    JSON.stringify(previousTask.steeringComments ?? []) === JSON.stringify(nextTask.steeringComments ?? []) &&
+    JSON.stringify(previousTask.comments ?? []) === JSON.stringify(nextTask.comments ?? []) &&
     areTaskDependenciesEqual(previousTask.dependencies, nextTask.dependencies) &&
     areTaskStepsEqual(previousTask.steps, nextTask.steps) &&
     areTaskBadgeInfosEqual(previousTask.prInfo, nextTask.prInfo) &&

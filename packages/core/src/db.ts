@@ -58,7 +58,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const SCHEMA_SQL = `
 -- Tasks table with JSON columns for nested data
@@ -333,8 +333,15 @@ export class Database {
       });
     }
 
+    if (version < 5) {
+      this.applyMigration(5, () => {
+        // Migrate steeringComments to comments (unified comments field)
+        this.migrateSteeringCommentsToComments();
+      });
+    }
+
     // Future migrations go here:
-    // if (version < 3) { this.applyMigration(3, () => { ... }); }
+    // if (version < 6) { this.applyMigration(6, () => { ... }); }
   }
 
   /**
@@ -365,6 +372,60 @@ export class Database {
   private addColumnIfMissing(table: string, column: string, definition: string): void {
     if (!this.hasColumn(table, column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+
+  /**
+   * Migrate steeringComments data to the unified comments field.
+   * This is a one-way migration from schema version 4 to 5.
+   */
+  private migrateSteeringCommentsToComments(): void {
+    // Only run if steeringComments column exists
+    if (!this.hasColumn("tasks", "steeringComments")) {
+      return;
+    }
+
+    // Get all tasks that have steering comments
+    const tasksWithSteering = this.db
+      .prepare("SELECT id, steeringComments, comments FROM tasks WHERE steeringComments != '[]'")
+      .all() as Array<{ id: string; steeringComments: string; comments: string }>;
+
+    for (const task of tasksWithSteering) {
+      try {
+        const steeringComments = JSON.parse(task.steeringComments) as Array<{
+          id: string;
+          text: string;
+          createdAt: string;
+          author: "user" | "agent";
+        }>;
+        const existingComments = JSON.parse(task.comments || "[]") as Array<{
+          id: string;
+          text: string;
+          author: string;
+          createdAt: string;
+          updatedAt?: string;
+        }>;
+
+        // Convert steering comments to the unified format
+        const migratedComments = steeringComments.map((sc) => ({
+          id: sc.id,
+          text: sc.text,
+          author: sc.author,
+          createdAt: sc.createdAt,
+          updatedAt: sc.createdAt, // Steering comments didn't have updatedAt
+        }));
+
+        // Merge: existing comments first, then migrated steering comments
+        const mergedComments = [...existingComments, ...migratedComments];
+
+        // Update the task with merged comments
+        this.db
+          .prepare("UPDATE tasks SET comments = ? WHERE id = ?")
+          .run(JSON.stringify(mergedComments), task.id);
+      } catch {
+        // Skip tasks with invalid JSON in steeringComments
+        continue;
+      }
     }
   }
 

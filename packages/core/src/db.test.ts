@@ -86,7 +86,7 @@ describe("Database", () => {
     });
 
     it("seeds schema version", () => {
-      expect(db.getSchemaVersion()).toBe(4);
+      expect(db.getSchemaVersion()).toBe(5);
     });
 
     it("seeds lastModified", () => {
@@ -109,7 +109,7 @@ describe("Database", () => {
 
     it("is idempotent - calling init() twice does not fail", () => {
       expect(() => db.init()).not.toThrow();
-      expect(db.getSchemaVersion()).toBe(4);
+      expect(db.getSchemaVersion()).toBe(5);
     });
 
     it("does not overwrite existing config on re-init", () => {
@@ -411,7 +411,7 @@ describe("Database", () => {
         steps: JSON.stringify([{ name: "Step 1", status: "done" }, { name: "Step 2", status: "in-progress" }]),
         log: JSON.stringify([{ timestamp: now, action: "Created" }]),
         attachments: JSON.stringify([{ filename: "test.png", originalName: "test.png", mimeType: "image/png", size: 1024, createdAt: now }]),
-        steeringComments: JSON.stringify([{ id: "c1", text: "Do this", createdAt: now, author: "user" }]),
+        comments: JSON.stringify([{ id: "c1", text: "Do this", createdAt: now, author: "user" }]),
         workflowStepResults: JSON.stringify([{ workflowStepId: "WS-001", workflowStepName: "QA", status: "passed" }]),
         prInfo: JSON.stringify({ url: "https://github.com/test/pr/1", number: 1, status: "open", title: "PR", headBranch: "feature", baseBranch: "main", commentCount: 0 }),
         issueInfo: JSON.stringify({ url: "https://github.com/test/issues/1", number: 1, state: "open", title: "Issue" }),
@@ -425,7 +425,7 @@ describe("Database", () => {
           worktree, blockedBy, paused, baseBranch, modelPresetId, modelProvider,
           modelId, validatorModelProvider, validatorModelId, mergeRetries, error,
           summary, thinkingLevel, createdAt, updatedAt, columnMovedAt,
-          dependencies, steps, log, attachments, steeringComments,
+          dependencies, steps, log, attachments, comments,
           workflowStepResults, prInfo, issueInfo, breakIntoSubtasks,
           enabledWorkflowSteps
         ) VALUES (
@@ -440,7 +440,7 @@ describe("Database", () => {
         task.validatorModelId, task.mergeRetries, task.error, task.summary,
         task.thinkingLevel, task.createdAt, task.updatedAt, task.columnMovedAt,
         task.dependencies, task.steps, task.log, task.attachments,
-        task.steeringComments, task.workflowStepResults, task.prInfo,
+        task.comments, task.workflowStepResults, task.prInfo,
         task.issueInfo, task.breakIntoSubtasks, task.enabledWorkflowSteps,
       );
 
@@ -458,7 +458,7 @@ describe("Database", () => {
       expect(JSON.parse(row.steps)).toHaveLength(2);
       expect(JSON.parse(row.log)).toHaveLength(1);
       expect(JSON.parse(row.attachments)).toHaveLength(1);
-      expect(JSON.parse(row.steeringComments)).toHaveLength(1);
+      expect(JSON.parse(row.comments)).toHaveLength(1);
       expect(JSON.parse(row.workflowStepResults)).toHaveLength(1);
       expect(JSON.parse(row.prInfo).number).toBe(1);
       expect(JSON.parse(row.issueInfo).state).toBe("open");
@@ -684,7 +684,7 @@ describe("schema migrations", () => {
     db.init();
 
     // Verify version bumped to 4 (includes v1→v2, v2→v3, and v3→v4 migrations)
-    expect(db.getSchemaVersion()).toBe(4);
+    expect(db.getSchemaVersion()).toBe(5);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -709,11 +709,11 @@ describe("schema migrations", () => {
     const db = new Database(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(4);
+    expect(db.getSchemaVersion()).toBe(5);
 
     // Re-init should not fail
     db.init();
-    expect(db.getSchemaVersion()).toBe(4);
+    expect(db.getSchemaVersion()).toBe(5);
 
     db.close();
   });
@@ -808,7 +808,7 @@ describe("schema migrations", () => {
     db.init();
 
     // Verify version bumped to 4
-    expect(db.getSchemaVersion()).toBe(4);
+    expect(db.getSchemaVersion()).toBe(5);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -864,7 +864,7 @@ describe("createDatabase factory", () => {
     const db = createDatabase(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(4);
+    expect(db.getSchemaVersion()).toBe(5);
     expect(db.getLastModified()).toBeGreaterThan(0);
 
     db.close();

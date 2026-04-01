@@ -979,7 +979,7 @@ export async function runTaskSteer(id: string, message?: string, projectName?: s
   // Add steering comment
   let task;
   try {
-    task = await store.addSteeringComment(id, trimmed, "user");
+    task = await store.addComment(id, trimmed, "user");
   } catch (err: any) {
     if (err.code === "ENOENT") {
       console.error(`Error: Task not found: ${id}`);

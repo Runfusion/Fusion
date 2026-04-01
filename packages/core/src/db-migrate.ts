@@ -165,12 +165,12 @@ async function migrateTasks(kbDir: string, db: Database): Promise<void> {
       worktree, blockedBy, paused, baseBranch, modelPresetId, modelProvider,
       modelId, validatorModelProvider, validatorModelId, mergeRetries, error,
       summary, thinkingLevel, createdAt, updatedAt, columnMovedAt,
-      dependencies, steps, log, attachments, steeringComments,
+      dependencies, steps, log, attachments,
       comments, workflowStepResults, prInfo, issueInfo, mergeDetails,
       breakIntoSubtasks, enabledWorkflowSteps
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `);
 
@@ -183,6 +183,17 @@ async function migrateTasks(kbDir: string, db: Database): Promise<void> {
     try {
       const raw = await readFile(taskJsonPath, "utf-8");
       const task: Task = JSON.parse(raw);
+
+      // Merge steeringComments into comments (unified comments field)
+      const existingComments = task.comments || [];
+      const steeringComments = (task as any).steeringComments || [];
+      const mergedComments = [...existingComments, ...steeringComments.map((sc: any) => ({
+        id: sc.id,
+        text: sc.text,
+        author: sc.author,
+        createdAt: sc.createdAt,
+        updatedAt: sc.createdAt, // Steering comments didn't have updatedAt
+      }))];
 
       insertStmt.run(
         task.id,
@@ -213,8 +224,7 @@ async function migrateTasks(kbDir: string, db: Database): Promise<void> {
         toJson(task.steps || []),
         toJson(task.log || []),
         toJson(task.attachments || []),
-        toJson(task.steeringComments || []),
-        toJson(task.comments || []),
+        toJson(mergedComments),
         toJson(task.workflowStepResults || []),
         toJsonNullable(task.prInfo),
         toJsonNullable(task.issueInfo),

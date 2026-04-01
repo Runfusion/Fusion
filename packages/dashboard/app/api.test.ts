@@ -8,7 +8,7 @@ import {
   loginProvider,
   logoutProvider,
   fetchModels,
-  addSteeringComment,
+  addComment,
   addTaskComment,
   updateTaskComment,
   deleteTaskComment,
@@ -494,7 +494,7 @@ describe("logoutProvider", () => {
   });
 });
 
-describe("addSteeringComment", () => {
+describe("addComment", () => {
   const originalFetch = globalThis.fetch;
 
   afterEach(() => {
@@ -511,7 +511,7 @@ describe("addSteeringComment", () => {
     log: [],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
-    steeringComments: [
+    comments: [
       {
         id: "1234567890-abc123",
         text: "Please handle the edge case",
@@ -524,11 +524,11 @@ describe("addSteeringComment", () => {
   it("sends POST with text and returns updated task", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_TASK));
 
-    const result = await addSteeringComment("FN-001", "Please handle the edge case");
+    const result = await addComment("FN-001", "Please handle the edge case");
 
     expect(result.id).toBe("FN-001");
-    expect(result.steeringComments).toHaveLength(1);
-    expect(result.steeringComments![0].text).toBe("Please handle the edge case");
+    expect(result.comments).toHaveLength(1);
+    expect(result.comments![0].text).toBe("Please handle the edge case");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/steer", {
       headers: { "Content-Type": "application/json" },
       method: "POST",
@@ -541,7 +541,7 @@ describe("addSteeringComment", () => {
       mockFetchResponse(false, { error: "Task not found" })
     );
 
-    await expect(addSteeringComment("FN-001", "Test comment")).rejects.toThrow("Task not found");
+    await expect(addComment("FN-001", "Test comment")).rejects.toThrow("Task not found");
   });
 });
 

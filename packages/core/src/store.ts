@@ -150,7 +150,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       steps: fromJson<import("./types.js").TaskStep[]>(row.steps) || [],
       log: fromJson<import("./types.js").TaskLogEntry[]>(row.log) || [],
       attachments: (() => { const a = fromJson<TaskAttachment[]>(row.attachments); return a && a.length > 0 ? a : undefined; })(),
-      steeringComments: (() => { const s = fromJson<import("./types.js").SteeringComment[]>(row.steeringComments); return s && s.length > 0 ? s : undefined; })(),
       comments: (() => { const c = fromJson<import("./types.js").TaskComment[]>(row.comments); return c && c.length > 0 ? c : undefined; })(),
       workflowStepResults: (() => { const w = fromJson<import("./types.js").WorkflowStepResult[]>(row.workflowStepResults); return w && w.length > 0 ? w : undefined; })(),
       prInfo: fromJson<import("./types.js").PrInfo>(row.prInfo),
@@ -172,12 +171,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         worktree, blockedBy, paused, baseBranch, baseCommitSha, modelPresetId, modelProvider,
         modelId, validatorModelProvider, validatorModelId, mergeRetries, error,
         summary, thinkingLevel, createdAt, updatedAt, columnMovedAt,
-        dependencies, steps, log, attachments, steeringComments,
+        dependencies, steps, log, attachments,
         comments, workflowStepResults, prInfo, issueInfo, mergeDetails,
         breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `).run(
       task.id,
@@ -209,7 +208,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       toJson(task.steps || []),
       toJson(task.log || []),
       toJson(task.attachments || []),
-      toJson(task.steeringComments || []),
       toJson(task.comments || []),
       toJson(task.workflowStepResults || []),
       toJsonNullable(task.prInfo),
@@ -691,7 +689,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       createdAt: now,
       updatedAt: now,
       // Explicitly NOT copied: worktree, status, blockedBy, paused, baseBranch,
-      // attachments, steeringComments, prInfo, agent logs, size, reviewLevel
+      // attachments, comments, prInfo, agent logs, size, reviewLevel
     };
 
     const newDir = this.taskDir(newId);
@@ -1936,38 +1934,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   async addTaskComment(id: string, text: string, author: string): Promise<Task> {
-    return this.withTaskLock(id, async () => {
-      const dir = this.taskDir(id);
-      const task = await this.readTaskJson(dir);
-
-      if (!task.log) {
-        task.log = [];
-      }
-
-      const commentId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const comment: import("./types.js").TaskComment = {
-        id: commentId,
-        text,
-        author,
-        createdAt: new Date().toISOString(),
-      };
-
-      if (!task.comments) {
-        task.comments = [];
-      }
-      task.comments.push(comment);
-      task.updatedAt = new Date().toISOString();
-      task.log.push({
-        timestamp: task.updatedAt,
-        action: `Comment added by ${author}`,
-      });
-
-      await this.atomicWriteTaskJson(dir, task);
-      if (this.watcher) this.taskCache.set(id, { ...task });
-
-      this.emit("task:updated", task);
-      return task;
-    });
+    // Delegate to unified addComment method
+    return this.addComment(id, text, author);
   }
 
   async updateTaskComment(id: string, commentId: string, text: string): Promise<Task> {
@@ -2025,17 +1993,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
-   * Add a steering comment to a task.
-   * Steering comments are user-provided feedback injected into the AI execution context.
-   * When a steering comment is added to a task in the "done" column by a user,
+   * Add a comment to a task.
+   * Comments are injected into the AI execution context.
+   * When a comment is added to a task in the "done" column by a user,
    * automatically creates a refinement task with the comment text as feedback.
    */
-  async addSteeringComment(
+  async addComment(
     id: string,
     text: string,
-    author: "user" | "agent" = "user",
+    author: string = "user",
   ): Promise<Task> {
-    // Phase 1: Add steering comment under lock
+    // Phase 1: Add comment under lock
     const task = await this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
@@ -2048,21 +2016,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // Generate unique ID: timestamp + random suffix for collision resistance
       const commentId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      const comment: import("./types.js").SteeringComment = {
+      const comment: import("./types.js").TaskComment = {
         id: commentId,
         text,
-        createdAt: new Date().toISOString(),
         author,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
 
-      if (!task.steeringComments) {
-        task.steeringComments = [];
+      if (!task.comments) {
+        task.comments = [];
       }
-      task.steeringComments.push(comment);
+      task.comments.push(comment);
       task.updatedAt = new Date().toISOString();
       task.log.push({
         timestamp: task.updatedAt,
-        action: "Steering comment added",
+        action: "Comment added",
         outcome: `by ${author}`,
       });
 
@@ -2080,7 +2049,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         await this.refineTask(id, text);
       } catch {
         // Silently ignore - refinement is best-effort and shouldn't fail
-        // the steering comment addition. refineTask already validates
+        // the comment addition. refineTask already validates
         // feedback text, so empty/whitespace comments won't create refinements.
       }
     }
@@ -2374,7 +2343,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       validatorModelId: entry.validatorModelId,
       breakIntoSubtasks: entry.breakIntoSubtasks,
       modifiedFiles: entry.modifiedFiles,
-      // Intentionally NOT restoring: worktree, status, blockedBy, paused, baseBranch, baseCommitSha, error, steeringComments
+      // Intentionally NOT restoring: worktree, status, blockedBy, paused, baseBranch, baseCommitSha, error, comments
     };
 
     // Write task.json

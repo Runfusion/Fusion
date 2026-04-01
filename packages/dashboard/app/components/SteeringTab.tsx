@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import type { TaskDetail } from "@fusion/core";
-import { addSteeringComment } from "../api";
+import { addComment } from "../api";
 import type { ToastType } from "../hooks/useToast";
 
 function formatTimestamp(iso: string): string {
@@ -24,7 +24,7 @@ interface SteeringTabProps {
 }
 
 export function SteeringTab({ task, addToast }: SteeringTabProps) {
-  const [comments, setComments] = useState(task.steeringComments || []);
+  const [comments, setComments] = useState(task.comments || []);
   const [newComment, setNewComment] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -35,10 +35,10 @@ export function SteeringTab({ task, addToast }: SteeringTabProps) {
 
     setIsSubmitting(true);
     try {
-      const updated = await addSteeringComment(task.id, newComment.trim());
-      setComments(updated.steeringComments || []);
+      const updated = await addComment(task.id, newComment.trim());
+      setComments(updated.comments || []);
       setNewComment("");
-      addToast("Steering comment added", "success");
+      addToast("Comment added", "success");
     } catch (err: any) {
       addToast(err.message, "error");
     } finally {
@@ -60,7 +60,7 @@ export function SteeringTab({ task, addToast }: SteeringTabProps) {
 
   return (
     <div className="detail-section">
-      <h4>Steering Comments</h4>
+      <h4>Comments</h4>
       <p style={{ fontSize: "13px", opacity: 0.7, marginBottom: "12px" }}>
         Add comments to guide the AI during task execution. These are injected into the execution context.
       </p>
@@ -113,7 +113,7 @@ export function SteeringTab({ task, addToast }: SteeringTabProps) {
           ))}
         </div>
       ) : (
-        <div style={{ opacity: 0.5, marginBottom: "16px" }}>(no steering comments yet)</div>
+        <div style={{ opacity: 0.5, marginBottom: "16px" }}>(no comments yet)</div>
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -121,7 +121,7 @@ export function SteeringTab({ task, addToast }: SteeringTabProps) {
           value={newComment}
           onChange={(e) => setNewComment(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Add a steering comment... (Ctrl+Enter to submit)"
+          placeholder="Add a comment... (Ctrl+Enter to submit)"
           maxLength={MAX_LENGTH}
           rows={4}
           style={{
@@ -160,7 +160,7 @@ export function SteeringTab({ task, addToast }: SteeringTabProps) {
             onClick={handleSubmit}
             disabled={!isValid || isSubmitting}
           >
-            {isSubmitting ? "Adding…" : "Add Steering Comment"}
+            {isSubmitting ? "Adding…" : "Add Comment"}
           </button>
         </div>
       </div>

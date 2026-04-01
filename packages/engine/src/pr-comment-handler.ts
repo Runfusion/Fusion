@@ -85,10 +85,10 @@ export class PrCommentHandler {
     const text = this.buildSteeringText(prInfo, comment, hasCodeSuggestions);
 
     try {
-      await this.store.addSteeringComment(taskId, text, "agent");
-      prMonitorLog.log(`Added steering comment for PR review #${comment.id}`);
+      await this.store.addComment(taskId, text, "agent");
+      prMonitorLog.log(`Added comment for PR review #${comment.id}`);
     } catch (err) {
-      prMonitorLog.error(`Failed to add steering comment for ${taskId}:`, err);
+      prMonitorLog.error(`Failed to add comment for ${taskId}:`, err);
     }
   }
 

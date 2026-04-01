@@ -1615,9 +1615,9 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("## Project Commands");
   });
 
-  it("includes Steering Comments section when steeringComments has entries", () => {
+  it("includes Comments section when comments has entries", () => {
     const task = createMockTaskDetail({
-      steeringComments: [
+      comments: [
         {
           id: "1",
           text: "Please handle the edge case",
@@ -1631,13 +1631,13 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("## Steering Comments");
     expect(result).toContain("**user**");
     expect(result).toContain("> Please handle the edge case");
-    expect(result).toContain("The following steering comments were added by the user");
+    expect(result).toContain("The following comments were added during execution");
   });
 
-  it("formats multiple steering comments correctly", () => {
+  it("formats multiple comments correctly", () => {
     const now = new Date();
     const task = createMockTaskDetail({
-      steeringComments: [
+      comments: [
         {
           id: "1",
           text: "First comment",
@@ -1660,29 +1660,29 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("> Second comment");
   });
 
-  it("omits Steering Comments section when steeringComments is empty", () => {
-    const task = createMockTaskDetail({ steeringComments: [] });
+  it("omits Comments section when comments is empty", () => {
+    const task = createMockTaskDetail({ comments: [] });
     const result = buildExecutionPrompt(task);
 
     expect(result).not.toContain("## Steering Comments");
   });
 
-  it("omits Steering Comments section when steeringComments is undefined", () => {
+  it("omits Comments section when comments is undefined", () => {
     const task = createMockTaskDetail();
     const result = buildExecutionPrompt(task);
 
     expect(result).not.toContain("## Steering Comments");
   });
 
-  it("includes only the 10 most recent steering comments", () => {
-    const steeringComments = Array.from({ length: 15 }, (_, i) => ({
+  it("includes only the 10 most recent comments", () => {
+    const comments = Array.from({ length: 15 }, (_, i) => ({
       id: `${i}`,
       text: `Comment ${i}`,
       createdAt: new Date().toISOString(),
       author: "user" as const,
     }));
 
-    const task = createMockTaskDetail({ steeringComments });
+    const task = createMockTaskDetail({ comments });
     const result = buildExecutionPrompt(task);
 
     // Should include comments 5-14 (the 10 most recent), not 0-4
@@ -1725,7 +1725,7 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("## Steering Comments");
 
     // Verify explanatory header text
-    expect(result).toContain("The following steering comments were added by the user during execution");
+    expect(result).toContain("The following comments were added during execution");
     expect(result).toContain("Consider adjusting your approach or replanning remaining steps based on this feedback");
 
     // Verify all three comments appear with correct author badges
