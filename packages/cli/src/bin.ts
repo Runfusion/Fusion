@@ -164,46 +164,44 @@ async function main() {
   // Extract command early (needed for migration check)
   const command = args[0];
 
-  // ── First-Run Auto-Migration ─────────────────────────────────────────────
-  // Check if this is a fresh installation or if projects need to be migrated
-  // Skip migration check for 'project' commands to avoid circular issues
-  if (command !== "project" && !process.env.KB_SKIP_MIGRATION) {
+  // Migration check for first-run experience
+  // Skip for init command and help flags
+  if (command !== "init" && command !== "--help" && command !== "-h") {
     try {
-      const { createMigrationOrchestrator, createFirstRunExperience, CentralCore } = await import("@fusion/core");
+      const { FirstRunDetector, MigrationCoordinator } = await import("@fusion/core");
+      const { CentralCore } = await import("@fusion/core");
       
-      const centralCore = new CentralCore();
-      await centralCore.init();
+      const detector = new FirstRunDetector();
+      const state = await detector.detectFirstRunState();
+      
+      if (state === "needs-migration") {
+        const cwd = process.cwd();
+        const detected = await detector.detectExistingProjects(cwd);
+        const projectRoot = detected[0]?.path;
 
-      const migration = createMigrationOrchestrator(centralCore);
+        if (projectRoot) {
+          const central = new CentralCore();
+          await central.init();
 
-      if (await migration.needsMigration()) {
-        const firstRun = createFirstRunExperience(centralCore);
-        const state = await firstRun.getSetupState();
+          try {
+            const coordinator = new MigrationCoordinator(central);
+            const result = await coordinator.registerSingleProject(projectRoot);
 
-        if (state.isFirstRun && state.hasDetectedProjects) {
-          console.log("[kb] First run detected. Auto-registering projects...");
-          const result = await migration.runMigration({ 
-            startPath: process.cwd(),
-            autoRegister: true 
-          });
-          
-          if (result.projectsRegistered.length > 0) {
-            console.log(`[kb] Auto-registered ${result.projectsRegistered.length} project(s):`);
-            for (const p of result.projectsRegistered) {
-              console.log(`       - ${p.name}: ${p.path}`);
+            if (result.success && result.projectsRegistered.length > 0) {
+              const project = await central.getProject(result.projectsRegistered[0]);
+              if (project) {
+                console.log(`✓ Auto-registered project: ${project.name}`);
+              }
+            } else if (result.errors.length > 0) {
+              console.warn(`Migration warning: ${result.errors[0]}`);
             }
-          }
-          
-          if (result.projectsSkipped.length > 0) {
-            console.log(`[kb] Skipped ${result.projectsSkipped.length} project(s) (already registered or invalid)`);
+          } finally {
+            await central.close();
           }
         }
       }
-
-      await centralCore.close();
-    } catch (err) {
-      // Migration is best-effort: log warning but don't block command execution
-      console.warn("[kb] Warning: Migration check failed:", (err as Error).message);
+    } catch {
+      // Silently ignore migration errors - user can manually run fn init
     }
   }
 

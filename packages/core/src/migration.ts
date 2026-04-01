@@ -11,11 +11,11 @@
  */
 
 import { existsSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, basename, dirname } from "node:path";
 import type { CentralCore } from "./central-core.js";
 import { CentralCore as CentralCoreClass } from "./central-core.js";
+import type { CentralCoreStub } from "./migration-stubs.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ export interface ProjectSetupInput {
 
 /** Resolved project context for backward compatibility */
 export interface ResolvedContext {
-  /** Project ID in central registry */
+  /** Project ID in central registry, or the legacy sentinel value `"legacy"` when isLegacy is true. */
   projectId: string;
   /** Absolute path to project working directory */
   workingDirectory: string;
@@ -82,8 +82,9 @@ export class ProjectRequiredError extends Error {
 /**
  * Detects the first-run state and existing projects for migration.
  *
- * This class determines which startup path to take:
- * - Fresh install → Show setup wizard
+ * This class determines which startup path to take using cwd-ancestor scoped
+ * project discovery (it intentionally does not scan the wider filesystem):
+ * - Fresh install → No central DB and no kb project found from cwd upward
  * - Existing single project → Auto-migrate
  * - Already migrated → Normal operation
  */
@@ -102,43 +103,51 @@ export class FirstRunDetector {
    * Detect the current first-run state.
    *
    * Returns one of four states:
-   * - `"fresh-install"` — No central DB, no local `.kb/` found
-   * - `"needs-migration"` — No central DB, but `.kb/kb.db` exists in cwd
-   * - `"setup-wizard"` — Central DB exists but has zero projects
+   * - `"fresh-install"` — No central DB and no kb project found from cwd upward
+   * - `"needs-migration"` — No central DB, but a `.kb/kb.db` project exists in cwd ancestry
+   * - `"setup-wizard"` — Central DB exists and can be read, but has zero projects
    * - `"normal-operation"` — Central DB exists with one or more projects
    * 
    * @param existingCentral — Optional existing CentralCore instance to use instead of creating a new one
    */
   async detectFirstRunState(existingCentral?: CentralCore): Promise<FirstRunState> {
+    const detectLocalState = async (): Promise<"fresh-install" | "needs-migration"> => {
+      const detectedProjects = await this.detectExistingProjects(process.cwd());
+      return detectedProjects.length > 0 ? "needs-migration" : "fresh-install";
+    };
+
+    const detectFallbackState = async (): Promise<FirstRunState> => {
+      const localState = await detectLocalState();
+      return localState === "needs-migration" ? localState : "fresh-install";
+    };
+
     const hasCentral = this.hasCentralDb();
 
     if (!hasCentral) {
-      // No central DB - check for local .kb/ in cwd
-      const cwd = process.cwd();
-      const localKbExists = this.hasKbProject(cwd);
-      return localKbExists ? "needs-migration" : "fresh-install";
+      return detectLocalState();
     }
 
-    // Central DB exists - check if it has projects
+    // Central DB exists - check if it has projects.
+    // If the central DB is present but unreadable/corrupt, fall back to local
+    // project detection so upgrade migration remains backward-compatible.
     let central: CentralCore | undefined = existingCentral;
     let shouldClose = false;
-    
+
     if (!central) {
       try {
         central = new CentralCoreClass(this.globalDir);
         await central.init();
         shouldClose = true;
       } catch {
-        return "setup-wizard";
+        return detectFallbackState();
       }
     }
-    
+
     try {
       const projects = await central.listProjects();
       return projects.length === 0 ? "setup-wizard" : "normal-operation";
     } catch {
-      // Central DB exists but is unreadable - treat as setup wizard
-      return "setup-wizard";
+      return detectFallbackState();
     } finally {
       if (shouldClose && central) {
         await central.close();
@@ -179,7 +188,7 @@ export class FirstRunDetector {
     const home = homedir();
     const root = dirname(current) === current ? current : "/"; // Handle Windows vs Unix root
 
-    while (current !== home && current !== root) {
+    while (true) {
       if (visited.has(current)) break;
       visited.add(current);
 
@@ -191,6 +200,10 @@ export class FirstRunDetector {
           hasDb: true,
         });
         // Only detect one project - stop at first match
+        break;
+      }
+
+      if (current === home || current === root) {
         break;
       }
 
@@ -300,13 +313,13 @@ export class FirstRunDetector {
  * - Idempotent re-runs
  */
 export class MigrationCoordinator {
-  private readonly central: CentralCore;
+  private readonly central: CentralCoreStub;
 
   /**
    * Create a MigrationCoordinator.
-   * @param central — Initialized CentralCore instance
+   * @param central — Initialized central project registry contract
    */
-  constructor(central: CentralCore) {
+  constructor(central: CentralCoreStub) {
     this.central = central;
   }
 
@@ -320,38 +333,18 @@ export class MigrationCoordinator {
    */
   async coordinateMigration(): Promise<MigrationResult> {
     const detector = new FirstRunDetector(this.central.getGlobalDir());
-    const state = await detector.detectFirstRunState();
+    const projects = await detector.detectExistingProjects(process.cwd());
+    const registeredProjects = await this.central.listProjects();
 
-    switch (state) {
-      case "needs-migration": {
-        // Find the project in cwd
-        const projects = await detector.detectExistingProjects(process.cwd());
-        if (projects.length === 0) {
-          return {
-            success: false,
-            projectsRegistered: [],
-            errors: ["No existing kb project found for migration"],
-          };
-        }
-        return this.registerSingleProject(projects[0].path);
-      }
-
-      case "fresh-install":
-        return {
-          success: true,
-          projectsRegistered: [],
-          errors: [],
-        };
-
-      case "setup-wizard":
-      case "normal-operation":
-        // No migration needed
-        return {
-          success: true,
-          projectsRegistered: [],
-          errors: [],
-        };
+    if (projects.length > 0 && registeredProjects.length === 0) {
+      return this.registerSingleProject(projects[0].path);
     }
+
+    return {
+      success: true,
+      projectsRegistered: [],
+      errors: [],
+    };
   }
 
   /**
@@ -370,6 +363,31 @@ export class MigrationCoordinator {
     // Validate path
     if (!isAbsolute(projectPath)) {
       result.errors.push(`Project path must be absolute: ${projectPath}`);
+      return result;
+    }
+
+    if (!this.hasKbProject(projectPath)) {
+      result.errors.push(`Project path is not a valid kb project: ${projectPath}`);
+      return result;
+    }
+
+    try {
+      const existingProjects = await this.central.listProjects();
+      const overlappingProject = existingProjects.find((project) => this.pathsOverlap(project.path, projectPath));
+      if (overlappingProject) {
+        if (this.normalizePath(overlappingProject.path) === this.normalizePath(projectPath)) {
+          result.success = true;
+          result.projectsRegistered.push(overlappingProject.id);
+          return result;
+        }
+
+        result.errors.push(
+          `Project path overlaps an existing registered project: ${overlappingProject.path}`
+        );
+        return result;
+      }
+    } catch (err) {
+      result.errors.push(`Failed to check existing registrations: ${(err as Error).message}`);
       return result;
     }
 
@@ -394,11 +412,15 @@ export class MigrationCoordinator {
 
     // Register the project
     try {
-      const project = await this.central.registerProject({
+      let project = await this.central.registerProject({
         name: uniqueName,
         path: projectPath,
         isolationMode: "in-process",
       });
+
+      if ("updateProject" in this.central && typeof (this.central as CentralCore & { updateProject?: unknown }).updateProject === "function") {
+        project = await (this.central as CentralCore).updateProject(project.id, { status: "active" });
+      }
 
       result.success = true;
       result.projectsRegistered.push(project.id);
@@ -424,6 +446,14 @@ export class MigrationCoordinator {
 
     for (const input of projects) {
       try {
+        if (!isAbsolute(input.path)) {
+          throw new Error(`Project path must be absolute: ${input.path}`);
+        }
+
+        if (!this.hasKbProject(input.path)) {
+          throw new Error(`Project path is not a valid kb project: ${input.path}`);
+        }
+
         // Check if already registered
         const existing = await this.central.getProjectByPath(input.path);
         if (existing) {
@@ -471,6 +501,35 @@ export class MigrationCoordinator {
     }
 
     return candidate;
+  }
+
+  private hasKbProject(dir: string): boolean {
+    const kbDir = join(dir, ".kb");
+    const dbPath = join(kbDir, "kb.db");
+
+    if (!existsSync(kbDir)) return false;
+    if (!existsSync(dbPath)) return false;
+
+    try {
+      const stat = statSync(dbPath);
+      return stat.isFile() && stat.size > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private pathsOverlap(a: string, b: string): boolean {
+    const normalizedA = this.normalizePath(a);
+    const normalizedB = this.normalizePath(b);
+    return (
+      normalizedA === normalizedB ||
+      normalizedA.startsWith(`${normalizedB}/`) ||
+      normalizedB.startsWith(`${normalizedA}/`)
+    );
+  }
+
+  private normalizePath(pathValue: string): string {
+    return resolve(pathValue).replace(/\/+$/, "");
   }
 }
 
@@ -541,23 +600,6 @@ export class BackwardCompat {
     const projects = await this.central.listProjects();
 
     if (projects.length === 0) {
-      // No projects registered - check if cwd has a current .fusion project or legacy .kb project
-      if (this.hasProjectData(cwd)) {
-        // Auto-migrate this project
-        const coordinator = new MigrationCoordinator(this.central);
-        const result = await coordinator.registerSingleProject(cwd);
-        if (result.success && result.projectsRegistered.length > 0) {
-          const newProject = await this.central.getProject(result.projectsRegistered[0]);
-          if (newProject) {
-            return {
-              projectId: newProject.id,
-              workingDirectory: newProject.path,
-              isLegacy: false,
-            };
-          }
-        }
-      }
-
       throw new ProjectRequiredError(
         "No projects registered. Run 'fn init' or 'fn project add' to set up a project.",
         []
@@ -565,7 +607,7 @@ export class BackwardCompat {
     }
 
     if (projects.length === 1) {
-      // Single project - auto-use it for backward compatibility
+      // Single project - auto-use it for backward compatibility.
       const project = projects[0];
       return {
         projectId: project.id,
@@ -574,7 +616,7 @@ export class BackwardCompat {
       };
     }
 
-    // Multiple projects - require explicit selection
+    // Multiple projects - require explicit selection.
     throw new ProjectRequiredError(
       "Multiple projects registered. Use --project <name> to specify which project to use.",
       projects.map((p) => ({ id: p.id, name: p.name }))
@@ -611,25 +653,4 @@ export class BackwardCompat {
     return all.map((p) => ({ id: p.id, name: p.name }));
   }
 
-  /**
-   * Check if a directory contains a current .fusion project or legacy .kb project.
-   */
-  private hasProjectData(dir: string): boolean {
-    return this.hasProjectDb(dir, ".fusion") || this.hasProjectDb(dir, ".kb");
-  }
-
-  private hasProjectDb(dir: string, folderName: ".fusion" | ".kb"): boolean {
-    const projectDir = join(dir, folderName);
-    const dbPath = join(projectDir, "kb.db");
-
-    if (!existsSync(projectDir)) return false;
-    if (!existsSync(dbPath)) return false;
-
-    try {
-      const stat = statSync(dbPath);
-      return stat.isFile() && stat.size > 0;
-    } catch {
-      return false;
-    }
-  }
 }

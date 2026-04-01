@@ -61,6 +61,24 @@ describe("Backward Compatibility Layer", () => {
       rmSync(tempProjectDir, { recursive: true, force: true });
     });
 
+    it("should auto-resolve the single registered project even when cwd is unrelated", async () => {
+      const tempProjectDir = tempDir("kb-single-path-match-");
+      const unrelatedDir = tempDir("kb-single-unrelated-");
+      const project = await central.registerProject({
+        name: "Path Match Project",
+        path: tempProjectDir,
+      });
+
+      const compat = new BackwardCompat(central);
+      const context = await compat.resolveProjectContext(unrelatedDir);
+
+      expect(context.projectId).toBe(project.id);
+      expect(context.workingDirectory).toBe(tempProjectDir);
+
+      rmSync(tempProjectDir, { recursive: true, force: true });
+      rmSync(unrelatedDir, { recursive: true, force: true });
+    });
+
     it("should use explicit project ID when provided", async () => {
       const tempProjectDir = tempDir("kb-explicit-compat-");
       const project = await central.registerProject({
@@ -150,6 +168,48 @@ describe("Backward Compatibility Layer", () => {
       rmSync(tempProjectDir1, { recursive: true, force: true });
       rmSync(tempProjectDir2, { recursive: true, force: true });
     });
+
+    it("should require explicit selection when cwd is inside one of multiple projects", async () => {
+      const tempProjectDir1 = tempDir("kb-multi-cwd1-");
+      const tempProjectDir2 = tempDir("kb-multi-cwd2-");
+      const nestedDir = join(tempProjectDir1, "src", "nested");
+      mkdirSync(nestedDir, { recursive: true });
+      await central.registerProject({
+        name: "Project One",
+        path: tempProjectDir1,
+      });
+      await central.registerProject({
+        name: "Project Two",
+        path: tempProjectDir2,
+      });
+
+      const compat = new BackwardCompat(central);
+      await expect(compat.resolveProjectContext(nestedDir)).rejects.toThrow(ProjectRequiredError);
+
+      rmSync(tempProjectDir1, { recursive: true, force: true });
+      rmSync(tempProjectDir2, { recursive: true, force: true });
+    });
+
+    it("should require explicit selection when cwd is outside all registered projects", async () => {
+      const tempProjectDir1 = tempDir("kb-multi-outside1-");
+      const tempProjectDir2 = tempDir("kb-multi-outside2-");
+      const unrelatedDir = tempDir("kb-multi-outside-unrelated-");
+      await central.registerProject({
+        name: "Project One",
+        path: tempProjectDir1,
+      });
+      await central.registerProject({
+        name: "Project Two",
+        path: tempProjectDir2,
+      });
+
+      const compat = new BackwardCompat(central);
+      await expect(compat.resolveProjectContext(unrelatedDir)).rejects.toThrow(ProjectRequiredError);
+
+      rmSync(tempProjectDir1, { recursive: true, force: true });
+      rmSync(tempProjectDir2, { recursive: true, force: true });
+      rmSync(unrelatedDir, { recursive: true, force: true });
+    });
   });
 
   describe("legacy mode without central database", () => {
@@ -186,23 +246,17 @@ describe("Backward Compatibility Layer", () => {
     });
   });
 
-  describe("auto-migration on resolve", () => {
-    it("should auto-register project found in cwd when no projects registered", async () => {
-      // Create a project directory with .kb/
-      const projectDir = tempDir("kb-auto-migrate-compat-");
+  describe("no implicit mutation during resolve", () => {
+    it("should not auto-register a project found in cwd when no projects are registered", async () => {
+      const projectDir = tempDir("kb-no-auto-migrate-compat-");
       createFakeKbProject(projectDir);
 
       const compat = new BackwardCompat(central);
-      
-      // Should auto-register the project found in cwd
-      const context = await compat.resolveProjectContext(projectDir);
 
-      expect(context.isLegacy).toBe(false);
-      expect(context.workingDirectory).toBe(projectDir);
+      await expect(compat.resolveProjectContext(projectDir)).rejects.toThrow(ProjectRequiredError);
 
-      // Verify project was registered
       const isRegistered = await central.isProjectRegistered(projectDir);
-      expect(isRegistered).toBe(true);
+      expect(isRegistered).toBe(false);
 
       rmSync(projectDir, { recursive: true, force: true });
     });

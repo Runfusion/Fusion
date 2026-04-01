@@ -31,7 +31,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { isAbsolute, join, basename } from "node:path";
+import { isAbsolute, join, basename, resolve } from "node:path";
 import type {
   RegisteredProject,
   ProjectHealth,
@@ -961,6 +961,24 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async autoRegisterProject(projectPath: string): Promise<RegisteredProject> {
     this.ensureInitialized();
 
+    const normalizedProjectPath = resolve(projectPath);
+    const existingProjects = await this.listProjects();
+    const overlappingProject = existingProjects.find((project) => {
+      const existingPath = resolve(project.path);
+      return (
+        existingPath === normalizedProjectPath ||
+        existingPath.startsWith(`${normalizedProjectPath}/`) ||
+        normalizedProjectPath.startsWith(`${existingPath}/`)
+      );
+    });
+
+    if (overlappingProject) {
+      if (resolve(overlappingProject.path) === normalizedProjectPath) {
+        return overlappingProject;
+      }
+      throw new Error(`Project path overlaps an existing registered project: ${overlappingProject.path}`);
+    }
+
     // Check if already registered
     const existing = await this.getProjectByPath(projectPath);
     if (existing) {
@@ -973,12 +991,14 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     // Ensure unique name
     const uniqueName = await this.ensureUniqueName(name);
 
-    // Register with in-process isolation
-    return this.registerProject({
+    // Register with in-process isolation, then mark active for migration/init flows.
+    const project = await this.registerProject({
       name: uniqueName,
       path: projectPath,
       isolationMode: "in-process",
     });
+
+    return this.updateProject(project.id, { status: "active" });
   }
 
   /**

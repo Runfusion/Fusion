@@ -124,25 +124,28 @@ export type {
   ProjectHealth, 
   CentralActivityLogEntry, 
   GlobalConcurrencyState,
-  DetectedProject,
   MigrationOptions,
-  MigrationResult,
-  ProjectSetupInput,
   SetupState,
   SetupCompletionResult,
 } from "./types.js";
 
-// ── Migration & First-Run (Multi-Project Support) ───────────────────────────
+// ── Migration and First-Run Experience ────────────────────────────────
 
 export {
-  MigrationOrchestrator,
-  createMigrationOrchestrator,
-  MAX_AUTO_REGISTER_PROJECTS,
-  DEFAULT_MAX_DEPTH,
-  EXCLUDED_DIRS,
-} from "./migration-orchestrator.js";
-
+  FirstRunDetector,
+  MigrationCoordinator,
+  BackwardCompat,
+  ProjectRequiredError,
+} from "./migration.js";
+export type {
+  FirstRunState,
+  DetectedProject,
+  MigrationResult,
+  ProjectSetupInput,
+  ResolvedContext,
+} from "./migration.js";
 export {
-  FirstRunExperience,
-  createFirstRunExperience,
-} from "./first-run.js";
+  needsCentralMigration,
+  detectExistingProjects,
+  autoMigrateToCentral,
+} from "./db-migrate.js";

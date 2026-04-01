@@ -9,8 +9,9 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { readFile, readdir, rename, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import type { Database } from "./db.js";
 import { toJson, toJsonNullable, normalizeTaskComments } from "./db.js";
 import type { Task, BoardConfig, ActivityLogEntry, ArchivedTaskEntry } from "./types.js";
@@ -544,16 +545,36 @@ async function createBackups(kbDir: string): Promise<void> {
  * @param globalDir — Directory for central database. Defaults to `~/.pi/kb/`.
  */
 export function needsCentralMigration(cwd: string, globalDir?: string): boolean {
-  const { FirstRunDetector } = require("./migration.js");
-  const detector = new FirstRunDetector(globalDir);
-
-  // Check if central DB exists
-  if (detector.hasCentralDb()) {
+  const centralDbPath = join(globalDir ?? join(homedir(), ".pi", "kb"), "kb-central.db");
+  if (existsSync(centralDbPath)) {
     return false;
   }
 
-  // Check if cwd has a kb project
-  return detector["hasKbProject"](cwd);
+  let current = resolve(cwd);
+  const home = homedir();
+  const root = dirname(current) === current ? current : "/";
+
+  while (true) {
+    const dbPath = join(current, ".kb", "kb.db");
+    if (existsSync(dbPath)) {
+      try {
+        const stat = statSync(dbPath);
+        return stat.isFile() && stat.size > 0;
+      } catch {
+        return false;
+      }
+    }
+
+    if (current === home || current === root) {
+      break;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return false;
 }
 
 /**
@@ -567,7 +588,7 @@ export async function detectExistingProjects(
   cwd?: string,
   globalDir?: string
 ): Promise<Array<{ path: string; name: string; hasDb: boolean }>> {
-  const { FirstRunDetector } = require("./migration.js");
+  const { FirstRunDetector } = await import("./migration.js");
   const detector = new FirstRunDetector(globalDir);
   return detector.detectExistingProjects(cwd);
 }
@@ -583,7 +604,7 @@ export async function autoMigrateToCentral(
   existingProjectPath: string,
   central: import("./central-core.js").CentralCore
 ): Promise<import("./migration.js").MigrationResult> {
-  const { MigrationCoordinator } = require("./migration.js");
+  const { MigrationCoordinator } = await import("./migration.js");
   const coordinator = new MigrationCoordinator(central);
   return coordinator.registerSingleProject(existingProjectPath);
 }
