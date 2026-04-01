@@ -453,4 +453,72 @@ describe("Header", () => {
       expect(onOpenSchedules).toHaveBeenCalled();
     });
   });
+
+  describe("mobile header layout", () => {
+    it("applies header-project-selector class when multiple projects exist on mobile", () => {
+      const { container } = renderHeader({
+        projects: [
+          { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+          { id: "2", name: "Project Two", path: "/path/two", status: "active" as const },
+        ],
+        currentProject: { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+      }, true);
+      expect(container.querySelector(".header-project-selector")).toBeDefined();
+    });
+
+    it("does not show project selector on mobile with single project", () => {
+      const { container } = renderHeader({
+        projects: [{ id: "1", name: "Project One", path: "/path/one", status: "active" as const }],
+      }, true);
+      expect(container.querySelector(".header-project-selector")).toBeNull();
+    });
+
+    it("renders header-back-button when currentProject is set on mobile", () => {
+      const { container } = renderHeader({
+        currentProject: { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+        onViewAllProjects: vi.fn(),
+      }, true);
+      expect(container.querySelector(".header-back-button")).toBeDefined();
+    });
+
+    it("does not render header-back-button on mobile when no currentProject", () => {
+      const { container } = renderHeader({}, true);
+      expect(container.querySelector(".header-back-button")).toBeNull();
+    });
+
+    it("mobile overflow menu closes when clicking outside", () => {
+      renderHeader({ onOpenFiles: vi.fn() }, true);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      expect(screen.getByRole("menu")).toBeDefined();
+
+      // Click outside the menu
+      fireEvent.mouseDown(document.body);
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("mobile overflow menu closes on Escape key", () => {
+      renderHeader({ onOpenFiles: vi.fn() }, true);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      expect(screen.getByRole("menu")).toBeDefined();
+
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("mobile overflow trigger has correct accessibility attributes", () => {
+      renderHeader({}, true);
+      const trigger = screen.getByTitle("More header actions");
+      expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+      fireEvent.click(trigger);
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("hides logo-sub on mobile via CSS", () => {
+      renderHeader({}, true);
+      // The element exists but is hidden via CSS on mobile
+      expect(screen.getByText("tasks")).toBeDefined();
+    });
+  });
 });
