@@ -696,7 +696,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   worktreeInitCommand: undefined,
   recycleWorktrees: false,
   worktreeNaming: "random",
-  taskPrefix: undefined,
+  taskPrefix: "FN",
   includeTaskIdInCommit: true,
   planningProvider: undefined,
   planningModelId: undefined,

@@ -156,7 +156,7 @@ describe("WorktreePool", () => {
         (c) => typeof c[0] === "string" && (c[0] as string).includes("checkout -B"),
       );
       expect(checkoutCall).toBeDefined();
-      expect(checkoutCall![0]).toBe('git checkout -B "fusion/fn-042" kb/kb-041');
+      expect(checkoutCall![0]).toBe('git checkout -B "fusion/fn-042" fusion/fn-041');
     });
 
     it("tolerates git checkout -- . failure (already clean)", () => {

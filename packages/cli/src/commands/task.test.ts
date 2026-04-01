@@ -942,7 +942,7 @@ describe("runTaskRefine", () => {
 
     mockRefineTask = vi.fn().mockResolvedValue({
       id: "FN-002",
-      description: "Refinement of KB-001",
+      description: "Refinement of FN-001",
       column: "triage",
       dependencies: ["FN-001"],
       steps: [],
@@ -1132,7 +1132,7 @@ describe("runTaskDelete", () => {
     await runTaskDelete("FN-001", false);
 
     expect(mockRlQuestion).toHaveBeenCalledOnce();
-    expect(mockRlQuestion).toHaveBeenCalledWith("Are you sure you want to delete KB-001? [y/N] ");
+    expect(mockRlQuestion).toHaveBeenCalledWith("Are you sure you want to delete FN-001? [y/N] ");
     expect(mockRlClose).toHaveBeenCalled();
     expect(mockDeleteTask).toHaveBeenCalledOnce();
     expect(mockDeleteTask).toHaveBeenCalledWith("FN-001");
@@ -1227,7 +1227,7 @@ describe("runTaskComment", () => {
 
     const store = (TaskStore as unknown as ReturnType<typeof vi.fn>).mock.results.at(-1)?.value;
     expect(store.addTaskComment).toHaveBeenCalledWith("FN-001", "Hello", "alice");
-    expect(logSpy).toHaveBeenCalledWith("  ✓ Comment added to KB-001");
+    expect(logSpy).toHaveBeenCalledWith("  ✓ Comment added to FN-001");
   });
 
   it("lists task comments", async () => {
@@ -1309,7 +1309,7 @@ describe("runTaskRetry", () => {
       column: "in-progress"
     }));
 
-    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task KB-001 is not failed (status: none)");
+    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task FN-001 is not failed (status: none)");
   });
 
   it("throws error with correct status when task has different status", async () => {
@@ -1319,7 +1319,7 @@ describe("runTaskRetry", () => {
       column: "in-progress"
     }));
 
-    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task KB-001 is not failed (status: paused)");
+    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task FN-001 is not failed (status: paused)");
   });
 });
 
@@ -1434,7 +1434,7 @@ describe("runTaskLogs", () => {
 
     await runTaskLogs("FN-001");
 
-    expect(logSpy).toHaveBeenCalledWith("No agent logs found for KB-001");
+    expect(logSpy).toHaveBeenCalledWith("No agent logs found for FN-001");
   });
 
   it("exits with error when task not found", async () => {
@@ -1937,7 +1937,7 @@ describe("runTaskPrCreate", () => {
   it("exits with error when branch has no commits", async () => {
     const task = makeInReviewTask();
     mockGetTask.mockResolvedValueOnce(task);
-    mockCreatePr.mockRejectedValueOnce(new Error("No commits between main and kb/kb-001"));
+    mockCreatePr.mockRejectedValueOnce(new Error("No commits between main and fusion/fn-001"));
     
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("process.exit");

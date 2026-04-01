@@ -32,7 +32,7 @@ describe("MergeDetails", () => {
             deletions: 2,
             mergedAt: "2026-01-01T01:00:00.000Z",
             prNumber: 42,
-            mergeCommitMessage: "feat(KB-001): merge kb/kb-001",
+            mergeCommitMessage: "feat(FN-001): merge fusion/fn-001",
             mergeConfirmed: true,
           },
         })}
@@ -44,7 +44,7 @@ describe("MergeDetails", () => {
     expect(screen.getByText("5")).toBeTruthy();
     expect(screen.getByText("+10 / -2")).toBeTruthy();
     expect(screen.getByText("#42")).toBeTruthy();
-    expect(screen.getByText("feat(KB-001): merge kb/kb-001")).toBeTruthy();
+    expect(screen.getByText("feat(FN-001): merge fusion/fn-001")).toBeTruthy();
     expect(screen.getByText("Merged successfully")).toBeTruthy();
   });
 });

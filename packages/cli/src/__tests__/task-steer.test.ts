@@ -66,7 +66,7 @@ describe("runTaskSteer", () => {
 
     expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-001", "Focus on error handling", "user");
     expect(mockConsoleLog).toHaveBeenCalledWith(
-      expect.stringContaining("Steering comment added to KB-001")
+      expect.stringContaining("Steering comment added to FN-001")
     );
   });
 
