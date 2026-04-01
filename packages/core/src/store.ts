@@ -9,6 +9,8 @@ import { GlobalSettingsStore } from "./global-settings.js";
 import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
 import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
 import { MissionStore } from "./mission-store.js";
+import { BackwardCompat, ProjectRequiredError } from "./migration.js";
+import { CentralCore } from "./central-core.js";
 
 export interface TaskStoreEvents {
   "task:created": [task: Task];
@@ -21,6 +23,36 @@ export interface TaskStoreEvents {
 }
 
 export class TaskStore extends EventEmitter<TaskStoreEvents> {
+  static async getOrCreateForProject(projectId?: string, centralCore?: CentralCore): Promise<TaskStore> {
+    const central = centralCore ?? new CentralCore();
+    let initializedHere = false;
+
+    if (!centralCore) {
+      await central.init();
+      initializedHere = true;
+    }
+
+    try {
+      const compat = new BackwardCompat(central);
+      const context = await compat.resolveProjectContext(process.cwd(), projectId);
+      const store = new TaskStore(context.workingDirectory);
+      await store.init();
+      return store;
+    } catch (error) {
+      if (error instanceof ProjectRequiredError) {
+        if (projectId) {
+          throw new Error(`Project "${projectId}" not found`);
+        }
+        throw new Error(error.message);
+      }
+      throw error;
+    } finally {
+      if (initializedHere) {
+        await central.close();
+      }
+    }
+  }
+
   /**
    * Hybrid storage note: task metadata lives in SQLite, while blob files remain on disk.
    * Any write to `.kb/tasks/{id}` must recreate the directory on demand, and any read from
@@ -2062,8 +2094,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.updatedAt = new Date().toISOString();
       task.log.push({
         timestamp: task.updatedAt,
-        action: "Comment added",
-        outcome: `by ${author}`,
+        action: `Comment added by ${author}`,
       });
 
       await this.atomicWriteTaskJson(dir, task);
@@ -2786,94 +2817,4 @@ ${notificationsSection}`;
 
   // ── Backward Compatibility (Multi-Project Support) ────────────────────────
 
-  /**
-   * Get or create a TaskStore for a project, supporting backward-compatible
-   * single-project mode and multi-project resolution.
-   *
-   * Resolution logic:
-   * - If `projectId` provided: look up in central registry, create store for that path
-   * - If no `projectId` and single project registered: use that project
-   * - If no `projectId` and multiple projects: throw requiring explicit selection
-   * - If no central DB available: fall back to legacy behavior (current directory)
-   *
-   * @param projectId — Optional project ID to resolve
-   * @param centralCore — Optional CentralCore instance (creates new if not provided)
-   * @returns TaskStore initialized for the resolved project
-   * @throws Error if project resolution fails or multiple projects require explicit selection
-   */
-  static async getOrCreateForProject(
-    projectId?: string,
-    centralCore?: import("./central-core.js").CentralCore
-  ): Promise<TaskStore> {
-    // If no centralCore provided, try to create one
-    let core = centralCore;
-    let shouldCleanupCore = false;
-    
-    if (!core) {
-      try {
-        const { CentralCore } = await import("./central-core.js");
-        core = new CentralCore();
-        await core.init();
-        shouldCleanupCore = true;
-      } catch {
-        // Central core not available - fall back to legacy mode
-      }
-    }
-
-    // Legacy mode: no central core available
-    if (!core) {
-      const store = new TaskStore(process.cwd());
-      await store.init();
-      return store;
-    }
-
-    try {
-      // If projectId provided, look it up directly
-      if (projectId) {
-        const project = await core.getProject(projectId);
-        if (!project) {
-          // Try to find by name
-          const allProjects = await core.listProjects();
-          const byName = allProjects.find(p => p.name === projectId);
-          if (!byName) {
-            throw new Error(`Project "${projectId}" not found`);
-          }
-          const store = new TaskStore(byName.path);
-          await store.init();
-          return store;
-        }
-        const store = new TaskStore(project.path);
-        await store.init();
-        return store;
-      }
-
-      // No projectId provided - check registered projects
-      const projects = await core.listProjects();
-
-      if (projects.length === 0) {
-        // No projects registered - fall back to legacy mode (current directory)
-        const store = new TaskStore(process.cwd());
-        await store.init();
-        return store;
-      }
-
-      if (projects.length === 1) {
-        // Exactly one project - use it
-        const store = new TaskStore(projects[0].path);
-        await store.init();
-        return store;
-      }
-
-      // Multiple projects - require explicit selection
-      const projectList = projects.map(p => `  - ${p.name}: ${p.path}`).join("\n");
-      throw new Error(
-        `Multiple projects registered. Use --project <name> to specify one.\n\nAvailable projects:\n${projectList}`
-      );
-    } finally {
-      // Clean up the central core if we created it
-      if (shouldCleanupCore && core) {
-        await core.close();
-      }
-    }
-  }
 }

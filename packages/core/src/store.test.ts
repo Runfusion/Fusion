@@ -823,6 +823,82 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("upsertTask regression coverage", () => {
+    it("creates tasks successfully on a fresh database schema", async () => {
+      const freshRoot = makeTmpDir();
+      const freshGlobal = makeTmpDir();
+      const freshStore = new TaskStore(freshRoot, freshGlobal);
+      await freshStore.init();
+
+      const task = await freshStore.createTask({ description: "fresh schema task" });
+      expect(task.id).toBe("FN-001");
+      expect(await freshStore.getTask(task.id)).toBeDefined();
+
+      freshStore.stopWatching();
+      await rm(freshRoot, { recursive: true, force: true });
+      await rm(freshGlobal, { recursive: true, force: true });
+    });
+
+    it("persists createTask with nullable, array, and optional scalar fields", async () => {
+      const created = await store.createTask({
+        title: "Persist me",
+        description: "Create path coverage",
+        column: "todo",
+        dependencies: ["FN-999"],
+        enabledWorkflowSteps: ["WS-001"],
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        validatorModelProvider: "openai",
+        validatorModelId: "gpt-4o",
+        modelPresetId: "normal",
+      });
+
+      const persisted = await store.getTask(created.id);
+      expect(persisted.title).toBe("Persist me");
+      expect(persisted.column).toBe("todo");
+      expect(persisted.dependencies).toEqual(["FN-999"]);
+      expect(persisted.enabledWorkflowSteps).toEqual(["WS-001"]);
+      expect(persisted.modelProvider).toBe("anthropic");
+      expect(persisted.validatorModelProvider).toBe("openai");
+      expect(persisted.modelPresetId).toBe("normal");
+    });
+
+    it("persists updateTask changes across scalar, array, and nullable JSON-backed fields", async () => {
+      const task = await store.createTask({ description: "Update path coverage" });
+
+      await store.updateTask(task.id, {
+        title: "Updated title",
+        dependencies: ["FN-002", "FN-003"],
+        blockedBy: "FN-002",
+        status: "failed",
+        error: "boom",
+        summary: "summary",
+        workflowStepResults: [
+          {
+            workflowStepId: "WS-001",
+            workflowStepName: "QA",
+            status: "passed",
+            startedAt: "2026-04-01T00:00:00.000Z",
+            completedAt: "2026-04-01T00:01:00.000Z",
+            output: "ok",
+          },
+        ],
+        modifiedFiles: ["packages/core/src/store.ts"],
+      });
+
+      const persisted = await store.getTask(task.id);
+      expect(persisted.title).toBe("Updated title");
+      expect(persisted.dependencies).toEqual(["FN-002", "FN-003"]);
+      expect(persisted.blockedBy).toBe("FN-002");
+      expect(persisted.status).toBe("failed");
+      expect(persisted.error).toBe("boom");
+      expect(persisted.summary).toBe("summary");
+      expect(persisted.workflowStepResults).toHaveLength(1);
+      expect(persisted.workflowStepResults?.[0].workflowStepId).toBe("WS-001");
+      expect(persisted.modifiedFiles).toEqual(["packages/core/src/store.ts"]);
+    });
+  });
+
   describe("directory recreation for file-backed blobs", () => {
     it("pauseTask recreates missing task directory before writing task.json", async () => {
       const task = await createTestTask();

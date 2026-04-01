@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   breakIntoSubtasks INTEGER DEFAULT 0,
   enabledWorkflowSteps TEXT DEFAULT '[]',
   modifiedFiles TEXT DEFAULT '[]',
+  missionId TEXT,
   sliceId TEXT
 );
 

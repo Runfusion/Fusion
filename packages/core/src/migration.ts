@@ -541,8 +541,8 @@ export class BackwardCompat {
     const projects = await this.central.listProjects();
 
     if (projects.length === 0) {
-      // No projects registered - check if cwd has a .kb/ directory
-      if (this.hasKbProject(cwd)) {
+      // No projects registered - check if cwd has a current .fusion project or legacy .kb project
+      if (this.hasProjectData(cwd)) {
         // Auto-migrate this project
         const coordinator = new MigrationCoordinator(this.central);
         const result = await coordinator.registerSingleProject(cwd);
@@ -612,13 +612,17 @@ export class BackwardCompat {
   }
 
   /**
-   * Check if a directory contains a kb project.
+   * Check if a directory contains a current .fusion project or legacy .kb project.
    */
-  private hasKbProject(dir: string): boolean {
-    const kbDir = join(dir, ".kb");
-    const dbPath = join(kbDir, "kb.db");
+  private hasProjectData(dir: string): boolean {
+    return this.hasProjectDb(dir, ".fusion") || this.hasProjectDb(dir, ".kb");
+  }
 
-    if (!existsSync(kbDir)) return false;
+  private hasProjectDb(dir: string, folderName: ".fusion" | ".kb"): boolean {
+    const projectDir = join(dir, folderName);
+    const dbPath = join(projectDir, "kb.db");
+
+    if (!existsSync(projectDir)) return false;
     if (!existsSync(dbPath)) return false;
 
     try {
