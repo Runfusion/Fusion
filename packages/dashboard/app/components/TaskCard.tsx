@@ -1,5 +1,5 @@
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Maximize2 } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo } from "@fusion/core";
 import { fetchTaskDetail, uploadAttachment } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
@@ -138,9 +138,19 @@ function TaskCardComponent({
 
   const titleInputRef = useRef<HTMLInputElement>(null);
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const touchOpenHandledRef = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket();
+
+  // Touch gesture detection refs
+  const touchStartPosRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const hasTouchMovedRef = useRef(false);
+
+  const isInteractiveTarget = useCallback((target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) return false;
+    return !!target.closest("button, a, input, textarea, select, label, [role='button']");
+  }, []);
 
   // Reset edit state when task changes
   useEffect(() => {
@@ -232,10 +242,58 @@ function TaskCardComponent({
     }
   }, [task.id, onOpenDetail, addToast, isEditing]);
 
-  const handleExpandClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleCardClick = useCallback((e: React.MouseEvent) => {
+    if (touchOpenHandledRef.current) {
+      touchOpenHandledRef.current = false;
+      return;
+    }
+    if (isInteractiveTarget(e.target)) return;
     void handleClick();
-  }, [handleClick]);
+  }, [handleClick, isInteractiveTarget]);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+    hasTouchMovedRef.current = false;
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!touchStartPosRef.current) return;
+    
+    const touch = e.touches[0];
+    if (!touch) return;
+    
+    const dx = Math.abs(touch.clientX - touchStartPosRef.current.x);
+    const dy = Math.abs(touch.clientY - touchStartPosRef.current.y);
+    
+    // If moved beyond threshold, mark as moved (scrolling/dragging)
+    if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
+      hasTouchMovedRef.current = true;
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (isInteractiveTarget(e.target)) return;
+    
+    // Check if this was a valid tap (not a scroll)
+    if (!touchStartPosRef.current) return;
+    
+    const touchDuration = Date.now() - touchStartPosRef.current.time;
+    const isQuickTap = touchDuration < TOUCH_TAP_MAX_DURATION;
+    const isStationary = !hasTouchMovedRef.current;
+    
+    // Only open modal for quick taps that didn't move significantly
+    if (isQuickTap && isStationary) {
+      touchOpenHandledRef.current = true;
+      void handleClick();
+    }
+    
+    // Reset touch tracking
+    touchStartPosRef.current = null;
+    hasTouchMovedRef.current = false;
+  }, [handleClick, isInteractiveTarget]);
 
   const handleDepClick = useCallback(async (e: React.MouseEvent, depId: string) => {
     e.stopPropagation(); // Prevent card click
@@ -502,6 +560,10 @@ function TaskCardComponent({
       onDragOver={handleFileDragOver}
       onDragLeave={handleFileDragLeave}
       onDrop={handleFileDrop}
+      onClick={handleCardClick}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       onDoubleClick={handleDoubleClick}
     >
       <div className="card-header">
@@ -532,14 +594,6 @@ function TaskCardComponent({
           />
         )}
         <div className="card-header-actions">
-          <button
-            className="card-expand-btn"
-            onClick={handleExpandClick}
-            title="Open task details"
-            aria-label="Open task details"
-          >
-            <Maximize2 size={12} />
-          </button>
           {canEdit && (
             <button
               className="card-edit-btn"
@@ -677,6 +731,9 @@ function TaskCardComponent({
     </div>
   );
 }
+
+const TOUCH_MOVE_THRESHOLD = 10; // pixels
+const TOUCH_TAP_MAX_DURATION = 300; // milliseconds
 
 export const TaskCard = memo(TaskCardComponent, areTaskCardPropsEqual);
 TaskCard.displayName = "TaskCard";

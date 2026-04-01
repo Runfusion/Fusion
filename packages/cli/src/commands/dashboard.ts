@@ -71,7 +71,7 @@ export function getMergeStrategy(settings: Pick<Settings, "mergeStrategy">): Non
 }
 
 export function getTaskBranchName(taskId: string): string {
-  return `fusion/${taskId.toLowerCase()}`;
+  return `kb/${taskId.toLowerCase()}`;
 }
 
 function buildPullRequestTitle(task: Pick<TaskDetail, "id" | "title">): string {

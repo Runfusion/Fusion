@@ -3316,7 +3316,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Determine branch name from task
-      const branchName = `fusion/${task.id.toLowerCase()}`;
+      const branchName = `kb/${task.id.toLowerCase()}`;
 
       // Get owner/repo from git remote or GITHUB_REPOSITORY env
       let owner: string;
