@@ -14,3 +14,62 @@ export { PrCommentHandler } from "./pr-comment-handler.js";
 export { NtfyNotifier, type NtfyNotifierOptions } from "./notifier.js";
 export { CronRunner, type CronRunnerOptions } from "./cron-runner.js";
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./stuck-task-detector.js";
+
+// ── Project Runtime (Multi-Project Support) ────────────────────────────────
+
+export {
+  type ProjectRuntime,
+  type ProjectRuntimeConfig,
+  type RuntimeStatus,
+  type RuntimeMetrics,
+  type ProjectRuntimeEvents,
+  type GlobalMetrics,
+} from "./project-runtime.js";
+
+export { InProcessRuntime } from "./runtimes/in-process-runtime.js";
+export { ChildProcessRuntime } from "./runtimes/child-process-runtime.js";
+export { ProjectManager, type ProjectManagerEvents } from "./project-manager.js";
+
+// ── IPC Protocol ───────────────────────────────────────────────────────
+
+export {
+  type IpcMessage,
+  type IpcCommandType,
+  type IpcResponseType,
+  type IpcEventType,
+  START_RUNTIME,
+  STOP_RUNTIME,
+  GET_STATUS,
+  GET_METRICS,
+  GET_TASK_STORE,
+  GET_SCHEDULER,
+  PING,
+  OK,
+  ERROR,
+  PONG,
+  TASK_CREATED,
+  TASK_MOVED,
+  TASK_UPDATED,
+  ERROR_EVENT,
+  HEALTH_CHANGED,
+  type StartRuntimePayload,
+  type StopRuntimePayload,
+  type OkPayload,
+  type ErrorPayload,
+  type PongPayload,
+  type TaskCreatedPayload,
+  type TaskMovedPayload,
+  type TaskUpdatedPayload,
+  type ErrorEventPayload,
+  type HealthChangedPayload,
+  isIpcCommand,
+  isIpcResponse,
+  isIpcEvent,
+  createCommand,
+  createResponse,
+  createEvent,
+  generateCorrelationId,
+} from "./ipc/ipc-protocol.js";
+
+export { IpcHost } from "./ipc/ipc-host.js";
+export { IpcWorker } from "./ipc/ipc-worker.js";

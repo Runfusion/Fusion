@@ -64,3 +64,12 @@ export const reviewerLog = createLogger("reviewer");
 
 /** Logger for the PR monitor subsystem. */
 export const prMonitorLog = createLogger("pr-monitor");
+
+/** Logger for the project runtime subsystem. */
+export const runtimeLog = createLogger("runtime");
+
+/** Logger for the IPC subsystem. */
+export const ipcLog = createLogger("ipc");
+
+/** Logger for the project manager subsystem. */
+export const projectManagerLog = createLogger("project-manager");
