@@ -77,6 +77,63 @@ vi.mock("lucide-react", () => ({
   ListTree: () => null,
   Sparkles: () => null,
   Save: () => null,
+  X: () => null,
+}));
+
+// Mock ModelSelectionModal
+vi.mock("../ModelSelectionModal", () => ({
+  ModelSelectionModal: ({
+    isOpen,
+    onClose,
+    models,
+    executorValue,
+    validatorValue,
+    onExecutorChange,
+    onValidatorChange,
+    modelsLoading,
+    modelsError,
+    onRetry,
+  }: {
+    isOpen: boolean;
+    onClose: () => void;
+    models: typeof MOCK_MODELS;
+    executorValue: string;
+    validatorValue: string;
+    onExecutorChange: (value: string) => void;
+    onValidatorChange: (value: string) => void;
+    modelsLoading: boolean;
+    modelsError: string | null;
+    onRetry: () => void;
+  }) => {
+    if (!isOpen) return null;
+    return (
+      <div data-testid="model-selection-modal">
+        <div data-testid="modal-props-models-count">{models.length}</div>
+        <div data-testid="modal-props-executor-value">{executorValue}</div>
+        <div data-testid="modal-props-validator-value">{validatorValue}</div>
+        <div data-testid="modal-props-loading">{modelsLoading ? "loading" : "not-loading"}</div>
+        <div data-testid="modal-props-error">{modelsError || "no-error"}</div>
+        <button data-testid="modal-close" onClick={onClose}>
+          Close
+        </button>
+        <button
+          data-testid="modal-select-executor"
+          onClick={() => onExecutorChange("anthropic/claude-sonnet-4-5")}
+        >
+          Select Executor
+        </button>
+        <button
+          data-testid="modal-select-validator"
+          onClick={() => onValidatorChange("openai/gpt-4o")}
+        >
+          Select Validator
+        </button>
+        <button data-testid="modal-retry" onClick={onRetry}>
+          Retry
+        </button>
+      </div>
+    );
+  },
 }));
 
 function renderQuickEntryBox(props = {}) {
@@ -416,7 +473,24 @@ describe("QuickEntryBox", () => {
       expect(document.querySelector(".dep-dropdown-search")).toBeTruthy();
     });
 
-    it("opens model dropdown when clicking models button", () => {
+    it("opens model modal when clicking models button", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Task with models" } });
+
+      // Modal should not be visible initially
+      expect(screen.queryByTestId("model-selection-modal")).toBeNull();
+
+      // Click the models button
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+
+      // Modal should now be visible
+      expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+    });
+
+    it("modal receives correct props (models, loading state, etc.)", () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
@@ -424,8 +498,15 @@ describe("QuickEntryBox", () => {
       fireEvent.change(textarea, { target: { value: "Task with models" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
-      // Dropdown should be visible with model options
-      expect(document.querySelector(".inline-create-model-dropdown")).toBeTruthy();
+      // Modal should be open
+      expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+
+      // Check props passed to modal
+      expect(screen.getByTestId("modal-props-models-count").textContent).toBe("2");
+      expect(screen.getByTestId("modal-props-executor-value").textContent).toBe("");
+      expect(screen.getByTestId("modal-props-validator-value").textContent).toBe("");
+      expect(screen.getByTestId("modal-props-loading").textContent).toBe("not-loading");
+      expect(screen.getByTestId("modal-props-error").textContent).toBe("no-error");
     });
 
     it("selects dependencies and includes them in submit payload", async () => {
@@ -580,13 +661,14 @@ describe("QuickEntryBox", () => {
       fireEvent.change(textarea, { target: { value: "Task with model" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
-      // Select executor model
-      const executorButton = screen.getByRole("button", { name: "Executor Model" });
-      fireEvent.click(executorButton);
+      // Modal should be open
+      expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
 
-      // Select the first model option
-      const modelOption = screen.getByText("Claude Sonnet 4.5");
-      fireEvent.click(modelOption);
+      // Select executor model via mocked modal
+      fireEvent.click(screen.getByTestId("modal-select-executor"));
+
+      // Close the modal
+      fireEvent.click(screen.getByTestId("modal-close"));
 
       // Submit the task
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -602,25 +684,25 @@ describe("QuickEntryBox", () => {
       });
     });
 
-    it("closes dropdowns on Escape and preserves input", () => {
+    it("closes modal on Escape when open", async () => {
       renderQuickEntryBox();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.focus(textarea);
-      fireEvent.change(textarea, { target: { value: "Task with dropdown" } });
-      fireEvent.click(screen.getByTestId("quick-entry-deps-button"));
+      fireEvent.change(textarea, { target: { value: "Task with modal" } });
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
-      // Dropdown should be open
-      expect(document.querySelector(".dep-dropdown")).toBeTruthy();
+      // Modal should be open
+      expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
 
-      // Press Escape - should close dropdown but not clear input
+      // Press Escape - should close modal but not clear input
       fireEvent.keyDown(textarea, { key: "Escape" });
 
-      // Dropdown should be closed
-      expect(document.querySelector(".dep-dropdown")).toBeNull();
+      // Modal should be closed
+      expect(screen.queryByTestId("model-selection-modal")).toBeNull();
 
       // Input should still have the value
-      expect((textarea as HTMLTextAreaElement).value).toBe("Task with dropdown");
+      expect((textarea as HTMLTextAreaElement).value).toBe("Task with modal");
     });
 
     it("clears all state on second Escape after dropdowns are closed", () => {
