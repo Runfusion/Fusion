@@ -321,6 +321,37 @@ export function Header({
           </button>
         )}
 
+        {/* Workflow Steps - desktop only */}
+        {!isMobile && onOpenWorkflowSteps && (
+          <button
+            className="btn-icon"
+            onClick={onOpenWorkflowSteps}
+            title="Workflow Steps"
+            data-testid="workflow-steps-btn"
+          >
+            <Workflow size={16} />
+          </button>
+        )}
+
+        {/* Agents - desktop only */}
+        {!isMobile && onOpenAgents && (
+          <button
+            className="btn-icon"
+            onClick={onOpenAgents}
+            title="Manage Agents"
+            data-testid="agents-btn"
+          >
+            <Bot size={16} />
+          </button>
+        )}
+
+        {/* Settings - always inline on desktop */}
+        {!isMobile && (
+          <button className="btn-icon" onClick={onOpenSettings} title="Settings">
+            <Settings size={16} />
+          </button>
+        )}
+
         {/* Pause button (soft pause) - always inline */}
         <button
           className={`btn-icon${enginePaused ? " btn-icon--paused" : ""}`}
@@ -352,37 +383,6 @@ export function Header({
             aria-haspopup="menu"
           >
             <MoreHorizontal size={16} />
-          </button>
-        )}
-
-        {/* Workflow Steps - desktop only */}
-        {!isMobile && onOpenWorkflowSteps && (
-          <button
-            className="btn-icon"
-            onClick={onOpenWorkflowSteps}
-            title="Workflow Steps"
-            data-testid="workflow-steps-btn"
-          >
-            <Workflow size={16} />
-          </button>
-        )}
-
-        {/* Agents - desktop only */}
-        {!isMobile && onOpenAgents && (
-          <button
-            className="btn-icon"
-            onClick={onOpenAgents}
-            title="Manage Agents"
-            data-testid="agents-btn"
-          >
-            <Bot size={16} />
-          </button>
-        )}
-
-        {/* Settings - always inline on desktop */}
-        {!isMobile && (
-          <button className="btn-icon" onClick={onOpenSettings} title="Settings">
-            <Settings size={16} />
           </button>
         )}
 
