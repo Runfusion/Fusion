@@ -9,17 +9,16 @@
  */
 
 import { CentralCore, type RegisteredProject, type IsolationMode } from "@fusion/core";
-import { resolve, isAbsolute, basename } from "node:path";
+import { resolve, isAbsolute } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import {
   getCentralCore,
   getProjectManager,
-  findKbDir,
+  resolveProject,
   isKbProject,
   suggestProjectName,
   formatLastActivity,
-  type ResolvedProject,
 } from "../project-resolver.js";
 
 const VALID_ISOLATION_MODES: IsolationMode[] = ["in-process", "child-process"];
@@ -55,9 +54,9 @@ export async function runProjectList(options: { json?: boolean } = {}): Promise<
       const runtime = pm.getRuntime(project.id);
       const runtimeStatus = runtime?.getStatus() ?? "not_started";
 
-      // Get task counts from store
       let taskCounts: Record<string, number> = {};
       let totalTasks = 0;
+      let readWarning: string | undefined;
       try {
         const { TaskStore } = await import("@fusion/core");
         const store = new TaskStore(project.path);
@@ -67,8 +66,8 @@ export async function runProjectList(options: { json?: boolean } = {}): Promise<
         for (const task of tasks) {
           taskCounts[task.column] = (taskCounts[task.column] || 0) + 1;
         }
-      } catch {
-        // Ignore errors reading tasks
+      } catch (error: any) {
+        readWarning = error?.message || "Failed to read project tasks";
       }
 
       const health = await central.getProjectHealth(project.id);
@@ -80,6 +79,7 @@ export async function runProjectList(options: { json?: boolean } = {}): Promise<
         totalTasks,
         lastActivity: health?.lastActivityAt,
         activeAgents: health?.inFlightAgentCount ?? 0,
+        readWarning,
       };
     })
   );
@@ -128,6 +128,9 @@ export async function runProjectList(options: { json?: boolean } = {}): Promise<
       console.log(
         `    ${p.project.name.padEnd(nameWidth)}  ${p.project.path.padEnd(pathWidth)}  ${statusIcon} ${p.project.status.padEnd(8)}  ${String(p.totalTasks).padEnd(6)}  ${String(p.activeAgents).padEnd(6)}  ${lastActivity}`
       );
+      if (p.readWarning) {
+        console.log(`      warning: ${p.readWarning}`);
+      }
     }
 
     console.log();
@@ -162,7 +165,7 @@ export async function runProjectAdd(
     const kbPath = resolve(dir, ".kb");
     if (!existsSync(kbPath)) {
       console.log(`\n  No .kb/ directory found in ${dir}`);
-      const shouldInit = await promptConfirm("Initialize kb here first?", true);
+      const shouldInit = await promptConfirmWithRl(rl, "Initialize kb here first?", true);
 
       if (shouldInit) {
         const { TaskStore } = await import("@fusion/core");
@@ -278,13 +281,6 @@ export async function runProjectRemove(
     process.exit(1);
   }
 
-  // Check if runtime is active
-  const runtime = pm.getRuntime(project.id);
-  if (runtime) {
-    console.log(`  Stopping runtime for '${project.name}'...`);
-    await pm.removeProject(project.id);
-  }
-
   // Confirmation prompt
   if (!options.force && interactive) {
     const confirmed = await promptConfirm(
@@ -295,6 +291,13 @@ export async function runProjectRemove(
       console.log("Cancelled.");
       return;
     }
+  }
+
+  // Check if runtime is active
+  const runtime = pm.getRuntime(project.id);
+  if (runtime) {
+    console.log(`  Stopping runtime for '${project.name}'...`);
+    await pm.removeProject(project.id);
   }
 
   await central.unregisterProject(project.id);
@@ -310,10 +313,9 @@ export async function runProjectRemove(
  *
  * Shows detailed information about a specific project.
  */
-export async function runProjectInfo(name?: string, options: { interactive?: boolean } = {}): Promise<void> {
+export async function runProjectInfo(name?: string, _options: { interactive?: boolean } = {}): Promise<void> {
   const central = await getCentralCore();
   const pm = await getProjectManager();
-  const interactive = options.interactive ?? true;
 
   let project: RegisteredProject;
 
@@ -325,36 +327,20 @@ export async function runProjectInfo(name?: string, options: { interactive?: boo
     }
     project = found;
   } else {
-    // Auto-detect from cwd
-    const cwd = process.cwd();
-    const kbDir = findKbDir(cwd);
+    const resolved = await resolveProject({ interactive: false });
+    project = {
+      id: resolved.projectId,
+      name: resolved.name,
+      path: resolved.directory,
+      status: resolved.status as RegisteredProject["status"],
+      isolationMode: resolved.isolationMode as RegisteredProject["isolationMode"],
+      createdAt: "",
+      updatedAt: "",
+    };
 
-    if (kbDir) {
-      const found = await central.getProjectByPath(kbDir);
-      if (found) {
-        project = found;
-      } else {
-        console.error(`Error: Found kb project at ${kbDir} but it's not registered.`);
-        console.error("Run `fn project add .` to register it.");
-        process.exit(1);
-      }
-    } else {
-      // List projects and ask user to select
-      const projects = await central.listProjects();
-      if (projects.length === 0) {
-        console.error("Error: No projects registered.");
-        process.exit(1);
-      }
-
-      if (projects.length === 1) {
-        project = projects[0];
-      } else if (interactive) {
-        project = await promptProjectSelection(projects, "Select a project:");
-      } else {
-        console.error("Error: Multiple projects registered. Please specify a project name.");
-        console.error("Run `fn project list` to see available projects.");
-        process.exit(1);
-      }
+    const storedProject = await central.getProject(resolved.projectId);
+    if (storedProject) {
+      project = storedProject;
     }
   }
 
@@ -362,9 +348,9 @@ export async function runProjectInfo(name?: string, options: { interactive?: boo
   const runtime = pm.getRuntime(project.id);
   const runtimeStatus = runtime?.getStatus() ?? "not_started";
 
-  // Get task counts
   let taskCounts: Record<string, number> = {};
   let totalTasks = 0;
+  let taskReadWarning: string | undefined;
   try {
     const { TaskStore } = await import("@fusion/core");
     const store = new TaskStore(project.path);
@@ -374,8 +360,8 @@ export async function runProjectInfo(name?: string, options: { interactive?: boo
     for (const task of tasks) {
       taskCounts[task.column] = (taskCounts[task.column] || 0) + 1;
     }
-  } catch {
-    // Ignore errors reading tasks
+  } catch (error: any) {
+    taskReadWarning = error?.message || "Failed to read project tasks";
   }
 
   // Get health metrics
@@ -389,8 +375,12 @@ export async function runProjectInfo(name?: string, options: { interactive?: boo
   console.log(`  Status: ${project.status}`);
   console.log(`  Isolation Mode: ${project.isolationMode}`);
   console.log(`  Runtime: ${runtimeStatus}`);
-  console.log(`  Created: ${new Date(project.createdAt).toLocaleString()}`);
-  console.log(`  Updated: ${new Date(project.updatedAt).toLocaleString()}`);
+  if (project.createdAt) {
+    console.log(`  Created: ${new Date(project.createdAt).toLocaleString()}`);
+  }
+  if (project.updatedAt) {
+    console.log(`  Updated: ${new Date(project.updatedAt).toLocaleString()}`);
+  }
   console.log();
 
   console.log(`  Tasks (${totalTasks} total):`);
@@ -402,7 +392,10 @@ export async function runProjectInfo(name?: string, options: { interactive?: boo
       console.log(`    ${icon} ${col}: ${count}`);
     }
   }
-  console.log();
+  if (taskReadWarning) {
+    console.log(`  Warning: ${taskReadWarning}`);
+    console.log();
+  }
 
   if (health) {
     console.log("  Activity:");
@@ -440,39 +433,25 @@ async function findProjectByNameOrId(central: CentralCore, nameOrId: string): Pr
   return findProjectByName(central, nameOrId);
 }
 
-async function promptProjectSelection(
-  projects: RegisteredProject[],
-  message: string
-): Promise<RegisteredProject> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-  console.log(`\n  ${message}`);
-  for (let i = 0; i < projects.length; i++) {
-    console.log(`    ${i + 1}. ${projects[i].name} (${projects[i].path})`);
-  }
-
-  while (true) {
-    const answer = await rl.question("\n  Enter number: ");
-    const num = parseInt(answer.trim(), 10);
-
-    if (!isNaN(num) && num >= 1 && num <= projects.length) {
-      rl.close();
-      return projects[num - 1];
-    }
-
-    console.log(`    Invalid selection. Please enter a number between 1 and ${projects.length}`);
-  }
+async function promptConfirmWithRl(
+  rl: ReturnType<typeof createInterface>,
+  message: string,
+  defaultYes = false
+): Promise<boolean> {
+  const prompt = defaultYes ? "[Y/n]" : "[y/N]";
+  const answer = await rl.question(`  ${message} ${prompt}: `);
+  const trimmed = answer.trim().toLowerCase();
+  if (trimmed === "" && defaultYes) return true;
+  return trimmed === "y" || trimmed === "yes";
 }
 
 async function promptConfirm(message: string, defaultYes = false): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const prompt = defaultYes ? "[Y/n]" : "[y/N]";
-  const answer = await rl.question(`  ${message} ${prompt}: `);
-  rl.close();
-
-  const trimmed = answer.trim().toLowerCase();
-  if (trimmed === "" && defaultYes) return true;
-  return trimmed === "y" || trimmed === "yes";
+  try {
+    return await promptConfirmWithRl(rl, message, defaultYes);
+  } finally {
+    rl.close();
+  }
 }
 
 function getStatusIcon(status: string): string {

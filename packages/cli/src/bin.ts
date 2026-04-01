@@ -47,7 +47,6 @@ const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./co
 const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
 const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice } = await import("./commands/mission.js");
 const { runProjectList, runProjectAdd, runProjectRemove, runProjectInfo } = await import("./commands/project.js");
-const { getResolvedProject } = await import("./project-resolver.js");
 
 const HELP = `
 fn — AI-orchestrated task board

@@ -1,20 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { runProjectList, runProjectAdd, runProjectRemove, runProjectInfo } from "./project.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Create mock functions at module level
 const mockListProjects = vi.fn();
 const mockGetProject = vi.fn();
 const mockGetProjectByPath = vi.fn();
 const mockRegisterProject = vi.fn();
 const mockUnregisterProject = vi.fn();
 const mockGetProjectHealth = vi.fn();
-const mockGetRuntime = vi.fn().mockReturnValue(undefined);
-const mockRemoveProject = vi.fn().mockResolvedValue(undefined);
-const mockFindKbDir = vi.fn().mockReturnValue(null);
+const mockGetRuntime = vi.fn();
+const mockRemoveRuntime = vi.fn();
+const mockTaskStoreInit = vi.fn();
+const mockTaskStoreListTasks = vi.fn();
+const mockFindKbDir = vi.fn();
+const mockIsKbProject = vi.fn();
+const mockSuggestProjectName = vi.fn();
+const mockFormatLastActivity = vi.fn();
 
-// Mock project-resolver module - define inline
 vi.mock("../project-resolver.js", () => ({
-  getCentralCore: vi.fn().mockImplementation(() => ({
+  getCentralCore: vi.fn(async () => ({
     listProjects: mockListProjects,
     getProject: mockGetProject,
     getProjectByPath: mockGetProjectByPath,
@@ -22,205 +24,257 @@ vi.mock("../project-resolver.js", () => ({
     unregisterProject: mockUnregisterProject,
     getProjectHealth: mockGetProjectHealth,
   })),
-  getProjectManager: vi.fn().mockImplementation(() => ({
+  getProjectManager: vi.fn(async () => ({
     getRuntime: mockGetRuntime,
-    removeProject: mockRemoveProject,
+    removeProject: mockRemoveRuntime,
   })),
-  findKbDir: vi.fn().mockImplementation((path: string) => mockFindKbDir(path)),
-  isKbProject: vi.fn().mockReturnValue(true),
-  suggestProjectName: vi.fn().mockReturnValue("test-project"),
-  formatLastActivity: vi.fn().mockReturnValue("just now"),
+  findKbDir: vi.fn((path: string) => mockFindKbDir(path)),
+  isKbProject: vi.fn((path: string) => mockIsKbProject(path)),
+  suggestProjectName: vi.fn((path: string) => mockSuggestProjectName(path)),
+  formatLastActivity: vi.fn((timestamp?: string) => mockFormatLastActivity(timestamp)),
+  resolveProject: vi.fn(),
 }));
 
-// Mock fs
 vi.mock("node:fs", () => ({
-  existsSync: vi.fn().mockReturnValue(true),
-  statSync: vi.fn().mockReturnValue({ isDirectory: () => true }),
+  existsSync: vi.fn(() => true),
+  statSync: vi.fn(() => ({ isDirectory: () => true })),
 }));
 
-// Mock @fusion/core TaskStore
-vi.mock("@fusion/core", async () => ({
-  TaskStore: vi.fn().mockImplementation(() => ({
-    init: vi.fn().mockResolvedValue(undefined),
-    listTasks: vi.fn().mockResolvedValue([]),
-  })),
-}));
+vi.mock("@fusion/core", async () => {
+  const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
+  return {
+    ...actual,
+    TaskStore: vi.fn().mockImplementation(() => ({
+      init: mockTaskStoreInit,
+      listTasks: mockTaskStoreListTasks,
+    })),
+  };
+});
 
-describe("Project Commands", () => {
+const { runProjectList, runProjectAdd, runProjectRemove, runProjectInfo } = await import("./project.js");
+
+describe("project commands", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset default mock return values
+
     mockListProjects.mockResolvedValue([]);
     mockGetProject.mockResolvedValue(undefined);
     mockGetProjectByPath.mockResolvedValue(undefined);
-    mockGetProjectHealth.mockResolvedValue(undefined);
-    mockGetRuntime.mockReturnValue(undefined);
-    mockRemoveProject.mockResolvedValue(undefined);
-    mockFindKbDir.mockReturnValue(null);
-    mockRegisterProject.mockImplementation((config: any) => ({
+    mockRegisterProject.mockImplementation(async (config: { name: string; path: string; isolationMode: string }) => ({
       id: "proj_new",
       name: config.name,
       path: config.path,
+      status: "initializing",
       isolationMode: config.isolationMode,
-      status: "active",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
     }));
     mockUnregisterProject.mockResolvedValue(undefined);
+    mockGetProjectHealth.mockResolvedValue(undefined);
+    mockGetRuntime.mockReturnValue(undefined);
+    mockRemoveRuntime.mockResolvedValue(undefined);
+    mockTaskStoreInit.mockResolvedValue(undefined);
+    mockTaskStoreListTasks.mockResolvedValue([]);
+    mockFindKbDir.mockReturnValue(null);
+    mockIsKbProject.mockReturnValue(true);
+    mockSuggestProjectName.mockReturnValue("test-project");
+    mockFormatLastActivity.mockReturnValue("just now");
   });
 
-  describe("exports", () => {
-    it("exports runProjectList as a function", () => {
-      expect(typeof runProjectList).toBe("function");
-    });
+  it("prints empty state when no projects are registered", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    it("exports runProjectAdd as a function", () => {
-      expect(typeof runProjectAdd).toBe("function");
-    });
+    await runProjectList();
 
-    it("exports runProjectRemove as a function", () => {
-      expect(typeof runProjectRemove).toBe("function");
-    });
-
-    it("exports runProjectInfo as a function", () => {
-      expect(typeof runProjectInfo).toBe("function");
-    });
+    expect(logSpy).toHaveBeenCalledWith("\n  No projects registered.");
   });
 
-  describe("runProjectList", () => {
-    it("should handle empty project list", async () => {
-      mockListProjects.mockResolvedValue([]);
-
-      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-
-      await runProjectList();
-
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("No projects registered"));
-      consoleSpy.mockRestore();
-    });
-
-    it("should output JSON when --json flag is set", async () => {
-      const mockProject = {
+  it("emits json output for project list", async () => {
+    mockListProjects.mockResolvedValue([
+      {
         id: "proj_123",
-        name: "test-project",
-        path: "/path/to/project",
+        name: "alpha",
+        path: "/tmp/alpha",
         status: "active",
         isolationMode: "in-process",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      };
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+      },
+    ]);
+    mockGetProjectHealth.mockResolvedValue({ inFlightAgentCount: 1, lastActivityAt: "2026-03-31T00:00:00.000Z" });
+    mockTaskStoreListTasks.mockResolvedValue([{ column: "todo" }, { column: "done" }]);
 
-      mockListProjects.mockResolvedValue([mockProject]);
-      mockGetProjectHealth.mockResolvedValue({
-        lastActivityAt: "2024-01-01T00:00:00.000Z",
-        inFlightAgentCount: 0,
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runProjectList({ json: true });
 
-      await runProjectList({ json: true });
-
-      const jsonCall = consoleSpy.mock.calls.find((call) => {
-        try {
-          JSON.parse(call[0] as string);
-          return true;
-        } catch {
-          return false;
-        }
-      });
-      expect(jsonCall).toBeDefined();
-
-      const output = JSON.parse(jsonCall![0] as string);
-      expect(output).toBeInstanceOf(Array);
-      expect(output[0]).toHaveProperty("id", "proj_123");
-      expect(output[0]).toHaveProperty("name", "test-project");
-
-      consoleSpy.mockRestore();
-    });
+    const payload = JSON.parse(String(logSpy.mock.calls[0][0]));
+    expect(payload).toEqual([
+      expect.objectContaining({
+        id: "proj_123",
+        name: "alpha",
+        totalTasks: 2,
+        activeAgents: 1,
+      }),
+    ]);
   });
 
-  describe("runProjectAdd", () => {
-    it.skip("should exit if no directory provided - type check issue", async () => {
-      // Skipped: TypeScript prevents passing undefined, runtime check not needed
+  it("registers a project with explicit path and name", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runProjectAdd("/tmp/my-project", {
+      name: "my-project",
+      isolation: "child-process",
+      interactive: false,
     });
 
-    it("should validate isolation mode", async () => {
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as (code?: number) => never);
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(mockRegisterProject).toHaveBeenCalledWith({
+      name: "my-project",
+      path: "/tmp/my-project",
+      isolationMode: "child-process",
+    });
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Registered project 'my-project'"));
+  });
 
-      await runProjectAdd("/tmp", { isolation: "invalid-mode" as any, interactive: false });
+  it("rejects invalid isolation modes", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
 
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid isolation mode"));
-      expect(exitSpy).toHaveBeenCalledWith(1);
-
-      exitSpy.mockRestore();
-      errorSpy.mockRestore();
+    await runProjectAdd("/tmp/my-project", {
+      name: "my-project",
+      isolation: "invalid-mode" as never,
+      interactive: false,
     });
 
-    it("should register project with valid inputs", async () => {
-      const { existsSync } = await import("node:fs");
-      vi.mocked(existsSync).mockReturnValue(true);
+    expect(errorSpy).toHaveBeenCalledWith("Error: Invalid isolation mode 'invalid-mode'");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
 
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  it("errors when directory is not a kb project", async () => {
+    mockIsKbProject.mockReturnValue(false);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
 
-      await runProjectAdd("/tmp/test-project", { name: "my-project", interactive: false });
+    await runProjectAdd("/tmp/not-kb", { interactive: false });
 
-      expect(mockRegisterProject).toHaveBeenCalledWith({
+    expect(errorSpy).toHaveBeenCalledWith("Error: No kb project found at /tmp/not-kb");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("errors when registering a duplicate project name", async () => {
+    mockListProjects.mockResolvedValue([
+      {
+        id: "proj_existing",
         name: "my-project",
-        path: expect.any(String),
-        isolationMode: "in-process",
-      });
-
-      logSpy.mockRestore();
-    });
-  });
-
-  describe("runProjectRemove", () => {
-    it.skip("should exit if project not found - mock setup issue", async () => {
-      // Skipped: mock setup requires vi.hoisted pattern that needs refactoring
-      // The functionality is verified via integration tests
-    });
-
-    it.skip("should skip confirmation with --force flag - mock setup issue", async () => {
-      // Skipped: mock setup requires vi.hoisted pattern that needs refactoring
-    });
-  });
-
-  describe("runProjectInfo", () => {
-    it("should auto-detect project from cwd when no name provided", async () => {
-      const mockProject = {
-        id: "proj_123",
-        name: "detected-project",
-        path: "/current/dir",
+        path: "/tmp/existing",
         status: "active",
         isolationMode: "in-process",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      };
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+      },
+    ]);
 
-      mockFindKbDir.mockReturnValue("/current/dir");
-      mockGetProjectByPath.mockResolvedValue(mockProject);
-      mockGetProjectHealth.mockResolvedValue({
-        activeTaskCount: 5,
-        inFlightAgentCount: 2,
-        totalTasksCompleted: 100,
-        totalTasksFailed: 5,
-        lastActivityAt: "2024-01-01T00:00:00.000Z",
-      });
-      mockGetRuntime.mockReturnValue({ getStatus: () => "active" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
 
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runProjectAdd("/tmp/my-project", { name: "my-project", interactive: false });
 
-      await runProjectInfo(undefined, { interactive: false });
+    expect(errorSpy).toHaveBeenCalledWith("Error: Project 'my-project' already registered.");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
 
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("detected-project"));
-
-      logSpy.mockRestore();
+  it("unregisters a project and stops runtime first", async () => {
+    mockGetProject.mockResolvedValue({
+      id: "proj_123",
+      name: "alpha",
+      path: "/tmp/alpha",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
     });
+    mockGetRuntime.mockReturnValue({ getStatus: () => "active" });
 
-    it.skip("should exit if project not found by name - mock setup issue", async () => {
-      // Skipped: mock setup requires vi.hoisted pattern that needs refactoring
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runProjectRemove("proj_123", { force: true, interactive: false });
+
+    expect(mockRemoveRuntime).toHaveBeenCalledWith("proj_123");
+    expect(mockUnregisterProject).toHaveBeenCalledWith("proj_123");
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Unregistered project 'alpha'"));
+  });
+
+  it("does not stop runtime when removal is cancelled", async () => {
+    mockGetProject.mockResolvedValue({
+      id: "proj_123",
+      name: "alpha",
+      path: "/tmp/alpha",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
     });
+    mockGetRuntime.mockReturnValue({ getStatus: () => "active" });
+
+    const readline = await import("node:readline/promises");
+    const rlClose = vi.fn();
+    vi.spyOn(readline, "createInterface").mockReturnValue({
+      question: vi.fn().mockResolvedValue("n"),
+      close: rlClose,
+    } as never);
+
+    await runProjectRemove("proj_123", { force: false, interactive: true });
+
+    expect(mockRemoveRuntime).not.toHaveBeenCalled();
+    expect(mockUnregisterProject).not.toHaveBeenCalled();
+  });
+
+  it("shows info for auto-detected cwd project", async () => {
+    mockGetProject.mockResolvedValue({
+      id: "proj_123",
+      name: "detected-project",
+      path: "/workspace/app",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      updatedAt: "2026-03-31T00:00:00.000Z",
+    });
+    mockGetProjectHealth.mockResolvedValue({
+      activeTaskCount: 2,
+      inFlightAgentCount: 1,
+      totalTasksCompleted: 10,
+      totalTasksFailed: 1,
+      lastActivityAt: "2026-03-31T00:00:00.000Z",
+    });
+    mockGetRuntime.mockReturnValue({ getStatus: () => "active" });
+    mockTaskStoreListTasks.mockResolvedValue([{ column: "todo" }, { column: "todo" }, { column: "done" }]);
+
+    const resolver = await import("../project-resolver.js");
+    vi.mocked(resolver.resolveProject).mockResolvedValue({
+      projectId: "proj_123",
+      name: "detected-project",
+      directory: "/workspace/app",
+      status: "active",
+      isolationMode: "in-process",
+      store: {} as never,
+    } as never);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runProjectInfo(undefined, { interactive: false });
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Project: detected-project"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Active tasks: 2"));
+  });
+
+  it("errors when explicit project name is missing", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+    await runProjectInfo("missing-project", { interactive: false });
+
+    expect(errorSpy).toHaveBeenCalledWith("Error: Project 'missing-project' not found.");
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
 

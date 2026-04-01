@@ -147,9 +147,26 @@ describe("Project Resolver", () => {
   });
 
   describe("resolveProject", () => {
-    it.skip("should resolve by explicit --project flag - requires proper TaskStore mocking", async () => {
-      // Skipped: requires proper mocking of dynamic TaskStore import
-      // The resolveProject logic is tested via other tests
+    it("should resolve by explicit --project flag", async () => {
+      const mockProject = {
+        id: "proj_123",
+        name: "alpha",
+        path: "/workspace/alpha",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      };
+
+      vi.mocked(existsSync).mockImplementation((path) => path === "/workspace/alpha");
+
+      const core = await getCentralCore();
+      core.listProjects.mockResolvedValue([mockProject]);
+
+      const resolved = await resolveProject({ project: "alpha", interactive: false });
+      expect(resolved.projectId).toBe("proj_123");
+      expect(resolved.name).toBe("alpha");
+      expect(resolved.directory).toBe("/workspace/alpha");
     });
 
     it("should throw NOT_FOUND if --project project not found", async () => {
