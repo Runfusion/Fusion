@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { JSX } from "react";
 import { X, Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
-import { fetchAgents, createAgent, updateAgentState, deleteAgent } from "../api";
+import { fetchAgents, createAgent, updateAgent, updateAgentState, deleteAgent } from "../api";
 
 interface AgentListModalProps {
   isOpen: boolean;
@@ -43,6 +43,9 @@ export function AgentListModal({ isOpen, onClose, addToast }: AgentListModalProp
   useEffect(() => {
     localStorage.setItem("kb-agent-view", view);
   }, [view]);
+
+  const [editingRoleForAgent, setEditingRoleForAgent] = useState<string | null>(null);
+  const roleSelectRef = useRef<HTMLSelectElement>(null);
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true);
@@ -94,6 +97,32 @@ export function AgentListModal({ isOpen, onClose, addToast }: AgentListModalProp
       void loadAgents();
     } catch (err: any) {
       addToast(`Failed to delete agent: ${err.message}`, "error");
+    }
+  };
+
+  const handleRoleChange = async (agentId: string, newRole: AgentCapability) => {
+    const agent = agents.find(a => a.id === agentId);
+    if (!agent) return;
+
+    // If same role, just cancel editing without API call
+    if (agent.role === newRole) {
+      setEditingRoleForAgent(null);
+      return;
+    }
+
+    try {
+      await updateAgent(agentId, { role: newRole });
+      addToast(`Agent role updated to ${AGENT_ROLES.find(r => r.value === newRole)?.label ?? newRole}`, "success");
+      setEditingRoleForAgent(null);
+      void loadAgents();
+    } catch (err: any) {
+      addToast(`Failed to update role: ${err.message}`, "error");
+    }
+  };
+
+  const handleRoleKeyDown = (e: React.KeyboardEvent, agentId: string) => {
+    if (e.key === "Escape") {
+      setEditingRoleForAgent(null);
     }
   };
 
@@ -320,7 +349,38 @@ export function AgentListModal({ isOpen, onClose, addToast }: AgentListModalProp
                   <div key={agent.id} className="agent-card" style={{ borderLeftColor: stateStyle.border }}>
                     <div className="agent-card-header">
                       <div className="agent-info">
-                        <span className="agent-icon">{getRoleIcon(agent.role)}</span>
+                        {editingRoleForAgent === agent.id ? (
+                          <select
+                            ref={roleSelectRef}
+                            className="select agent-role-select"
+                            value={agent.role}
+                            onChange={(e) => void handleRoleChange(agent.id, e.target.value as AgentCapability)}
+                            onKeyDown={(e) => handleRoleKeyDown(e, agent.id)}
+                            onBlur={() => setEditingRoleForAgent(null)}
+                            autoFocus
+                          >
+                            {AGENT_ROLES.map(role => (
+                              <option key={role.value} value={role.value}>
+                                {role.icon} {role.label}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span
+                            className="agent-icon agent-icon--clickable"
+                            onClick={() => setEditingRoleForAgent(agent.id)}
+                            title="Click to change role"
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                setEditingRoleForAgent(agent.id);
+                              }
+                            }}
+                          >
+                            {getRoleIcon(agent.role)}
+                          </span>
+                        )}
                         <div className="agent-meta">
                           <span className="agent-name">{agent.name}</span>
                           <span className="agent-id text-secondary">{agent.id}</span>
@@ -589,6 +649,31 @@ export function AgentListModal({ isOpen, onClose, addToast }: AgentListModalProp
 
         .agent-icon {
           font-size: 24px;
+        }
+
+        .agent-icon--clickable {
+          cursor: pointer;
+          transition: opacity 0.2s ease, transform 0.2s ease;
+          user-select: none;
+        }
+
+        .agent-icon--clickable:hover {
+          opacity: 0.7;
+          transform: scale(1.1);
+        }
+
+        .agent-icon--clickable:focus {
+          outline: 2px solid var(--accent, #58a6ff);
+          outline-offset: 2px;
+          border-radius: 4px;
+        }
+
+        .agent-role-select {
+          font-size: 14px;
+          padding: 4px 8px;
+          min-width: 120px;
+          width: auto;
+          cursor: pointer;
         }
 
         .agent-meta {
