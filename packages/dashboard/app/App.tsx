@@ -10,6 +10,7 @@ import { SetupWizardModal } from "./components/SetupWizardModal";
 import { TaskDetailModal } from "./components/TaskDetailModal";
 import { TerminalModal } from "./components/TerminalModal";
 import { FileBrowserModal } from "./components/FileBrowserModal";
+import { ChangedFilesModal } from "./components/ChangedFilesModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { PlanningModeModal } from "./components/PlanningModeModal";
 import { SubtaskBreakdownModal } from "./components/SubtaskBreakdownModal";
@@ -45,6 +46,7 @@ function AppInner() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [fileBrowserWorkspace, setFileBrowserWorkspace] = useState("project");
+  const [changedFilesState, setChangedFilesState] = useState<{ taskId: string; worktree: string | undefined; column: string } | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
@@ -339,9 +341,12 @@ function AppInner() {
     setFilesOpen(true);
   }, []);
 
-  const handleOpenFilesForTask = useCallback((taskId: string) => {
-    setFileBrowserWorkspace(taskId);
-    setFilesOpen(true);
+  const handleOpenChangedFiles = useCallback((taskId: string, worktree: string | undefined, column: string) => {
+    setChangedFilesState({ taskId, worktree, column });
+  }, []);
+
+  const handleCloseChangedFiles = useCallback(() => {
+    setChangedFilesState(null);
   }, []);
 
   const handleWorkspaceChange = useCallback((workspace: string) => {
@@ -427,7 +432,7 @@ function AppInner() {
           onArchiveAllDone={archiveAllDone}
           searchQuery={searchQuery}
           availableModels={availableModels}
-          onOpenFilesForTask={handleOpenFilesForTask}
+          onOpenFilesForTask={handleOpenChangedFiles}
           projectId={currentProject?.id}
           projectName={currentProject?.name}
         />
@@ -548,6 +553,15 @@ function AppInner() {
           isOpen={true}
           onClose={() => setFilesOpen(false)}
           onWorkspaceChange={handleWorkspaceChange}
+        />
+      )}
+      {changedFilesState && (
+        <ChangedFilesModal
+          taskId={changedFilesState.taskId}
+          worktree={changedFilesState.worktree}
+          column={changedFilesState.column}
+          isOpen={true}
+          onClose={handleCloseChangedFiles}
         />
       )}
       <UsageIndicator

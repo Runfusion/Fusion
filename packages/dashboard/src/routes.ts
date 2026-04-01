@@ -1062,6 +1062,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     console.debug("[planning:routes:registered]", planningRoutes);
   }
   const sessionFilesCache = new Map<string, { files: string[]; expiresAt: number }>();
+  const taskFileDiffsCache = new Map<
+    string,
+    {
+      files: Array<{ path: string; status: "added" | "modified" | "deleted" | "renamed"; diff: string; oldPath?: string }>;
+      expiresAt: number;
+    }
+  >();
 
   // Get GitHub token from options or env
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
@@ -1832,6 +1839,114 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.json(files);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
+  router.get("/tasks/:id/file-diffs", async (req, res) => {
+    try {
+      const task = await store.getTask(req.params.id);
+      if (!task.worktree || !existsSync(task.worktree)) {
+        res.json([]);
+        return;
+      }
+
+      const cached = taskFileDiffsCache.get(task.id);
+      if (cached && cached.expiresAt > Date.now()) {
+        res.json(cached.files);
+        return;
+      }
+
+      const baseBranch = task.baseBranch ?? "main";
+      type TaskFileDiff = { path: string; status: "added" | "modified" | "deleted" | "renamed"; diff: string; oldPath?: string };
+      let files: TaskFileDiff[] = [];
+
+      const parseNameStatus = (output: string): TaskFileDiff[] => {
+        return output
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const parts = line.split("\t");
+            const rawStatus = parts[0] ?? "M";
+            const statusCode = rawStatus[0];
+
+            if (statusCode === "R") {
+              const oldPath = parts[1];
+              const path = parts[2];
+              return {
+                path,
+                oldPath,
+                status: "renamed" as const,
+                diff: "",
+              };
+            }
+
+            const path = parts[1];
+            return {
+              path,
+              status:
+                statusCode === "A"
+                  ? ("added" as const)
+                  : statusCode === "D"
+                    ? ("deleted" as const)
+                    : ("modified" as const),
+              diff: "",
+            };
+          })
+          .filter((entry): entry is TaskFileDiff => Boolean(entry.path));
+      };
+
+      try {
+        const output = execSync(`git diff --name-status ${baseBranch}...HEAD`, {
+          cwd: task.worktree,
+          encoding: "utf-8",
+          timeout: 5000,
+        }).trim();
+
+        files = output ? parseNameStatus(output) : [];
+      } catch {
+        const fallback = execSync("git diff --name-status HEAD", {
+          cwd: task.worktree,
+          encoding: "utf-8",
+          timeout: 5000,
+        }).trim();
+        files = fallback ? parseNameStatus(fallback) : [];
+      }
+
+      if (files.length === 0) {
+        taskFileDiffsCache.set(task.id, {
+          files: [],
+          expiresAt: Date.now() + 10000,
+        });
+        res.json([]);
+        return;
+      }
+
+      const filesWithDiffs = files.map((file) => {
+        try {
+          const diff = execSync(`git diff ${baseBranch}...HEAD -- "${file.path.replace(/"/g, '\\"')}"`, {
+            cwd: task.worktree,
+            encoding: "utf-8",
+            timeout: 10000,
+          });
+          return { ...file, diff };
+        } catch {
+          return file;
+        }
+      });
+
+      taskFileDiffsCache.set(task.id, {
+        files: filesWithDiffs,
+        expiresAt: Date.now() + 10000,
+      });
+
+      res.json(filesWithDiffs);
     } catch (err: any) {
       if (err.code === "ENOENT") {
         res.status(404).json({ error: `Task ${req.params.id} not found` });

@@ -35,7 +35,7 @@ interface BoardProps {
    * Called when the user clicks the "Subtask" button in the inline create card.
    */
   onSubtaskBreakdown?: (description: string) => void;
-  onOpenFilesForTask?: (taskId: string) => void;
+  onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
   /** Project context for multi-project mode */
   projectId?: string;
   projectName?: string;

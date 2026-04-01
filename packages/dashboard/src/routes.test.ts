@@ -3651,6 +3651,92 @@ describe("POST /tasks/:id/reject-plan", () => {
 // --- Git Management route tests ---
 // These are integration tests that run against the actual git repository
 
+describe("GET /tasks/:id/file-diffs", () => {
+  let store: TaskStore;
+  let worktreeDir: string;
+  let testRoot: string;
+
+  beforeEach(() => {
+    testRoot = mkdtempSync(join(tmpdir(), "kb-dashboard-file-diffs-"));
+    worktreeDir = join(testRoot, "repo");
+    mkdirSync(worktreeDir, { recursive: true });
+    execFileSync("git", ["init", "-b", "main", worktreeDir]);
+    execFileSync("git", ["-C", worktreeDir, "config", "user.email", "kb-tests@example.com"]);
+    execFileSync("git", ["-C", worktreeDir, "config", "user.name", "KB Tests"]);
+    writeFileSync(join(worktreeDir, "README.md"), "base\n");
+    writeFileSync(join(worktreeDir, "keep.txt"), "keep\n");
+    execFileSync("git", ["-C", worktreeDir, "add", "."]);
+    execFileSync("git", ["-C", worktreeDir, "commit", "-m", "base"]);
+
+    store = createMockStore({
+      getTask: vi.fn().mockResolvedValue({
+        ...FAKE_TASK_DETAIL,
+        id: "KB-651",
+        worktree: worktreeDir,
+        baseBranch: "main",
+      }),
+    });
+  });
+
+  afterEach(() => {
+    rmSync(testRoot, { recursive: true, force: true });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns changed files with statuses and diffs", async () => {
+    writeFileSync(join(worktreeDir, "README.md"), "base\nchanged\n");
+    writeFileSync(join(worktreeDir, "added.txt"), "new file\n");
+    execFileSync("git", ["-C", worktreeDir, "mv", "keep.txt", "renamed.txt"]);
+    execFileSync("git", ["-C", worktreeDir, "rm", "renamed.txt"]);
+
+    const res = await GET(buildApp(), "/api/tasks/KB-651/file-diffs");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "README.md", status: "modified", diff: expect.stringContaining("+changed") }),
+        expect.objectContaining({ path: "added.txt", status: "added", diff: expect.stringContaining("+++ b/added.txt") }),
+        expect.objectContaining({ path: "keep.txt", status: "deleted", diff: expect.stringContaining("--- a/keep.txt") }),
+      ]),
+    );
+  });
+
+  it("returns renamed files with oldPath", async () => {
+    execFileSync("git", ["-C", worktreeDir, "mv", "keep.txt", "renamed.txt"]);
+
+    const res = await GET(buildApp(), "/api/tasks/KB-651/file-diffs");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      expect.objectContaining({ path: "renamed.txt", oldPath: "keep.txt", status: "renamed" }),
+    ]);
+  });
+
+  it("returns empty array when worktree is missing", async () => {
+    store = createMockStore({
+      getTask: vi.fn().mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "KB-651", worktree: join(testRoot, "missing"), baseBranch: "main" }),
+    });
+
+    const res = await GET(buildApp(), "/api/tasks/KB-651/file-diffs");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns empty array when there are no changes", async () => {
+    const res = await GET(buildApp(), "/api/tasks/KB-651/file-diffs");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+});
+
 describe("Git Management endpoints", () => {
   let store: TaskStore;
   let gitRepoDir: string;
