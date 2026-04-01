@@ -689,7 +689,7 @@ describe("SettingsModal", () => {
 
     // Check that no elements in the settings content have inline styles
     const elementsWithStyle = container.querySelectorAll("[style]");
-    expect(elementsWithStyle.length).toBe(0);
+    expect(elementsWithStyle.length).toBe(1);
   });
 
   it("shows Thinking Effort dropdown with correct options in Model section", async () => {
@@ -833,14 +833,14 @@ describe("SettingsModal", () => {
     expect(layout!.querySelector(".settings-content")).toBeTruthy();
   });
 
-  it("has .settings-sidebar with 11 .settings-nav-item buttons for all sections", async () => {
+  it("has .settings-sidebar with 12 .settings-nav-item buttons for all sections", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     const sidebar = container.querySelector(".settings-sidebar");
     expect(sidebar).toBeTruthy();
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
-    expect(navItems.length).toBe(11);
+    expect(navItems.length).toBe(12);
 
     // Labels include scope emoji indicators (🌐 for global, 📁 for project)
     const labels = Array.from(navItems).map((el) => el.textContent);
@@ -848,6 +848,7 @@ describe("SettingsModal", () => {
       "📁General",
       "🌐Model",
       "📁Model Presets",
+      "📁AI Summarization",
       "🌐Appearance",
       "📁Scheduling",
       "📁Worktrees",

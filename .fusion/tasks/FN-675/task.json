@@ -1,0 +1,32 @@
+{
+  "id": "FN-675",
+  "description": "The files modified from the card and the changes list inside of a task card don’t align. The inside task card always just shows one change",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "blockedBy": "KB-622",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "createdAt": "2026-04-01T13:57:33.907Z",
+  "updatedAt": "2026-04-01T14:01:51.166Z",
+  "columnMovedAt": "2026-04-01T13:59:48.382Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T13:57:33.907Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T13:59:12.519Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T13:59:45.794Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies a real bug: the `/api/tasks/:id/session-files` endpoint uses `baseBranch` with triple-dot syntax (`...`) while the `/api/tasks/:id/diff` endpoint uses `baseCommitSha` with double-dot syntax (`..`). This causes the task card's \"files changed\" count (from session-files) to differ from the Changes tab file list (from diff endpoint). The spec provides concrete, verifiable steps to align the session-files endpoint with the diff endpoint's proven logic."
+    }
+  ]
+}

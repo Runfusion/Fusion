@@ -6,10 +6,10 @@
   "reviewLevel": 0,
   "currentStep": 3,
   "baseCommitSha": "b0efb66d66a31db4e1a2a589fea83c741a39020e",
-  "summary": "Completed KB-650: Added refresh-on-open effect to UsageIndicator component that triggers a fresh data fetch when the usage modal opens (isOpen transitions from false to true). The implementation includes a 5-second debounce to avoid duplicate requests when the modal is rapidly toggled. All 33 existing tests pass. Created changeset file for the @fusion/dashboard package.",
+  "summary": "Completed task KB-650: Refresh usage when bringing up the usage modal. Added 6 new tests for the refresh-on-open behavior: (1) calls refresh when isOpen transitions from false to true, (2) does not call refresh when isOpen is already true on mount, (3) does not call refresh when modal closes, (4) skips refresh if data is fresh (within 5 seconds), (5) calls refresh when modal opens if data is stale, and (6) calls refresh again when modal reopens after being closed. All 38 tests pass. Changeset file was already created in a previous commit.",
   "createdAt": "2026-04-01T02:34:03.915Z",
-  "updatedAt": "2026-04-01T06:22:10.993Z",
-  "columnMovedAt": "2026-04-01T06:22:10.993Z",
+  "updatedAt": "2026-04-01T13:55:46.560Z",
+  "columnMovedAt": "2026-04-01T13:55:46.560Z",
   "dependencies": [],
   "steps": [
     {
@@ -98,20 +98,28 @@
       "action": "Step 2 (Documentation & Delivery) → in-progress"
     },
     {
-      "timestamp": "2026-04-01T06:21:14.485Z",
-      "action": "Created changeset file for usage modal refresh feature",
-      "outcome": ".changeset/refresh-usage-modal.md created with patch bump for @fusion/dashboard"
+      "timestamp": "2026-04-01T13:48:46.919Z",
+      "action": "Resumed after engine restart"
     },
     {
-      "timestamp": "2026-04-01T06:21:19.573Z",
+      "timestamp": "2026-04-01T13:48:47.408Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/crisp-aspen"
+    },
+    {
+      "timestamp": "2026-04-01T13:48:53.858Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T13:51:53.029Z",
       "action": "Step 2 (Documentation & Delivery) → done"
     },
     {
-      "timestamp": "2026-04-01T06:21:37.334Z",
+      "timestamp": "2026-04-01T13:51:58.026Z",
       "action": "Task marked done by agent"
     }
   ],
   "modifiedFiles": [
-    ".changeset/refresh-usage-modal.md"
+    ".changeset/refresh-usage-modal.md",
+    "packages/dashboard/app/components/UsageIndicator.test.tsx"
   ]
 }

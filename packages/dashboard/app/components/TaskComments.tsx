@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Task, TaskComment } from "@kb/core";
+import type { Task, TaskComment } from "@fusion/core";
 import { addTaskComment, updateTaskComment, deleteTaskComment } from "../api";
 import type { ToastType } from "../hooks/useToast";
 

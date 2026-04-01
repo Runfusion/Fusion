@@ -1,0 +1,30 @@
+{
+  "id": "FN-676",
+  "description": "The buttons on the create task modal need to be at the bottom of the screen (the save button)",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 0,
+  "blockedBy": "KB-660",
+  "createdAt": "2026-04-01T13:58:01.983Z",
+  "updatedAt": "2026-04-01T14:01:51.189Z",
+  "columnMovedAt": "2026-04-01T14:00:13.507Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T13:58:01.983Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T13:59:52.680Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T14:00:10.926Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a focused CSS-only layout fix. The spec accurately identifies the root cause (hardcoded `max-height` on modal-body instead of flex-based layout) and provides a correct technical solution. All file references are accurate, and the testing requirements are appropriate for a UI fix."
+    }
+  ]
+}

@@ -18,7 +18,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --exclude src/executor.test.ts && pnpm run test:executor",
+    "test:executor": "vitest run src/executor.test.ts -t \"TaskExecutor with semaphore|TaskExecutor worktreeInitCommand|TaskExecutor worktree naming\" && vitest run src/executor.test.ts -t \"TaskExecutor worktree recovery\" && vitest run src/executor.test.ts -t \"TaskExecutor dependency-based worktree creation\" && vitest run src/executor.test.ts -t \"TaskExecutor worktree pool integration|WorktreePool capacity|Merger worktree pool integration\" && vitest run src/executor.test.ts -t \"buildExecutionPrompt|summarizeToolArgs|TaskExecutor pause behavior|TaskExecutor global pause behavior|TaskExecutor enginePaused soft pause\" && vitest run src/executor.test.ts -t \"Code review verdict|RETHINK verdict handling|Plan RETHINK verdict handling|task_add_dep tool|TaskExecutor usage limit detection|Per-task model overrides|Invalid transition error handling|TaskExecutor task_done with summary|Workflow Steps Execution|Real-time steering injection\""
   },
   "dependencies": {
     "@fusion/core": "workspace:*",

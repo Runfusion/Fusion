@@ -449,9 +449,11 @@ export class TaskExecutor {
             }
           }
         }
+      } else if (task.worktree) {
+        // Task already had a worktree assigned and it exists on disk — reuse it
+        executorLog.log(`Reusing existing worktree: ${worktreePath}`);
       } else {
-        worktreePath = task.worktree || join(this.rootDir, ".worktrees", generateWorktreeName(this.rootDir));
-        isResume = existsSync(worktreePath);
+        // Directory exists at generated path but task has no worktree — create via normal flow
         worktreePath = await this.createWorktree(branchName, worktreePath, task.id);
       }
 

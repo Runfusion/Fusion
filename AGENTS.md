@@ -223,6 +223,318 @@ kb has two activity log systems:
 - Cascade deletes ensure no orphaned data when projects are unregistered
 - Foreign key constraints maintain referential integrity
 
+## Multi-Project Runtime Architecture
+
+kb's multi-project support is built on a runtime abstraction layer that enables task execution across multiple projects with configurable isolation modes. This architecture provides both efficiency (in-process) and security (child-process isolation) options.
+
+### Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     HybridExecutor                                │
+│                    (Multi-Project Orchestrator)                   │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │              ProjectManager (internal)                       │ │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐  │ │
+│  │  │   Project A  │  │   Project B  │  │    Project C    │  │ │
+│  │  │ (in-process) │  │(child-process│  │  (in-process)   │  │ │
+│  │  └──────────────┘  └──────────────┘  └─────────────────┘  │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                    ┌─────────┴──────────┐
+                    ▼                    ▼
+              ┌──────────┐          ┌──────────┐
+              │CentralCore│         │ Scheduler │
+              │ (registry)│         │ (per proj) │
+              └──────────┘          └──────────┘
+```
+
+### ProjectRuntime Interface
+
+The `ProjectRuntime` interface is the core abstraction for multi-project execution:
+
+```typescript
+interface ProjectRuntime extends EventEmitter<ProjectRuntimeEvents> {
+  start(): Promise<void>;           // Initialize and start the runtime
+  stop(): Promise<void>;            // Graceful shutdown
+  getStatus(): RuntimeStatus;        // Current runtime status
+  getTaskStore(): TaskStore;         // Access project task store
+  getScheduler(): Scheduler;         // Access project scheduler
+  getMetrics(): RuntimeMetrics;      // Get current metrics
+}
+```
+
+**RuntimeStatus values:** `starting` → `active` → `stopping` → `stopped`, or `paused`/`errored` for exceptional states.
+
+### Runtime Implementations
+
+#### 1. InProcessRuntime
+
+Runs a project within the main Node.js process:
+
+- **Pros:** Low overhead, fast startup (~0ms), shared memory, direct component access
+- **Cons:** No isolation - crashes or resource leaks affect all projects
+- **Use for:** Trusted projects, development, single-project deployments
+
+```typescript
+const runtime = new InProcessRuntime(config, centralCore);
+await runtime.start();
+
+// Direct access to components
+const taskStore = runtime.getTaskStore();
+const scheduler = runtime.getScheduler();
+```
+
+#### 2. ChildProcessRuntime
+
+Runs a project in an isolated child process via `fork()`:
+
+- **Pros:** Strong isolation, independent memory space, crash containment
+- **Cons:** Higher overhead (~100-300ms startup), IPC communication overhead
+- **Use for:** Untrusted projects, resource-intensive work, multi-tenant deployments
+
+```typescript
+const runtime = new ChildProcessRuntime(config, centralCore);
+await runtime.start();
+
+// Access via IPC only (getTaskStore/getScheduler throw)
+const metrics = runtime.getMetrics();
+```
+
+### IPC Protocol
+
+The IPC protocol enables communication between the host (HybridExecutor) and child process runtimes:
+
+**Command Types (Host → Worker):**
+- `START_RUNTIME` - Initialize and start the in-process runtime inside the child
+- `STOP_RUNTIME` - Graceful shutdown with timeout
+- `GET_STATUS` - Query runtime status
+- `GET_METRICS` - Query runtime metrics
+- `PING` - Health check
+
+**Event Types (Worker → Host, unsolicited):**
+- `TASK_CREATED` - Forwarded from TaskStore
+- `TASK_MOVED` - Forwarded from TaskStore  
+- `TASK_UPDATED` - Forwarded from TaskStore
+- `ERROR_EVENT` - Runtime errors
+- `HEALTH_CHANGED` - Status transitions
+
+### HybridExecutor
+
+The `HybridExecutor` is the main entry point for multi-project task execution:
+
+```typescript
+const central = new CentralCore();
+await central.init();
+
+const executor = new HybridExecutor(central);
+await executor.initialize();
+
+// Add a project runtime
+await executor.addProject({
+  projectId: "proj_abc123",
+  workingDirectory: "/path/to/project",
+  isolationMode: "in-process", // or "child-process"
+  maxConcurrent: 2,
+  maxWorktrees: 4,
+});
+
+// Listen for events across all projects
+executor.on("task:completed", ({ projectId, taskId }) => {
+  console.log(`Task ${taskId} completed in ${projectId}`);
+});
+
+// Graceful shutdown
+await executor.shutdown();
+```
+
+**Key Features:**
+- Automatic loading of registered projects on initialization
+- Event forwarding with project attribution
+- Global concurrency limit enforcement via CentralCore
+- Runtime mode switching (can change isolation mode)
+- Health monitoring with automatic restart (child-process mode)
+
+### Child Process Worker
+
+The `child-process-worker.ts` entry point runs inside forked child processes:
+
+1. Creates an `InProcessRuntime` internally
+2. Sets up `IpcWorker` to handle commands from the host
+3. Forwards all runtime events to the host via IPC
+4. Handles graceful shutdown on SIGTERM
+5. Self-terminates if parent disconnects unexpectedly
+
+### Isolation Mode Selection
+
+Choose isolation mode based on your requirements:
+
+| Factor | In-Process | Child-Process |
+|--------|-----------|---------------|
+| Startup time | ~0ms | ~100-300ms |
+| Memory isolation | No | Yes |
+| Crash containment | No | Yes |
+| IPC overhead | None | Minimal |
+| Use case | Trusted/single | Multi-tenant/isolated |
+
+### Security Considerations
+
+- Child process spawn validates `projectPath` exists and is absolute before forking
+- IPC message validation rejects malformed/unknown message types
+- No credentials passed over IPC - credentials stay in parent
+- Child process `cwd` is restricted to project path only
+- Terminate child on parent exit (prevent orphaned processes)
+- Input validation on all IPC message payloads
+- Path traversal prevention in project path resolution
+
+### Error Handling & Recovery
+
+**Child Process Runtime:**
+- Health monitoring via heartbeat every 5 seconds
+- Automatic restart on crash with exponential backoff (1s, 5s, 15s delays)
+- Max 3 restart attempts before transitioning to `errored` state
+- Graceful shutdown timeout: 30 seconds (SIGTERM → SIGKILL after 5s)
+
+**In-Process Runtime:**
+- Errors are emitted as `error` events
+- Status transitions to `errored` on fatal errors
+- Manual intervention required to restart
+
+## Multi-Project CLI Usage
+
+The kb CLI supports managing multiple projects through the `kb project` subcommand and the `--project` global flag.
+
+### Project Subcommands
+
+```bash
+# List all registered projects
+kb project list
+
+# Register a new project
+kb project add my-app /path/to/app
+
+# Unregister a project (data is preserved)
+kb project remove my-app [--force]
+
+# Show project details
+kb project show my-app
+
+# Set default project for CLI operations
+kb project set-default my-app
+
+# Detect which project you're currently in
+kb project detect
+```
+
+### Global --project Flag
+
+All task commands accept a `--project` (or `-P`) flag to target a specific project:
+
+```bash
+# Create a task in a specific project
+kb task create "Fix login bug" --project my-app
+
+# List tasks from a specific project
+kb task list --project my-app
+
+# Show task details from a project
+kb task show KB-001 --project my-app
+
+# Move a task to a different column
+kb task move KB-001 done --project my-app
+
+# Archive a completed task
+kb task archive KB-001 --project my-app
+
+# Delete a task
+kb task delete KB-001 --force --project my-app
+
+# Attach a file to a task
+kb task attach KB-001 screenshot.png --project my-app
+
+# Pause/unpause a task
+kb task pause KB-001 --project my-app
+kb task unpause KB-001 --project my-app
+
+# Retry a failed task
+kb task retry KB-001 --project my-app
+
+# Create a PR for a task
+kb task pr-create KB-001 --project my-app
+
+# Import GitHub issues as tasks
+kb task import owner/repo --project my-app
+
+# Show and update settings for a project
+kb settings --project my-app
+kb settings set maxConcurrent 4 --project my-app
+
+# Git operations in a project
+kb git status --project my-app
+kb git pull --project my-app
+kb git push --project my-app
+
+# Backup operations for a project
+kb backup --create --project my-app
+kb backup --list --project my-app
+```
+
+### Project Resolution Order
+
+When you run a kb command without `--project`, the CLI resolves the project in this order:
+
+1. **Explicit `--project` flag** — Uses the specified project
+2. **Default project** — Uses the project set via `kb project set-default`
+3. **CWD auto-detection** — Walks up the directory tree looking for `.fusion/kb.db`
+
+If no project is found, the CLI exits with an error:
+```
+No kb project found in current directory. Use --project or run from a project directory.
+```
+
+### Common Workflows
+
+**Cross-project operations without changing directories:**
+```bash
+# Create tasks in different projects from the same shell
+kb task create "Backend API endpoint" --project api-service
+kb task create "Frontend component" --project web-ui
+kb task create "Documentation update" --project docs
+
+# Check status of all projects
+kb project list
+
+# Archive completed tasks across projects
+kb task archive API-042 --project api-service
+kb task archive WEB-123 --project web-ui
+```
+
+**Setting up a default project:**
+```bash
+# Register your main project
+kb project add main ~/projects/my-app
+
+# Set it as default
+kb project set-default main
+
+# Now all commands use the default project without --project
+kb task list
+kb task create "New feature"
+kb git status
+```
+
+**Switching between projects:**
+```bash
+# Quick switch with shell aliases
+alias kb-api='kb --project api-service'
+alias kb-web='kb --project web-ui'
+
+# Or use the explicit flag
+kb task list --project api-service
+kb task list --project web-ui
+```
+
 ## Pi Extension (`packages/cli/src/extension.ts`)
 
 The pi extension provides tools and a `/kb` command for interacting with kb from within a pi session. It ships as part of `@gsxdsm/fusion` — one `pi install` gives you both the CLI and the extension.

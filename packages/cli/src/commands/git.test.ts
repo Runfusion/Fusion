@@ -36,7 +36,7 @@ describe("isGitRepo", () => {
   it("returns true when in a git repository", () => {
     mockExecSync.mockReturnValueOnce(".git");
     expect(isGitRepo()).toBe(true);
-    expect(mockExecSync).toHaveBeenCalledWith("git rev-parse --git-dir", { encoding: "utf-8", timeout: 5000 });
+    expect(mockExecSync).toHaveBeenCalledWith("git rev-parse --git-dir", { encoding: "utf-8", timeout: 5000, cwd: process.cwd() });
   });
 
   it("returns false when not in a git repository", () => {
@@ -378,7 +378,7 @@ describe("runGitFetch", () => {
 
     await runGitFetch("upstream");
 
-    expect(mockExecSync).toHaveBeenLastCalledWith("git fetch upstream", { encoding: "utf-8", timeout: 30000 });
+    expect(mockExecSync).toHaveBeenLastCalledWith("git fetch upstream", { encoding: "utf-8", timeout: 30000, cwd: process.cwd() });
   });
 
   it("exits with error when not a git repo", async () => {

@@ -1,0 +1,32 @@
+{
+  "id": "FN-673",
+  "description": "The Claude usage drop down is always saying rate limited now. It wasn’t like this before. Something broke. Fix it. It used to capture from the cli like codexbar",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "blockedBy": "FN-668",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "createdAt": "2026-04-01T13:52:59.547Z",
+  "updatedAt": "2026-04-01T14:01:51.136Z",
+  "columnMovedAt": "2026-04-01T13:56:46.790Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T13:52:59.547Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T13:56:21.206Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T13:56:43.198Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately identifies the issue. The `fetchClaudeUsage()` function in `packages/dashboard/src/usage.ts` (lines 235-238) indeed uses the `anthropic-beta: oauth-2025-04-20` header which appears to be causing 429 responses. The spec correctly identifies the fix approach (remove/update the header, add retry logic, improve error handling) and appropriately scopes the work to just the Claude provider with comprehensive test requirements."
+    }
+  ]
+}

@@ -1,71 +1,30 @@
 {
   "id": "FN-667",
   "description": "Model selector dialog is not rendering properly its behind the board",
-  "column": "in-progress",
+  "column": "todo",
+  "status": "queued",
   "size": "S",
-  "reviewLevel": 0,
-  "currentStep": 2,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/quiet-thorn",
-  "baseCommitSha": "92ab95534980efe2c7769f9d6185400842daab8c",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "blockedBy": "KB-660",
   "createdAt": "2026-04-01T06:18:50.482Z",
-  "updatedAt": "2026-04-01T06:42:32.128Z",
-  "columnMovedAt": "2026-04-01T06:42:10.384Z",
+  "updatedAt": "2026-04-01T14:01:50.348Z",
+  "columnMovedAt": "2026-04-01T13:50:11.135Z",
   "dependencies": [],
-  "steps": [
-    {
-      "name": "Update Z-Index Value",
-      "status": "done"
-    },
-    {
-      "name": "Testing & Verification",
-      "status": "done"
-    },
-    {
-      "name": "Documentation & Delivery",
-      "status": "in-progress"
-    }
-  ],
+  "steps": [],
   "log": [
     {
       "timestamp": "2026-04-01T06:18:50.482Z",
       "action": "Task created"
     },
     {
-      "timestamp": "2026-04-01T06:20:43.018Z",
+      "timestamp": "2026-04-01T13:49:45.375Z",
       "action": "Spec review requested"
     },
     {
-      "timestamp": "2026-04-01T06:21:04.064Z",
+      "timestamp": "2026-04-01T13:50:07.714Z",
       "action": "Spec review: APPROVE",
-      "outcome": "The specification accurately describes a real z-index stacking context conflict. The `.model-combobox-dropdown` (z-index: 100 at line 6074) conflicts with `.modal-overlay` (z-index: 100 at line 1661), causing the dropdown to render behind modal elements. The fix is a minimal, appropriate one-line CSS change to elevate the dropdown above the modal overlay."
-    },
-    {
-      "timestamp": "2026-04-01T06:42:10.635Z",
-      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-thorn"
-    },
-    {
-      "timestamp": "2026-04-01T06:42:10.664Z",
-      "action": "Step 0 (Update Z-Index Value) → pending"
-    },
-    {
-      "timestamp": "2026-04-01T06:42:23.788Z",
-      "action": "Step 0 (Update Z-Index Value) → in-progress"
-    },
-    {
-      "timestamp": "2026-04-01T06:42:25.658Z",
-      "action": "Step 0 (Update Z-Index Value) → done"
-    },
-    {
-      "timestamp": "2026-04-01T06:42:25.659Z",
-      "action": "Step 1 (Testing & Verification) → in-progress"
-    },
-    {
-      "timestamp": "2026-04-01T06:42:32.127Z",
-      "action": "Step 1 (Testing & Verification) → done"
-    },
-    {
-      "timestamp": "2026-04-01T06:42:32.128Z",
-      "action": "Step 2 (Documentation & Delivery) → in-progress"
+      "outcome": "The specification is high-quality, technically accurate, and provides a clear implementation path for fixing the dropdown clipping issue. The mission is well-defined, steps are concrete and verifiable, file references are accurate, and testing requirements are comprehensive. The approach of using fixed positioning to escape the `overflow-y: auto` clipping context is the correct solution."
     }
   ]
 }

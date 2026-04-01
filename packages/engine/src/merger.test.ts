@@ -339,7 +339,7 @@ describe("aiMergeTask — includeTaskIdInCommit setting", () => {
       (call) => String(call[0]).includes("git commit"),
     );
     expect(commitCall).toBeDefined();
-    expect(String(commitCall![0])).toContain("feat(KB-050):");
+    expect(String(commitCall![0])).toContain("feat(FN-050):");
   });
 
   it("fallback commit omits task ID when includeTaskIdInCommit is false", async () => {

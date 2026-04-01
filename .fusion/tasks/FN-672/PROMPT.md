@@ -1,115 +1,133 @@
-# Task: FN-672 - Fix Terminal Session Creation Error Messages
+# Task: FN-672 - Fix mobile layout for project selector and all projects links
 
 **Created:** 2026-04-01
 **Size:** S
 
 ## Review Level: 1 (Plan Only)
 
-**Assessment:** Surgical fix to improve error diagnostics in terminal session creation. Changes are isolated to terminal-service.ts and routes.ts with clear test updates.
-**Score:** 2/8 — Blast radius: 0, Pattern novelty: 0, Security: 1, Reversibility: 1
+**Assessment:** This is a straightforward UI layout fix. The ProjectSelector component exists but needs to be integrated into the Header and styled for mobile. Low blast radius, no security concerns, easily reversible.
+**Score:** 2/8 — Blast radius: 0, Pattern novelty: 1, Security: 0, Reversibility: 1
 
 ## Mission
 
-Fix misleading terminal session creation error messages. Currently, when `TerminalService.createSession()` fails for any reason (max sessions, shell not allowed, PTY module load failure, or PTY spawn failure), it returns `null` and the route handler always returns the same generic error: "Failed to create session. Max sessions may be reached." This is confusing because the actual cause may be completely different.
+The dashboard's project selector and "View All Projects" link currently don't render well on mobile devices because:
+1. The ProjectSelector component lacks CSS styles entirely
+2. When integrated, it crowds the header actions on narrow screens
+3. The "View All Projects" button in the ProjectSelector dropdown adds to the layout problem
 
-The fix will:
-1. Modify `createSession()` to return discriminated error information instead of just `null`
-2. Update the route handler to return specific, actionable error messages based on the actual failure cause
-3. Update tests to verify the new error messages
+Fix this by:
+1. Adding proper CSS styles for the ProjectSelector component
+2. Integrating ProjectSelector into the Header component
+3. On mobile (≤768px), placing the project selector on a new row below the main header actions
+
+This ensures the header remains usable on mobile while providing clear project context and navigation.
 
 ## Dependencies
 
-- **None**
+- **Task:** KB-502 (Dashboard Multi-Project UX: Overview page, drill-down, and setup wizard) — provides the ProjectSelector component and multi-project hooks
 
 ## Context to Read First
 
-- `packages/dashboard/src/terminal-service.ts` — `createSession()` method and error handling
-- `packages/dashboard/src/routes.ts` — `POST /api/terminal/sessions` route handler
-- `packages/dashboard/src/terminal-service.test.ts` — existing test patterns
-- `packages/dashboard/src/routes.test.ts` — existing test patterns for terminal routes
+- `packages/dashboard/app/components/Header.tsx` — understand current header structure and mobile handling
+- `packages/dashboard/app/components/ProjectSelector.tsx` — the component to integrate (already exists, uses BEM class names)
+- `packages/dashboard/app/styles.css` — find mobile breakpoint styles (line ~2708 for @media (max-width: 768px))
+- `packages/dashboard/app/hooks/useProjects.ts` — hook to fetch projects list
+- `packages/dashboard/app/hooks/useCurrentProject.ts` — hook to manage current project selection
+- `packages/dashboard/app/App.tsx` — see how Header is currently used and where project data flows
 
 ## File Scope
 
-- `packages/dashboard/src/terminal-service.ts` (modify)
-- `packages/dashboard/src/routes.ts` (modify)
-- `packages/dashboard/src/terminal-service.test.ts` (modify)
-- `packages/dashboard/src/routes.test.ts` (modify)
+- `packages/dashboard/app/components/Header.tsx` — add ProjectSelector integration and mobile row layout
+- `packages/dashboard/app/styles.css` — add project-selector CSS styles and mobile header-row styles
+- `packages/dashboard/app/App.tsx` — pass project data to Header component
 
 ## Steps
 
-### Step 1: Update TerminalService Return Type
+### Step 1: Add ProjectSelector CSS Styles
 
-- [ ] Create a discriminated union type `CreateSessionResult` in `terminal-service.ts`:
-  - `{ success: true; session: TerminalSession }` for successful creation
-  - `{ success: false; error: string; code: 'max_sessions' | 'invalid_shell' | 'pty_load_failed' | 'pty_spawn_failed' }` for failures
-- [ ] Update `createSession()` to return `Promise<CreateSessionResult>` instead of `Promise<TerminalSession | null>`
-- [ ] Update all failure paths to return specific error codes and messages:
-  - `max_sessions`: "Maximum terminal sessions reached. Please close an existing terminal and try again."
-  - `invalid_shell`: "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell)."
-  - `pty_load_failed`: "Terminal service unavailable. The PTY module could not be loaded."
-  - `pty_spawn_failed`: "Failed to start terminal shell process."
-- [ ] Run terminal-service tests and fix any failures
+- [ ] Add comprehensive CSS for `.project-selector` and child elements in `styles.css`
+- [ ] Include styles for: trigger button, dropdown, search input, project items, status icons, "View All" footer
+- [ ] Match existing dashboard design tokens (colors, spacing, border-radius)
+- [ ] Add mobile-specific styles for the selector when on header-row-mobile
 
 **Artifacts:**
-- `packages/dashboard/src/terminal-service.ts` (modified)
+- `packages/dashboard/app/styles.css` (modified) — new project-selector CSS section
 
-### Step 2: Update Routes Handler
+### Step 2: Integrate ProjectSelector into Header
 
-- [ ] Update `POST /api/terminal/sessions` route in `routes.ts` to handle the new `CreateSessionResult` type
-- [ ] Return specific HTTP status codes based on error type:
-  - `max_sessions`: 503 (Service Unavailable)
-  - `invalid_shell`: 400 (Bad Request)
-  - `pty_load_failed`: 503 (Service Unavailable)
-  - `pty_spawn_failed`: 500 (Internal Server Error)
-- [ ] Return the specific error message from the result in the response body
-- [ ] Run routes tests and fix any failures
+- [ ] Import `ProjectSelector` into Header.tsx
+- [ ] Import `useProjects` and `useCurrentProject` hooks (or accept as props)
+- [ ] Add `projects`, `currentProject`, `onSelectProject`, `onViewAllProjects` props to Header
+- [ ] Place ProjectSelector in the header layout between `header-left` and `header-actions`
+- [ ] Conditionally render ProjectSelector only when `projects.length > 1`
+- [ ] Connect `onViewAll` to navigate to projects overview
 
 **Artifacts:**
-- `packages/dashboard/src/routes.ts` (modified)
+- `packages/dashboard/app/components/Header.tsx` (modified)
 
-### Step 3: Update Tests
+### Step 3: Implement Mobile Two-Row Header Layout
 
-- [ ] Update `terminal-service.test.ts`:
-  - Change `expect(session2).toBeNull()` to check for `success: false` and appropriate error code
-  - Update all test cases that check for `null` returns to check for error results
-- [ ] Update `routes.test.ts`:
-  - Update the mock to return the new result type
-  - Add assertions for specific error codes and messages
-- [ ] Run full test suite for affected files
+- [ ] Modify header structure: wrap existing content in `.header-row--top`
+- [ ] Add `.header-row--bottom` for mobile that contains ProjectSelector
+- [ ] Use `useIsMobile()` hook to conditionally render the two-row layout
+- [ ] On mobile: show ProjectSelector in bottom row, hide from top row
+- [ ] On desktop: keep single-row layout with ProjectSelector inline
+- [ ] Update CSS to support `.header--multi-row` variant with flex-direction: column
 
 **Artifacts:**
-- `packages/dashboard/src/terminal-service.test.ts` (modified)
-- `packages/dashboard/src/routes.test.ts` (modified)
+- `packages/dashboard/app/components/Header.tsx` (modified)
+- `packages/dashboard/app/styles.css` (modified) — header row modifiers
 
-### Step 4: Testing & Verification
+### Step 4: Update App.tsx to Pass Project Data
+
+- [ ] Import `useProjects` and `useCurrentProject` in App.tsx
+- [ ] Call hooks to get projects list and current project state
+- [ ] Pass `projects`, `currentProject`, `setCurrentProject`, and navigation handler to Header
+- [ ] Handle "View All Projects" navigation (can set a view state or open ProjectOverview modal)
+
+**Artifacts:**
+- `packages/dashboard/app/App.tsx` (modified)
+
+### Step 5: Testing & Verification
 
 > ZERO test failures allowed. Full test suite as quality gate.
 
-- [ ] Run `pnpm test -- packages/dashboard/src/terminal-service.test.ts`
-- [ ] Run `pnpm test -- packages/dashboard/src/routes.test.ts`
 - [ ] Run full test suite: `pnpm test`
+- [ ] Verify existing Header tests pass
+- [ ] Manually test on mobile viewport (≤768px width):
+  - [ ] Project selector appears on second row
+  - [ ] Header actions remain accessible
+  - [ ] Dropdown opens/closes properly
+  - [ ] "View All Projects" link works
+- [ ] Manually test on desktop viewport (>768px):
+  - [ ] Single-row layout maintained
+  - [ ] Project selector inline with header actions
+  - [ ] No layout regressions
 - [ ] Build passes: `pnpm build`
 
-### Step 5: Documentation & Delivery
+### Step 6: Documentation & Delivery
 
-- [ ] Create changeset file for patch release (internal improvement)
-- [ ] Verify no documentation updates needed (internal diagnostic improvement)
-- [ ] No out-of-scope findings expected
+- [ ] Update relevant component docs if any exist for Header
+- [ ] Out-of-scope findings created as new tasks via `task_create` tool:
+  - Any additional mobile header improvements beyond this scope
+  - ProjectOverview modal integration if not yet complete
 
 ## Documentation Requirements
 
 **Must Update:**
-- None (internal diagnostic improvement)
+- None (code changes are self-documenting via component structure)
 
 **Check If Affected:**
-- None
+- `AGENTS.md` — check if dashboard component patterns section needs mobile layout guidance
 
 ## Completion Criteria
 
 - [ ] All steps complete
 - [ ] All tests passing
+- [ ] Project selector renders correctly on both mobile and desktop
+- [ ] Mobile header has two rows: top with actions, bottom with project selector
+- [ ] "View All Projects" link accessible from selector dropdown
 - [ ] Build passes
-- [ ] Terminal now returns specific, actionable error messages instead of misleading "Max sessions" message
 
 ## Git Commit Convention
 
@@ -121,8 +139,8 @@ Commits at step boundaries. All commits include the task ID:
 
 ## Do NOT
 
-- Expand task scope beyond error message improvements
-- Skip tests
-- Modify files outside the File Scope
-- Change the PTY module loading mechanism (just report the error)
-- Add new dependencies
+- Expand task scope beyond mobile layout fix for project selector
+- Modify ProjectSelector component internal logic (it's already functional)
+- Skip visual testing on actual mobile viewport sizes
+- Add new dependencies or packages
+- Change the existing desktop header layout beyond adding the selector inline

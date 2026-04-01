@@ -1,200 +1,67 @@
 /**
- * Project subcommand implementations for kb CLI.
- *
- * Implements:
- * - fn project list [--json]
- * - fn project add [dir] [--name <name>] [--isolation <mode>]
- * - fn project remove <name> [--force]
- * - fn project info [name]
+ * Project command implementations for kb CLI.
  */
 
-import { CentralCore, type RegisteredProject, type IsolationMode } from "@fusion/core";
-import { resolve, isAbsolute, basename } from "node:path";
+import { CentralCore, GlobalSettingsStore, type RegisteredProject, type IsolationMode } from "@fusion/core";
+import { resolve, isAbsolute } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
-import {
-  getCentralCore,
-  getProjectManager,
-  findKbDir,
-  isKbProject,
-  suggestProjectName,
-  formatLastActivity,
-  type ResolvedProject,
-} from "../project-resolver.js";
+import { formatProjectLine, detectProjectFromCwd, setDefaultProject } from "../project-context.js";
 
 const VALID_ISOLATION_MODES: IsolationMode[] = ["in-process", "child-process"];
 
-/**
- * Run the `fn project list` command.
- *
- * Shows all registered projects with:
- * - Name, directory, status
- * - In-flight task count
- * - Last activity timestamp
- * - Optional JSON output with --json flag
- */
-export async function runProjectList(options: { json?: boolean } = {}): Promise<void> {
-  const central = await getCentralCore();
-  const pm = await getProjectManager();
+export async function runProjectList(): Promise<void> {
+  const central = new CentralCore();
+  await central.init();
 
-  const projects = await central.listProjects();
+  try {
+    const projects = await central.listProjects();
+    const defaultProject = await getDefaultProject();
 
-  if (projects.length === 0) {
-    if (options.json) {
-      console.log(JSON.stringify([], null, 2));
-    } else {
+    if (projects.length === 0) {
       console.log("\n  No projects registered.");
-      console.log("  Register one with: fn project add <path>\n");
+      console.log("  Register one with: kb project add <name> <path>\n");
+      return;
     }
-    return;
-  }
 
-  // Get detailed info for each project
-  const projectsWithInfo = await Promise.all(
-    projects.map(async (project) => {
-      const runtime = pm.getRuntime(project.id);
-      const runtimeStatus = runtime?.getStatus() ?? "not_started";
-
-      // Get task counts from store
-      let taskCounts: Record<string, number> = {};
-      let totalTasks = 0;
-      try {
-        const { TaskStore } = await import("@fusion/core");
-        const store = new TaskStore(project.path);
-        await store.init();
-        const tasks = await store.listTasks();
-        totalTasks = tasks.length;
-        for (const task of tasks) {
-          taskCounts[task.column] = (taskCounts[task.column] || 0) + 1;
-        }
-      } catch {
-        // Ignore errors reading tasks
-      }
-
-      const health = await central.getProjectHealth(project.id);
-
-      return {
-        project,
-        runtimeStatus,
-        taskCounts,
-        totalTasks,
-        lastActivity: health?.lastActivityAt,
-        activeAgents: health?.inFlightAgentCount ?? 0,
-      };
-    })
-  );
-
-  // Sort by name alphabetically
-  projectsWithInfo.sort((a, b) => a.project.name.localeCompare(b.project.name));
-
-  if (options.json) {
-    // JSON output
-    const jsonOutput = projectsWithInfo.map((p) => ({
-      id: p.project.id,
-      name: p.project.name,
-      path: p.project.path,
-      status: p.project.status,
-      isolationMode: p.project.isolationMode,
-      runtimeStatus: p.runtimeStatus,
-      totalTasks: p.totalTasks,
-      taskCounts: p.taskCounts,
-      activeAgents: p.activeAgents,
-      lastActivity: p.lastActivity,
-      createdAt: p.project.createdAt,
-      updatedAt: p.project.updatedAt,
-    }));
-    console.log(JSON.stringify(jsonOutput, null, 2));
-  } else {
-    // Table output
     console.log();
     console.log("  Registered Projects:");
     console.log();
 
-    // Calculate column widths
-    const nameWidth = Math.max(...projectsWithInfo.map((p) => p.project.name.length), 4);
-    const pathWidth = Math.max(...projectsWithInfo.map((p) => p.project.path.length), 4);
-
-    // Header
-    console.log(
-      `    ${"Name".padEnd(nameWidth)}  ${"Path".padEnd(pathWidth)}  ${"Status".padEnd(10)}  ${"Tasks".padEnd(6)}  ${"Agents".padEnd(6)}  Last Activity`
-    );
-    console.log(
-      `    ${"-".repeat(nameWidth)}  ${"-".repeat(pathWidth)}  ${"-".repeat(10)}  ${"-".repeat(6)}  ${"-".repeat(6)}  -------------`
-    );
-
-    for (const p of projectsWithInfo) {
-      const statusIcon = getStatusIcon(p.project.status);
-      const lastActivity = formatLastActivity(p.lastActivity);
-      console.log(
-        `    ${p.project.name.padEnd(nameWidth)}  ${p.project.path.padEnd(pathWidth)}  ${statusIcon} ${p.project.status.padEnd(8)}  ${String(p.totalTasks).padEnd(6)}  ${String(p.activeAgents).padEnd(6)}  ${lastActivity}`
-      );
+    for (const project of projects) {
+      const isDefault = defaultProject?.id === project.id;
+      const line = formatProjectLine(project, isDefault);
+      console.log(`  ${line}`);
     }
 
     console.log();
-    const activeCount = projectsWithInfo.filter((p) => p.project.status === "active").length;
+    const activeCount = projects.filter((p) => p.status === "active").length;
     console.log(`  ${projects.length} project${projects.length === 1 ? "" : "s"} registered, ${activeCount} active`);
+    if (defaultProject) {
+      console.log(`  * indicates default project (${defaultProject.name})`);
+    }
     console.log();
+  } finally {
+    await central.close();
   }
 }
 
-/**
- * Run the `fn project add` command.
- *
- * Registers a new project with optional interactive prompts.
- */
 export async function runProjectAdd(
-  dir?: string,
-  options: { name?: string; isolation?: "in-process" | "child-process"; interactive?: boolean } = {}
+  name: string,
+  path: string,
+  options?: { isolation?: string; force?: boolean }
 ): Promise<void> {
-  const central = await getCentralCore();
-  const interactive = options.interactive ?? true;
-
-  // Interactive wizard if no directory provided
-  if (!dir && interactive) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-    // Ask for directory
-    const cwd = process.cwd();
-    const dirInput = await rl.question(`  Project directory [${cwd}]: `);
-    dir = dirInput.trim() || cwd;
-
-    // Check if directory has .kb/
-    const kbPath = resolve(dir, ".kb");
-    if (!existsSync(kbPath)) {
-      console.log(`\n  No .kb/ directory found in ${dir}`);
-      const shouldInit = await promptConfirm("Initialize kb here first?", true);
-
-      if (shouldInit) {
-        const { TaskStore } = await import("@fusion/core");
-        const store = new TaskStore(dir);
-        await store.init();
-        console.log(`  ✓ Initialized kb at ${dir}`);
-      } else {
-        console.log("  Cannot register project without .kb/ directory.");
-        rl.close();
-        process.exit(1);
-      }
-    }
-
-    // Ask for name
-    const suggestedName = options.name || suggestProjectName(dir);
-    const nameInput = await rl.question(`  Project name [${suggestedName}]: `);
-    options.name = nameInput.trim() || suggestedName;
-
-    // Ask for isolation mode
-    const isolationInput = await rl.question(`  Isolation mode [in-process]: `);
-    options.isolation = (isolationInput.trim() as IsolationMode) || "in-process";
-
-    rl.close();
-  }
-
-  if (!dir) {
-    console.error("Usage: fn project add [dir] [--name <name>] [--isolation <mode>]");
+  if (!name || !path) {
+    console.error("Usage: kb project add <name> <path> [--isolation <mode>]");
     process.exit(1);
   }
 
-  // Resolve and validate directory
-  const absolutePath = isAbsolute(dir) ? dir : resolve(process.cwd(), dir);
+  if (!isValidProjectName(name)) {
+    console.error(`Error: Invalid project name '${name}'`);
+    process.exit(1);
+  }
+
+  const absolutePath = isAbsolute(path) ? path : resolve(process.cwd(), path);
 
   if (!existsSync(absolutePath)) {
     console.error(`Error: Path does not exist: ${absolutePath}`);
@@ -206,222 +73,172 @@ export async function runProjectAdd(
     process.exit(1);
   }
 
-  // Check for .kb/ directory
-  if (!isKbProject(absolutePath)) {
+  const kbDbPath = resolve(absolutePath, ".kb", "kb.db");
+  if (!existsSync(kbDbPath) && !options?.force) {
     console.error(`Error: No kb project found at ${absolutePath}`);
-    console.error("Run `fn init` first to initialize a kb project.");
     process.exit(1);
   }
 
-  // Validate isolation mode
-  const isolationMode = options.isolation ?? "in-process";
-  if (!VALID_ISOLATION_MODES.includes(isolationMode)) {
+  const isolationMode = options?.isolation as IsolationMode | undefined;
+  if (isolationMode && !VALID_ISOLATION_MODES.includes(isolationMode)) {
     console.error(`Error: Invalid isolation mode '${isolationMode}'`);
-    console.error(`Valid modes: ${VALID_ISOLATION_MODES.join(", ")}`);
     process.exit(1);
   }
 
-  // Determine project name
-  const name = options.name || suggestProjectName(absolutePath);
+  const central = new CentralCore();
+  await central.init();
 
-  // Check for duplicate name
-  const existing = await findProjectByName(central, name);
-  if (existing) {
-    console.error(`Error: Project '${name}' already registered.`);
-    process.exit(1);
-  }
-
-  // Check for duplicate path
-  const existingByPath = await central.getProjectByPath(absolutePath);
-  if (existingByPath) {
-    console.error(`Error: Project already registered at path: ${absolutePath}`);
-    console.error(`Existing project: ${existingByPath.name}`);
-    process.exit(1);
-  }
-
-  // Register the project
-  const project = await central.registerProject({
-    name,
-    path: absolutePath,
-    isolationMode,
-  });
-
-  console.log();
-  console.log(`  ✓ Registered project '${name}'`);
-  console.log(`    ID: ${project.id}`);
-  console.log(`    Path: ${project.path}`);
-  console.log(`    Isolation: ${project.isolationMode}`);
-  console.log();
-}
-
-/**
- * Run the `fn project remove` command.
- *
- * Unregisters a project from the central registry.
- */
-export async function runProjectRemove(
-  name: string,
-  options: { force?: boolean; interactive?: boolean } = {}
-): Promise<void> {
-  const central = await getCentralCore();
-  const pm = await getProjectManager();
-  const interactive = options.interactive ?? true;
-
-  if (!name) {
-    console.error("Usage: fn project remove <name> [--force]");
-    process.exit(1);
-  }
-
-  const project = await findProjectByNameOrId(central, name);
-  if (!project) {
-    console.error(`Error: Project '${name}' not found.`);
-    process.exit(1);
-  }
-
-  // Check if runtime is active
-  const runtime = pm.getRuntime(project.id);
-  if (runtime) {
-    console.log(`  Stopping runtime for '${project.name}'...`);
-    await pm.removeProject(project.id);
-  }
-
-  // Confirmation prompt
-  if (!options.force && interactive) {
-    const confirmed = await promptConfirm(
-      `Unregister "${project.name}"? Project data will be preserved, only the registry entry will be removed.`,
-      false
-    );
-    if (!confirmed) {
-      console.log("Cancelled.");
-      return;
+  try {
+    const existing = await findProjectByName(central, name);
+    if (existing) {
+      console.error(`Error: Project '${name}' already registered.`);
+      process.exit(1);
     }
+
+    const project = await central.registerProject({
+      name,
+      path: absolutePath,
+      isolationMode: isolationMode ?? "in-process",
+    });
+
+    console.log();
+    console.log(`  ✓ Registered project '${name}'`);
+    console.log(`    ID: ${project.id}`);
+    console.log();
+  } finally {
+    await central.close();
   }
-
-  await central.unregisterProject(project.id);
-
-  console.log();
-  console.log(`  ✓ Unregistered project '${project.name}'`);
-  console.log(`    Project data at ${project.path} is preserved.`);
-  console.log();
 }
 
-/**
- * Run the `fn project info` command.
- *
- * Shows detailed information about a specific project.
- */
-export async function runProjectInfo(name?: string, options: { interactive?: boolean } = {}): Promise<void> {
-  const central = await getCentralCore();
-  const pm = await getProjectManager();
-  const interactive = options.interactive ?? true;
+export async function runProjectRemove(name: string, force?: boolean): Promise<void> {
+  if (!name) {
+    console.error("Usage: kb project remove <name> [--force]");
+    process.exit(1);
+  }
 
-  let project: RegisteredProject;
+  const central = new CentralCore();
+  await central.init();
 
-  if (name) {
-    const found = await findProjectByNameOrId(central, name);
-    if (!found) {
+  try {
+    const project = await findProjectByNameOrId(central, name);
+    if (!project) {
       console.error(`Error: Project '${name}' not found.`);
       process.exit(1);
     }
-    project = found;
-  } else {
-    // Auto-detect from cwd
-    const cwd = process.cwd();
-    const kbDir = findKbDir(cwd);
 
-    if (kbDir) {
-      const found = await central.getProjectByPath(kbDir);
-      if (found) {
-        project = found;
-      } else {
-        console.error(`Error: Found kb project at ${kbDir} but it's not registered.`);
-        console.error("Run `fn project add .` to register it.");
-        process.exit(1);
-      }
-    } else {
-      // List projects and ask user to select
-      const projects = await central.listProjects();
-      if (projects.length === 0) {
-        console.error("Error: No projects registered.");
-        process.exit(1);
-      }
+    if (!force) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = await rl.question(`Unregister project '${project.name}'? [y/N] `);
+      rl.close();
 
-      if (projects.length === 1) {
-        project = projects[0];
-      } else if (interactive) {
-        project = await promptProjectSelection(projects, "Select a project:");
-      } else {
-        console.error("Error: Multiple projects registered. Please specify a project name.");
-        console.error("Run `fn project list` to see available projects.");
-        process.exit(1);
+      if (answer.trim().toLowerCase() !== "y") {
+        console.log("Cancelled.");
+        return;
       }
     }
-  }
 
-  // Get runtime status
-  const runtime = pm.getRuntime(project.id);
-  const runtimeStatus = runtime?.getStatus() ?? "not_started";
-
-  // Get task counts
-  let taskCounts: Record<string, number> = {};
-  let totalTasks = 0;
-  try {
-    const { TaskStore } = await import("@fusion/core");
-    const store = new TaskStore(project.path);
-    await store.init();
-    const tasks = await store.listTasks();
-    totalTasks = tasks.length;
-    for (const task of tasks) {
-      taskCounts[task.column] = (taskCounts[task.column] || 0) + 1;
-    }
-  } catch {
-    // Ignore errors reading tasks
-  }
-
-  // Get health metrics
-  const health = await central.getProjectHealth(project.id);
-
-  // Display info
-  console.log();
-  console.log(`  Project: ${project.name}`);
-  console.log(`  ID: ${project.id}`);
-  console.log(`  Path: ${project.path}`);
-  console.log(`  Status: ${project.status}`);
-  console.log(`  Isolation Mode: ${project.isolationMode}`);
-  console.log(`  Runtime: ${runtimeStatus}`);
-  console.log(`  Created: ${new Date(project.createdAt).toLocaleString()}`);
-  console.log(`  Updated: ${new Date(project.updatedAt).toLocaleString()}`);
-  console.log();
-
-  console.log(`  Tasks (${totalTasks} total):`);
-  const columns = ["triage", "todo", "in-progress", "in-review", "done", "archived"];
-  for (const col of columns) {
-    const count = taskCounts[col] || 0;
-    if (count > 0 || col !== "archived") {
-      const icon = getColumnIcon(col);
-      console.log(`    ${icon} ${col}: ${count}`);
-    }
-  }
-  console.log();
-
-  if (health) {
-    console.log("  Activity:");
-    console.log(`    Active tasks: ${health.activeTaskCount}`);
-    console.log(`    In-flight agents: ${health.inFlightAgentCount}`);
-    console.log(`    Total completed: ${health.totalTasksCompleted}`);
-    console.log(`    Total failed: ${health.totalTasksFailed}`);
-    if (health.lastActivityAt) {
-      console.log(`    Last activity: ${formatLastActivity(health.lastActivityAt)}`);
-    }
-    if (health.averageTaskDurationMs) {
-      const avgMins = Math.round(health.averageTaskDurationMs / 60000);
-      console.log(`    Avg task duration: ${avgMins}m`);
-    }
-    console.log();
+    await central.unregisterProject(project.id);
+    console.log(`  ✓ Unregistered project '${project.name}'`);
+  } finally {
+    await central.close();
   }
 }
 
-// Helper functions
+export async function runProjectShow(name: string): Promise<void> {
+  if (!name) {
+    console.error("Usage: kb project show <name>");
+    process.exit(1);
+  }
+
+  const central = new CentralCore();
+  await central.init();
+
+  try {
+    const project = await findProjectByNameOrId(central, name);
+    if (!project) {
+      console.error(`Error: Project '${name}' not found.`);
+      process.exit(1);
+    }
+
+    const defaultProject = await getDefaultProject();
+    const isDefault = defaultProject?.id === project.id;
+
+    console.log();
+    console.log(`  Project: ${project.name}${isDefault ? " (default)" : ""}`);
+    console.log(`  ID: ${project.id}`);
+    console.log(`  Path: ${project.path}`);
+    console.log(`  Status: ${project.status}`);
+    console.log();
+  } finally {
+    await central.close();
+  }
+}
+
+export async function runProjectSetDefault(name: string): Promise<void> {
+  if (!name) {
+    console.error("Usage: kb project set-default <name>");
+    process.exit(1);
+  }
+
+  const central = new CentralCore();
+  await central.init();
+
+  try {
+    const project = await findProjectByNameOrId(central, name);
+    if (!project) {
+      console.error(`Error: Project '${name}' not found.`);
+      process.exit(1);
+    }
+
+    await setDefaultProject(project.id);
+    console.log();
+    console.log(`  ✓ Set '${project.name}' as default project`);
+    console.log();
+  } finally {
+    await central.close();
+  }
+}
+
+export async function runProjectDetect(): Promise<void> {
+  const central = new CentralCore();
+  await central.init();
+
+  try {
+    const project = await detectProjectFromCwd(process.cwd(), central);
+
+    if (project) {
+      console.log();
+      console.log(`  Detected: ${project.name} (${project.path})`);
+      console.log();
+    } else {
+      console.log();
+      console.log("  No kb project detected from current directory.");
+      console.log();
+    }
+  } finally {
+    await central.close();
+  }
+}
+
+// Helpers
+
+async function getDefaultProject(): Promise<RegisteredProject | undefined> {
+  const globalStore = new GlobalSettingsStore();
+  await globalStore.init();
+
+  const settings = await globalStore.getSettings();
+  if (!settings.defaultProjectId) {
+    return undefined;
+  }
+
+  const central = new CentralCore();
+  await central.init();
+  try {
+    return await central.getProject(settings.defaultProjectId);
+  } finally {
+    await central.close();
+  }
+}
 
 async function findProjectByName(central: CentralCore, name: string): Promise<RegisteredProject | undefined> {
   const allProjects = await central.listProjects();
@@ -430,81 +247,16 @@ async function findProjectByName(central: CentralCore, name: string): Promise<Re
 }
 
 async function findProjectByNameOrId(central: CentralCore, nameOrId: string): Promise<RegisteredProject | undefined> {
-  // First try exact ID match
   const byId = await central.getProject(nameOrId);
   if (byId) {
     return byId;
   }
-
-  // Then try case-insensitive name match
   return findProjectByName(central, nameOrId);
 }
 
-async function promptProjectSelection(
-  projects: RegisteredProject[],
-  message: string
-): Promise<RegisteredProject> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-  console.log(`\n  ${message}`);
-  for (let i = 0; i < projects.length; i++) {
-    console.log(`    ${i + 1}. ${projects[i].name} (${projects[i].path})`);
+function isValidProjectName(name: string): boolean {
+  if (!name || name.length < 1 || name.length > 64) {
+    return false;
   }
-
-  while (true) {
-    const answer = await rl.question("\n  Enter number: ");
-    const num = parseInt(answer.trim(), 10);
-
-    if (!isNaN(num) && num >= 1 && num <= projects.length) {
-      rl.close();
-      return projects[num - 1];
-    }
-
-    console.log(`    Invalid selection. Please enter a number between 1 and ${projects.length}`);
-  }
-}
-
-async function promptConfirm(message: string, defaultYes = false): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const prompt = defaultYes ? "[Y/n]" : "[y/N]";
-  const answer = await rl.question(`  ${message} ${prompt}: `);
-  rl.close();
-
-  const trimmed = answer.trim().toLowerCase();
-  if (trimmed === "" && defaultYes) return true;
-  return trimmed === "y" || trimmed === "yes";
-}
-
-function getStatusIcon(status: string): string {
-  switch (status) {
-    case "active":
-      return "●";
-    case "paused":
-      return "⏸";
-    case "errored":
-      return "✗";
-    case "initializing":
-      return "◌";
-    default:
-      return "○";
-  }
-}
-
-function getColumnIcon(column: string): string {
-  switch (column) {
-    case "triage":
-      return "●";
-    case "todo":
-      return "○";
-    case "in-progress":
-      return "▸";
-    case "in-review":
-      return "◆";
-    case "done":
-      return "✓";
-    case "archived":
-      return "▪";
-    default:
-      return "•";
-  }
+  return /^[a-zA-Z0-9_-]+$/.test(name);
 }

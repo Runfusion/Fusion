@@ -487,7 +487,7 @@ describe("TaskCard file-scope overlap badge logic", () => {
   }
 
   it("generates correct tooltip text", () => {
-    expect(computeScopeTooltip("FN-005")).toBe("Blocked by KB-005 (file overlap)");
+    expect(computeScopeTooltip("FN-005")).toBe("Blocked by FN-005 (file overlap)");
   });
 });
 
@@ -647,7 +647,7 @@ describe("TaskCard clickable dependencies", () => {
     fireEvent.click(depBadge);
 
     await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith("Failed to load dependency KB-001", "error");
+      expect(addToast).toHaveBeenCalledWith("Failed to load dependency FN-001", "error");
     });
     expect(onOpenDetail).not.toHaveBeenCalled();
   });
@@ -2295,18 +2295,17 @@ describe("TaskCard GitHub badges", () => {
 });
 
 /**
- * Tests for expand button and modal open behavior in TaskCard.
- * Ensures that clicking the expand button opens the modal,
- * while clicking the card body does not.
+ * Tests for task detail opening behavior in TaskCard.
+ * The card body opens the modal directly; there is no separate expand button.
  */
-describe("TaskCard expand button", () => {
+describe("TaskCard detail opening", () => {
   const noopToast = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("opens modal when clicking the expand button", async () => {
+  it("opens modal when clicking the card body", async () => {
     const { fetchTaskDetail } = await import("../../api");
     const mockFetch = vi.mocked(fetchTaskDetail);
     const mockDetail: TaskDetail = {
@@ -2330,11 +2329,8 @@ describe("TaskCard expand button", () => {
     const card = document.querySelector('[data-id="FN-099"]');
     expect(card).toBeDefined();
 
-    const expandButton = screen.getByRole("button", { name: /Open task details/i });
-    expect(expandButton).toBeDefined();
-    expect(expandButton.classList.contains("card-expand-btn")).toBe(true);
-
-    fireEvent.click(expandButton);
+    const cardTitle = screen.getByText("Test task");
+    fireEvent.click(cardTitle);
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith("FN-099");
@@ -2342,10 +2338,24 @@ describe("TaskCard expand button", () => {
     });
   });
 
-  it("does NOT open modal when clicking the card body", async () => {
-    const onOpenDetail = vi.fn();
+  it("does not render a separate expand button", () => {
+    const task = makeTask();
 
-    const task = makeTask({ title: "Test Task Title" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={noopToast} />);
+    expect(screen.queryByRole("button", { name: /Open task details/i })).toBeNull();
+  });
+
+  it("opens modal only once per card click", async () => {
+    const { fetchTaskDetail } = await import("../../api");
+    const mockFetch = vi.mocked(fetchTaskDetail);
+    const mockDetail: TaskDetail = {
+      ...makeTask({ id: "FN-099" }),
+      prompt: "",
+      attachments: [],
+    };
+    mockFetch.mockResolvedValueOnce(mockDetail);
+    const onOpenDetail = vi.fn();
+    const task = makeTask();
 
     render(
       <TaskCard
@@ -2355,35 +2365,13 @@ describe("TaskCard expand button", () => {
       />
     );
 
-    const card = document.querySelector('[data-id="FN-099"]');
-    expect(card).toBeDefined();
+    fireEvent.click(screen.getByText("Test task"));
 
-    // Click on the card title (part of card body)
-    const cardTitle = screen.getByText("Test Task Title");
-    fireEvent.click(cardTitle);
-
-    // Wait for any async operations
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    // Modal should NOT have opened
-    expect(onOpenDetail).not.toHaveBeenCalled();
-  });
-
-  it("expand button has correct accessibility attributes", () => {
-    const task = makeTask();
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const expandButton = screen.getByRole("button", { name: /Open task details/i });
-    expect(expandButton).toBeDefined();
-    expect(expandButton.getAttribute("aria-label")).toBe("Open task details");
-    expect(expandButton.getAttribute("title")).toBe("Open task details");
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith("FN-099");
+      expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
+      expect(onOpenDetail).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("does NOT open modal during vertical scrolling", async () => {
@@ -2484,7 +2472,7 @@ describe("TaskCard expand button", () => {
     expect(onOpenDetail).not.toHaveBeenCalled();
   });
 
-  it("expand button is present in all columns", () => {
+  it("does not render an expand button in any column", () => {
     const columns: Column[] = ["triage", "todo", "in-progress", "in-review", "done", "archived"];
 
     for (const column of columns) {
@@ -2498,48 +2486,10 @@ describe("TaskCard expand button", () => {
         />
       );
 
-      const expandButton = screen.getByRole("button", { name: /Open task details/i });
-      expect(expandButton).toBeDefined();
-      expect(expandButton.classList.contains("card-expand-btn")).toBe(true);
+      expect(screen.queryByRole("button", { name: /Open task details/i })).toBeNull();
 
       unmount();
     }
-  });
-
-  it("expand button stops propagation to prevent double-triggering", async () => {
-    const { fetchTaskDetail } = await import("../../api");
-    const mockFetch = vi.mocked(fetchTaskDetail);
-    const mockDetail: TaskDetail = {
-      ...makeTask({ id: "FN-099" }),
-      prompt: "",
-      attachments: [],
-    };
-    mockFetch.mockResolvedValueOnce(mockDetail);
-    const onOpenDetail = vi.fn();
-
-    const task = makeTask();
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={onOpenDetail}
-        addToast={noopToast}
-      />
-    );
-
-    const card = document.querySelector('[data-id="FN-099"]');
-    expect(card).toBeDefined();
-
-    const expandButton = screen.getByRole("button", { name: /Open task details/i });
-
-    // Click the expand button - should only trigger once
-    fireEvent.click(expandButton);
-
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith("FN-099");
-      expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
-      expect(onOpenDetail).toHaveBeenCalledTimes(1);
-    });
   });
 });
 

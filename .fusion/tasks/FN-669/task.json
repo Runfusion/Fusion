@@ -1,30 +1,32 @@
 {
   "id": "FN-669",
-  "description": "Support deep link to view task modal from ntfy notification with a setting for the host name to use",
+  "description": "The main page before you select a project is missing all layouts. It needs to be design properly",
   "column": "todo",
   "status": "queued",
   "size": "M",
   "reviewLevel": 2,
   "currentStep": 0,
   "blockedBy": "KB-622",
-  "createdAt": "2026-04-01T06:19:48.553Z",
-  "updatedAt": "2026-04-01T06:42:55.408Z",
-  "columnMovedAt": "2026-04-01T06:20:51.769Z",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "createdAt": "2026-04-01T13:50:48.191Z",
+  "updatedAt": "2026-04-01T14:01:50.357Z",
+  "columnMovedAt": "2026-04-01T13:53:12.703Z",
   "dependencies": [],
   "steps": [],
   "log": [
     {
-      "timestamp": "2026-04-01T06:19:48.553Z",
+      "timestamp": "2026-04-01T13:50:48.191Z",
       "action": "Task created"
     },
     {
-      "timestamp": "2026-04-01T06:20:35.369Z",
+      "timestamp": "2026-04-01T13:52:51.186Z",
       "action": "Spec review requested"
     },
     {
-      "timestamp": "2026-04-01T06:20:49.134Z",
+      "timestamp": "2026-04-01T13:53:10.734Z",
       "action": "Spec review: APPROVE",
-      "outcome": "The specification is well-structured and accurate. All referenced files exist at the specified paths with the expected interfaces and functions. The mission is clear, steps have verifiable outcomes, and the testing strategy is appropriate. Minor naming discrepancy in the API client (Step 4 references `fetchTask` but the actual function is `fetchTaskDetail`) should be corrected during implementation."
+      "outcome": "This is a well-crafted specification for a CSS-only styling task. The spec accurately inventories all class names from both `ProjectOverview.tsx` and `ProjectGridSkeleton.tsx`, correctly references existing CSS patterns and variables, and appropriately scopes the work to a single file. The step breakdown is methodical and verifiable."
     }
   ]
 }

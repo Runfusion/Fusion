@@ -1,30 +1,39 @@
 {
   "id": "FN-670",
-  "description": "The column in list view is too narrow it needs to span the full row",
+  "description": "Make sure the system always ensures build passes before merging to main. Make sure this is in the promots",
   "column": "todo",
   "status": "queued",
-  "size": "S",
-  "reviewLevel": 0,
+  "size": "M",
+  "reviewLevel": 2,
   "currentStep": 0,
-  "blockedBy": "FN-667",
-  "createdAt": "2026-04-01T06:21:17.046Z",
-  "updatedAt": "2026-04-01T06:42:55.410Z",
-  "columnMovedAt": "2026-04-01T06:22:01.383Z",
+  "blockedBy": "KB-622",
+  "createdAt": "2026-04-01T13:51:35.917Z",
+  "updatedAt": "2026-04-01T14:01:50.385Z",
+  "columnMovedAt": "2026-04-01T13:55:34.310Z",
   "dependencies": [],
   "steps": [],
   "log": [
     {
-      "timestamp": "2026-04-01T06:21:17.046Z",
+      "timestamp": "2026-04-01T13:51:35.917Z",
       "action": "Task created"
     },
     {
-      "timestamp": "2026-04-01T06:21:48.926Z",
+      "timestamp": "2026-04-01T13:54:16.095Z",
       "action": "Spec review requested"
     },
     {
-      "timestamp": "2026-04-01T06:22:00.009Z",
+      "timestamp": "2026-04-01T13:54:41.681Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is well-structured and addresses a real gap in the merge process. The mission is clear, file scope is accurate, and the step breakdown is logical. However, there are several issues that need correction before implementation: line number references are incorrect, the mechanism for detecting build failure from the AI agent is underspecified, and Step 4 needs clarification on how the agent should signal build failure versus proceeding with commit."
+    },
+    {
+      "timestamp": "2026-04-01T13:55:06.197Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T13:55:30.265Z",
       "action": "Spec review: APPROVE",
-      "outcome": "The specification is accurate and complete. The issue description correctly identifies the constrained title column in the list view, and the file references (lines 4870 and 5130 in `styles.css`) match the actual code. The scope is appropriately limited to a CSS-only change, and the review level (0 - None) is justified for this straightforward UI fix."
+      "outcome": "This is a well-crafted specification for a critical safety feature. The mission is clear: add mandatory build verification to the merge path to prevent broken code from reaching main. The spec correctly identifies the touchpoints in `merger.ts` (merge flow), `executor.ts` (execution prompt), and comprehensive test coverage. The review level of 2 with size M is appropriate given the blast radius to core merge infrastructure."
     }
   ]
 }

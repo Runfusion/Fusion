@@ -128,7 +128,7 @@ describe("NewTaskModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
     
     await waitFor(() => {
-      expect(props.addToast).toHaveBeenCalledWith("Created KB-042", "success");
+      expect(props.addToast).toHaveBeenCalledWith("Created FN-042", "success");
     });
   });
 

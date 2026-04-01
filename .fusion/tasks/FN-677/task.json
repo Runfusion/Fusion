@@ -1,0 +1,30 @@
+{
+  "id": "FN-677",
+  "description": "Fix pre-existing merge conflict in packages/core/src/types.ts at line 470. The file has unresolved git conflict markers (<<<<<<< HEAD, =======, >>>>>>>) from a bad merge commit (c2c830da). The conflict is about whether `summarize?: boolean` should be in TaskCreateInput. This causes build failures and test failures across the dashboard package.",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 0,
+  "blockedBy": "KB-622",
+  "createdAt": "2026-04-01T13:58:36.241Z",
+  "updatedAt": "2026-04-01T14:01:51.201Z",
+  "columnMovedAt": "2026-04-01T14:00:35.176Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T13:58:36.241Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T14:00:06.467Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T14:00:32.976Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies a real build-breaking issue: `first-run.ts` and `migration-orchestrator.ts` import 6 types (`DetectedProject`, `SetupState`, `ProjectSetupInput`, `SetupCompletionResult`, `MigrationOptions`, `MigrationResult`) that do not exist in `types.ts`. The spec correctly maps the required type definitions based on actual usage patterns in the source files and includes a secondary requirement to add `setupComplete?: boolean` to `GlobalSettings`. The size (S) and revi"
+    }
+  ]
+}

@@ -1,28 +1,28 @@
 {
   "id": "KB-662",
   "description": "When dashboard becomes visible refresh data",
-  "column": "done",
+  "column": "in-progress",
   "size": "S",
   "reviewLevel": 1,
-  "currentStep": 3,
-  "baseCommitSha": "4c0cee8c6c8326cee0748cc0ab7aa8ea2b035a10",
-  "summary": "The dashboard visibility change feature was already fully implemented in useTasks.ts with:\n\n1. **Implementation**: A useEffect hook that listens for `visibilitychange` events on document, debounces refetching (1 second minimum), and updates local state with normalized task data when the tab becomes visible.\n\n2. **Tests**: All 26 useTasks tests pass, including 4 visibility-specific tests covering:\n   - Refetch when visibility changes from hidden to visible\n   - No refetch when visibility changes to hidden  \n   - Debouncing of rapid visibility changes (minimum 1 second between fetches)\n   - Cleanup of the event listener on unmount\n\n3. **Fixes**: Resolved pre-existing merge conflicts in types.ts (summarize field) and SettingsModal.tsx (duplicate activeSectionScope declaration) to ensure clean build and tests.\n\nBuild passes and all relevant tests pass. The feature works as specified - dashboard automatically refreshes data when the tab becomes visible after being hidden.",
+  "currentStep": 0,
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/quiet-plume",
+  "baseCommitSha": "e478311c531d314b7f2ce3d95fd08aad67b05b7c",
   "createdAt": "2026-04-01T05:35:18.262Z",
-  "updatedAt": "2026-04-01T06:32:12.122Z",
-  "columnMovedAt": "2026-04-01T06:32:12.122Z",
+  "updatedAt": "2026-04-01T14:00:36.543Z",
+  "columnMovedAt": "2026-04-01T14:00:20.319Z",
   "dependencies": [],
   "steps": [
     {
       "name": "Add Visibility Change Listener",
-      "status": "done"
+      "status": "in-progress"
     },
     {
       "name": "Testing & Verification",
-      "status": "done"
+      "status": "pending"
     },
     {
       "name": "Documentation & Delivery",
-      "status": "done"
+      "status": "pending"
     }
   ],
   "log": [
@@ -40,45 +40,16 @@
       "outcome": "The specification is well-crafted for a small, focused change. It correctly identifies the target files, describes concrete implementation steps with verifiable outcomes, and specifies appropriate testing requirements. The mission is clear, the file scope is accurate, and the sizing (S, Review Level 1) is appropriate for this low-blast-radius feature."
     },
     {
-      "timestamp": "2026-04-01T06:24:35.728Z",
-      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gilt-frost"
+      "timestamp": "2026-04-01T14:00:20.556Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-plume"
     },
     {
-      "timestamp": "2026-04-01T06:24:35.770Z",
+      "timestamp": "2026-04-01T14:00:20.577Z",
       "action": "Step 0 (Add Visibility Change Listener) → pending"
     },
     {
-      "timestamp": "2026-04-01T06:24:44.812Z",
+      "timestamp": "2026-04-01T14:00:36.543Z",
       "action": "Step 0 (Add Visibility Change Listener) → in-progress"
-    },
-    {
-      "timestamp": "2026-04-01T06:31:25.770Z",
-      "action": "Step 0 (Add Visibility Change Listener) → done"
-    },
-    {
-      "timestamp": "2026-04-01T06:31:27.880Z",
-      "action": "plan review requested for Step 1 (Add Visibility Change Listener)"
-    },
-    {
-      "timestamp": "2026-04-01T06:31:47.206Z",
-      "action": "plan review Step 1: APPROVE",
-      "outcome": "The step's checkboxes WILL achieve the stated outcomes. However, the worker should be aware that **the visibility change feature is already fully implemented and tested** in the codebase. The implementation exists at `packages/dashboard/app/hooks/useTasks.ts:34-66` and comprehensive tests exist at `packages/dashboard/app/hooks/__tests__/useTasks.test.ts:813-938`."
-    },
-    {
-      "timestamp": "2026-04-01T06:31:48.132Z",
-      "action": "Step 1 (Testing & Verification) → done"
-    },
-    {
-      "timestamp": "2026-04-01T06:31:49.713Z",
-      "action": "Step 2 (Documentation & Delivery) → done"
-    },
-    {
-      "timestamp": "2026-04-01T06:31:59.053Z",
-      "action": "Task marked done by agent"
     }
-  ],
-  "modifiedFiles": [
-    "packages/core/src/types.ts",
-    "packages/dashboard/app/components/SettingsModal.tsx"
   ]
 }

@@ -27,6 +27,9 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
   readdirSync: vi.fn().mockReturnValue([]),
 }));
+vi.mock("node:fs/promises", () => ({
+  readFile: vi.fn().mockResolvedValue("# Task prompt content"),
+}));
 
 import { TaskExecutor } from "./executor.js";
 import { TriageProcessor } from "./triage.js";
@@ -73,6 +76,7 @@ function createMockStore(overrides: Record<string, any> = {}) {
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getRootDir: vi.fn().mockReturnValue("/tmp/root"),
     updateStep: vi.fn().mockImplementation(async (id: string, step: number, status: StepStatus) => {
       return makeTaskDetail(id, "in-progress");
     }),
@@ -277,7 +281,7 @@ describe("In-review merge handling after restart", () => {
     store.getTask.mockResolvedValue(makeTaskDetail("FN-050", "in-progress"));
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
-      "Cannot merge KB-050: task is in 'in-progress', must be in 'in-review'",
+      "Cannot merge FN-050: task is in 'in-progress', must be in 'in-review'",
     );
 
     // No git commands should have been executed
@@ -351,7 +355,7 @@ describe("In-review merge handling after restart", () => {
     } as any);
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-055")).rejects.toThrow(
-      "AI merge failed for KB-055: all 3 attempts exhausted",
+      "AI merge failed for FN-055: all 3 attempts exhausted",
     );
 
     // Should have attempted git reset --merge cleanup

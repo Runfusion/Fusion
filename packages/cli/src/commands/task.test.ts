@@ -29,6 +29,16 @@ vi.mock("@fusion/core", () => {
     TaskStore: vi.fn(),
     COLUMNS,
     COLUMN_LABELS,
+    CentralCore: vi.fn().mockImplementation(function() {
+      return {
+        init: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        listProjects: vi.fn().mockResolvedValue([]),
+        getProject: vi.fn().mockResolvedValue(undefined),
+        getProjectByPath: vi.fn().mockResolvedValue(undefined),
+        registerProject: vi.fn().mockResolvedValue({ id: "proj_test", name: "test", path: "/test" }),
+      };
+    }),
   };
 });
 
@@ -49,12 +59,26 @@ vi.mock("@fusion/core/gh-cli", () => ({
   getCurrentRepo: vi.fn(),
 }));
 
+// Mock project-context
+vi.mock("../project-context.js", () => ({
+  resolveProject: vi.fn().mockResolvedValue({
+    projectId: "proj_test",
+    projectPath: "/test",
+    projectName: "test",
+    store: {},
+  }),
+  getStore: vi.fn().mockResolvedValue({}),
+  getDefaultProject: vi.fn().mockResolvedValue(undefined),
+  setDefaultProject: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@fusion/core";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { runTaskShow, runTaskCreate, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskLogs, runTaskComment, runTaskComments, runTaskPrCreate, type LogsOptions } from "./task.js";
 import { isGhAvailable, isGhAuthenticated, getCurrentRepo } from "@fusion/core/gh-cli";
 import { GitHubClient } from "@fusion/dashboard";
+import { resolveProject } from "../project-context.js";
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -1354,6 +1378,14 @@ describe("runTaskLogs", () => {
 
     mockGetTask = vi.fn();
     mockGetAgentLogs = vi.fn().mockResolvedValue([]);
+
+    // Mock resolveProject for follow mode tests
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "test",
+      store: {} as TaskStore,
+    });
 
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       init: vi.fn(),

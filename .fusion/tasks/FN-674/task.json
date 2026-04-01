@@ -1,0 +1,32 @@
+{
+  "id": "FN-674",
+  "description": "List view on the dashboard is just a blank page",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-622",
+  "modelProvider": "anthropic",
+  "modelId": "claude-sonnet-4-6",
+  "createdAt": "2026-04-01T13:56:15.834Z",
+  "updatedAt": "2026-04-01T14:01:51.164Z",
+  "columnMovedAt": "2026-04-01T13:59:03.387Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T13:56:15.834Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T13:57:53.216Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T13:59:01.268Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies a real bug: the frontend's `fetchProjectTasks()` sends `projectId` to `/api/tasks`, but the backend endpoint ignores it. The spec correctly identifies the file locations, provides a clear implementation approach using dynamic imports (matching the existing pattern for `AgentStore`), and requires appropriate test coverage. One minor gap exists around `TaskStore.getOrCreateForProject` which doesn't exist in the current codebase."
+    }
+  ]
+}

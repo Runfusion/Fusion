@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
+import { resolveProject } from "../project-context.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -34,11 +35,11 @@ export type GitPushResult = {
 // ── Core Git Functions ─────────────────────────────────────────────────
 
 /**
- * Check if the current directory is a git repository.
+ * Check if a directory is a git repository.
  */
-export function isGitRepo(): boolean {
+export function isGitRepo(cwd: string = process.cwd()): boolean {
   try {
-    execSync("git rev-parse --git-dir", { encoding: "utf-8", timeout: 5000 });
+    execSync("git rev-parse --git-dir", { encoding: "utf-8", timeout: 5000, cwd });
     return true;
   } catch {
     return false;
@@ -72,24 +73,24 @@ export function isValidBranchName(name: string): boolean {
  * Get the current git status including branch, commit hash, and dirty state.
  * Returns structured data for CLI display.
  */
-export function getGitStatus(): GitStatus | null {
+export function getGitStatus(cwd: string = process.cwd()): GitStatus | null {
   try {
     // Get current branch (empty string means detached HEAD)
-    const branchOutput = execSync("git branch --show-current", { encoding: "utf-8", timeout: 5000 }).trim();
+    const branchOutput = execSync("git branch --show-current", { encoding: "utf-8", timeout: 5000, cwd }).trim();
     const branch = branchOutput || "HEAD detached";
 
     // Get current commit hash (short)
-    const commit = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000 }).trim();
+    const commit = execSync("git rev-parse --short HEAD", { encoding: "utf-8", timeout: 5000, cwd }).trim();
 
     // Check if working directory is dirty
-    const statusOutput = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000 }).trim();
+    const statusOutput = execSync("git status --porcelain", { encoding: "utf-8", timeout: 5000, cwd }).trim();
     const isDirty = statusOutput.length > 0;
 
     // Get ahead/behind counts from upstream
     let ahead = 0;
     let behind = 0;
     try {
-      const revListOutput = execSync("git rev-list --left-right --count HEAD...@{u}", { encoding: "utf-8", timeout: 5000 }).trim();
+      const revListOutput = execSync("git rev-list --left-right --count HEAD...@{u}", { encoding: "utf-8", timeout: 5000, cwd }).trim();
       const match = revListOutput.match(/(\d+)\s+(\d+)/);
       if (match) {
         ahead = parseInt(match[1], 10);
@@ -192,14 +193,17 @@ export function pushGitBranch(): GitPushResult {
 /**
  * Run the git status command and display formatted output.
  */
-export async function runGitStatus(): Promise<void> {
-  // Validate current directory is a git repo
-  if (!isGitRepo()) {
+export async function runGitStatus(projectName?: string): Promise<void> {
+  // Resolve project path
+  const { projectPath } = projectName ? await resolveProject(projectName) : { projectPath: process.cwd() };
+
+  // Validate directory is a git repo
+  if (!isGitRepo(projectPath)) {
     console.error("Error: Not a git repository");
     process.exit(1);
   }
 
-  const status = getGitStatus();
+  const status = getGitStatus(projectPath);
   if (!status) {
     console.error("Error: Failed to get git status");
     process.exit(1);
@@ -237,12 +241,16 @@ export async function runGitStatus(): Promise<void> {
 /**
  * Run the git fetch command.
  * @param remote - The remote to fetch from (default: "origin")
+ * @param projectName - Optional project name to target
  */
-export async function runGitFetch(remote?: string): Promise<void> {
+export async function runGitFetch(remote?: string, projectName?: string): Promise<void> {
   const targetRemote = remote || "origin";
 
-  // Validate current directory is a git repo
-  if (!isGitRepo()) {
+  // Resolve project path
+  const { projectPath } = projectName ? await resolveProject(projectName) : { projectPath: process.cwd() };
+
+  // Validate directory is a git repo
+  if (!isGitRepo(projectPath)) {
     console.error("Error: Not a git repository");
     process.exit(1);
   }
@@ -254,16 +262,9 @@ export async function runGitFetch(remote?: string): Promise<void> {
   }
 
   try {
-    const result = fetchGitRemote(targetRemote);
+    execSync(`git fetch ${targetRemote}`, { encoding: "utf-8", timeout: 30000, cwd: projectPath });
     console.log();
-    if (result.fetched && result.message && result.message !== "Fetch completed") {
-      console.log(`  ✓ Fetched from ${targetRemote}`);
-      if (result.message) {
-        console.log(`    ${result.message}`);
-      }
-    } else {
-      console.log(`  ✓ Fetched from ${targetRemote} (no new changes)`);
-    }
+    console.log(`  ✓ Fetched from ${targetRemote}`);
     console.log();
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
@@ -274,16 +275,20 @@ export async function runGitFetch(remote?: string): Promise<void> {
 /**
  * Run the git pull command.
  * @param options.skipConfirm - Skip confirmation when there are uncommitted changes
+ * @param options.projectName - Optional project name to target
  */
-export async function runGitPull(options: { skipConfirm?: boolean } = {}): Promise<void> {
-  // Validate current directory is a git repo
-  if (!isGitRepo()) {
+export async function runGitPull(options: { skipConfirm?: boolean; projectName?: string } = {}): Promise<void> {
+  // Resolve project path
+  const { projectPath } = options.projectName ? await resolveProject(options.projectName) : { projectPath: process.cwd() };
+
+  // Validate directory is a git repo
+  if (!isGitRepo(projectPath)) {
     console.error("Error: Not a git repository");
     process.exit(1);
   }
 
   // Check for dirty state
-  const status = getGitStatus();
+  const status = getGitStatus(projectPath);
   if (!status) {
     console.error("Error: Failed to get git status");
     process.exit(1);
@@ -307,21 +312,20 @@ export async function runGitPull(options: { skipConfirm?: boolean } = {}): Promi
   }
 
   try {
-    const result = pullGitBranch();
+    const output = execSync("git pull", { encoding: "utf-8", timeout: 30000, cwd: projectPath });
     console.log();
-    
-    if (result.conflict) {
-      console.error("  ✗ Merge conflict detected. Resolve manually.");
-      process.exit(1);
-    }
-    
     console.log(`  ✓ Pulled latest changes for ${status.branch}`);
-    if (result.message && result.message !== "Already up to date.") {
-      console.log(`    ${result.message}`);
+    if (output.trim() && output.trim() !== "Already up to date.") {
+      console.log(`    ${output.trim()}`);
     }
     console.log();
   } catch (err: any) {
-    console.error(`Error: ${err.message}`);
+    const message = err.message || String(err);
+    if (message.includes("CONFLICT") || message.includes("Merge conflict")) {
+      console.error("  ✗ Merge conflict detected. Resolve manually.");
+      process.exit(1);
+    }
+    console.error(`Error: ${message || "Pull failed"}`);
     process.exit(1);
   }
 }
@@ -329,16 +333,20 @@ export async function runGitPull(options: { skipConfirm?: boolean } = {}): Promi
 /**
  * Run the git push command.
  * @param options.skipConfirm - Skip confirmation prompt
+ * @param options.projectName - Optional project name to target
  */
-export async function runGitPush(options: { skipConfirm?: boolean } = {}): Promise<void> {
-  // Validate current directory is a git repo
-  if (!isGitRepo()) {
+export async function runGitPush(options: { skipConfirm?: boolean; projectName?: string } = {}): Promise<void> {
+  // Resolve project path
+  const { projectPath } = options.projectName ? await resolveProject(options.projectName) : { projectPath: process.cwd() };
+
+  // Validate directory is a git repo
+  if (!isGitRepo(projectPath)) {
     console.error("Error: Not a git repository");
     process.exit(1);
   }
 
   // Get current branch
-  const status = getGitStatus();
+  const status = getGitStatus(projectPath);
   if (!status) {
     console.error("Error: Failed to get git status");
     process.exit(1);
@@ -351,7 +359,7 @@ export async function runGitPush(options: { skipConfirm?: boolean } = {}): Promi
 
   // Check for upstream
   try {
-    execSync("git rev-parse --abbrev-ref --symbolic-full-name @{u}", { encoding: "utf-8", timeout: 5000 });
+    execSync("git rev-parse --abbrev-ref --symbolic-full-name @{u}", { encoding: "utf-8", timeout: 5000, cwd: projectPath });
   } catch {
     console.error("Error: No upstream configured for current branch");
     console.error(`  Run: git push -u origin ${status.branch}`);
@@ -373,15 +381,22 @@ export async function runGitPush(options: { skipConfirm?: boolean } = {}): Promi
   }
 
   try {
-    const result = pushGitBranch();
+    const output = execSync("git push", { encoding: "utf-8", timeout: 30000, cwd: projectPath });
     console.log();
     console.log(`  ✓ Pushed ${status.branch} to origin`);
-    if (result.message && result.message !== "Push completed") {
-      console.log(`    ${result.message}`);
+    if (output.trim()) {
+      console.log(`    ${output.trim()}`);
     }
     console.log();
   } catch (err: any) {
-    console.error(`Error: ${err.message}`);
+    const message = err.message || String(err);
+    if (message.includes("rejected") || message.includes("non-fast-forward")) {
+      console.error("Error: Push rejected. Pull latest changes first.");
+    } else if (message.includes("Could not resolve host") || message.includes("Connection refused")) {
+      console.error("Error: Failed to connect to remote");
+    } else {
+      console.error(`Error: ${message || "Push failed"}`);
+    }
     process.exit(1);
   }
 }

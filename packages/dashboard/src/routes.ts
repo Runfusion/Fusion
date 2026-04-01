@@ -5882,6 +5882,267 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   // Mount mission routes at /api/missions
   router.use("/missions", createMissionRouter(store));
 
+  // ── Project Management Routes (Multi-Project Support) ───────────────────────
+  // These routes require CentralCore which is imported dynamically to avoid
+  // circular dependencies and ensure the central database is initialized.
+
+  /**
+   * GET /api/projects
+   * List all registered projects with their basic info.
+   * Returns: ProjectInfo[]
+   */
+  router.get("/projects", async (_req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const projects = await central.listProjects();
+      await central.close();
+      
+      res.json(projects);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/projects
+   * Register a new project.
+   * Body: { name: string, path: string, isolationMode?: "in-process" | "child-process" }
+   * Returns: RegisteredProject
+   */
+  router.post("/projects", async (req, res) => {
+    try {
+      const { name, path, isolationMode = "in-process" } = req.body;
+      
+      if (!name || typeof name !== "string" || !name.trim()) {
+        res.status(400).json({ error: "name is required and must be a non-empty string" });
+        return;
+      }
+      if (!path || typeof path !== "string" || !path.trim()) {
+        res.status(400).json({ error: "path is required and must be a non-empty string" });
+        return;
+      }
+      if (!["in-process", "child-process"].includes(isolationMode)) {
+        res.status(400).json({ error: "isolationMode must be 'in-process' or 'child-process'" });
+        return;
+      }
+      
+      // Check if path exists and has .fusion/ directory
+      const { existsSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      if (!existsSync(path)) {
+        res.status(400).json({ error: "Project path does not exist" });
+        return;
+      }
+      const hasFusionDir = existsSync(join(path, ".fusion"));
+      
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const project = await central.registerProject({
+        name: name.trim(),
+        path: path.trim(),
+        isolationMode,
+      });
+      
+      await central.close();
+      
+      res.status(201).json({ ...project, _meta: { hasFusionDir: hasFusionDir ? undefined : false } });
+    } catch (err: any) {
+      const status = err.message?.includes("already registered") ? 409 
+        : err.message?.includes("Duplicate path") ? 409
+        : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/projects/:id
+   * Unregister a project.
+   */
+  router.delete("/projects/:id", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      await central.unregisterProject(req.params.id);
+      await central.close();
+      
+      res.json({ success: true });
+    } catch (err: any) {
+      const status = err.message?.includes("not found") ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/projects/:id/health
+   * Get health metrics for a specific project.
+   * Returns: ProjectHealth
+   */
+  router.get("/projects/:id/health", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const health = await central.getProjectHealth(req.params.id);
+      await central.close();
+      
+      if (!health) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      
+      res.json(health);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/projects/:id/config
+   * Get project-specific configuration.
+   * Returns: { maxConcurrent: number, rootDir: string }
+   */
+  router.get("/projects/:id/config", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const project = await central.getProject(req.params.id);
+      await central.close();
+      
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      
+      res.json({
+        maxConcurrent: 2,
+        rootDir: project.path,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/projects/:id/pause
+   * Pause a project.
+   */
+  router.post("/projects/:id/pause", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const project = await central.updateProject(req.params.id, { status: "paused" });
+      await central.updateProjectHealth(req.params.id, { status: "paused" });
+      await central.close();
+      
+      res.json(project);
+    } catch (err: any) {
+      const status = err.message?.includes("not found") ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/projects/:id/resume
+   * Resume a paused project.
+   */
+  router.post("/projects/:id/resume", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const project = await central.updateProject(req.params.id, { status: "active" });
+      await central.updateProjectHealth(req.params.id, { status: "active" });
+      await central.close();
+      
+      res.json(project);
+    } catch (err: any) {
+      const status = err.message?.includes("not found") ? 404 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/activity-feed
+   * Get unified activity feed across all projects.
+   * Query: limit, projectId, types
+   * Returns: ActivityFeedEntry[]
+   */
+  router.get("/activity-feed", async (req, res) => {
+    try {
+      const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+      const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+      const typesParam = typeof req.query.types === "string" ? req.query.types.split(",") : undefined;
+      const types = typesParam as import("@fusion/core").ActivityEventType[] | undefined;
+      
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const entries = await central.getRecentActivity({ limit, projectId, types });
+      await central.close();
+      
+      res.json(entries);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/global-concurrency
+   * Get global concurrency state across all projects.
+   * Returns: GlobalConcurrencyState
+   */
+  router.get("/global-concurrency", async (_req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const state = await central.getGlobalConcurrencyState();
+      await central.close();
+      
+      res.json(state);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/first-run-status
+   * Check if user has projects or needs setup wizard.
+   * Returns: { hasProjects: boolean, singleProjectPath: string | null }
+   */
+  router.get("/first-run-status", async (_req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const projects = await central.listProjects();
+      await central.close();
+      
+      const hasProjects = projects.length > 0;
+      const singleProjectPath = projects.length === 1 ? projects[0].path : null;
+      
+      res.json({ hasProjects, singleProjectPath });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
 

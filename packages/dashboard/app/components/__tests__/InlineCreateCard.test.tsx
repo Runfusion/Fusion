@@ -300,12 +300,12 @@ describe("InlineCreateCard model selector", () => {
       autoSelectModelPreset: false,
       defaultPresetBySize: {},
     });
-    const { props } = renderCard();
+    const { props } = renderCard([], { availableModels: undefined });
     const textarea = screen.getByPlaceholderText("What needs to be done?");
 
     fireEvent.change(textarea, { target: { value: "Task with preset" } });
     fireEvent.click(screen.getByRole("button", { name: /Preset/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Budget" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Budget" }));
     fireEvent.click(screen.getByRole("button", { name: /Save/i }));
 
     await waitFor(() => {

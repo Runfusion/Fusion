@@ -74,7 +74,7 @@ describe("useAgentLogs", () => {
 
     expect(mockFetchAgentLogs).toHaveBeenCalledWith("FN-001");
     expect(MockEventSource.instances).toHaveLength(1);
-    expect(MockEventSource.instances[0].url).toBe("/api/tasks/KB-001/logs/stream");
+    expect(MockEventSource.instances[0].url).toBe("/api/tasks/FN-001/logs/stream");
   });
 
   it("appends live SSE entries to historical entries", async () => {

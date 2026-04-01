@@ -1,55 +1,21 @@
 {
   "id": "KB-620",
   "description": "Migration and First-Run Experience: Implement auto-migration from single-project to multi-project system, backward compatibility layer, and first-run setup wizard.\n\n1. **Auto-Migration** (`packages/core/src/db-migrate.ts` — extend existing):\n   - On first run post-upgrade, detect existing `.kb/` directory\n   - Auto-create central DB at `~/.pi/kb/kb-central.db` if missing\n   - Auto-register existing `.kb/` directory as a project in central registry\n   - Set project name from git remote name or directory name\n   - Set isolation mode to `in-process` (default)\n   - Idempotent: re-running with existing central DB is a no-op\n\n2. **Backward Compatibility**:\n   - Single-project users experience zero behavior change\n   - All existing commands work without `--project` flag\n   - Dashboard defaults to single project view when only one project registered\n   - No breaking changes to TaskStore API\n   - Existing `.kb/kb.db` stays in place, central DB is additive\n\n3. **First-Run Detection** — Logic to determine first-run state:\n   - No central DB exists → first run\n   - Central DB exists but empty → setup wizard\n   - Central DB exists with projects → normal operation\n   - Existing `.kb/` but no central DB → migration path\n\n4. **Setup Wizard Integration**:\n   - CLI: `fn init` extended to register project in central DB\n   - Dashboard: overview page shows migration prompt for existing single-project\n   - Both paths converge on same `CentralCore.registerProject()` call\n\n5. **Migration Testing**:\n   - Test: fresh install → setup wizard path\n   - Test: existing single project → auto-migration path\n   - Test: post-migration → all existing features work\n   - Test: idempotent migration (run twice, no errors)\n   - Test: backward compatibility (single project, no --project flag)\n\n6. **Rollback Safety**:\n   - Central DB deletion doesn't break existing per-project `.kb/` databases\n   - Document rollback procedure in AGENTS.md\n\n**File scope:**\n- `packages/core/src/db-migrate.ts` (extend with central DB migration)\n- `packages/core/src/central-core.ts` (add migration helpers)\n- `packages/cli/src/bin.ts` (extend `fn init` for multi-project)\n- `packages/core/test/migration.test.ts` (new)\n- `packages/core/test/backward-compat.test.ts` (new)\n\n**Context:** Read `packages/core/src/db-migrate.ts` for existing migration patterns, `packages/core/src/central-core.ts` for CentralCore API, `packages/cli/src/bin.ts` for CLI init command.",
-  "column": "in-progress",
+  "column": "todo",
+  "status": "queued",
   "size": "M",
   "reviewLevel": 3,
-  "currentStep": 1,
-  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/hazy-aspen",
-  "baseCommitSha": "92ab95534980efe2c7769f9d6185400842daab8c",
+  "currentStep": 0,
   "createdAt": "2026-03-31T23:26:48.611Z",
-  "updatedAt": "2026-04-01T06:42:45.693Z",
-  "columnMovedAt": "2026-04-01T06:41:55.372Z",
+  "updatedAt": "2026-04-01T14:01:50.326Z",
+  "columnMovedAt": "2026-03-31T23:35:32.331Z",
   "dependencies": [
     "KB-615",
     "KB-616",
     "KB-618",
     "KB-619"
   ],
-  "steps": [
-    {
-      "name": "Preflight",
-      "status": "done"
-    },
-    {
-      "name": "First-Run Detection Logic",
-      "status": "in-progress"
-    },
-    {
-      "name": "Auto-Migration to Central Database",
-      "status": "pending"
-    },
-    {
-      "name": "Backward Compatibility Layer",
-      "status": "pending"
-    },
-    {
-      "name": "CLI Integration — fn init Command and Migration Hooks",
-      "status": "pending"
-    },
-    {
-      "name": "Dashboard First-Run Wizard Integration",
-      "status": "pending"
-    },
-    {
-      "name": "Testing & Verification",
-      "status": "pending"
-    },
-    {
-      "name": "Documentation & Delivery",
-      "status": "pending"
-    }
-  ],
+  "steps": [],
   "log": [
     {
       "timestamp": "2026-03-31T23:26:48.611Z",
@@ -72,40 +38,6 @@
       "timestamp": "2026-03-31T23:35:28.428Z",
       "action": "Spec review: APPROVE",
       "outcome": "This is a well-crafted specification that correctly builds upon existing patterns in the kb codebase. The spec accurately references real files (`db-migrate.ts`, `global-settings.ts`, `db.ts`, `bin.ts`, `index.ts`) and follows established conventions for migrations, SQLite storage, and testing. The stub strategy for incomplete dependencies is pragmatic, and the rollback safety considerations are thorough. The four-state first-run detection model (`fresh-install`, `needs-migration`, `setup-wizard"
-    },
-    {
-      "timestamp": "2026-04-01T06:41:55.593Z",
-      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/hazy-aspen"
-    },
-    {
-      "timestamp": "2026-04-01T06:41:55.616Z",
-      "action": "Step 0 (Preflight) → pending"
-    },
-    {
-      "timestamp": "2026-04-01T06:41:57.406Z",
-      "action": "Step 0 (Preflight) → in-progress"
-    },
-    {
-      "timestamp": "2026-04-01T06:42:16.115Z",
-      "action": "Step 0 (Preflight) → done"
-    },
-    {
-      "timestamp": "2026-04-01T06:42:16.117Z",
-      "action": "Preflight checks complete",
-      "outcome": "Dependencies are in place: CentralCore, ProjectManager, and project resolution patterns are all available. Tests are running. Ready to proceed with Step 1."
-    },
-    {
-      "timestamp": "2026-04-01T06:42:17.178Z",
-      "action": "plan review requested for Step 1 (First-Run Detection Logic)"
-    },
-    {
-      "timestamp": "2026-04-01T06:42:44.424Z",
-      "action": "plan review Step 1: APPROVE",
-      "outcome": "The plan for Step 1 is well-structured and achievable. The detection logic design with four distinct states (`fresh-install`, `needs-migration`, `setup-wizard`, `normal-operation`) correctly handles the transition from single-project to multi-project mode. The `FirstRunDetector` class responsibilities are clearly scoped, and the `MigrationCoordinator` orchestration approach is sound."
-    },
-    {
-      "timestamp": "2026-04-01T06:42:45.693Z",
-      "action": "Step 1 (First-Run Detection Logic) → in-progress"
     }
   ]
 }

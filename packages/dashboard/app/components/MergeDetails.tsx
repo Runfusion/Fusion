@@ -1,4 +1,4 @@
-import type { Task } from "@kb/core";
+import type { Task } from "@fusion/core";
 
 interface MergeDetailsProps {
   task: Task;

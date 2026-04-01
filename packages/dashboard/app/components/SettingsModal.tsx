@@ -167,6 +167,9 @@ export function SettingsModal({
     };
   }, [activeSection, loadAuthStatus]);
 
+  /** Get the scope of the currently active section */
+  const activeSectionScope = SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.scope;
+
   const handleLogin = useCallback(async (providerId: string) => {
     setAuthActionInProgress(providerId);
     try {

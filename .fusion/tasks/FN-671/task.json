@@ -1,34 +1,97 @@
 {
   "id": "FN-671",
-  "description": "Add a disclosure to see quick add dashboard icons and options for both board view and list view",
-  "column": "todo",
-  "status": "queued",
+  "description": "I can’t access all header icons now on mobile",
+  "column": "in-progress",
   "size": "S",
-  "reviewLevel": 2,
-  "currentStep": 0,
-  "blockedBy": "FN-667",
-  "createdAt": "2026-04-01T06:21:39.049Z",
-  "updatedAt": "2026-04-01T06:42:55.411Z",
-  "columnMovedAt": "2026-04-01T06:24:26.579Z",
+  "reviewLevel": 1,
+  "currentStep": 1,
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/eager-thorn",
+  "baseCommitSha": "c3552af142f40e5833f5207c74af0e60de491e99",
+  "createdAt": "2026-04-01T13:51:52.837Z",
+  "updatedAt": "2026-04-01T14:02:01.790Z",
+  "columnMovedAt": "2026-04-01T14:01:50.408Z",
   "dependencies": [],
-  "steps": [],
+  "steps": [
+    {
+      "name": "Move Usage Button to Mobile Overflow Menu",
+      "status": "done"
+    },
+    {
+      "name": "Move Activity Log Button to Mobile Overflow Menu",
+      "status": "in-progress"
+    },
+    {
+      "name": "Verify Mobile Overflow Menu Organization",
+      "status": "pending"
+    },
+    {
+      "name": "Update Tests",
+      "status": "pending"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
   "log": [
     {
-      "timestamp": "2026-04-01T06:21:39.049Z",
+      "timestamp": "2026-04-01T13:51:52.837Z",
       "action": "Task created"
     },
     {
-      "timestamp": "2026-04-01T06:22:38.451Z",
-      "action": "Spec review not approved (review_spec was never called) — specification not approved"
-    },
-    {
-      "timestamp": "2026-04-01T06:24:03.740Z",
+      "timestamp": "2026-04-01T13:55:08.226Z",
       "action": "Spec review requested"
     },
     {
-      "timestamp": "2026-04-01T06:24:24.692Z",
+      "timestamp": "2026-04-01T13:56:02.491Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification correctly identifies a genuine gap—ProjectSelector.tsx uses BEM-style classes (`.project-selector`, `.project-selector__trigger`, etc.) that have zero CSS definitions, and the component is unstyled. The steps for adding CSS follow dashboard conventions and the testing strategy is appropriate. However, the spec contains a factual error: it claims `header-back-button` and `header-project-selector` classes are used in Header.tsx (lines 108-130 reference), but these class names do "
+    },
+    {
+      "timestamp": "2026-04-01T13:56:44.673Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T13:57:02.415Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification correctly identifies the mobile header layout issue and provides clear steps for moving Usage and Activity Log buttons to the overflow menu. However, there is a critical error in Step 2 where the spec incorrectly references a non-existent `onActivityLog` function instead of `onOpenActivityLog`. This would cause a runtime error if implemented as written."
+    },
+    {
+      "timestamp": "2026-04-01T13:57:13.029Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T13:57:38.001Z",
       "action": "Spec review: APPROVE",
-      "outcome": "The specification is comprehensive and accurate. It correctly identifies the target component (`QuickEntryBox`), the current implementation patterns (focus-based expansion via `isExpanded`, `showExpandedControls` gating), and the required persistence mechanism (`localStorage`). The mission is clear, steps have verifiable outcomes, and testing requirements demand real assertions."
+      "outcome": "The specification accurately describes a focused mobile UI fix. The issue is real: Header.tsx currently shows Usage and Activity Log buttons inline on mobile (around lines 203-214), contributing to header overflow. The fix follows established patterns already used for Terminal, Files, and Git Manager buttons (which are conditionally rendered with `!isMobile` and duplicated in the overflow menu at line 295+). The CSS styles for mobile overflow menu are in place and tested."
+    },
+    {
+      "timestamp": "2026-04-01T14:01:51.135Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/eager-thorn"
+    },
+    {
+      "timestamp": "2026-04-01T14:01:51.165Z",
+      "action": "Step 0 (Move Usage Button to Mobile Overflow Menu) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T14:01:52.137Z",
+      "action": "Step 0 (Move Usage Button to Mobile Overflow Menu) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:01:59.833Z",
+      "action": "Step 0 (Move Usage Button to Mobile Overflow Menu) → done"
+    },
+    {
+      "timestamp": "2026-04-01T14:02:01.789Z",
+      "action": "Step 1 (Move Activity Log Button to Mobile Overflow Menu) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T14:02:01.790Z",
+      "action": "plan review requested for Step 1 (Move Usage Button to Mobile Overflow Menu)"
     }
   ]
 }
