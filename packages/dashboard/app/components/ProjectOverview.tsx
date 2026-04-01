@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { Plus, LayoutGrid, Filter, ArrowUpDown, Activity, CheckCircle, AlertCircle, Folder, Inbox } from "lucide-react";
-import type { ProjectInfo, ProjectHealth, ProjectStatus } from "@fusion/core";
+import type { ProjectInfo, ProjectHealth, ProjectStatus } from "../api";
 import { ProjectCard } from "./ProjectCard";
 import { ProjectGridSkeleton } from "./ProjectGridSkeleton";
 import { useProjectHealth } from "../hooks/useProjectHealth";

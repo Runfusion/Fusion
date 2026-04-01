@@ -12,7 +12,7 @@ import {
   Loader2,
   X,
 } from "lucide-react";
-import type { ProjectInfo, ProjectStatus } from "@fusion/core";
+import type { ProjectInfo, ProjectStatus } from "../api";
 
 export interface ProjectSelectorProps {
   projects: ProjectInfo[];

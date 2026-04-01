@@ -5891,6 +5891,122 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * POST /api/projects/detect
+   * Auto-detect kb projects in a directory.
+   * Body: { basePath?: string }
+   * Returns: { projects: DetectedProject[] }
+   */
+  router.post("/projects/detect", async (req, res) => {
+    try {
+      const { basePath } = req.body;
+      const { existsSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { readdir } = await import("node:fs/promises");
+      
+      // Default to home directory if no basePath provided
+      const searchPath = basePath || process.env.HOME || process.env.USERPROFILE || ".";
+      
+      if (!existsSync(searchPath)) {
+        res.status(400).json({ error: "Base path does not exist" });
+        return;
+      }
+
+      // Get list of existing projects to check for duplicates
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      const existingProjects = await central.listProjects();
+      await central.close();
+      
+      const existingPaths = new Set(existingProjects.map((p: { path: string }) => p.path));
+      
+      // Scan for .kb/kb.db or .fusion/kb.db files (indicating kb projects)
+      const detected: Array<{ path: string; suggestedName: string; existing: boolean }> = [];
+      
+      try {
+        const entries = await readdir(searchPath, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          
+          const dirPath = join(searchPath, entry.name);
+          const hasKbDb = existsSync(join(dirPath, ".kb", "kb.db"));
+          const hasFusionDir = existsSync(join(dirPath, ".fusion"));
+          
+          if (hasKbDb || hasFusionDir) {
+            detected.push({
+              path: dirPath,
+              suggestedName: entry.name,
+              existing: existingPaths.has(dirPath),
+            });
+          }
+        }
+      } catch {
+        // Ignore read errors
+      }
+      
+      res.json({ projects: detected });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/projects/:id
+   * Get a single project by ID.
+   */
+  router.get("/projects/:id", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const project = await central.getProject(req.params.id);
+      await central.close();
+      
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      
+      res.json(project);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * PATCH /api/projects/:id
+   * Update a project.
+   */
+  router.patch("/projects/:id", async (req, res) => {
+    try {
+      const { name, status, isolationMode } = req.body;
+      
+      const updates: Partial<import("@fusion/core").RegisteredProject> = {};
+      if (name !== undefined) updates.name = name;
+      if (status !== undefined) updates.status = status as import("@fusion/core").ProjectStatus;
+      if (isolationMode !== undefined) updates.isolationMode = isolationMode as "in-process" | "child-process";
+      
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      
+      const project = await central.updateProject(req.params.id, updates);
+      await central.close();
+      
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      
+      res.json(project);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * DELETE /api/projects/:id
    * Unregister a project.
    */
@@ -6069,6 +6185,226 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const singleProjectPath = projects.length === 1 ? projects[0].path : null;
       
       res.json({ hasProjects, singleProjectPath });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/tasks/:id/diff
+   * Fetch git diff for a task's changes.
+   * Query: ?worktree=path
+   * Returns: TaskDiff
+   */
+  router.get("/tasks/:id/diff", async (req, res) => {
+    try {
+      const task = store.getTask(req.params.id);
+      if (!task) {
+        res.status(404).json({ error: "Task not found" });
+        return;
+      }
+
+      const worktree = typeof req.query.worktree === "string" ? req.query.worktree : undefined;
+      const cwd = worktree || store.getRootDir();
+
+      // Get the base commit - default to HEAD~1 if not provided
+      let baseCommit = "HEAD~1";
+
+      // Get the diff
+      const { execSync } = await import("node:child_process");
+      
+      // Get list of changed files
+      const filesOutput = execSync(`git diff --name-status ${baseCommit}..HEAD`, {
+        encoding: "utf-8",
+        cwd,
+        timeout: 10000,
+      });
+
+      const files: Array<{
+        path: string;
+        status: "added" | "modified" | "deleted";
+        additions: number;
+        deletions: number;
+        patch: string;
+      }> = [];
+
+      for (const line of filesOutput.trim().split("\n")) {
+        if (!line.trim()) continue;
+        
+        const parts = line.split("\t");
+        const statusCode = parts[0];
+        const filePath = parts[1];
+        
+        let status: "added" | "modified" | "deleted";
+        if (statusCode.startsWith("A")) status = "added";
+        else if (statusCode.startsWith("D")) status = "deleted";
+        else status = "modified";
+
+        // Get patch for this file
+        let patch = "";
+        try {
+          patch = execSync(`git diff ${baseCommit}..HEAD -- "${filePath}"`, {
+            encoding: "utf-8",
+            cwd,
+            timeout: 10000,
+          });
+        } catch {
+          // Ignore errors for individual files
+        }
+
+        // Count additions/deletions
+        const additions = (patch.match(/^\+[^+]/gm) || []).length;
+        const deletions = (patch.match(/^-[^-]/gm) || []).length;
+
+        files.push({ path: filePath, status, additions, deletions, patch });
+      }
+
+      const stats = {
+        filesChanged: files.length,
+        additions: files.reduce((sum, f) => sum + f.additions, 0),
+        deletions: files.reduce((sum, f) => sum + f.deletions, 0),
+      };
+
+      res.json({ files, stats });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/tasks/:id/file-diffs
+   * Fetch simplified file diffs for a task.
+   * Query: ?worktree=path
+   * Returns: TaskFileDiff[]
+   */
+  router.get("/tasks/:id/file-diffs", async (req, res) => {
+    try {
+      const task = store.getTask(req.params.id);
+      if (!task) {
+        res.status(404).json({ error: "Task not found" });
+        return;
+      }
+
+      const worktree = typeof req.query.worktree === "string" ? req.query.worktree : undefined;
+      const cwd = worktree || store.getRootDir();
+
+      // Get the base commit
+      let baseCommit = "HEAD~1";
+
+      // Get the diff stat for file list
+      const { execSync } = await import("node:child_process");
+      
+      const filesOutput = execSync(`git diff --name-status ${baseCommit}..HEAD`, {
+        encoding: "utf-8",
+        cwd,
+        timeout: 10000,
+      });
+
+      const files: Array<{
+        path: string;
+        status: "added" | "modified" | "deleted";
+        additions: number;
+        deletions: number;
+        patch: string;
+      }> = [];
+
+      for (const line of filesOutput.trim().split("\n")) {
+        if (!line.trim()) continue;
+        
+        const parts = line.split("\t");
+        const statusCode = parts[0];
+        const filePath = parts[1];
+        
+        let status: "added" | "modified" | "deleted";
+        if (statusCode.startsWith("A")) status = "added";
+        else if (statusCode.startsWith("D")) status = "deleted";
+        else status = "modified";
+
+        let patch = "";
+        try {
+          patch = execSync(`git diff ${baseCommit}..HEAD -- "${filePath}"`, {
+            encoding: "utf-8",
+            cwd,
+            timeout: 10000,
+          });
+        } catch {
+          // Ignore errors for individual files
+        }
+
+        const additions = (patch.match(/^\+[^+]/gm) || []).length;
+        const deletions = (patch.match(/^-[^-]/gm) || []).length;
+
+        files.push({ path: filePath, status, additions, deletions, patch });
+      }
+
+      res.json(files);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Scripts API ──────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/scripts
+   * Fetch all saved scripts.
+   * Returns: Record<string, string> (name -> command)
+   */
+  router.get("/scripts", async (_req, res) => {
+    try {
+      const { loadScriptStore } = await import("./script-store.js");
+      const store = await loadScriptStore();
+      res.json(store.getScripts());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/scripts
+   * Add or update a script.
+   * Body: { name: string, command: string }
+   * Returns: Record<string, string> (updated scripts)
+   */
+  router.post("/scripts", async (req, res) => {
+    try {
+      const { name, command } = req.body;
+      
+      if (!name || typeof name !== "string" || !name.trim()) {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      if (command === undefined || typeof command !== "string") {
+        res.status(400).json({ error: "command is required" });
+        return;
+      }
+      
+      const { loadScriptStore } = await import("./script-store.js");
+      const store = await loadScriptStore();
+      store.setScript(name.trim(), command.trim());
+      await store.save();
+      
+      res.json(store.getScripts());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/scripts/:name
+   * Remove a script.
+   * Returns: Record<string, string> (updated scripts)
+   */
+  router.delete("/scripts/:name", async (req, res) => {
+    try {
+      const { name } = req.params;
+      
+      const { loadScriptStore } = await import("./script-store.js");
+      const store = await loadScriptStore();
+      store.removeScript(name);
+      await store.save();
+      
+      res.json(store.getScripts());
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

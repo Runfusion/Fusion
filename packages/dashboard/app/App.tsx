@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
-import type { TaskDetail, TaskCreateInput, Task, ThemeMode, ProjectInfo } from "@fusion/core";
-import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, fetchModels, fetchTaskDetail } from "./api";
-import type { ModelInfo } from "./api";
+import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@fusion/core";
+import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, fetchModels, fetchTaskDetail, updateProject, unregisterProject } from "./api";
+import type { ModelInfo, ProjectInfo } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
@@ -25,13 +25,49 @@ import { ActivityLogModal } from "./components/ActivityLogModal";
 import { WorkflowStepManager } from "./components/WorkflowStepManager";
 import { AgentListModal } from "./components/AgentListModal";
 import { AgentsView } from "./components/AgentsView";
+import { ScriptsModal } from "./components/ScriptsModal";
 import { useTasks } from "./hooks/useTasks";
 import { useProjects } from "./hooks/useProjects";
 import { useCurrentProject } from "./hooks/useCurrentProject";
 import { ToastProvider, useToast } from "./hooks/useToast";
 import { useTheme } from "./hooks/useTheme";
 
+type ViewMode = "overview" | "project";
+type TaskView = "board" | "list" | "agents";
+
 function AppInner() {
+  const { toasts, addToast, removeToast } = useToast();
+  
+  // Project management hooks - MUST be called before any conditional logic
+  const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects, register: registerProject, update: updateProjectHook, unregister: unregisterProjectHook } = useProjects();
+  const { currentProject, setCurrentProject, clearCurrentProject, loading: currentProjectLoading } = useCurrentProject(projects);
+  
+  // Tasks hook with project context
+  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone } = useTasks(
+    currentProject ? { projectId: currentProject.id } : undefined
+  );
+
+  // Theme management
+  const { themeMode, colorTheme, setThemeMode, setColorTheme } = useTheme();
+
+  // View state
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("kb-dashboard-view-mode");
+      if (saved === "overview" || saved === "project") return saved;
+    }
+    return "overview";
+  });
+  
+  const [taskView, setTaskView] = useState<TaskView>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("kb-dashboard-task-view");
+      if (saved === "board" || saved === "list" || saved === "agents") return saved;
+    }
+    return "board";
+  });
+
+  // Modal states
   const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
   const [isPlanningOpen, setIsPlanningOpen] = useState(false);
   const [planningInitialPlan, setPlanningInitialPlan] = useState<string | null>(null);
@@ -53,36 +89,38 @@ function AppInner() {
   const [scriptsOpen, setScriptsOpen] = useState(false);
   const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
+  const [setupWizardOpen, setSetupWizardOpen] = useState(false);
+
+  // Settings state
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [rootDir, setRootDir] = useState<string>(".");
   const [autoMerge, setAutoMerge] = useState(true);
   const [globalPaused, setGlobalPaused] = useState(false);
   const [enginePaused, setEnginePaused] = useState(false);
-  const [view, setView] = useState<"board" | "list" | "agents">(() => {
-    // Initialize from localStorage if available
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("kb-dashboard-view");
-      if (saved === "list" || saved === "board" || saved === "agents") {
-        return saved;
-      }
-    }
-    return "board";
-  });
-
   const [searchQuery, setSearchQuery] = useState("");
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
 
-  // Setup wizard state
-  const [setupWizardOpen, setSetupWizardOpen] = useState(false);
+  // Persist view mode
+  useEffect(() => {
+    localStorage.setItem("kb-dashboard-view-mode", viewMode);
+  }, [viewMode]);
 
-  // Tasks hook with project context
-  const { tasks, createTask, moveTask, deleteTask, mergeTask, retryTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone } = useTasks(
-    currentProject ? { projectId: currentProject.id } : undefined
-  );
+  // Persist task view
+  useEffect(() => {
+    localStorage.setItem("kb-dashboard-task-view", taskView);
+  }, [taskView]);
 
-  // Theme management
-  const { themeMode, colorTheme, setThemeMode, setColorTheme } = useTheme();
+  // Sync view mode when current project is restored from localStorage
+  useEffect(() => {
+    // Wait for both loading states to complete before syncing
+    if (projectsLoading || currentProjectLoading) return;
+
+    // If we have a restored current project but viewMode is overview, sync to project view
+    if (currentProject && viewMode === "overview") {
+      setViewMode("project");
+    }
+  }, [projectsLoading, currentProjectLoading, currentProject, viewMode]);
 
   // Auto-open setup wizard on first run (no projects)
   useEffect(() => {
@@ -93,7 +131,6 @@ function AppInner() {
     if (setupWizardOpen) return;
 
     // Don't open if we have projects OR a saved current project
-    // (currentProject from localStorage means user was previously viewing a project)
     if (projects.length > 0 || currentProject) return;
 
     // Only open when truly no projects exist and no project is being restored
@@ -103,29 +140,6 @@ function AppInner() {
     return () => clearTimeout(timer);
   }, [projectsLoading, projects.length, currentProjectLoading, currentProject, setupWizardOpen]);
 
-  // Persist view mode
-  useEffect(() => {
-    localStorage.setItem("kb-dashboard-view-mode", viewMode);
-  }, [viewMode]);
-
-  // Sync view mode when current project is restored from localStorage
-  // This ensures that if the user refreshed while viewing a specific project,
-  // they return to project view instead of the overview
-  useEffect(() => {
-    // Wait for both loading states to complete before syncing
-    if (projectsLoading || currentProjectLoading) return;
-
-    // If we have a restored current project but viewMode is overview, sync to project view
-    if (currentProject && viewMode === "overview") {
-      setViewMode("project");
-    }
-  }, [projectsLoading, currentProjectLoading, currentProject]); // intentionally NOT depending on viewMode
-
-  // Persist task view
-  useEffect(() => {
-    localStorage.setItem("kb-dashboard-task-view", taskView);
-  }, [taskView]);
-
   // Theme toggle handler: cycles Dark → Light → System → Dark
   const handleToggleTheme = useCallback(() => {
     const cycle: ThemeMode[] = ["dark", "light", "system"];
@@ -134,6 +148,7 @@ function AppInner() {
     setThemeMode(nextMode);
   }, [themeMode, setThemeMode]);
 
+  // Initial data fetch
   useEffect(() => {
     fetchConfig()
       .then((cfg) => {
@@ -156,7 +171,7 @@ function AppInner() {
           setSettingsInitialSection("authentication");
         }
       })
-      .catch(() => {/* fail silently — do not auto-open */});
+      .catch(() => {/* fail silently */});
   }, []);
 
   // Fetch available models
@@ -165,7 +180,6 @@ function AppInner() {
       .then((models) => setAvailableModels(models))
       .catch(() => {/* keep empty array on failure */});
   }, []);
-  const { toasts, addToast, removeToast } = useToast();
 
   // Handle deep link to task on mount
   useEffect(() => {
@@ -173,8 +187,18 @@ function AppInner() {
     const taskId = params.get("task");
     if (!taskId) return;
 
-  const handleChangeView = useCallback((newView: "board" | "list" | "agents") => {
-    setView(newView);
+    fetchTaskDetail(taskId)
+      .then((detail) => {
+        setDetailTask(detail);
+      })
+      .catch(() => {
+        addToast(`Task ${taskId} not found`, "error");
+      });
+  }, [addToast]);
+
+  // View change handlers
+  const handleChangeTaskView = useCallback((newView: TaskView) => {
+    setTaskView(newView);
   }, []);
 
   // Project selection handlers
@@ -192,23 +216,33 @@ function AppInner() {
     setSetupWizardOpen(true);
   }, []);
 
+  const handleSetupComplete = useCallback((project: ProjectInfo) => {
+    setSetupWizardOpen(false);
+    setCurrentProject(project);
+    setViewMode("project");
+    addToast(`Project ${project.name} registered successfully`, "success");
+    refreshProjects();
+  }, [setCurrentProject, addToast, refreshProjects]);
+
   const handlePauseProject = useCallback(async (project: ProjectInfo) => {
     try {
       await updateProject(project.id, { status: "paused" });
       addToast(`Project ${project.name} paused`, "success");
+      refreshProjects();
     } catch {
       addToast(`Failed to pause project ${project.name}`, "error");
     }
-  }, [updateProject, addToast]);
+  }, [addToast, refreshProjects]);
 
   const handleResumeProject = useCallback(async (project: ProjectInfo) => {
     try {
       await updateProject(project.id, { status: "active" });
       addToast(`Project ${project.name} resumed`, "success");
+      refreshProjects();
     } catch {
       addToast(`Failed to resume project ${project.name}`, "error");
     }
-  }, [updateProject, addToast]);
+  }, [addToast, refreshProjects]);
 
   const handleRemoveProject = useCallback(async (project: ProjectInfo) => {
     try {
@@ -219,11 +253,13 @@ function AppInner() {
         clearCurrentProject();
         setViewMode("overview");
       }
+      refreshProjects();
     } catch {
       addToast(`Failed to remove project ${project.name}`, "error");
     }
-  }, [unregisterProject, currentProject, clearCurrentProject, addToast]);
+  }, [unregisterProject, currentProject, clearCurrentProject, addToast, refreshProjects]);
 
+  // Task handlers
   const handleNewTaskOpen = useCallback(() => setNewTaskModalOpen(true), []);
   const handleNewTaskClose = useCallback(() => setNewTaskModalOpen(false), []);
 
@@ -358,33 +394,44 @@ function AppInner() {
   const handleOpenAgents = useCallback(() => setAgentsOpen(true), []);
   const handleCloseAgents = useCallback(() => setAgentsOpen(false), []);
 
-  return (
-    <>
-      <Header
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenGitHubImport={() => setGitHubImportOpen(true)}
-        onOpenPlanning={handlePlanningOpen}
-        onOpenUsage={handleOpenUsage}
-        onOpenActivityLog={handleOpenActivityLog}
-        onOpenSchedules={handleOpenSchedules}
-        onOpenGitManager={handleOpenGitManager}
-        onOpenWorkflowSteps={() => setWorkflowStepsOpen(true)}
-        onOpenAgents={handleOpenAgents}
-        onToggleTerminal={handleToggleTerminal}
-        onOpenFiles={handleOpenFiles}
-        filesOpen={filesOpen}
-        globalPaused={globalPaused}
-        enginePaused={enginePaused}
-        onToggleGlobalPause={handleToggleGlobalPause}
-        onToggleEnginePause={handleToggleEnginePause}
-        view={view}
-        onChangeView={handleChangeView}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-      />
-      {view === "agents" ? (
-        <AgentsView addToast={addToast} />
-      ) : view === "board" ? (
+  // Scripts handlers
+  const handleOpenScripts = useCallback(() => setScriptsOpen(true), []);
+  const handleCloseScripts = useCallback(() => setScriptsOpen(false), []);
+  const handleRunScript = useCallback((name: string, command: string) => {
+    setTerminalInitialCommand(command);
+    setTerminalOpen(true);
+    addToast(`Running script: ${name}`, "info");
+  }, [addToast]);
+
+  // Terminal close handler
+  const handleTerminalClose = useCallback(() => {
+    setTerminalOpen(false);
+    setTerminalInitialCommand(undefined);
+  }, []);
+
+  // Render main content based on view mode
+  const renderMainContent = () => {
+    if (viewMode === "overview") {
+      return (
+        <ProjectOverview
+          projects={projects}
+          loading={projectsLoading}
+          onSelectProject={handleSelectProject}
+          onAddProject={handleAddProject}
+          onPauseProject={handlePauseProject}
+          onResumeProject={handleResumeProject}
+          onRemoveProject={handleRemoveProject}
+        />
+      );
+    }
+
+    // Project view
+    if (taskView === "agents") {
+      return <AgentsView addToast={addToast} />;
+    }
+
+    if (taskView === "board") {
+      return (
         <Board
           tasks={tasks}
           maxConcurrent={maxConcurrent}
@@ -448,7 +495,7 @@ function AppInner() {
         onToggleGlobalPause={handleToggleGlobalPause}
         onToggleEnginePause={handleToggleEnginePause}
         view={taskView}
-        onChangeView={setTaskView}
+        onChangeView={handleChangeTaskView}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         projects={projects}

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Play, Pause, AlertCircle, Loader2 } from "lucide-react";
-import type { ProjectStatus, ProjectHealth } from "@fusion/core";
+import type { ProjectStatus } from "@fusion/core";
+import type { ProjectHealth } from "../api";
 
 export interface ProjectHealthBadgeProps {
   status: ProjectStatus;

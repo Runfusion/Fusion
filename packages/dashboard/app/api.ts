@@ -1868,3 +1868,100 @@ export function fetchProjectTasks(projectId: string, limit?: number, offset?: nu
 export function fetchProjectConfig(projectId: string): Promise<{ maxConcurrent: number; rootDir: string }> {
   return api<{ maxConcurrent: number; rootDir: string }>(`/projects/${encodeURIComponent(projectId)}/config`);
 }
+
+/** Detected project information */
+export interface DetectedProject {
+  path: string;
+  suggestedName: string;
+  existing: boolean;
+}
+
+/** Detect projects in a base path */
+export function detectProjects(basePath?: string): Promise<{ projects: DetectedProject[] }> {
+  return api<{ projects: DetectedProject[] }>("/projects/detect", {
+    method: "POST",
+    body: JSON.stringify({ basePath }),
+  });
+}
+
+/** Fetch a single project by ID */
+export function fetchProject(id: string): Promise<ProjectInfo> {
+  return api<ProjectInfo>(`/projects/${encodeURIComponent(id)}`);
+}
+
+/** Update an existing project */
+export function updateProject(id: string, updates: Partial<ProjectInfo>): Promise<ProjectInfo> {
+  return api<ProjectInfo>(`/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+// ── Scripts API ──────────────────────────────────────────────────────────
+
+/** Fetch all saved scripts */
+export function fetchScripts(): Promise<Record<string, string>> {
+  return api<Record<string, string>>("/scripts");
+}
+
+/** Add or update a script */
+export function addScript(name: string, command: string): Promise<Record<string, string>> {
+  return api<Record<string, string>>("/scripts", {
+    method: "POST",
+    body: JSON.stringify({ name, command }),
+  });
+}
+
+/** Remove a script */
+export function removeScript(name: string): Promise<Record<string, string>> {
+  return api<Record<string, string>>(`/scripts/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
+// ── Task Diff API ──────────────────────────────────────────────────────────
+
+/** Task diff information */
+export interface TaskDiff {
+  files: Array<{
+    path: string;
+    status: "added" | "modified" | "deleted";
+    additions: number;
+    deletions: number;
+    patch: string;
+  }>;
+  stats: {
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+  };
+}
+
+/** Fetch diff for a task's changes */
+export function fetchTaskDiff(taskId: string, worktree?: string): Promise<TaskDiff> {
+  const params = new URLSearchParams();
+  if (worktree) params.set("worktree", worktree);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<TaskDiff>(`/tasks/${encodeURIComponent(taskId)}/diff${query}`);
+}
+
+/** Individual file diff */
+export interface TaskFileDiff {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  additions: number;
+  deletions: number;
+  patch: string;
+}
+
+/** Fetch file diffs for a task */
+export function fetchTaskFileDiffs(taskId: string, worktree?: string): Promise<TaskFileDiff[]> {
+  const params = new URLSearchParams();
+  if (worktree) params.set("worktree", worktree);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<TaskFileDiff[]>(`/tasks/${encodeURIComponent(taskId)}/file-diffs${query}`);
+}
+
+
+
+
