@@ -867,6 +867,274 @@ describe("POST /tasks/archive-all-done", () => {
   });
 });
 
+describe("POST /tasks/batch-update-models", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("updates multiple tasks with executor and validator models", async () => {
+    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    const task2 = { ...FAKE_TASK_DETAIL, id: "KB-002" };
+    const updated1 = { ...task1, modelProvider: "openai", modelId: "gpt-4o", validatorModelProvider: "anthropic", validatorModelId: "claude-sonnet-4-5" };
+    const updated2 = { ...task2, modelProvider: "openai", modelId: "gpt-4o", validatorModelProvider: "anthropic", validatorModelId: "claude-sonnet-4-5" };
+
+    (store.getTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(task1)
+      .mockResolvedValueOnce(task2);
+    (store.updateTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(updated1)
+      .mockResolvedValueOnce(updated2);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001", "KB-002"],
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      validatorModelProvider: "anthropic",
+      validatorModelId: "claude-sonnet-4-5",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(2);
+    expect(res.body.updated).toHaveLength(2);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      validatorModelProvider: "anthropic",
+      validatorModelId: "claude-sonnet-4-5",
+    });
+    expect(store.updateTask).toHaveBeenCalledWith("KB-002", {
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      validatorModelProvider: "anthropic",
+      validatorModelId: "claude-sonnet-4-5",
+    });
+  });
+
+  it("updates only executor model when only executor fields provided", async () => {
+    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    const updated1 = { ...task1, modelProvider: "openai", modelId: "gpt-4o" };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task1);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated1);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001"],
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    });
+  });
+
+  it("updates only validator model when only validator fields provided", async () => {
+    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    const updated1 = { ...task1, validatorModelProvider: "anthropic", validatorModelId: "claude-sonnet-4-5" };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task1);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated1);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001"],
+      validatorModelProvider: "anthropic",
+      validatorModelId: "claude-sonnet-4-5",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      validatorModelProvider: "anthropic",
+      validatorModelId: "claude-sonnet-4-5",
+    });
+  });
+
+  it("clears models when null values provided", async () => {
+    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001", modelProvider: "openai", modelId: "gpt-4o" };
+    const updated1 = { ...task1, modelProvider: undefined, modelId: undefined };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task1);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated1);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001"],
+      modelProvider: null,
+      modelId: null,
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      modelProvider: null,
+      modelId: null,
+    });
+  });
+
+  it("returns 400 when taskIds is not an array", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: "KB-001",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("taskIds must be an array");
+  });
+
+  it("returns 400 when taskIds is empty", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: [],
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("at least one task ID");
+  });
+
+  it("returns 400 when taskIds contains non-string values", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001", 123],
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("non-empty strings");
+  });
+
+  it("returns 400 when no model fields provided", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001"],
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("At least one model field");
+  });
+
+  it("returns 400 when only executor provider provided (missing modelId)", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001"],
+      modelProvider: "openai",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Executor model must include both provider and modelId");
+  });
+
+  it("returns 400 when only executor modelId provided (missing provider)", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001"],
+      modelId: "gpt-4o",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Executor model must include both provider and modelId");
+  });
+
+  it("returns 400 when only validator provider provided (missing modelId)", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001"],
+      validatorModelProvider: "anthropic",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Validator model must include both provider and modelId");
+  });
+
+  it("returns 400 when only validator modelId provided (missing provider)", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001"],
+      validatorModelId: "claude-sonnet-4-5",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Validator model must include both provider and modelId");
+  });
+
+  it("returns 404 when task does not exist", async () => {
+    const err = new Error("Task KB-999 not found") as Error & { code: string };
+    err.code = "ENOENT";
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-999"],
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("KB-999 not found");
+  });
+
+  it("continues with other tasks when individual update fails", async () => {
+    const task1 = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    const task2 = { ...FAKE_TASK_DETAIL, id: "KB-002" };
+    const updated1 = { ...task1, modelProvider: "openai", modelId: "gpt-4o" };
+
+    (store.getTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(task1)
+      .mockResolvedValueOnce(task2);
+    (store.updateTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(updated1)
+      .mockRejectedValueOnce(new Error("Update failed"));
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["KB-001", "KB-002"],
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(res.body.updated).toHaveLength(1);
+    expect(consoleSpy).toHaveBeenCalled();
+
+    consoleSpy.mockRestore();
+  });
+});
+
 describe("PATCH /tasks/:id", () => {
   let store: TaskStore;
 

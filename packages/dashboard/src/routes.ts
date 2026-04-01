@@ -1567,6 +1567,132 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * POST /api/tasks/batch-update-models
+   * Batch update AI model configuration for multiple tasks.
+   * Body: { taskIds: string[], modelProvider?: string | null, modelId?: string | null, validatorModelProvider?: string | null, validatorModelId?: string | null }
+   * Returns: { updated: Task[], count: number }
+   */
+  router.post("/tasks/batch-update-models", async (req, res) => {
+    try {
+      const { taskIds, modelProvider, modelId, validatorModelProvider, validatorModelId } = req.body;
+
+      // Validate taskIds
+      if (!Array.isArray(taskIds)) {
+        res.status(400).json({ error: "taskIds must be an array" });
+        return;
+      }
+      if (taskIds.length === 0) {
+        res.status(400).json({ error: "taskIds must contain at least one task ID" });
+        return;
+      }
+      if (taskIds.some((id) => typeof id !== "string" || id.trim().length === 0)) {
+        res.status(400).json({ error: "taskIds must contain non-empty strings" });
+        return;
+      }
+
+      // Validate that at least one model field is being updated
+      const hasExecutorModel = modelProvider !== undefined || modelId !== undefined;
+      const hasValidatorModel = validatorModelProvider !== undefined || validatorModelId !== undefined;
+      if (!hasExecutorModel && !hasValidatorModel) {
+        res.status(400).json({ error: "At least one model field must be provided" });
+        return;
+      }
+
+      // Validate model field pairs (both provider and modelId must be provided together or neither)
+      const validateModelPair = (provider: unknown, modelIdValue: unknown, name: string): { provider?: string | null; modelId?: string | null } => {
+        if (provider === undefined && modelIdValue === undefined) {
+          return { provider: undefined, modelId: undefined };
+        }
+        if ((provider !== undefined && modelIdValue === undefined) || (provider === undefined && modelIdValue !== undefined)) {
+          throw new Error(`${name} must include both provider and modelId or neither`);
+        }
+        if (provider !== null && typeof provider !== "string") {
+          throw new Error(`${name} provider must be a string or null`);
+        }
+        if (modelIdValue !== null && typeof modelIdValue !== "string") {
+          throw new Error(`${name} modelId must be a string or null`);
+        }
+        return { provider: provider as string | null, modelId: modelIdValue as string | null };
+      };
+
+      let validatedExecutor: { provider?: string | null; modelId?: string | null };
+      let validatedValidator: { provider?: string | null; modelId?: string | null };
+
+      try {
+        validatedExecutor = validateModelPair(modelProvider, modelId, "Executor model");
+        validatedValidator = validateModelPair(validatorModelProvider, validatorModelId, "Validator model");
+      } catch (err: any) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+
+      // Verify all tasks exist
+      const tasksById = new Map<string, Awaited<ReturnType<TaskStore["getTask"]>>>();
+      for (const taskId of taskIds) {
+        try {
+          const task = await store.getTask(taskId);
+          tasksById.set(taskId, task);
+        } catch (err: any) {
+          if (err?.code === "ENOENT" || err?.message?.includes("not found")) {
+            res.status(404).json({ error: `Task ${taskId} not found` });
+            return;
+          }
+          throw err;
+        }
+      }
+
+      // Build update payload (only include fields that were explicitly provided)
+      const updates: { modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null } = {};
+      if (validatedExecutor.provider !== undefined) {
+        updates.modelProvider = validatedExecutor.provider;
+      }
+      if (validatedExecutor.modelId !== undefined) {
+        updates.modelId = validatedExecutor.modelId;
+      }
+      if (validatedValidator.provider !== undefined) {
+        updates.validatorModelProvider = validatedValidator.provider;
+      }
+      if (validatedValidator.modelId !== undefined) {
+        updates.validatorModelId = validatedValidator.modelId;
+      }
+
+      // Update all tasks in parallel
+      const updatePromises = taskIds.map(async (taskId) => {
+        try {
+          const updated = await store.updateTask(taskId, updates);
+          return { success: true, task: updated };
+        } catch (err: any) {
+          console.error(`Failed to update task ${taskId}:`, err);
+          return { success: false, taskId, error: err.message };
+        }
+      });
+
+      const results = await Promise.all(updatePromises);
+
+      // Collect successful updates
+      const updated: Task[] = [];
+      const errors: Array<{ taskId: string; error: string }> = [];
+
+      for (const result of results) {
+        if (result.success && "task" in result) {
+          updated.push(result.task);
+        } else if (!result.success) {
+          errors.push({ taskId: result.taskId, error: result.error });
+        }
+      }
+
+      // Log errors but don't fail the entire request
+      if (errors.length > 0) {
+        console.error(`[batch-update-models] ${errors.length} tasks failed to update:`, errors);
+      }
+
+      res.json({ updated, count: updated.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to batch update models" });
+    }
+  });
+
   // Upload attachment
   router.post("/tasks/:id/attachments", upload.single("file"), async (req, res) => {
     try {
