@@ -250,7 +250,8 @@ The dashboard includes several runtime safeguards to stay responsive during long
 - **Memoized task rendering**: `TaskCard`, `Column`, and worktree grouping are memoized so unrelated SSE updates do not force the whole board to repaint. The board also preserves stable per-column task arrays for unchanged columns.
 - **Large-column pagination**: Columns with more than **100 tasks** use incremental client-side pagination, rendering **50 tasks initially** and loading **25 more** at a time. This is applied to active non-archived, non-`in-progress` columns to avoid breaking worktree grouping and archived browsing behavior.
 - **Badge update isolation**: Live GitHub PR/issue badge websocket updates are rendered through a dedicated child component so badge freshness is preserved even when task cards are memoized.
-- **SSE cleanup and reconnects**: Task and log streaming hooks explicitly clean up EventSource listeners/connections and avoid duplicate stream setup during rerenders.
+- **SSE cleanup and reconnects**: Task and log streaming hooks explicitly clean up EventSource listeners/connections, automatically refetch the task snapshot after a stream reconnect, and avoid duplicate stream setup during rerenders.
+- **Foreground recovery refresh**: The task board refreshes its task snapshot when the browser tab becomes visible again so long-lived hidden tabs do not keep showing stale board/list data after missed live events.
 
 ## Development
 
