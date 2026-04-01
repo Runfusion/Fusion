@@ -2,7 +2,7 @@
 "@gsxdsm/fusion": patch
 ---
 
-Fix Git Manager dialog rendering off-screen on smaller viewports
+Fix the Git Manager modal so it stays within the viewport.
 
-Changed `.gm-content` min-height from 400px to 0, allowing the modal content
-to properly flex within the viewport instead of forcing overflow.
+- Let `.gm-content` shrink by changing its `min-height` from `400px` to `0`
+- Keep the modal content constrained on desktop and mobile viewports to avoid off-screen rendering

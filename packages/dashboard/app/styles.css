@@ -11346,6 +11346,12 @@ html .column.drag-over * {
    ══════════════════════════════════════════════════════════════════ */
 
 /* Modal size override */
+.modal-overlay:has(.gm-modal) {
+  align-items: center;
+  padding-top: 0;
+  padding: 24px;
+}
+
 .gm-modal {
   width: 900px;
   max-width: 95vw;
@@ -12487,6 +12493,11 @@ html .column.drag-over * {
 /* ── Responsive ── */
 
 @media (max-width: 640px) {
+  .modal-overlay:has(.gm-modal) {
+    align-items: stretch;
+    padding: 0;
+  }
+
   .gm-modal {
     width: 100%;
     max-width: 100%;
@@ -12497,6 +12508,8 @@ html .column.drag-over * {
 
   .gm-layout {
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
   }
 
   .gm-sidebar {
