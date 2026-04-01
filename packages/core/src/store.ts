@@ -2520,6 +2520,18 @@ ${stepsSection}`;
     }
   }
 
+  /**
+   * Close the database connection and clean up resources.
+   * Call this when the store is no longer needed (e.g., short-lived per-request stores).
+   */
+  close(): void {
+    this.stopWatching();
+    if (this._db) {
+      this._db.close();
+      this._db = null;
+    }
+  }
+
   getRootDir(): string {
     return this.rootDir;
   }

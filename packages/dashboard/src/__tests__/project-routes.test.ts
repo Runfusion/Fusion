@@ -72,6 +72,8 @@ import {
   fetchActivityFeed,
   fetchFirstRunStatus,
   fetchGlobalConcurrency,
+  fetchProjectTasks,
+  fetchTasks,
   type ProjectInfo,
   type DetectedProject,
 } from "../../app/api";
@@ -342,6 +344,92 @@ describe("Project Routes API Functions", () => {
 
       expect(result.globalMaxConcurrent).toBe(4);
       expect(result.currentlyActive).toBe(2);
+    });
+  });
+
+  describe("fetchProjectTasks", () => {
+    it("sends projectId as query parameter to /api/tasks", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      await fetchProjectTasks("proj_abc");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/tasks"),
+        expect.any(Object)
+      );
+      const url: string = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(url).toContain("projectId=proj_abc");
+    });
+
+    it("returns tasks from the project's store when projectId is provided", async () => {
+      const mockTasks = [
+        {
+          id: "FN-001",
+          description: "Fix the bug",
+          column: "todo",
+          dependencies: [],
+          steps: [],
+          log: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ];
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockTasks));
+
+      const result = await fetchProjectTasks("proj_abc");
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe("FN-001");
+    });
+
+    it("returns 404 when project is not found", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(
+        mockFetchResponse(false, { error: "Project not found" }, 404)
+      );
+
+      await expect(fetchProjectTasks("nonexistent_proj")).rejects.toThrow();
+    });
+
+    it("returns empty array on graceful degradation when backend error occurs", async () => {
+      // Backend returns 200 with [] for CentralCore unavailability
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      const result = await fetchProjectTasks("proj_abc");
+
+      expect(result).toEqual([]);
+    });
+
+    it("supports limit and offset parameters alongside projectId", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      await fetchProjectTasks("proj_abc", 10, 20);
+
+      const url: string = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(url).toContain("projectId=proj_abc");
+      expect(url).toContain("limit=10");
+      expect(url).toContain("offset=20");
+    });
+  });
+
+  describe("fetchTasks (default store - no projectId)", () => {
+    it("fetches from /api/tasks without projectId when no project is specified", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      await fetchTasks();
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/tasks",
+        expect.any(Object)
+      );
+    });
+
+    it("does not include projectId parameter in default fetchTasks call", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      await fetchTasks();
+
+      const url: string = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(url).not.toContain("projectId");
     });
   });
 });

@@ -1442,6 +1442,42 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
+      // When projectId is provided, delegate to that project's TaskStore via CentralCore
+      const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+      if (projectId) {
+        try {
+          const { CentralCore, TaskStore: ProjectTaskStore } = await import("@fusion/core");
+          const central = new CentralCore();
+          await central.init();
+
+          let project;
+          try {
+            project = await central.getProject(projectId);
+          } finally {
+            await central.close();
+          }
+
+          if (!project) {
+            res.status(404).json({ error: "Project not found" });
+            return;
+          }
+
+          const projectStore = new ProjectTaskStore(project.path);
+          await projectStore.init();
+          try {
+            const tasks = await projectStore.listTasks({ limit, offset });
+            res.json(tasks);
+          } finally {
+            projectStore.close();
+          }
+        } catch (err: any) {
+          if (res.headersSent) return;
+          // Graceful degradation: CentralCore unavailable or other error → empty array
+          res.json([]);
+        }
+        return;
+      }
+
       const tasks = await store.listTasks({ limit, offset });
       res.json(tasks);
     } catch (err: any) {
