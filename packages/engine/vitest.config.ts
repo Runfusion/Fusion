@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
     maxWorkers,
-    fileParallelism: false,
+    fileParallelism: true,
     coverage: {
       enabled: false,
       reporter: ["text", "html", "json"],

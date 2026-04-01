@@ -17,7 +17,7 @@ export default defineConfig({
     include: ["app/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
     setupFiles: ["./vitest.setup.ts"],
     maxWorkers,
-    fileParallelism: false,
+    fileParallelism: true,
     coverage: {
       enabled: false,
       reporter: ["text", "html", "json"],

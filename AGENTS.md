@@ -94,6 +94,15 @@ pnpm build         # build all packages
 
 Tests are required. Typechecks and manual verification are not substitutes for real tests with assertions.
 
+### Test Optimization Patterns
+
+When writing tests, follow these patterns to keep the test suite fast:
+
+- **Use fake timers** (`vi.useFakeTimers()`, `vi.setSystemTime()`) instead of real `setTimeout` for timestamp-dependent tests. See `packages/core/src/backup.test.ts` for an example.
+- **Default to `fileParallelism: true`** in vitest configs; use `test.sequential()` for specific tests that truly need isolation
+- **Avoid real delays** — Never use `setTimeout`, `sleep`, or waiting for actual time to pass in tests. Use Vitest's timer mocks instead.
+- **Use unique temp directories** — Each test should use isolated temp directories (e.g., `mkdtempSync`) to avoid conflicts in parallel execution
+
 ## Multi-Project Architecture / Central Core
 
 kb supports multi-project coordination through a central infrastructure that provides:

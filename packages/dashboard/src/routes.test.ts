@@ -33,6 +33,18 @@ function createMockGlobalSettingsStore() {
   };
 }
 
+function createMockMissionStore() {
+  return {
+    createSession: vi.fn().mockResolvedValue({ id: "session-1", status: "active" }),
+    getSession: vi.fn().mockResolvedValue({ id: "session-1", status: "active", answers: [] }),
+    updateSession: vi.fn().mockResolvedValue(undefined),
+    addAnswer: vi.fn().mockResolvedValue(undefined),
+    deleteSession: vi.fn().mockResolvedValue(undefined),
+    listSessions: vi.fn().mockResolvedValue([]),
+    generatePlan: vi.fn().mockResolvedValue({ plan: "Test plan", steps: [] }),
+  };
+}
+
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
     getTask: vi.fn(),
@@ -63,6 +75,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getWorkflowStep: vi.fn(),
     updateWorkflowStep: vi.fn(),
     deleteWorkflowStep: vi.fn(),
+    getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
     ...overrides,
   } as unknown as TaskStore;
 }
@@ -3665,7 +3678,10 @@ describe("Git Management endpoints", () => {
   let store: TaskStore;
 
   beforeEach(() => {
-    store = createMockStore();
+    // Use the actual project root so git commands work
+    store = createMockStore({
+      getRootDir: vi.fn().mockReturnValue(process.cwd()),
+    });
   });
 
   function buildApp() {
