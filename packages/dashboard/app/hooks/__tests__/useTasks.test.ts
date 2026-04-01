@@ -258,14 +258,21 @@ describe("useTasks", () => {
     unmount();
   });
 
-  it("reproduces the board stall: tasks changed while SSE is disconnected stay stale after reconnect without a resync fetch", async () => {
+  it("resyncs tasks after SSE reconnect so the board does not stay stale when updates were missed during disconnect", async () => {
     vi.useFakeTimers();
     const initialTask = createMockTask({
       id: "FN-001",
       title: "Stale title",
       updatedAt: "2026-01-01T00:00:00Z",
     });
-    mockFetchTasks.mockResolvedValueOnce([initialTask]);
+    const refreshedTask = createMockTask({
+      id: "FN-001",
+      title: "Fresh title",
+      updatedAt: "2026-01-02T00:00:00Z",
+    });
+    mockFetchTasks
+      .mockResolvedValueOnce([initialTask])
+      .mockResolvedValueOnce([refreshedTask]);
 
     const { result } = renderHook(() => useTasks());
 
@@ -287,8 +294,8 @@ describe("useTasks", () => {
     });
 
     expect(MockEventSource.instances).toHaveLength(2);
-    expect(mockFetchTasks).toHaveBeenCalledTimes(1);
-    expect(result.current.tasks[0]?.title).toBe("Stale title");
+    expect(mockFetchTasks).toHaveBeenCalledTimes(2);
+    expect(result.current.tasks[0]?.title).toBe("Fresh title");
   });
 
   describe("SSE event: task:updated", () => {

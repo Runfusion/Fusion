@@ -38,21 +38,42 @@ vi.mock("../../api", async (importOriginal) => {
   };
 });
 
+const mockUseTasks = vi.fn(() => ({
+  tasks: [],
+  createTask: vi.fn(),
+  moveTask: vi.fn(),
+  deleteTask: vi.fn(),
+  mergeTask: vi.fn(),
+  retryTask: vi.fn(),
+  updateTask: vi.fn(),
+  duplicateTask: vi.fn(),
+  archiveTask: vi.fn(),
+  unarchiveTask: vi.fn(),
+  archiveAllDone: vi.fn(),
+}));
+
 vi.mock("../../hooks/useTasks", () => ({
-  useTasks: () => ({
-    tasks: [],
-    createTask: vi.fn(),
-    moveTask: vi.fn(),
-    deleteTask: vi.fn(),
-    mergeTask: vi.fn(),
-    retryTask: vi.fn(),
-  }),
+  useTasks: () => mockUseTasks(),
 }));
 
 import { fetchAuthStatus, fetchSettings, updateSettings } from "../../api";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockUseTasks.mockReset();
+  mockUseTasks.mockImplementation(() => ({
+    tasks: [],
+    createTask: vi.fn(),
+    moveTask: vi.fn(),
+    deleteTask: vi.fn(),
+    mergeTask: vi.fn(),
+    retryTask: vi.fn(),
+    updateTask: vi.fn(),
+    duplicateTask: vi.fn(),
+    archiveTask: vi.fn(),
+    unarchiveTask: vi.fn(),
+    archiveAllDone: vi.fn(),
+  }));
 });
 
 describe("App auto-open Settings on unauthenticated", () => {
@@ -268,6 +289,60 @@ describe("App engine pause (soft pause)", () => {
 });
 
 describe("App view switching", () => {
+  it("keeps the board mounted with fresh hook data after a reconnect-driven resync", async () => {
+    const staleTasks = [
+      {
+        id: "FN-001",
+        title: "Stale title",
+        description: "Test task",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        columnMovedAt: "2026-01-01T00:00:00Z",
+      },
+    ];
+    const freshTasks = [
+      {
+        ...staleTasks[0],
+        title: "Fresh title",
+        updatedAt: "2026-01-02T00:00:00Z",
+      },
+    ];
+
+    let tasksState = staleTasks;
+    mockUseTasks.mockImplementation(() => ({
+      tasks: tasksState,
+      createTask: vi.fn(),
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+    }));
+
+    const { rerender } = render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Stale title")).toBeTruthy();
+    });
+
+    tasksState = freshTasks;
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Fresh title")).toBeTruthy();
+    });
+
+    expect(document.querySelector(".board")).toBeTruthy();
+  });
   it("renders Board view by default", async () => {
     render(<App />);
 
