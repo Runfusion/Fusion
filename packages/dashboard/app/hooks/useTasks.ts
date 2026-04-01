@@ -30,9 +30,39 @@ export function useTasks() {
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
 
+  // Ref to track last visibility fetch time for debouncing (1 second minimum)
+  const lastVisibilityFetchRef = useRef<number>(0);
+  const VISIBILITY_FETCH_DEBOUNCE_MS = 1000;
+
   // Fetch initial tasks
   useEffect(() => {
     api.fetchTasks().then((tasks) => setTasks(tasks.map(normalizeTask))).catch(() => setTasks([]));
+  }, []);
+
+  // Visibility change listener - refresh tasks when tab becomes visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        const now = Date.now();
+        const timeSinceLastFetch = now - lastVisibilityFetchRef.current;
+
+        // Debounce: only fetch if at least 1 second has passed since last visibility fetch
+        if (timeSinceLastFetch >= VISIBILITY_FETCH_DEBOUNCE_MS) {
+          lastVisibilityFetchRef.current = now;
+          api.fetchTasks()
+            .then((tasks) => setTasks(tasks.map(normalizeTask)))
+            .catch(() => {
+              // Silently ignore fetch errors on visibility change
+            });
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   // SSE live updates

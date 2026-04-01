@@ -809,4 +809,140 @@ describe("useTasks", () => {
       expect(result.current.tasks[0].column).toBe("todo");
     });
   });
+
+  describe("visibility change", () => {
+    let originalVisibilityState: PropertyDescriptor | undefined;
+
+    beforeEach(() => {
+      // Store original descriptor to restore later
+      originalVisibilityState = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    });
+
+    afterEach(() => {
+      // Restore original visibilityState property
+      if (originalVisibilityState) {
+        Object.defineProperty(document, "visibilityState", originalVisibilityState);
+      } else {
+        // If no original descriptor, just delete our mock
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (document as any).visibilityState;
+      }
+    });
+
+    function setVisibilityState(state: "visible" | "hidden") {
+      Object.defineProperty(document, "visibilityState", {
+        value: state,
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    function dispatchVisibilityChange() {
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+
+    it("refetches tasks when visibility changes from hidden to visible", async () => {
+      const initialTask = createMockTask({ id: "FN-001", column: "todo" as Column });
+      const refreshedTask = createMockTask({
+        id: "FN-001",
+        column: "in-progress" as Column,
+        updatedAt: "2026-01-02T00:00:00Z",
+      });
+
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      // Reset mock to return refreshed data
+      mockFetchTasks.mockResolvedValueOnce([refreshedTask]);
+
+      // Simulate tab becoming visible
+      setVisibilityState("hidden");
+      setVisibilityState("visible");
+      dispatchVisibilityChange();
+
+      await waitFor(() => {
+        expect(result.current.tasks[0].column).toBe("in-progress");
+      });
+
+      expect(mockFetchTasks).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not refetch when visibility changes to hidden", async () => {
+      const initialTask = createMockTask({ id: "FN-001" });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      });
+
+      // Simulate tab becoming hidden
+      setVisibilityState("visible");
+      setVisibilityState("hidden");
+      dispatchVisibilityChange();
+
+      // Should not trigger another fetch
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+    });
+
+    it("debounces rapid visibility changes (minimum 1 second between fetches)", async () => {
+      const initialTask = createMockTask({ id: "FN-001" });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      // Wait for 1 second to ensure debounce window has passed from initial fetch
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+
+      // Reset mock to track new calls
+      mockFetchTasks.mockClear();
+
+      // First visibility change should trigger a fetch (1s has passed)
+      setVisibilityState("hidden");
+      setVisibilityState("visible");
+      dispatchVisibilityChange();
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      });
+
+      // Rapid visibility changes immediately after should be debounced
+      for (let i = 0; i < 5; i++) {
+        setVisibilityState("hidden");
+        setVisibilityState("visible");
+        dispatchVisibilityChange();
+      }
+
+      // Should still only be 1 call (debounced)
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+    });
+
+    it("cleans up visibility change listener on unmount", async () => {
+      mockFetchTasks.mockResolvedValueOnce([]);
+
+      const removeEventListenerSpy = vi.spyOn(document, "removeEventListener");
+
+      const { unmount } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      });
+
+      unmount();
+
+      expect(removeEventListenerSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+
+      removeEventListenerSpy.mockRestore();
+    });
+  });
 });
