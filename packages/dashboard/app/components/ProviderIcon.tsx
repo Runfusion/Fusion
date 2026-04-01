@@ -97,6 +97,7 @@ const providerConfig: Record<
 > = {
   anthropic: { component: AnthropicIcon, color: "#d4a27f" }, // warm tan
   openai: { component: OpenAIIcon, color: "#10a37f" }, // green
+  "openai-codex": { component: OpenAIIcon, color: "#10a37f" }, // green (same as openai)
   google: { component: GeminiIcon, color: "#4285f4" }, // blue
   gemini: { component: GeminiIcon, color: "#4285f4" }, // blue (same as google)
   ollama: { component: OllamaIcon, color: "#fff" }, // white
