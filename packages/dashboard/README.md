@@ -44,6 +44,7 @@ AI-guided interactive planning for creating well-specified tasks from high-level
 - **Task Detail Editing**: Edit task title and description directly in the task detail modal. Click the pencil icon in the modal header (available for Triage and Todo tasks) to enter edit mode.
 - **List View**: Alternative tabular view for tasks with sorting and filtering. The "Hide Done" toggle hides both Done and Archived tasks for an active-work-only view.
 - **Model Selection at Creation**: Choose executor and validator AI models while creating tasks from the board or list view, or leave them unset to use the global defaults.
+- **Bulk Model Editing**: Update AI model configuration for multiple tasks at once in the list view. Select tasks via checkboxes (archived tasks excluded), then use the "Bulk Edit Models" toolbar to apply executor and/or validator model changes to all selected tasks. Selection persists in localStorage across page reloads.
 - **Task Details**: View full task specifications, agent logs, and attachments
 - **GitHub Import**: Import issues directly from GitHub repositories
 - **PR Management**: Create, monitor, and merge pull requests for in-review tasks
