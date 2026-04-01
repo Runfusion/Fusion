@@ -3,6 +3,26 @@ import { render, screen } from "@testing-library/react";
 import { ProviderIcon } from "../ProviderIcon";
 
 describe("ProviderIcon", () => {
+  it("renders OpenAI brand icon for openai-codex provider", () => {
+    render(<ProviderIcon provider="openai-codex" />);
+    expect(screen.getByTestId("openai-icon")).toBeInTheDocument();
+    expect(screen.getByLabelText("OpenAI Codex")).toBeInTheDocument();
+  });
+
+  it("applies provider-specific color for openai-codex", () => {
+    render(<ProviderIcon provider="openai-codex" />);
+    const icon = screen.getByTestId("openai-icon").parentElement;
+    expect(icon).toHaveStyle({ color: "#10a37f" });
+  });
+
+  it("passes correct color to SVG fill for openai-codex", () => {
+    render(<ProviderIcon provider="openai-codex" />);
+    const svg = screen.getByTestId("openai-icon");
+    const paths = svg.querySelectorAll("path");
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths[0]).toHaveAttribute("fill", "#10a37f");
+  });
+
   it("renders Anthropic brand icon for anthropic provider", () => {
     render(<ProviderIcon provider="anthropic" />);
     expect(screen.getByTestId("anthropic-icon")).toBeInTheDocument();
