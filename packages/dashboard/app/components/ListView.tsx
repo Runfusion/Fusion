@@ -116,7 +116,7 @@ export function ListView({
         // Invalid localStorage data - fall through to default
       }
     }
-    return true; // Default: hide done tasks
+    return false; // Default: show done tasks
   });
 
   // Collapsed sections state - initialize from localStorage
@@ -724,7 +724,6 @@ export function ListView({
             availableModels={availableModels}
             onPlanningMode={onPlanningMode}
             onSubtaskBreakdown={onSubtaskBreakdown}
-            autoExpand={false}
           />
         </div>
         {filteredCount === 0 ? (

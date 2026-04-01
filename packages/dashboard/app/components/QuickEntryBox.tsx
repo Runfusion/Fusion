@@ -22,11 +22,6 @@ interface QuickEntryBoxProps {
    * Called when the user clicks the "Subtask" button to trigger subtask breakdown.
    */
   onSubtaskBreakdown?: (description: string) => void;
-  /**
-   * When false, the component will not auto-expand on focus.
-   * Defaults to true for backward compatibility.
-   */
-  autoExpand?: boolean;
 }
 
 function getModelSelectionValue(provider?: string, modelId?: string): string {
@@ -49,7 +44,7 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
   };
 }
 
-export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels, onPlanningMode, onSubtaskBreakdown, autoExpand = true }: QuickEntryBoxProps) {
+export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels, onPlanningMode, onSubtaskBreakdown }: QuickEntryBoxProps) {
   const [description, setDescription] = useState(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem(STORAGE_KEY) || "";
@@ -314,11 +309,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       justResetRef.current = false;
       return;
     }
-    // Only auto-expand if autoExpand prop is true (defaults to true for backward compatibility)
-    if (autoExpand) {
-      setIsExpanded(true);
-    }
-  }, [autoExpand]);
+    setIsExpanded(true);
+  }, []);
 
   const handleBlur = useCallback(() => {
     // Clear any existing timeout

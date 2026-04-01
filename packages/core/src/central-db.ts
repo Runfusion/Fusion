@@ -122,8 +122,6 @@ export class CentralDatabase {
 
     // Enable WAL mode for concurrent reader/writer access
     this.db.exec("PRAGMA journal_mode = WAL");
-    // Ensure data reaches disk on commit (NORMAL is safe with WAL mode)
-    this.db.exec("PRAGMA synchronous = NORMAL");
     // Enable foreign key enforcement
     this.db.exec("PRAGMA foreign_keys = ON");
   }
@@ -146,14 +144,8 @@ export class CentralDatabase {
 
   /**
    * Close the database connection.
-   * Checkpoints the WAL first to ensure all writes are flushed to the main db file.
    */
   close(): void {
-    try {
-      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    } catch {
-      // Best-effort: checkpoint failure is non-fatal
-    }
     this.db.close();
   }
 

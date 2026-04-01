@@ -24,15 +24,11 @@ export {
   type RuntimeMetrics,
   type ProjectRuntimeEvents,
   type GlobalMetrics,
-  type TaskExecutionResult,
-  type RuntimeHealth,
-  type RuntimeEventType,
 } from "./project-runtime.js";
 
 export { InProcessRuntime } from "./runtimes/in-process-runtime.js";
 export { ChildProcessRuntime } from "./runtimes/child-process-runtime.js";
 export { ProjectManager, type ProjectManagerEvents } from "./project-manager.js";
-export { HybridExecutor, type HybridExecutorEvents, type HybridExecutorOptions } from "./hybrid-executor.js";
 
 // ── IPC Protocol ───────────────────────────────────────────────────────
 

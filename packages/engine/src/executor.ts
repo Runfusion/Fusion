@@ -449,29 +449,10 @@ export class TaskExecutor {
             }
           }
         }
-      } else if (task.worktree) {
-        // Task already had a worktree assigned and it exists on disk — reuse it
-        executorLog.log(`Reusing existing worktree: ${worktreePath}`);
       } else {
-        // Directory exists at generated path but task has no worktree — create via normal flow
+        worktreePath = task.worktree || join(this.rootDir, ".worktrees", generateWorktreeName(this.rootDir));
+        isResume = existsSync(worktreePath);
         worktreePath = await this.createWorktree(branchName, worktreePath, task.id);
-      }
-
-      // Capture the base commit SHA for diff computation
-      // This is done after worktree creation when we're on the new branch
-      if (!task.baseCommitSha) {
-        try {
-          const baseCommitSha = execSync("git rev-parse HEAD", {
-            cwd: worktreePath,
-            stdio: "pipe",
-            encoding: "utf-8",
-          }).trim();
-          await this.store.updateTask(task.id, { baseCommitSha });
-          executorLog.log(`${task.id}: captured baseCommitSha ${baseCommitSha.slice(0, 7)}`);
-        } catch (err: any) {
-          executorLog.log(`Failed to capture baseCommitSha for ${task.id}: ${err.message}`);
-          // Non-fatal: task can continue without baseCommitSha
-        }
       }
 
       this.activeWorktrees.set(task.id, worktreePath);
@@ -588,14 +569,6 @@ export class TaskExecutor {
           }
 
           if (taskDone) {
-            // Capture modified files before running workflow steps
-            const updatedTask = await this.store.getTask(task.id);
-            const modifiedFiles = this.captureModifiedFiles(worktreePath, updatedTask.baseCommitSha);
-            if (modifiedFiles.length > 0) {
-              await this.store.updateTask(task.id, { modifiedFiles });
-              executorLog.log(`${task.id}: captured ${modifiedFiles.length} modified files`);
-            }
-
             // Run workflow steps before moving to in-review
             const workflowSuccess = await this.runWorkflowSteps(task, worktreePath, settings);
             if (!workflowSuccess) {
@@ -1090,61 +1063,6 @@ export class TaskExecutor {
     await this.store.updateTask(taskId, { worktree: undefined, status: undefined });
     await this.store.moveTask(taskId, "triage");
     await this.store.logEntry(taskId, "Execution stopped — work discarded, moved to triage for re-specification");
-  }
-
-  /**
-   * Capture the list of files modified during agent execution.
-   * Uses git diff against the stored baseCommitSha to determine what changed.
-   * Returns an empty array if no changes or if git commands fail.
-   */
-  private captureModifiedFiles(worktreePath: string, baseCommitSha?: string): string[] {
-    try {
-      // Determine the base reference for diff
-      // If baseCommitSha is stored, use it; otherwise fall back to merge-base with HEAD
-      let baseRef = baseCommitSha;
-      if (!baseRef) {
-        // Try to find merge-base with main/master as fallback
-        try {
-          baseRef = execSync("git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main", {
-            cwd: worktreePath,
-            stdio: "pipe",
-            encoding: "utf-8",
-          }).trim();
-        } catch {
-          // If merge-base fails, use HEAD~1 as last resort
-          try {
-            baseRef = execSync("git rev-parse HEAD~1", {
-              cwd: worktreePath,
-              stdio: "pipe",
-              encoding: "utf-8",
-            }).trim();
-          } catch {
-            executorLog.log(`Could not determine base commit for diff in ${worktreePath}`);
-            return [];
-          }
-        }
-      }
-
-      if (!baseRef) {
-        return [];
-      }
-
-      // Get list of modified files using git diff --name-only
-      const output = execSync(`git diff --name-only ${baseRef}..HEAD`, {
-        cwd: worktreePath,
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim();
-
-      if (!output) {
-        return [];
-      }
-
-      return output.split("\n").filter(Boolean);
-    } catch (err: any) {
-      executorLog.log(`Failed to capture modified files: ${err.message}`);
-      return [];
-    }
   }
 
   // ── Worktree management ────────────────────────────────────────────

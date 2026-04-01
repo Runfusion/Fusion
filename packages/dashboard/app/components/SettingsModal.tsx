@@ -79,9 +79,6 @@ export function SettingsModal({
   const [activeSection, setActiveSection] = useState<SectionId>(initialSection ?? SETTINGS_SECTIONS[0].id);
   const [prefixError, setPrefixError] = useState<string | null>(null);
 
-  /** Get the scope of the currently active section */
-  const activeSectionScope = SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.scope;
-
   // Auth state (independent of the settings save flow)
   const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
   const [authLoading, setAuthLoading] = useState(false);
@@ -341,6 +338,9 @@ export function SettingsModal({
     },
     [onClose],
   );
+
+  /** Get the scope of the currently active section */
+  const activeSectionScope = SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.scope;
 
   const handleSave = useCallback(async () => {
     if (prefixError || presetDraft) return;

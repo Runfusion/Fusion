@@ -163,36 +163,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isOpen, view]);
 
-  const handleCancel = useCallback(async () => {
-    // Show confirmation if user has made progress
-    if (hasProgress) {
-      if (!confirm("Are you sure you want to close? Your planning progress will be lost.")) {
-        return;
-      }
-    }
-
-    // Always close the stream connection
-    streamConnectionRef.current?.close();
-    streamConnectionRef.current = null;
-
-    if (view.type === "question" || view.type === "summary") {
-      try {
-        await cancelPlanning(view.session.sessionId);
-      } catch {
-        // Ignore errors on cancel
-      }
-    }
-    setInitialPlan("");
-    setView({ type: "initial" });
-    setError(null);
-    setResponseHistory([]);
-    setEditedSummary(null);
-    setStreamingOutput("");
-    setHasProgress(false);
-    currentSessionIdRef.current = null;
-    onClose();
-  }, [hasProgress, view, onClose]);
-
   // Handle escape key to close
   useEffect(() => {
     if (!isOpen) return;
@@ -243,6 +213,36 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
     },
     [view]
   );
+
+  const handleCancel = useCallback(async () => {
+    // Show confirmation if user has made progress
+    if (hasProgress) {
+      if (!confirm("Are you sure you want to close? Your planning progress will be lost.")) {
+        return;
+      }
+    }
+
+    // Always close the stream connection
+    streamConnectionRef.current?.close();
+    streamConnectionRef.current = null;
+
+    if (view.type === "question" || view.type === "summary") {
+      try {
+        await cancelPlanning(view.session.sessionId);
+      } catch {
+        // Ignore errors on cancel
+      }
+    }
+    setInitialPlan("");
+    setView({ type: "initial" });
+    setError(null);
+    setResponseHistory([]);
+    setEditedSummary(null);
+    setStreamingOutput("");
+    setHasProgress(false);
+    currentSessionIdRef.current = null;
+    onClose();
+  }, [hasProgress, view, onClose]);
 
   const handleCreateTask = useCallback(async () => {
     if (view.type !== "summary") return;

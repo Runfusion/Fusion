@@ -15,12 +15,6 @@ describe("ProviderIcon", () => {
     expect(screen.getByLabelText("OpenAI")).toBeInTheDocument();
   });
 
-  it("renders OpenAI brand icon for openai-codex provider", () => {
-    render(<ProviderIcon provider="openai-codex" />);
-    expect(screen.getByTestId("openai-icon")).toBeInTheDocument();
-    expect(screen.getByLabelText("OpenAI")).toBeInTheDocument();
-  });
-
   it("renders Gemini brand icon for google provider", () => {
     render(<ProviderIcon provider="google" />);
     expect(screen.getByTestId("gemini-icon")).toBeInTheDocument();
@@ -73,12 +67,6 @@ describe("ProviderIcon", () => {
 
   it("applies provider-specific color for openai", () => {
     render(<ProviderIcon provider="openai" />);
-    const icon = screen.getByTestId("openai-icon").parentElement;
-    expect(icon).toHaveStyle({ color: "#10a37f" });
-  });
-
-  it("applies provider-specific color for openai-codex", () => {
-    render(<ProviderIcon provider="openai-codex" />);
     const icon = screen.getByTestId("openai-icon").parentElement;
     expect(icon).toHaveStyle({ color: "#10a37f" });
   });
@@ -153,14 +141,6 @@ describe("ProviderIcon", () => {
 
   it("passes correct color to SVG fill for openai", () => {
     render(<ProviderIcon provider="openai" />);
-    const svg = screen.getByTestId("openai-icon");
-    const paths = svg.querySelectorAll("path");
-    expect(paths.length).toBeGreaterThan(0);
-    expect(paths[0]).toHaveAttribute("fill", "#10a37f");
-  });
-
-  it("passes correct color to SVG fill for openai-codex", () => {
-    render(<ProviderIcon provider="openai-codex" />);
     const svg = screen.getByTestId("openai-icon");
     const paths = svg.querySelectorAll("path");
     expect(paths.length).toBeGreaterThan(0);

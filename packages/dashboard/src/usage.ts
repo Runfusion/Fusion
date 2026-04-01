@@ -207,24 +207,8 @@ function decodeJwtPayload(token: string): any {
   }
 }
 
-/**
- * Sleep for specified milliseconds
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // ── Claude fetcher ─────────────────────────────────────────────────────────
 
-/**
- * Fetch Claude usage data from Anthropic API.
- * 
- * Implements retry logic with exponential backoff for rate limit (429) errors:
- * - Max 3 attempts total (initial + 2 retries)
- * - Delays: 1s, 2s, 4s (exponential backoff)
- * - Auth errors (401/403) and server errors (5xx) fail immediately without retry
- * - After max retries exhausted, returns user-friendly rate limit error
- */
 async function fetchClaudeUsage(): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Claude",
@@ -271,98 +255,78 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
     else usage.plan = oauthCreds.rateLimitTier;
   }
 
-  // Retry logic with exponential backoff for 429 errors
-  const MAX_RETRIES = 3;
-  const BASE_DELAY_MS = 1000; // 1s, 2s, 4s
+  try {
+    const res = await httpsRequest("https://api.anthropic.com/api/oauth/usage", {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${oauthCreds.accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+      },
+    });
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const res = await httpsRequest("https://api.anthropic.com/api/oauth/usage", {
-        method: "GET",
-        headers: {
-          authorization: `Bearer ${oauthCreds.accessToken}`,
-          "anthropic-beta": "oauth-2025-04-20",
-        },
-      });
-
-      if (res.status === 401 || res.status === 403) {
-        usage.status = "error";
-        usage.error = "Auth expired — run 'claude' to re-login";
-        return usage;
-      }
-
-      if (res.status === 429) {
-        // Rate limited - retry with exponential backoff (1s, 2s, 4s)
-        if (attempt < MAX_RETRIES) {
-          const delayMs = BASE_DELAY_MS * Math.pow(2, attempt - 1); // 1s, 2s, 4s
-          await sleep(delayMs);
-          continue; // Retry
-        }
-        // All retries exhausted
-        usage.status = "error";
-        usage.error = "Rate limited by Anthropic API — please try again in a few moments";
-        return usage;
-      }
-
-      if (res.status !== 200) {
-        usage.status = "error";
-        usage.error = `HTTP ${res.status}`;
-        return usage;
-      }
-
-      const data = JSON.parse(res.body);
-      usage.status = "ok";
-
-      const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
-      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-
-      const parseWindow = (key: string, label: string, windowDurationMs: number): UsageWindow | null => {
-        const w = data[key];
-        if (!w || typeof w !== "object") return null;
-
-        const pctUsed: number = w.utilization ?? w.percent_used ?? w.percentUsed ?? 0;
-        let resetText: string | null = null;
-        let resetMs: number | undefined;
-
-        const resetAt = w.resets_at || w.reset_at || w.resetAt;
-        if (resetAt) {
-          const msLeft = new Date(resetAt).getTime() - Date.now();
-          resetMs = msLeft > 0 ? msLeft : 0;
-          resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
-        }
-
-        return {
-          label,
-          percentUsed: Math.min(100, Math.max(0, pctUsed)),
-          percentLeft: Math.min(100, Math.max(0, 100 - pctUsed)),
-          resetText,
-          windowDurationMs,
-          resetMs,
-        };
-      };
-
-      const fiveHour = parseWindow("five_hour", "Session (5h)", FIVE_HOURS_MS);
-      const sevenDay = parseWindow("seven_day", "Weekly", SEVEN_DAYS_MS);
-      const sonnet = parseWindow("seven_day_sonnet", "Weekly (Sonnet)", SEVEN_DAYS_MS);
-      const opus = parseWindow("seven_day_opus", "Weekly (Opus)", SEVEN_DAYS_MS);
-
-      if (fiveHour) usage.windows.push(fiveHour);
-      if (sevenDay) usage.windows.push(sevenDay);
-      if (sonnet) usage.windows.push(sonnet);
-      if (opus) usage.windows.push(opus);
-
-      // Success - exit retry loop
-      return usage;
-    } catch (e: any) {
+    if (res.status === 401 || res.status === 403) {
       usage.status = "error";
-      usage.error = e.message || "Failed to fetch";
+      usage.error = "Auth expired — run 'claude' to re-login";
       return usage;
     }
+
+    if (res.status === 429) {
+      usage.status = "error";
+      usage.error = "Rate limited — try again later";
+      return usage;
+    }
+
+    if (res.status !== 200) {
+      usage.status = "error";
+      usage.error = `HTTP ${res.status}`;
+      return usage;
+    }
+
+    const data = JSON.parse(res.body);
+    usage.status = "ok";
+
+    const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+    const parseWindow = (key: string, label: string, windowDurationMs: number): UsageWindow | null => {
+      const w = data[key];
+      if (!w || typeof w !== "object") return null;
+
+      const pctUsed: number = w.utilization ?? w.percent_used ?? w.percentUsed ?? 0;
+      let resetText: string | null = null;
+      let resetMs: number | undefined;
+
+      const resetAt = w.resets_at || w.reset_at || w.resetAt;
+      if (resetAt) {
+        const msLeft = new Date(resetAt).getTime() - Date.now();
+        resetMs = msLeft > 0 ? msLeft : 0;
+        resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
+      }
+
+      return {
+        label,
+        percentUsed: Math.min(100, Math.max(0, pctUsed)),
+        percentLeft: Math.min(100, Math.max(0, 100 - pctUsed)),
+        resetText,
+        windowDurationMs,
+        resetMs,
+      };
+    };
+
+    const fiveHour = parseWindow("five_hour", "Session (5h)", FIVE_HOURS_MS);
+    const sevenDay = parseWindow("seven_day", "Weekly", SEVEN_DAYS_MS);
+    const sonnet = parseWindow("seven_day_sonnet", "Weekly (Sonnet)", SEVEN_DAYS_MS);
+    const opus = parseWindow("seven_day_opus", "Weekly (Opus)", SEVEN_DAYS_MS);
+
+    if (fiveHour) usage.windows.push(fiveHour);
+    if (sevenDay) usage.windows.push(sevenDay);
+    if (sonnet) usage.windows.push(sonnet);
+    if (opus) usage.windows.push(opus);
+  } catch (e: any) {
+    usage.status = "error";
+    usage.error = e.message || "Failed to fetch";
   }
 
-  // Should not reach here, but return error just in case
-  usage.status = "error";
-  usage.error = "Rate limited by Anthropic API — please try again in a few moments";
   return usage;
 }
 

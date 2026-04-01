@@ -991,9 +991,8 @@ describe("GitManagerModal", () => {
     await user.clear(nameInput);
     await user.type(nameInput, "upstream");
 
-    const saveButton = nameInput.closest(".gm-remote-edit")?.querySelector(".btn.btn-sm.btn-primary");
-    expect(saveButton).toBeTruthy();
-    await user.click(saveButton as HTMLButtonElement);
+    const saveButton = screen.getByRole("button", { name: "" }); // Check button
+    await user.click(saveButton);
 
     await waitFor(() => {
       expect(renameGitRemote).toHaveBeenCalledWith("origin", "upstream");
@@ -1024,9 +1023,8 @@ describe("GitManagerModal", () => {
     await user.clear(urlInput);
     await user.type(urlInput, "https://new-url.com/repo.git");
 
-    const saveButton = urlInput.closest(".gm-remote-edit")?.querySelector(".btn.btn-sm.btn-primary");
-    expect(saveButton).toBeTruthy();
-    await user.click(saveButton as HTMLButtonElement);
+    const saveButton = screen.getByRole("button", { name: "" }); // Check button
+    await user.click(saveButton);
 
     await waitFor(() => {
       expect(updateGitRemoteUrl).toHaveBeenCalledWith("origin", "https://new-url.com/repo.git");

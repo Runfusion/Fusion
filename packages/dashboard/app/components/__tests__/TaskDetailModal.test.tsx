@@ -1341,7 +1341,7 @@ describe("TaskDetailModal", () => {
       renderWithSearch();
       fireEvent.click(screen.getByText("Add Dependency"));
       const input = document.querySelector(".dep-dropdown-search") as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "fn-020" } });
+      fireEvent.change(input, { target: { value: "kb-020" } });
 
       const items = document.querySelectorAll(".dep-dropdown-item");
       expect(items).toHaveLength(1);
@@ -1465,7 +1465,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(depLink);
 
       await waitFor(() => {
-        expect(addToast).toHaveBeenCalledWith("Failed to load dependency FN-001", "error");
+        expect(addToast).toHaveBeenCalledWith("Failed to load dependency KB-001", "error");
       });
       expect(onOpenDetail).not.toHaveBeenCalled();
     });
@@ -1805,7 +1805,7 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         expect(mockApprovePlan).toHaveBeenCalledWith("FN-001");
       });
-      expect(addToast).toHaveBeenCalledWith("Plan approved — FN-001 moved to Todo", "success");
+      expect(addToast).toHaveBeenCalledWith("Plan approved — KB-001 moved to Todo", "success");
       expect(onClose).toHaveBeenCalled();
     });
 
@@ -1846,7 +1846,7 @@ describe("TaskDetailModal", () => {
         expect(mockRejectPlan).toHaveBeenCalledWith("FN-001");
       });
       expect(addToast).toHaveBeenCalledWith(
-        "Plan rejected — FN-001 returned to Triage for re-specification",
+        "Plan rejected — KB-001 returned to Triage for re-specification",
         "info"
       );
       expect(onClose).toHaveBeenCalled();
@@ -2013,7 +2013,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Duplicate"));
 
       expect(window.confirm).toHaveBeenCalledWith(
-        "Duplicate FN-001? This will create a new task in Triage with the same description and prompt."
+        "Duplicate KB-001? This will create a new task in Triage with the same description and prompt."
       );
 
       window.confirm = originalConfirm;
@@ -2072,7 +2072,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Duplicate"));
 
       await waitFor(() => {
-        expect(addToast).toHaveBeenCalledWith("Duplicated FN-001 → FN-002", "success");
+        expect(addToast).toHaveBeenCalledWith("Duplicated KB-001 → KB-002", "success");
       });
 
       window.confirm = originalConfirm;
@@ -2393,7 +2393,7 @@ describe("TaskDetailModal", () => {
 
       await waitFor(() => {
         expect(refineTask).toHaveBeenCalledWith("FN-001", "Need to add more tests");
-        expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-002", "success");
+        expect(addToast).toHaveBeenCalledWith("Refinement task created: KB-002", "success");
         expect(onClose).toHaveBeenCalled();
       });
     });
@@ -2682,7 +2682,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
-        expect(addToast).toHaveBeenCalledWith("Updated FN-001", "success");
+        expect(addToast).toHaveBeenCalledWith("Updated KB-001", "success");
       });
 
       // Should exit edit mode

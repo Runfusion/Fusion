@@ -256,7 +256,7 @@ describe("Board", () => {
       const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]");
       expect(todoTasks[0].title).toBe("Updated");
       expect(columnRenderCounts.todo).toBeGreaterThan(initialTodoRenders);
-      expect(columnRenderCounts.done).toBeGreaterThanOrEqual(initialDoneRenders);
+      expect(columnRenderCounts.done).toBe(initialDoneRenders);
     });
 
     it("filtered tasks are sorted correctly (columnMovedAt, createdAt)", () => {
@@ -292,7 +292,7 @@ describe("Board", () => {
       expect(todoTasks).toHaveLength(3);
 
       // Tasks with columnMovedAt should come first, sorted by columnMovedAt descending (newest first)
-      // So FN-002 (12:00) should be first, FN-001 (10:00) second
+      // So KB-002 (12:00) should be first, KB-001 (10:00) second
       // Legacy tasks (no columnMovedAt) come last, sorted by createdAt ascending
       expect(todoTasks[0].id).toBe("FN-002");
       expect(todoTasks[1].id).toBe("FN-001");
@@ -302,7 +302,7 @@ describe("Board", () => {
     it("matches tasks across multiple fields simultaneously", () => {
       const tasks: Task[] = [
         createTask({ id: "SEARCH-123", title: "Searchable title", description: "Normal description", column: "todo" }),
-        createTask({ id: "FN-999", title: "Other task", description: "This has searchable content", column: "todo" }),
+        createTask({ id: "KB-999", title: "Other task", description: "This has searchable content", column: "todo" }),
         createTask({ id: "FN-888", title: "Unrelated", description: "No match here", column: "todo" }),
       ];
 
@@ -313,7 +313,7 @@ describe("Board", () => {
 
       // Should match both tasks with "search" in ID, title, or description
       expect(todoTasks).toHaveLength(2);
-      expect(todoTasks.map((t: Task) => t.id).sort()).toEqual(["FN-999", "SEARCH-123"]);
+      expect(todoTasks.map((t: Task) => t.id).sort()).toEqual(["KB-999", "SEARCH-123"]);
     });
 
     it("trims whitespace from search query", () => {

@@ -129,53 +129,6 @@ export interface ProjectRuntime extends EventEmitter<ProjectRuntimeEvents> {
 }
 
 /**
- * Result of a task execution operation.
- */
-export interface TaskExecutionResult {
-  /** Whether the task execution was successful */
-  success: boolean;
-  /** The task ID that was executed */
-  taskId: string;
-  /** Error message if execution failed */
-  error?: string;
-  /** Number of steps completed during execution */
-  stepsCompleted?: number;
-  /** ISO-8601 timestamp when execution started */
-  startedAt?: string;
-  /** ISO-8601 timestamp when execution completed */
-  completedAt?: string;
-}
-
-/**
- * Health metrics for a ProjectRuntime instance.
- * Used for detailed health monitoring and diagnostics.
- */
-export interface RuntimeHealth {
-  /** Current status of the runtime */
-  status: RuntimeStatus;
-  /** Number of tasks currently in-progress */
-  activeTasks: number;
-  /** Memory usage in bytes */
-  memoryUsage: number;
-  /** ISO-8601 timestamp of the last activity */
-  lastActivityAt: string;
-  /** Number of errors encountered */
-  errorCount: number;
-  /** Optional last error message */
-  lastError?: string;
-}
-
-/**
- * Runtime event types for event handlers.
- */
-export type RuntimeEventType =
-  | "task:created"
-  | "task:completed"
-  | "task:failed"
-  | "health:changed"
-  | "error";
-
-/**
  * Global metrics aggregated across all project runtimes.
  */
 export interface GlobalMetrics {

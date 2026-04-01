@@ -382,7 +382,6 @@ body {
   gap: var(--column-gap);
   padding: var(--board-padding);
   height: calc(100vh - 57px);
-  height: calc(100dvh - 57px);
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x proximity;
@@ -4798,11 +4797,6 @@ body {
   padding-right: 8px;
 }
 
-/* Set width on ID column header to match data cells */
-.list-table th:nth-child(2).list-header-cell {
-  width: 70px;
-}
-
 .list-header-cell:hover {
   color: var(--text);
 }
@@ -4864,7 +4858,6 @@ body {
 }
 
 .list-cell-id {
-  width: 70px;
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
@@ -4874,6 +4867,7 @@ body {
 }
 
 .list-cell-title {
+  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5133,9 +5127,7 @@ body {
   }
 
   .list-cell-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-width: 150px;
   }
 
   .list-cell-date {
@@ -10562,9 +10554,6 @@ html .column.drag-over * {
   width: 900px;
   max-width: 95vw;
   max-height: 85vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 /* Main layout: sidebar + content */
@@ -11662,7 +11651,7 @@ html .column.drag-over * {
   .gm-modal {
     width: 100%;
     max-width: 100%;
-    height: 100vh;
+    max-height: 100vh;
     border-radius: 0;
   }
 
@@ -11699,7 +11688,7 @@ html .column.drag-over * {
   }
 
   .gm-content {
-    min-height: 200px;
+    min-height: 300px;
     padding: var(--space-md);
   }
 
@@ -11811,135 +11800,4 @@ html .column.drag-over * {
 
 [data-theme="light"] .gm-load-more:hover {
   background: rgba(0, 0, 0, 0.03);
-}
-
-/* ── Task Changes Tab Styles ─────────────────────────────────────────────── */
-
-.task-changes-tab {
-  padding: 16px;
-}
-
-.changes-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.changes-header h4 {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.changes-file-list {
-  border: 1px solid var(--border, #30363d);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.changes-file-item {
-  border-bottom: 1px solid var(--border, #30363d);
-}
-
-.changes-file-item:last-child {
-  border-bottom: none;
-}
-
-.changes-file-item.expanded {
-  background: var(--bg-secondary, #161b22);
-}
-
-.changes-file-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: none;
-  border: none;
-  width: 100%;
-  text-align: left;
-  cursor: pointer;
-  color: var(--text-primary, #c9d1d9);
-  font-size: 13px;
-  transition: background 0.15s;
-}
-
-.changes-file-header:hover {
-  background: var(--bg-hover, #1f242c);
-}
-
-.changes-file-toggle {
-  display: flex;
-  align-items: center;
-  color: var(--text-secondary, #8b949e);
-  flex-shrink: 0;
-}
-
-.changes-file-status {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.changes-file-path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-}
-
-.changes-file-stat {
-  color: var(--text-secondary, #8b949e);
-  font-size: 11px;
-  flex-shrink: 0;
-  margin-left: 8px;
-}
-
-.changes-file-content {
-  border-top: 1px solid var(--border, #30363d);
-  background: var(--bg-primary, #0d1117);
-}
-
-.changes-diff-patch {
-  margin: 0;
-  padding: 12px;
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-x: auto;
-  white-space: pre;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  color: var(--text-primary, #c9d1d9);
-}
-
-.changes-diff-patch code {
-  background: none;
-  padding: 0;
-}
-
-/* Syntax highlighting for diff */
-.changes-diff-patch .diff-add,
-.changes-diff-patch [data-prefix="+"] {
-  color: #3fb950;
-}
-
-.changes-diff-patch .diff-del,
-.changes-diff-patch [data-prefix="-"] {
-  color: #f85149;
-}
-
-.changes-diff-patch .diff-hunk,
-.changes-diff-patch [data-prefix="@@"] {
-  color: #58a6ff;
 }

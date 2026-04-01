@@ -110,8 +110,8 @@ describe("useMultiAgentLogs", () => {
     await waitFor(() => {
       // Filter to unique URLs (Strict Mode may create duplicates)
       const urls = [...new Set(MockEventSource.instances.map((es) => es.url))];
-      expect(urls).toContain("/api/tasks/FN-001/logs/stream");
-      expect(urls).toContain("/api/tasks/FN-002/logs/stream");
+      expect(urls).toContain("/api/tasks/KB-001/logs/stream");
+      expect(urls).toContain("/api/tasks/KB-002/logs/stream");
     });
   });
 
@@ -214,7 +214,7 @@ describe("useMultiAgentLogs", () => {
 
     await waitFor(() => {
       const urls = [...new Set(MockEventSource.instances.map((es) => es.url))];
-      expect(urls).toContain("/api/tasks/FN-002/logs/stream");
+      expect(urls).toContain("/api/tasks/KB-002/logs/stream");
     });
   });
 
@@ -232,7 +232,7 @@ describe("useMultiAgentLogs", () => {
       expect(result.current["FN-001"].entries).toHaveLength(2);
     });
 
-    // Clear only FN-001
+    // Clear only KB-001
     act(() => {
       result.current["FN-001"].clear();
     });

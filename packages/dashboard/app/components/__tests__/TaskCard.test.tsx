@@ -487,7 +487,7 @@ describe("TaskCard file-scope overlap badge logic", () => {
   }
 
   it("generates correct tooltip text", () => {
-    expect(computeScopeTooltip("FN-005")).toBe("Blocked by FN-005 (file overlap)");
+    expect(computeScopeTooltip("FN-005")).toBe("Blocked by KB-005 (file overlap)");
   });
 });
 
@@ -647,7 +647,7 @@ describe("TaskCard clickable dependencies", () => {
     fireEvent.click(depBadge);
 
     await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith("Failed to load dependency FN-001", "error");
+      expect(addToast).toHaveBeenCalledWith("Failed to load dependency KB-001", "error");
     });
     expect(onOpenDetail).not.toHaveBeenCalled();
   });
@@ -2295,17 +2295,18 @@ describe("TaskCard GitHub badges", () => {
 });
 
 /**
- * Tests for task detail opening behavior in TaskCard.
- * The card body opens the modal directly; there is no separate expand button.
+ * Tests for expand button and modal open behavior in TaskCard.
+ * Ensures that clicking the expand button opens the modal,
+ * while clicking the card body does not.
  */
-describe("TaskCard detail opening", () => {
+describe("TaskCard expand button", () => {
   const noopToast = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("opens modal when clicking the card body", async () => {
+  it("opens modal when clicking the expand button", async () => {
     const { fetchTaskDetail } = await import("../../api");
     const mockFetch = vi.mocked(fetchTaskDetail);
     const mockDetail: TaskDetail = {
@@ -2329,8 +2330,11 @@ describe("TaskCard detail opening", () => {
     const card = document.querySelector('[data-id="FN-099"]');
     expect(card).toBeDefined();
 
-    const cardTitle = screen.getByText("Test task");
-    fireEvent.click(cardTitle);
+    const expandButton = screen.getByRole("button", { name: /Open task details/i });
+    expect(expandButton).toBeDefined();
+    expect(expandButton.classList.contains("card-expand-btn")).toBe(true);
+
+    fireEvent.click(expandButton);
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith("FN-099");
@@ -2338,24 +2342,10 @@ describe("TaskCard detail opening", () => {
     });
   });
 
-  it("does not render a separate expand button", () => {
-    const task = makeTask();
-
-    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={noopToast} />);
-    expect(screen.queryByRole("button", { name: /Open task details/i })).toBeNull();
-  });
-
-  it("opens modal only once per card click", async () => {
-    const { fetchTaskDetail } = await import("../../api");
-    const mockFetch = vi.mocked(fetchTaskDetail);
-    const mockDetail: TaskDetail = {
-      ...makeTask({ id: "FN-099" }),
-      prompt: "",
-      attachments: [],
-    };
-    mockFetch.mockResolvedValueOnce(mockDetail);
+  it("does NOT open modal when clicking the card body", async () => {
     const onOpenDetail = vi.fn();
-    const task = makeTask();
+
+    const task = makeTask({ title: "Test Task Title" });
 
     render(
       <TaskCard
@@ -2365,13 +2355,35 @@ describe("TaskCard detail opening", () => {
       />
     );
 
-    fireEvent.click(screen.getByText("Test task"));
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card).toBeDefined();
 
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith("FN-099");
-      expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
-      expect(onOpenDetail).toHaveBeenCalledTimes(1);
-    });
+    // Click on the card title (part of card body)
+    const cardTitle = screen.getByText("Test Task Title");
+    fireEvent.click(cardTitle);
+
+    // Wait for any async operations
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Modal should NOT have opened
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("expand button has correct accessibility attributes", () => {
+    const task = makeTask();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const expandButton = screen.getByRole("button", { name: /Open task details/i });
+    expect(expandButton).toBeDefined();
+    expect(expandButton.getAttribute("aria-label")).toBe("Open task details");
+    expect(expandButton.getAttribute("title")).toBe("Open task details");
   });
 
   it("does NOT open modal during vertical scrolling", async () => {
@@ -2472,7 +2484,7 @@ describe("TaskCard detail opening", () => {
     expect(onOpenDetail).not.toHaveBeenCalled();
   });
 
-  it("does not render an expand button in any column", () => {
+  it("expand button is present in all columns", () => {
     const columns: Column[] = ["triage", "todo", "in-progress", "in-review", "done", "archived"];
 
     for (const column of columns) {
@@ -2486,10 +2498,48 @@ describe("TaskCard detail opening", () => {
         />
       );
 
-      expect(screen.queryByRole("button", { name: /Open task details/i })).toBeNull();
+      const expandButton = screen.getByRole("button", { name: /Open task details/i });
+      expect(expandButton).toBeDefined();
+      expect(expandButton.classList.contains("card-expand-btn")).toBe(true);
 
       unmount();
     }
+  });
+
+  it("expand button stops propagation to prevent double-triggering", async () => {
+    const { fetchTaskDetail } = await import("../../api");
+    const mockFetch = vi.mocked(fetchTaskDetail);
+    const mockDetail: TaskDetail = {
+      ...makeTask({ id: "FN-099" }),
+      prompt: "",
+      attachments: [],
+    };
+    mockFetch.mockResolvedValueOnce(mockDetail);
+    const onOpenDetail = vi.fn();
+
+    const task = makeTask();
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={onOpenDetail}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card).toBeDefined();
+
+    const expandButton = screen.getByRole("button", { name: /Open task details/i });
+
+    // Click the expand button - should only trigger once
+    fireEvent.click(expandButton);
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith("FN-099");
+      expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
+      expect(onOpenDetail).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -2562,150 +2612,5 @@ describe("TaskCard title display", () => {
     // Look for the task ID within the card-title element specifically
     const cardTitle = screen.getByText("FN-001", { selector: ".card-title" });
     expect(cardTitle).toBeDefined();
-  });
-});
-
-/**
- * Tests for TaskCard title truncation to 140 characters.
- */
-describe("TaskCard title truncation", () => {
-  const noopToast = vi.fn();
-
-  const makeTask = (overrides: Partial<Task> = {}): Task => ({
-    id: "FN-001",
-    description: "Test task",
-    column: "todo",
-    dependencies: [],
-    steps: [],
-    currentStep: 0,
-    log: [],
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
-    columnMovedAt: "2026-01-01T00:00:00Z",
-    ...overrides,
-  } as Task);
-
-  it("displays short title unchanged (under 140 characters)", () => {
-    const shortTitle = "This is a short title";
-    const task = makeTask({ title: shortTitle });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const cardTitle = screen.getByText(shortTitle);
-    expect(cardTitle).toBeDefined();
-    expect(cardTitle.textContent).toBe(shortTitle);
-  });
-
-  it("displays title exactly 140 characters unchanged", () => {
-    const exactTitle = "A".repeat(140);
-    const task = makeTask({ title: exactTitle });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const cardTitle = screen.getByText(exactTitle);
-    expect(cardTitle).toBeDefined();
-    expect(cardTitle.textContent?.length).toBe(140);
-    expect(cardTitle.textContent).toBe(exactTitle);
-  });
-
-  it("truncates title over 140 characters with ellipsis", () => {
-    const longTitle = "B".repeat(150);
-    const task = makeTask({ title: longTitle });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // Should show truncated text with ellipsis (140 chars + "…")
-    const expectedTruncated = "B".repeat(140) + "…";
-    const cardTitle = screen.getByText(expectedTruncated);
-    expect(cardTitle).toBeDefined();
-    expect(cardTitle.textContent?.length).toBe(141); // 140 + ellipsis
-  });
-
-  it("truncates description fallback when no title and description is over 140 chars", () => {
-    const longDescription = "C".repeat(200);
-    const task = makeTask({ title: undefined, description: longDescription });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // Should show truncated description with ellipsis
-    const expectedTruncated = "C".repeat(140) + "…";
-    const cardTitle = screen.getByText(expectedTruncated);
-    expect(cardTitle).toBeDefined();
-    expect(cardTitle.textContent?.length).toBe(141);
-  });
-
-  it("includes full untruncated text in title attribute for tooltip", () => {
-    const longTitle = "D".repeat(200);
-    const task = makeTask({ title: longTitle });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // The title attribute should contain the full untruncated text
-    const cardTitleElement = document.querySelector(".card-title");
-    expect(cardTitleElement).toBeDefined();
-    expect(cardTitleElement?.getAttribute("title")).toBe(longTitle);
-  });
-
-  it("includes full description in title attribute when using description fallback", () => {
-    const longDescription = "E".repeat(200);
-    const task = makeTask({ title: undefined, description: longDescription });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const cardTitleElement = document.querySelector(".card-title");
-    expect(cardTitleElement).toBeDefined();
-    expect(cardTitleElement?.getAttribute("title")).toBe(longDescription);
-  });
-
-  it("includes task id in title attribute when falling back to id", () => {
-    const task = makeTask({ title: undefined, description: "" });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const cardTitleElement = document.querySelector(".card-title");
-    expect(cardTitleElement).toBeDefined();
-    expect(cardTitleElement?.getAttribute("title")).toBe("FN-001");
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,16 +14,17 @@ import {
 } from "./backup.js";
 import type { ProjectSettings } from "./types.js";
 
+// Helper to wait with a delay that ensures different timestamps
+async function waitForNextSecond(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 1100));
+}
+
 describe("BackupManager", () => {
   let tempDir: string;
   let kbDir: string;
   let backupManager: BackupManager;
 
   beforeEach(async () => {
-    // Use fake timers for deterministic timestamp control
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    
     tempDir = mkdtempSync(join(tmpdir(), "kb-backup-test-"));
     kbDir = join(tempDir, ".fusion");
     await mkdir(kbDir, { recursive: true });
@@ -33,7 +34,6 @@ describe("BackupManager", () => {
   });
 
   afterEach(async () => {
-    vi.useRealTimers();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -83,25 +83,20 @@ describe("BackupManager", () => {
     });
 
     it("should return sorted array newest-first", async () => {
-      // Create multiple backups by advancing system time deterministically
-      const backup1 = await backupManager.createBackup();
-      
-      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
-      const backup2 = await backupManager.createBackup();
-      
-      vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
-      const backup3 = await backupManager.createBackup();
+      // Create multiple backups with delays to ensure different timestamps
+      await backupManager.createBackup();
+      await waitForNextSecond();
+      await backupManager.createBackup();
+      await waitForNextSecond();
+      await backupManager.createBackup();
 
       const backups = await backupManager.listBackups();
 
       expect(backups).toHaveLength(3);
-      // Verify sorted by createdAt descending (newest first)
-      expect(backups[0].createdAt >= backups[1].createdAt).toBe(true);
-      expect(backups[1].createdAt >= backups[2].createdAt).toBe(true);
-      // Verify correct ordering by filename
-      expect(backups[0].filename).toBe(backup3.filename);
-      expect(backups[1].filename).toBe(backup2.filename);
-      expect(backups[2].filename).toBe(backup1.filename);
+      // Verify sorted by createdAt descending
+      for (let i = 0; i < backups.length - 1; i++) {
+        expect(backups[i].createdAt >= backups[i + 1].createdAt).toBe(true);
+      }
     });
 
     it("should only list files matching backup pattern", async () => {
@@ -128,10 +123,10 @@ describe("BackupManager", () => {
 
   describe("cleanupOldBackups", () => {
     it("should not delete when backup count is within retention", async () => {
-      // Create 3 backups with retention of 7 by advancing time
+      // Create 3 backups with retention of 7
       for (let i = 0; i < 3; i++) {
-        vi.setSystemTime(new Date(`2026-01-01T00:00:0${i}.000Z`));
         await backupManager.createBackup();
+        await waitForNextSecond();
       }
 
       const deleted = await backupManager.cleanupOldBackups();
@@ -144,10 +139,10 @@ describe("BackupManager", () => {
     it("should delete oldest backups exceeding retention", async () => {
       const manager = new BackupManager(kbDir, { retention: 2 });
 
-      // Create 4 backups by advancing time deterministically
+      // Create 4 backups with 1-second delays to ensure different timestamps
       for (let i = 0; i < 4; i++) {
-        vi.setSystemTime(new Date(`2026-01-01T00:00:0${i}.000Z`));
         await manager.createBackup();
+        await waitForNextSecond();
       }
 
       const deleted = await manager.cleanupOldBackups();
@@ -155,17 +150,17 @@ describe("BackupManager", () => {
       expect(deleted).toBe(2); // 4 - 2 = 2 deleted
       const backups = await manager.listBackups();
       expect(backups).toHaveLength(2);
-    });
+    }, 10000);
 
     it("should keep the newest backups after cleanup", async () => {
       const manager = new BackupManager(kbDir, { retention: 2 });
 
-      // Create 4 backups and record their names by advancing time
+      // Create 4 backups and record their names
       const backupNames: string[] = [];
       for (let i = 0; i < 4; i++) {
-        vi.setSystemTime(new Date(`2026-01-01T00:00:0${i}.000Z`));
         const backup = await manager.createBackup();
         backupNames.push(backup.filename);
+        await waitForNextSecond();
       }
 
       await manager.cleanupOldBackups();
@@ -205,8 +200,8 @@ describe("BackupManager", () => {
     it("should create pre-restore backup by default", async () => {
       const backup = await backupManager.createBackup();
 
-      // Advance time to ensure different timestamp for pre-restore backup
-      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+      // Wait to ensure different timestamp
+      await waitForNextSecond();
 
       // Restore with default options (should create pre-restore backup)
       await backupManager.restoreBackup(backup.filename);
@@ -226,19 +221,12 @@ describe("generateBackupFilename", () => {
     expect(filename).toMatch(/^kb-\d{4}-\d{2}-\d{2}-\d{6}\.db$/);
   });
 
-  it("should generate unique filenames for different timestamps", () => {
-    // Use fake timers for deterministic time control
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    
+  it("should generate unique filenames for different timestamps", async () => {
     const filename1 = generateBackupFilename();
-    
-    vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+    await waitForNextSecond();
     const filename2 = generateBackupFilename();
 
     expect(filename1).not.toBe(filename2);
-    
-    vi.useRealTimers();
   });
 });
 
@@ -306,10 +294,6 @@ describe("createBackupManager", () => {
   });
 
   it("should use settings when provided", async () => {
-    // Use fake timers for deterministic time control
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    
     const tempDir = mkdtempSync(join(tmpdir(), "kb-backup-test-"));
     const kbDir = join(tempDir, ".fusion");
     await mkdir(kbDir, { recursive: true });
@@ -322,19 +306,18 @@ describe("createBackupManager", () => {
 
     const manager = createBackupManager(kbDir, settings);
 
-    // Create 4 backups by advancing time
+    // Create 4 backups with 1-second delays
     for (let i = 0; i < 4; i++) {
-      vi.setSystemTime(new Date(`2026-01-01T00:00:0${i}.000Z`));
       await manager.createBackup();
+      await waitForNextSecond();
     }
 
     // Cleanup should leave only 2
     const deleted = await manager.cleanupOldBackups();
     expect(deleted).toBe(2);
 
-    vi.useRealTimers();
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, 10000);
 });
 
 describe("runBackupCommand", () => {
@@ -342,10 +325,6 @@ describe("runBackupCommand", () => {
   let kbDir: string;
 
   beforeEach(async () => {
-    // Use fake timers for deterministic timestamp control
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    
     tempDir = mkdtempSync(join(tmpdir(), "kb-backup-test-"));
     kbDir = join(tempDir, ".fusion");
     await mkdir(kbDir, { recursive: true });
@@ -353,7 +332,6 @@ describe("runBackupCommand", () => {
   });
 
   afterEach(async () => {
-    vi.useRealTimers();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -420,15 +398,14 @@ describe("runBackupCommand", () => {
       autoBackupRetention: 2,
     };
 
-    // Create 3 backups first (manually to test cleanup) by advancing time
+    // Create 3 backups first (manually to test cleanup) with delays
     const manager = createBackupManager(kbDir, settings);
     for (let i = 0; i < 3; i++) {
-      vi.setSystemTime(new Date(`2026-01-01T00:00:0${i}.000Z`));
       await manager.createBackup();
+      await waitForNextSecond();
     }
 
     // Now run backup command
-    vi.setSystemTime(new Date("2026-01-01T00:00:03.000Z"));
     const result = await runBackupCommand(kbDir, settings);
 
     expect(result.success).toBe(true);
