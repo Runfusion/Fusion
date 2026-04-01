@@ -547,4 +547,107 @@ describe("Header", () => {
     const btn = screen.getByTestId("agents-btn");
     expect(btn).toBeDefined();
   });
+
+  // ── Multi-Project Selector ────────────────────────────────────
+
+  it("shows ProjectSelector when 2+ projects provided", () => {
+    const projects = [
+      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+    ];
+    render(<Header projects={projects} />);
+    expect(screen.getByTestId("project-selector-trigger")).toBeDefined();
+  });
+
+  it("does not show ProjectSelector with single project", () => {
+    const projects = [
+      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+    ];
+    const { container } = render(<Header projects={projects} />);
+    expect(container.querySelector(".project-selector")).toBeNull();
+  });
+
+  it("does not show ProjectSelector when no projects", () => {
+    const { container } = render(<Header projects={[]} />);
+    expect(container.querySelector(".project-selector")).toBeNull();
+  });
+
+  it("shows 'Back to All Projects' button when currentProject is set", () => {
+    const projects = [
+      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+    ];
+    render(
+      <Header
+        projects={projects}
+        currentProject={projects[0]}
+        onViewAllProjects={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId("back-to-projects-btn")).toBeDefined();
+  });
+
+  it("calls onViewAllProjects when 'Back to All Projects' clicked", () => {
+    const projects = [
+      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+    ];
+    const onViewAllProjects = vi.fn();
+    render(
+      <Header
+        projects={projects}
+        currentProject={projects[0]}
+        onViewAllProjects={onViewAllProjects}
+      />
+    );
+    fireEvent.click(screen.getByTestId("back-to-projects-btn"));
+    expect(onViewAllProjects).toHaveBeenCalled();
+  });
+
+  it("does not show 'Back to All Projects' when no currentProject", () => {
+    const projects = [
+      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+    ];
+    render(<Header projects={projects} currentProject={null} />);
+    expect(screen.queryByTestId("back-to-projects-btn")).toBeNull();
+  });
+
+  it("calls onSelectProject when project selected from selector", () => {
+    const projects = [
+      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+    ];
+    const onSelectProject = vi.fn();
+    render(
+      <Header
+        projects={projects}
+        currentProject={projects[0]}
+        onSelectProject={onSelectProject}
+        onViewAllProjects={vi.fn()}
+      />
+    );
+    
+    // Open selector
+    fireEvent.click(screen.getByTestId("project-selector-trigger"));
+    // Click on a project in the dropdown
+    fireEvent.click(screen.getByText("Project Two"));
+    expect(onSelectProject).toHaveBeenCalledWith(projects[1]);
+  });
+
+  it("shows current project name in selector trigger", () => {
+    const projects = [
+      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+    ];
+    render(
+      <Header
+        projects={projects}
+        currentProject={projects[0]}
+        onSelectProject={vi.fn()}
+        onViewAllProjects={vi.fn()}
+      />
+    );
+    
+    expect(screen.getByText("Project One")).toBeDefined();
+  });
 });

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow, Bot } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow, Bot, ChevronLeft } from "lucide-react";
+import type { ProjectInfo } from "@fusion/core";
+import { ProjectSelector } from "./ProjectSelector";
 
 // GitHub logo icon (Octocat mark) - uses currentColor for theme compatibility
 function GitHubLogo({ size = 16 }: { size?: number }) {
@@ -16,7 +18,7 @@ function GitHubLogo({ size = 16 }: { size?: number }) {
   );
 }
 
-interface HeaderProps {
+export interface HeaderProps {
   onOpenSettings?: () => void;
   onOpenGitHubImport?: () => void;
   onOpenPlanning?: () => void;
@@ -38,6 +40,11 @@ interface HeaderProps {
   onChangeView?: (view: "board" | "list" | "agents") => void;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
+  /** Multi-project props */
+  projects?: ProjectInfo[];
+  currentProject?: ProjectInfo | null;
+  onSelectProject?: (project: ProjectInfo) => void;
+  onViewAllProjects?: () => void;
 }
 
 function useIsMobile() {
@@ -78,6 +85,10 @@ export function Header({
   onChangeView,
   searchQuery = "",
   onSearchChange,
+  projects = [],
+  currentProject,
+  onSelectProject,
+  onViewAllProjects,
 }: HeaderProps) {
   const isMobile = useIsMobile();
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
@@ -153,7 +164,35 @@ export function Header({
         <img src="/logo.svg" alt="Fusion logo" className="header-logo" width={24} height={24} />
         <h1 className="logo">Fusion</h1>
         <span className="logo-sub">tasks</span>
+        
+        {/* Back to All Projects button when viewing a specific project */}
+        {currentProject && onViewAllProjects && (
+          <button
+            className="header-back-button"
+            onClick={onViewAllProjects}
+            title="Back to All Projects"
+            data-testid="back-to-projects-btn"
+          >
+            <ChevronLeft size={14} />
+            <span>All Projects</span>
+          </button>
+        )}
       </div>
+
+      {/* Project Selector - shown when 2+ projects */}
+      {projects.length > 1 && (
+        <div className="header-project-selector">
+          <ProjectSelector
+            projects={projects}
+            currentProject={currentProject || null}
+            onSelect={(project) => {
+              onSelectProject?.(project);
+            }}
+            onViewAll={onViewAllProjects || (() => {})}
+          />
+        </div>
+      )}
+
       <div className="header-actions">
         {/* Desktop Search - only show in board view */}
         {onSearchChange && view === "board" && !isMobile && (

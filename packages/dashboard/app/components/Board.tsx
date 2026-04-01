@@ -4,6 +4,7 @@ import { Column } from "./Column";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useBatchBadgeFetch } from "../hooks/useBatchBadgeFetch";
+import { Folder } from "lucide-react";
 import type { ModelInfo } from "../api";
 
 interface BoardProps {
@@ -35,6 +36,9 @@ interface BoardProps {
    */
   onSubtaskBreakdown?: (description: string) => void;
   onOpenFilesForTask?: (taskId: string) => void;
+  /** Project context for multi-project mode */
+  projectId?: string;
+  projectName?: string;
 }
 
 function sortTasksForColumn(tasks: Task[]): Task[] {
@@ -53,7 +57,7 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask }: BoardProps) {
+export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, projectId, projectName }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const { fetchBatch } = useBatchBadgeFetch();
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -142,30 +146,42 @@ export function Board({ tasks, maxConcurrent, onMoveTask, onOpenDetail, addToast
       }
     };
   }, [taskIdsWithBadges, fetchBatch]);
+
   return (
-    <main className="board" id="board">
-      {COLUMNS.map((col) => (
-        <Column
-          key={col}
-          column={col}
-          tasks={tasksByColumn[col]}
-          maxConcurrent={maxConcurrent}
-          onMoveTask={onMoveTask}
-          onOpenDetail={onOpenDetail}
-          addToast={addToast}
-          globalPaused={globalPaused}
-          onUpdateTask={onUpdateTask}
-          onArchiveTask={onArchiveTask}
-          onUnarchiveTask={onUnarchiveTask}
-          allTasks={filteredTasks}
-          availableModels={availableModels}
-          onOpenFilesForTask={onOpenFilesForTask}
-          {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
-          {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
-          {...(col === "done" ? { onArchiveAllDone } : {})}
-          {...(col === "archived" ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse } : {})}
-        />
-      ))}
-    </main>
+    <>
+      {/* Project context badge */}
+      {projectId && projectName && (
+        <div className="board-project-context">
+          <span className="board-project-badge">
+            <Folder size={14} />
+            {projectName}
+          </span>
+        </div>
+      )}
+      <main className="board" id="board">
+        {COLUMNS.map((col) => (
+          <Column
+            key={col}
+            column={col}
+            tasks={tasksByColumn[col]}
+            maxConcurrent={maxConcurrent}
+            onMoveTask={onMoveTask}
+            onOpenDetail={onOpenDetail}
+            addToast={addToast}
+            globalPaused={globalPaused}
+            onUpdateTask={onUpdateTask}
+            onArchiveTask={onArchiveTask}
+            onUnarchiveTask={onUnarchiveTask}
+            allTasks={filteredTasks}
+            availableModels={availableModels}
+            onOpenFilesForTask={onOpenFilesForTask}
+            {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
+            {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
+            {...(col === "done" ? { onArchiveAllDone } : {})}
+            {...(col === "archived" ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse } : {})}
+          />
+        ))}
+      </main>
+    </>
   );
 }

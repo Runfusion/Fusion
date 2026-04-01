@@ -1,13 +1,20 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { X, History, Trash2, Filter, RefreshCw, CheckCircle, XCircle, ArrowRight, Plus, Settings, AlertCircle, Loader2 } from "lucide-react";
-import { fetchActivityLog, clearActivityLog, type ActivityLogEntry, type ActivityEventType } from "../api";
-import type { Task } from "@fusion/core";
+import { useState, useEffect, useCallback } from "react";
+import { X, History, Trash2, Filter, RefreshCw, CheckCircle, XCircle, ArrowRight, Plus, Settings, AlertCircle, Loader2, Folder } from "lucide-react";
+import { clearActivityLog, type ActivityLogEntry, type ActivityEventType, type ActivityFeedEntry } from "../api";
+import { useActivityLog } from "../hooks/useActivityLog";
+import type { Task, ProjectInfo } from "@fusion/core";
 
 interface ActivityLogModalProps {
   isOpen: boolean;
   onClose: () => void;
   tasks: Task[];
   onOpenTaskDetail?: (taskId: string) => void;
+  /** When provided, shows only activity for this project */
+  projectId?: string;
+  /** List of all projects for filter dropdown */
+  projects?: ProjectInfo[];
+  /** Called when project filter changes */
+  onProjectFilterChange?: (projectId: string | undefined) => void;
 }
 
 const EVENT_TYPE_LABELS: Record<ActivityEventType, string> = {
@@ -46,78 +53,72 @@ function formatTimestamp(timestamp: string): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: ActivityLogModalProps) {
-  const [entries, setEntries] = useState<ActivityLogEntry[]>([]);
+/**
+ * ActivityLogModal - Activity log with project attribution and filtering
+ * 
+ * Features:
+ * - Project name badge for each activity entry
+ * - Project filter dropdown (when projects list provided)
+ * - Event type filter
+ * - Real-time updates via useActivityLog hook
+ */
+export function ActivityLogModal({ 
+  isOpen, 
+  onClose, 
+  tasks, 
+  onOpenTaskDetail, 
+  projectId,
+  projects = [],
+  onProjectFilterChange,
+}: ActivityLogModalProps) {
   const [filteredType, setFilteredType] = useState<ActivityEventType | "all">("all");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [filteredProjectId, setFilteredProjectId] = useState<string | "all">(projectId || "all");
   const [showConfirmClear, setShowConfirmClear] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
-
-  const loadActivityLog = useCallback(async (since?: string) => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const options: { limit: number; since?: string; type?: ActivityEventType } = {
-        limit: 100,
-        since,
-      };
-      if (filteredType !== "all") {
-        options.type = filteredType;
-      }
-      const data = await fetchActivityLog(options);
-      if (since) {
-        // Append older entries
-        setEntries((prev) => [...prev, ...data]);
-      } else {
-        // Replace with fresh entries
-        setEntries(data);
-      }
-      setHasMore(data.length === 100);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load activity log");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [filteredType]);
-
-  // Initial load and filter change
+  
+  // Sync with external projectId prop
   useEffect(() => {
-    if (isOpen) {
-      loadActivityLog();
-    }
-  }, [isOpen, loadActivityLog]);
+    setFilteredProjectId(projectId || "all");
+  }, [projectId]);
+  
+  // Convert filters to the format expected by useActivityLog
+  const activityType = filteredType === "all" ? undefined : filteredType;
+  const activeProjectId = filteredProjectId === "all" ? undefined : filteredProjectId;
+  
+  // Use the hook for data fetching
+  const { 
+    entries, 
+    loading: isLoading, 
+    error, 
+    refresh, 
+    hasMore 
+  } = useActivityLog({ 
+    projectId: activeProjectId, 
+    type: activityType, 
+    limit: 100,
+    autoRefresh: isOpen,
+  });
 
-  // Auto-refresh every 30 seconds when modal is open
-  useEffect(() => {
-    if (isOpen) {
-      pollingRef.current = setInterval(() => {
-        loadActivityLog();
-      }, 30000);
-    }
-    return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-    };
-  }, [isOpen, loadActivityLog]);
-
-  const handleLoadMore = () => {
-    if (entries.length > 0) {
-      const lastEntry = entries[entries.length - 1];
-      loadActivityLog(lastEntry.timestamp);
-    }
-  };
+  // Convert entries to ActivityLogEntry format for compatibility
+  const convertedEntries: ActivityLogEntry[] = entries.map((entry: ActivityFeedEntry) => ({
+    id: entry.id,
+    timestamp: entry.timestamp,
+    type: entry.type,
+    taskId: entry.taskId,
+    taskTitle: entry.taskTitle,
+    details: entry.details,
+    metadata: entry.metadata,
+    projectId: entry.projectId,
+    projectName: entry.projectName,
+  }));
 
   const handleClearLog = async () => {
     try {
       await clearActivityLog();
-      setEntries([]);
+      refresh();
       setShowConfirmClear(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to clear activity log");
+      // Error handled by hook
+      setShowConfirmClear(false);
     }
   };
 
@@ -125,6 +126,11 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
     if (onOpenTaskDetail) {
       onOpenTaskDetail(taskId);
     }
+  };
+
+  const handleProjectFilterChange = (value: string) => {
+    setFilteredProjectId(value);
+    onProjectFilterChange?.(value === "all" ? undefined : value);
   };
 
   // Handle escape key to close
@@ -142,6 +148,9 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [isOpen, onClose, showConfirmClear]);
+
+  // Determine if any filter is active
+  const isFilterActive = filteredType !== "all" || filteredProjectId !== "all";
 
   if (!isOpen) return null;
 
@@ -161,7 +170,27 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
             <span>Activity Log</span>
           </div>
           <div className="activity-log-actions">
-            {/* Filter dropdown */}
+            {/* Project filter dropdown (when projects provided) */}
+            {projects.length > 0 && (
+              <div className="activity-log-filter activity-log-filter--project">
+                <Folder size={14} />
+                <select
+                  value={filteredProjectId}
+                  onChange={(e) => handleProjectFilterChange(e.target.value)}
+                  className="activity-log-filter-select"
+                  data-testid="activity-project-filter"
+                >
+                  <option value="all">All Projects</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Event type filter dropdown */}
             <div className="activity-log-filter">
               <Filter size={14} />
               <select
@@ -182,7 +211,7 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
             {/* Refresh button */}
             <button
               className="activity-log-refresh"
-              onClick={() => loadActivityLog()}
+              onClick={() => refresh()}
               disabled={isLoading}
               title="Refresh"
               data-testid="activity-refresh"
@@ -191,7 +220,7 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
             </button>
 
             {/* Clear button */}
-            {entries.length > 0 && (
+            {convertedEntries.length > 0 && (
               <button
                 className="activity-log-clear"
                 onClick={() => setShowConfirmClear(true)}
@@ -214,6 +243,33 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
           </div>
         </div>
 
+        {/* Active filters display */}
+        {isFilterActive && (
+          <div className="activity-log-active-filters">
+            <span className="activity-log-filter-label">Active filters:</span>
+            {filteredProjectId !== "all" && (
+              <span className="activity-log-filter-badge">
+                Project: {projects.find(p => p.id === filteredProjectId)?.name || filteredProjectId}
+              </span>
+            )}
+            {filteredType !== "all" && (
+              <span className="activity-log-filter-badge">
+                Type: {EVENT_TYPE_LABELS[filteredType]}
+              </span>
+            )}
+            <button
+              className="activity-log-clear-filters"
+              onClick={() => {
+                setFilteredType("all");
+                setFilteredProjectId("all");
+                onProjectFilterChange?.(undefined);
+              }}
+            >
+              Clear all
+            </button>
+          </div>
+        )}
+
         {/* Content */}
         <div className="activity-log-content" data-testid="activity-log-content">
           {error && (
@@ -223,15 +279,31 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
             </div>
           )}
 
-          {entries.length === 0 && !isLoading && !error && (
+          {convertedEntries.length === 0 && !isLoading && !error && (
             <div className="activity-log-empty" data-testid="activity-empty">
               <History size={48} className="activity-log-empty-icon" />
-              <p>No activity recorded yet</p>
+              <p>
+                {isFilterActive 
+                  ? "No activity matches the current filters" 
+                  : "No activity recorded yet"}
+              </p>
+              {isFilterActive && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setFilteredType("all");
+                    setFilteredProjectId("all");
+                    onProjectFilterChange?.(undefined);
+                  }}
+                >
+                  Clear Filters
+                </button>
+              )}
             </div>
           )}
 
           <div className="activity-log-list">
-            {entries.map((entry) => (
+            {convertedEntries.map((entry) => (
               <div
                 key={entry.id}
                 className="activity-log-entry"
@@ -245,6 +317,13 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
                     <span className="activity-log-entry-type">
                       {EVENT_TYPE_LABELS[entry.type]}
                     </span>
+                    {/* Project name badge */}
+                    {entry.projectName && (
+                      <span className="activity-log-entry-project">
+                        <Folder size={10} />
+                        {entry.projectName}
+                      </span>
+                    )}
                     <span className="activity-log-entry-time">
                       {formatTimestamp(entry.timestamp)}
                     </span>
@@ -286,14 +365,14 @@ export function ActivityLogModal({ isOpen, onClose, tasks, onOpenTaskDetail }: A
           {hasMore && !isLoading && (
             <button
               className="activity-log-load-more"
-              onClick={handleLoadMore}
+              onClick={refresh}
               data-testid="activity-load-more"
             >
               Load More
             </button>
           )}
 
-          {isLoading && entries.length > 0 && (
+          {isLoading && convertedEntries.length > 0 && (
             <div className="activity-log-loading">
               <Loader2 size={20} className="spin" />
             </div>

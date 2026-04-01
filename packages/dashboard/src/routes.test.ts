@@ -25,12 +25,24 @@ vi.mock("@fusion/core", async () => {
   return {
     ...actual,
     isGhAuthenticated: vi.fn(),
+    CentralCore: vi.fn().mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      getProject: vi.fn().mockResolvedValue(null),
+    })),
+    TaskStore: vi.fn().mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      listTasks: vi.fn().mockResolvedValue([]),
+      close: vi.fn(),
+    })),
   };
 });
 
-import { isGhAuthenticated } from "@fusion/core";
+import { isGhAuthenticated, CentralCore, TaskStore as TaskStoreClass } from "@fusion/core";
 
 const mockIsGhAuthenticated = vi.mocked(isGhAuthenticated);
+const MockCentralCore = vi.mocked(CentralCore);
+const MockTaskStoreClass = vi.mocked(TaskStoreClass);
 
 function createMockGlobalSettingsStore() {
   return {
@@ -172,6 +184,118 @@ describe("GET /tasks", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("limit");
+  });
+
+  describe("with projectId query parameter", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("returns 404 when project is not found", async () => {
+      const mockCentralInstance = {
+        init: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        getProject: vi.fn().mockResolvedValue(null),
+      };
+      MockCentralCore.mockImplementation(() => mockCentralInstance as any);
+
+      const res = await GET(buildApp(), "/api/tasks?projectId=nonexistent");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Project not found");
+    });
+
+    it("returns tasks from the project store when project is found", async () => {
+      const projectPath = "/test/project/path";
+      const projectTasks = [FAKE_TASK_DETAIL];
+
+      const mockProjectStoreInstance = {
+        init: vi.fn().mockResolvedValue(undefined),
+        listTasks: vi.fn().mockResolvedValue(projectTasks),
+        close: vi.fn(),
+      };
+      MockTaskStoreClass.mockImplementation(() => mockProjectStoreInstance as any);
+
+      const mockCentralInstance = {
+        init: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        getProject: vi.fn().mockResolvedValue({
+          id: "proj_abc",
+          name: "Test Project",
+          path: projectPath,
+          status: "active",
+          isolationMode: "in-process",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      };
+      MockCentralCore.mockImplementation(() => mockCentralInstance as any);
+
+      const res = await GET(buildApp(), "/api/tasks?projectId=proj_abc");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0].id).toBe("FN-001");
+      // Verify project store was initialized with correct path
+      expect(MockTaskStoreClass).toHaveBeenCalledWith(projectPath);
+      expect(mockProjectStoreInstance.init).toHaveBeenCalled();
+      expect(mockProjectStoreInstance.listTasks).toHaveBeenCalledWith({ limit: undefined, offset: undefined });
+      expect(mockProjectStoreInstance.close).toHaveBeenCalled();
+      // Verify CentralCore was properly closed
+      expect(mockCentralInstance.close).toHaveBeenCalled();
+    });
+
+    it("passes limit and offset to the project store", async () => {
+      const mockProjectStoreInstance = {
+        init: vi.fn().mockResolvedValue(undefined),
+        listTasks: vi.fn().mockResolvedValue([]),
+        close: vi.fn(),
+      };
+      MockTaskStoreClass.mockImplementation(() => mockProjectStoreInstance as any);
+
+      const mockCentralInstance = {
+        init: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        getProject: vi.fn().mockResolvedValue({
+          id: "proj_abc",
+          name: "Test Project",
+          path: "/test/path",
+          status: "active",
+          isolationMode: "in-process",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      };
+      MockCentralCore.mockImplementation(() => mockCentralInstance as any);
+
+      const res = await GET(buildApp(), "/api/tasks?projectId=proj_abc&limit=5&offset=10");
+
+      expect(res.status).toBe(200);
+      expect(mockProjectStoreInstance.listTasks).toHaveBeenCalledWith({ limit: 5, offset: 10 });
+    });
+
+    it("returns 200 with empty array on graceful degradation when CentralCore is unavailable", async () => {
+      MockCentralCore.mockImplementation(() => {
+        throw new Error("CentralCore unavailable");
+      });
+
+      const res = await GET(buildApp(), "/api/tasks?projectId=proj_abc");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("still uses default store when projectId is not provided", async () => {
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([FAKE_TASK_DETAIL]);
+
+      const res = await GET(buildApp(), "/api/tasks");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(store.listTasks).toHaveBeenCalled();
+      // CentralCore should not be used when no projectId
+      expect(MockCentralCore).not.toHaveBeenCalled();
+    });
   });
 });
 

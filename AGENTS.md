@@ -1157,6 +1157,102 @@ When you add a template:
 2. The new step is enabled by default
 3. You can edit the step after creation to customize the prompt
 
+## Multi-Project Dashboard
+
+The kb dashboard supports managing multiple projects simultaneously. This enables teams to track tasks across multiple repositories from a single dashboard view.
+
+### Overview
+
+The multi-project dashboard provides:
+- **Project Overview page** — Responsive grid showing all registered projects with health status
+- **Project Selector** — Quick context switching between projects via header dropdown
+- **Project Drill-down** — Click any project to view its tasks in board or list view
+- **Setup Wizard** — First-run experience for registering projects
+- **Global Activity Feed** — Cross-project activity with project attribution
+
+### Project Status
+
+Projects have one of these statuses:
+- **`active`** — Project is operational and accepting tasks (green badge)
+- **`paused`** — Project temporarily suspended (yellow badge)
+- **`errored`** — Project has encountered errors (red badge)
+- **`initializing`** — Project just registered, not fully set up (blue badge)
+
+### Navigation
+
+**View all projects:**
+- Navigate to the Project Overview page showing all registered projects in a responsive grid (1→2→3 columns based on screen size)
+- Filter by status: All, Active, Paused, Errored
+- Sort by: Name, Last Activity, Status
+
+**Switch projects:**
+- Use the Project Selector in the header (visible when 2+ projects registered)
+- Shows current project name with dropdown menu
+- Displays project status icons for quick health assessment
+- "View All Projects" option in dropdown returns to overview
+
+**Back to overview:**
+- "Back to All Projects" button appears in header when viewing a specific project
+- Clicking returns to Project Overview page
+
+### First-Run Experience
+
+When no projects are registered:
+1. Setup wizard automatically opens on dashboard load
+2. Manually enter project path and name
+3. Or auto-detect projects in a base directory
+4. Select projects to register from detection results
+5. Projects are initialized with `in-process` execution mode by default
+
+### Project Health
+
+Each project card shows:
+- **Active Tasks** — Number of tasks in non-terminal columns
+- **Agents** — Currently running agents for this project
+- **Completed** — Total tasks completed (from health metrics)
+- **Last activity** — Relative timestamp of last project activity
+
+Health is polled every 10 seconds while Project Overview is visible.
+
+### Activity Log
+
+The global activity feed shows events from all projects:
+- Project name badge on each entry
+- Filter dropdown to show only specific project
+- Filter by event type (same options as single-project view)
+- Cross-project task linking (opens task detail if task exists in current view)
+
+### Storage
+
+Projects are registered in the central database (`~/.pi/kb/kb-central.db`):
+- `projects` table — Project registry with path, status, isolation mode
+- `projectHealth` — Mutable health metrics (active tasks, agent counts, totals)
+- `centralActivityLog` — Unified activity feed across all projects
+
+### View Preferences
+
+View state is persisted per scope:
+- **Overview vs Project mode** — `kb-dashboard-view-mode` in localStorage
+- **Board/List/Agents view** — `kb-dashboard-task-view` in localStorage
+- **Recently accessed projects** — Last 3 projects stored for quick selector access
+
+### API Integration
+
+Multi-project components use these APIs:
+- `GET /api/projects` — List all registered projects
+- `POST /api/projects` — Register new project
+- `PATCH /api/projects/:id` — Update project status/name
+- `DELETE /api/projects/:id` — Unregister project
+- `GET /api/projects/:id/health` — Fetch project health metrics
+- `GET /api/activity-feed` — Global activity (supports `?projectId=` filter)
+
+### Backward Compatibility
+
+Single-project mode is automatically maintained:
+- With only 1 project, Project Selector is hidden
+- Dashboard behaves like existing single-project mode
+- View preference falls back to "project" mode automatically
+
 ## Multi-Project Migration
 
 kb supports migrating from single-project mode to multi-project mode seamlessly. When you upgrade to a multi-project capable version, the system automatically detects existing projects and registers them in the central project registry.
