@@ -58,7 +58,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const SCHEMA_SQL = `
 -- Tasks table with JSON columns for nested data
@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   blockedBy TEXT,
   paused INTEGER DEFAULT 0,
   baseBranch TEXT,
+  baseCommitSha TEXT,
   modelPresetId TEXT,
   modelProvider TEXT,
   modelId TEXT,
@@ -99,7 +100,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   issueInfo TEXT,
   mergeDetails TEXT,
   breakIntoSubtasks INTEGER DEFAULT 0,
-  enabledWorkflowSteps TEXT DEFAULT '[]'
+  enabledWorkflowSteps TEXT DEFAULT '[]',
+  modifiedFiles TEXT DEFAULT '[]'
 );
 
 -- Config table (single row with project settings)
@@ -319,6 +321,15 @@ export class Database {
         // Add mission hierarchy columns to tasks for linking tasks to slices
         this.addColumnIfMissing("tasks", "missionId", "TEXT");
         this.addColumnIfMissing("tasks", "sliceId", "TEXT");
+      });
+    }
+
+    if (version < 4) {
+      this.applyMigration(4, () => {
+        // Add modifiedFiles column to track files changed during agent execution
+        this.addColumnIfMissing("tasks", "modifiedFiles", "TEXT DEFAULT '[]'");
+        // Add baseCommitSha column to store the base commit for diff computation
+        this.addColumnIfMissing("tasks", "baseCommitSha", "TEXT");
       });
     }
 

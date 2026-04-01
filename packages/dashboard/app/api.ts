@@ -1868,3 +1868,14 @@ export function fetchProjectTasks(projectId: string, limit?: number, offset?: nu
 export function fetchProjectConfig(projectId: string): Promise<{ maxConcurrent: number; rootDir: string }> {
   return api<{ maxConcurrent: number; rootDir: string }>(`/projects/${encodeURIComponent(projectId)}/config`);
 }
+
+/** Diff information for a task */
+export interface TaskDiff {
+  files: string[];
+  diffs: Record<string, { stat: string; patch: string }>;
+}
+
+/** Fetch diff information for a task */
+export function fetchTaskDiff(taskId: string): Promise<TaskDiff> {
+  return api<TaskDiff>(`/tasks/${encodeURIComponent(taskId)}/diff`);
+}

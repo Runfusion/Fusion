@@ -396,7 +396,7 @@ export function SetupWizard({ isOpen, onClose, onProjectCreated, onRegisterProje
               <button
                 className="btn btn-primary"
                 onClick={handleValidate}
-                disabled={state.isValidating || state.validationError}
+                disabled={state.isValidating || !!state.validationError}
               >
                 {state.isValidating ? (
                   <>

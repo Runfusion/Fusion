@@ -1423,7 +1423,7 @@ export async function runTaskPlan(initialPlanArg?: string, yesFlag = false, proj
 
       try {
         showThinking();
-        result = await submitResponse(sessionId, response) as typeof result;
+        result = await submitResponse(sessionId, response as Record<string, unknown>) as typeof result;
         clearThinking();
       } catch (err) {
         clearThinking();

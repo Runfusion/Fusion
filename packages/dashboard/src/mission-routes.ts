@@ -51,20 +51,29 @@ function validateUuid(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
-function validateMissionId(id: string): boolean {
-  return /^M-\d+$/.test(id);
+function validateMissionId(id: string | string[]): boolean {
+  const str = Array.isArray(id) ? id[0] : id;
+  return /^M-\d+$/.test(str);
 }
 
-function validateMilestoneId(id: string): boolean {
-  return /^MS-\d+$/.test(id);
+function validateMilestoneId(id: string | string[]): boolean {
+  const str = Array.isArray(id) ? id[0] : id;
+  return /^MS-\d+$/.test(str);
 }
 
-function validateSliceId(id: string): boolean {
-  return /^SL-\d+$/.test(id);
+function validateSliceId(id: string | string[]): boolean {
+  const str = Array.isArray(id) ? id[0] : id;
+  return /^SL-\d+$/.test(str);
 }
 
-function validateFeatureId(id: string): boolean {
-  return /^F-\d+$/.test(id);
+function validateFeatureId(id: string | string[]): boolean {
+  const str = Array.isArray(id) ? id[0] : id;
+  return /^F-\d+$/.test(str);
+}
+
+/** Helper to extract string from Express param (handles string | string[]) */
+function paramString(value: string | string[]): string {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function validateTitle(title: unknown): string {

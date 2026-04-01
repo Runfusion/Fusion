@@ -133,6 +133,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       blockedBy: row.blockedBy || undefined,
       paused: row.paused ? true : undefined,
       baseBranch: row.baseBranch || undefined,
+      baseCommitSha: row.baseCommitSha || undefined,
       modelPresetId: row.modelPresetId || undefined,
       modelProvider: row.modelProvider || undefined,
       modelId: row.modelId || undefined,
@@ -157,6 +158,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       mergeDetails: fromJson<import("./types.js").MergeDetails>(row.mergeDetails),
       breakIntoSubtasks: row.breakIntoSubtasks ? true : undefined,
       enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return e && e.length > 0 ? e : undefined; })(),
+      modifiedFiles: (() => { const m = fromJson<string[]>(row.modifiedFiles); return m && m.length > 0 ? m : undefined; })(),
     };
   }
 
@@ -167,15 +169,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.db.prepare(`
       INSERT OR REPLACE INTO tasks (
         id, title, description, "column", status, size, reviewLevel, currentStep,
-        worktree, blockedBy, paused, baseBranch, modelPresetId, modelProvider,
+        worktree, blockedBy, paused, baseBranch, baseCommitSha, modelPresetId, modelProvider,
         modelId, validatorModelProvider, validatorModelId, mergeRetries, error,
         summary, thinkingLevel, createdAt, updatedAt, columnMovedAt,
         dependencies, steps, log, attachments, steeringComments,
         comments, workflowStepResults, prInfo, issueInfo, mergeDetails,
-        breakIntoSubtasks, enabledWorkflowSteps
+        breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `).run(
       task.id,
@@ -190,6 +192,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.blockedBy ?? null,
       task.paused ? 1 : 0,
       task.baseBranch ?? null,
+      task.baseCommitSha ?? null,
       task.modelPresetId ?? null,
       task.modelProvider ?? null,
       task.modelId ?? null,
@@ -214,6 +217,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       toJsonNullable(task.mergeDetails),
       task.breakIntoSubtasks ? 1 : 0,
       toJson(task.enabledWorkflowSteps || []),
+      toJson(task.modifiedFiles || []),
     );
     this.db.bumpLastModified();
   }
@@ -875,7 +879,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; baseCommitSha?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Validate that task doesn't depend on itself
@@ -925,6 +929,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
       if (updates.paused !== undefined) task.paused = updates.paused || undefined;
       if (updates.baseBranch !== undefined) task.baseBranch = updates.baseBranch;
+      if (updates.baseCommitSha !== undefined) task.baseCommitSha = updates.baseCommitSha;
       if (updates.size !== undefined) task.size = updates.size;
       if (updates.reviewLevel !== undefined) task.reviewLevel = updates.reviewLevel;
       if (updates.mergeRetries !== undefined) task.mergeRetries = updates.mergeRetries;
@@ -962,6 +967,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.workflowStepResults = undefined;
       } else if (updates.workflowStepResults !== undefined) {
         task.workflowStepResults = updates.workflowStepResults;
+      }
+      if (updates.modifiedFiles === null) {
+        task.modifiedFiles = undefined;
+      } else if (updates.modifiedFiles !== undefined) {
+        task.modifiedFiles = updates.modifiedFiles;
       }
       task.updatedAt = new Date().toISOString();
 
@@ -1465,8 +1475,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           breakIntoSubtasks: task.breakIntoSubtasks,
           paused: task.paused,
           baseBranch: task.baseBranch,
+          baseCommitSha: task.baseCommitSha,
           mergeRetries: task.mergeRetries,
           error: task.error,
+          modifiedFiles: task.modifiedFiles,
         };
 
         // Write to archivedTasks table in SQLite
@@ -2295,8 +2307,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         breakIntoSubtasks: task.breakIntoSubtasks,
         paused: task.paused,
         baseBranch: task.baseBranch,
+        baseCommitSha: task.baseCommitSha,
         mergeRetries: task.mergeRetries,
         error: task.error,
+        modifiedFiles: task.modifiedFiles,
       };
 
       // Write to archivedTasks table
@@ -2359,7 +2373,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       validatorModelProvider: entry.validatorModelProvider,
       validatorModelId: entry.validatorModelId,
       breakIntoSubtasks: entry.breakIntoSubtasks,
-      // Intentionally NOT restoring: worktree, status, blockedBy, paused, baseBranch, error, steeringComments
+      modifiedFiles: entry.modifiedFiles,
+      // Intentionally NOT restoring: worktree, status, blockedBy, paused, baseBranch, baseCommitSha, error, steeringComments
     };
 
     // Write task.json
