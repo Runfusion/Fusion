@@ -11690,6 +11690,41 @@ html .column.drag-over * {
   font-size: 13px;
 }
 
+.changed-files-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.changed-files-sidebar {
+  width: 30%;
+  min-width: 260px;
+  max-width: 420px;
+}
+
+.changed-files-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.changed-files-entry {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.changed-files-entry.active {
+  background: var(--card-hover);
+}
+
+.changed-files-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--todo);
+}
+
 /* ── Commit Form ── */
 
 .gm-commit-form {

@@ -74,14 +74,14 @@ export function ChangedFilesModal({ taskId, worktree, column, isOpen, onClose }:
           </button>
         </div>
 
-        <div className="file-browser-body">
-          <aside className="file-browser-sidebar" style={{ flex: "0 0 30%" }}>
+        <div className="file-browser-body changed-files-layout">
+          <aside className="file-browser-sidebar changed-files-sidebar">
             {loading ? (
               <div className="gm-diff-loading">Loading changed files…</div>
             ) : error ? (
               <div className="gm-diff-error">{error}</div>
             ) : files.length === 0 ? (
-              <div className="file-browser-empty-state">No files changed</div>
+              <div className="file-browser-empty">No files changed</div>
             ) : (
               <div className="file-browser-list" role="list" aria-label="Changed files list">
                 {files.map((file) => {
@@ -91,14 +91,13 @@ export function ChangedFilesModal({ taskId, worktree, column, isOpen, onClose }:
                       key={`${file.oldPath ?? ""}:${file.path}`}
                       type="button"
                       role="listitem"
-                      className={`file-browser-entry ${active ? "active" : ""}`}
+                      aria-label={file.path}
+                      className={`file-node file-node--file changed-files-entry ${active ? "active" : ""}`}
                       onClick={() => setSelectedFile(file)}
                     >
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        {getStatusIcon(file.status)}
-                        <span>{file.path}</span>
-                      </span>
-                      <span className="badge">{getStatusLabel(file.status)}</span>
+                      <span className="file-node-icon">{getStatusIcon(file.status)}</span>
+                      <span className="file-node-name">{file.path}</span>
+                      <span className="detail-column-badge changed-files-badge">{getStatusLabel(file.status)}</span>
                     </button>
                   );
                 })}
@@ -106,9 +105,9 @@ export function ChangedFilesModal({ taskId, worktree, column, isOpen, onClose }:
             )}
           </aside>
 
-          <section className="file-browser-content" style={{ flex: "0 0 70%" }}>
+          <section className="file-browser-content changed-files-content">
             {!loading && !error && files.length > 0 && !selectedFile ? (
-              <div className="file-browser-empty-state">Select a file to view changes</div>
+              <div className="file-browser-empty">Select a file to view changes</div>
             ) : null}
 
             {selectedFile ? (
@@ -116,7 +115,7 @@ export function ChangedFilesModal({ taskId, worktree, column, isOpen, onClose }:
                 <div className="file-browser-toolbar">
                   <div className="file-browser-file-info">
                     <strong>{selectedFile.path}</strong>
-                    <span className="badge">{getStatusLabel(selectedFile.status)}</span>
+                    <span className="detail-column-badge changed-files-badge">{getStatusLabel(selectedFile.status)}</span>
                     {selectedFile.oldPath ? <span>Renamed from {selectedFile.oldPath}</span> : null}
                   </div>
                 </div>

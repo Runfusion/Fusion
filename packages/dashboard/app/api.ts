@@ -283,6 +283,17 @@ export function fetchSessionFiles(taskId: string): Promise<string[]> {
   return api<string[]>(`/tasks/${taskId}/session-files`);
 }
 
+export interface TaskFileDiff {
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  diff: string;
+  oldPath?: string;
+}
+
+export function fetchTaskFileDiffs(taskId: string): Promise<TaskFileDiff[]> {
+  return api<TaskFileDiff[]>(`/tasks/${taskId}/file-diffs`);
+}
+
 export function fetchTaskComments(id: string): Promise<TaskComment[]> {
   return api<TaskComment[]>(`/tasks/${id}/comments`);
 }

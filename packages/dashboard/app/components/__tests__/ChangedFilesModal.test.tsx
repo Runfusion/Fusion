@@ -41,7 +41,7 @@ describe("ChangedFilesModal", () => {
     );
 
     expect(screen.getByText("Changed Files — KB-651")).toBeInTheDocument();
-    expect(screen.getByText("src/a.ts")).toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "src/a.ts" })).toBeInTheDocument();
     expect(screen.getByLabelText("Diff for src/a.ts")).toBeInTheDocument();
     expect(screen.getByText(/\+hello/)).toBeInTheDocument();
   });
@@ -57,7 +57,7 @@ describe("ChangedFilesModal", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /src\/b.ts/i }));
+    fireEvent.click(screen.getByRole("listitem", { name: /src\/b.ts/i }));
 
     expect(mockSetSelectedFile).toHaveBeenCalledWith({ path: "src/b.ts", status: "added", diff: "diff --git a/src/b.ts b/src/b.ts" });
   });

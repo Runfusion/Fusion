@@ -46,6 +46,7 @@ AI-guided interactive planning for creating well-specified tasks from high-level
 - **Model Selection at Creation**: Choose executor and validator AI models while creating tasks from the board or list view, or leave them unset to use the global defaults.
 - **Bulk Model Editing**: Update AI model configuration for multiple tasks at once in the list view. Select tasks via checkboxes (archived tasks excluded), then use the "Bulk Edit Models" toolbar to apply executor and/or validator model changes to all selected tasks. Selection persists in localStorage across page reloads.
 - **Task Details**: View full task specifications, agent logs, and attachments
+- **Changed Files Viewer**: Click a task card's "files changed" button to open a dedicated diff viewer showing only files changed in that task worktree, with per-file statuses and sidebar navigation
 - **GitHub Import**: Import issues directly from GitHub repositories
 - **PR Management**: Create, monitor, and merge pull requests for in-review tasks
 

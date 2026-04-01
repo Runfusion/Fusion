@@ -43,7 +43,7 @@ interface TaskCardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onOpenFilesForTask?: (taskId: string) => void;
+  onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
 }
 
 function areTaskBadgeInfosEqual(
@@ -694,7 +694,7 @@ function TaskCardComponent({
           className="card-session-files"
           onClick={(e) => {
             e.stopPropagation();
-            onOpenFilesForTask?.(task.id);
+            onOpenFilesForTask?.(task.id, task.worktree, task.column);
           }}
           disabled={!onOpenFilesForTask}
         >
