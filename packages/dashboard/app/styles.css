@@ -131,6 +131,43 @@ body {
   position: relative;
 }
 
+/* Project selector in header */
+.header-project-selector {
+  display: flex;
+  align-items: center;
+  margin: 0 var(--space-md);
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* Back to All Projects button in header */
+.header-back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  margin-left: var(--space-sm);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.header-back-button:hover {
+  background: var(--card-hover);
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.header-back-button svg {
+  flex-shrink: 0;
+}
+
 .btn-icon {
   display: flex;
   align-items: center;
@@ -4113,6 +4150,114 @@ body {
   .mobile-overflow-item svg {
     color: var(--text-muted);
     flex-shrink: 0;
+  }
+
+  /* Mobile header layout improvements */
+  .header-left {
+    gap: 6px;
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .header-logo {
+    width: 20px;
+    height: 20px;
+  }
+
+  .logo {
+    font-size: 16px;
+  }
+
+  /* Hide logo subtitle on mobile to save space */
+  .logo-sub {
+    display: none;
+  }
+
+  /* Project selector mobile adjustments */
+  .header-project-selector {
+    margin: 0 8px;
+    max-width: 140px;
+    flex-shrink: 1;
+  }
+
+  .header-project-selector .project-selector__trigger {
+    min-width: 0;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  /* Back button mobile - compact with hidden text on very small screens */
+  .header-back-button {
+    margin-left: 4px;
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+
+  .header-back-button span {
+    display: none;
+  }
+
+  /* Mobile overflow menu improvements */
+  .mobile-overflow-trigger {
+    position: relative;
+    background: var(--card);
+    border: 1px solid var(--border);
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .mobile-overflow-trigger:hover {
+    background: var(--card-hover);
+    border-color: var(--text-dim);
+  }
+
+  /* Show item count badge on overflow trigger when menu has items */
+  .mobile-overflow-trigger::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    background: var(--todo);
+    border-radius: 50%;
+  }
+
+  .mobile-overflow-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    left: auto;
+    min-width: 240px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    padding: 6px;
+    gap: 2px;
+    animation: mobileMenuFadeIn 0.15s ease-out;
+  }
+
+  @keyframes mobileMenuFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .mobile-overflow-item {
+    padding: 12px 14px;
+    min-height: 44px;
+    font-size: 14px;
+    border-radius: var(--radius-md);
   }
 
   /* Modal: full-screen on mobile */
