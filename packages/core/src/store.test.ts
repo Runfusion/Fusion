@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { TaskStore } from "./store.js";
-import { readFile, writeFile, mkdir, rm, readdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rm, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -56,6 +56,12 @@ describe("TaskStore", () => {
 `,
     );
     return task;
+  }
+
+  async function deleteTaskDir(taskId: string): Promise<string> {
+    const dir = join(rootDir, ".kb", "tasks", taskId);
+    await rm(dir, { recursive: true, force: true });
+    return dir;
   }
 
   // ── Prompt generation (no duplicate description) ───────────────
@@ -804,6 +810,123 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("SQLite-first reads when task blobs are missing", () => {
+    it("getTask returns metadata from SQLite with an empty prompt when the task directory is missing", async () => {
+      const task = await createTestTask();
+      await deleteTaskDir(task.id);
+
+      const fetched = await store.getTask(task.id);
+
+      expect(fetched.id).toBe(task.id);
+      expect(fetched.description).toBe(task.description);
+      expect(fetched.prompt).toBe("");
+    });
+  });
+
+  describe("directory recreation for file-backed blobs", () => {
+    it("pauseTask recreates missing task directory before writing task.json", async () => {
+      const task = await createTestTask();
+      const dir = await deleteTaskDir(task.id);
+
+      const paused = await store.pauseTask(task.id, true);
+
+      expect(paused.paused).toBe(true);
+      expect(existsSync(dir)).toBe(true);
+      expect(existsSync(join(dir, "task.json"))).toBe(true);
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.paused).toBe(true);
+    });
+
+    it("updateStep recreates missing task directory and persists regenerated task.json", async () => {
+      const task = await createTaskWithSteps();
+      const promptDir = join(rootDir, ".kb", "tasks", task.id);
+      const prompt = await readFile(join(promptDir, "PROMPT.md"), "utf-8");
+      const dir = await deleteTaskDir(task.id);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "PROMPT.md"), prompt);
+
+      const updated = await store.updateStep(task.id, 0, "in-progress");
+
+      expect(updated.steps[0].status).toBe("in-progress");
+      expect(existsSync(dir)).toBe(true);
+      expect(existsSync(join(dir, "task.json"))).toBe(true);
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.steps[0].status).toBe("in-progress");
+    });
+
+    it("addSteeringComment recreates missing task directory before persisting metadata", async () => {
+      const task = await createTestTask();
+      const dir = await deleteTaskDir(task.id);
+
+      const updated = await store.addSteeringComment(task.id, "Please recover from missing directory");
+
+      expect(updated.steeringComments).toHaveLength(1);
+      expect(existsSync(dir)).toBe(true);
+      expect(existsSync(join(dir, "task.json"))).toBe(true);
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.steeringComments).toHaveLength(1);
+    });
+
+    it("appendAgentLog recreates missing task directory before writing agent.log", async () => {
+      const task = await createTestTask();
+      const dir = await deleteTaskDir(task.id);
+
+      await store.appendAgentLog(task.id, "Recovered log", "text");
+
+      expect(existsSync(dir)).toBe(true);
+      expect(existsSync(join(dir, "agent.log"))).toBe(true);
+
+      const logs = await store.getAgentLogs(task.id);
+      expect(logs).toHaveLength(1);
+      expect(logs[0].text).toBe("Recovered log");
+    });
+
+    it("addAttachment recreates missing task directory and attachment directory", async () => {
+      const task = await createTestTask();
+      const dir = await deleteTaskDir(task.id);
+
+      const attachment = await store.addAttachment(task.id, "note.txt", Buffer.from("hello"), "text/plain");
+
+      expect(existsSync(dir)).toBe(true);
+      expect(existsSync(join(dir, "attachments", attachment.filename))).toBe(true);
+      expect(existsSync(join(dir, "task.json"))).toBe(true);
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.attachments).toHaveLength(1);
+    });
+
+    it("updateTask recreates missing task directory before rewriting PROMPT.md", async () => {
+      const task = await createTestTask();
+      const dir = await deleteTaskDir(task.id);
+      const prompt = "# KB-001\n\nRecovered prompt\n";
+
+      const updated = await store.updateTask(task.id, { title: "Recovered", prompt });
+
+      expect(updated.title).toBe("Recovered");
+      expect(existsSync(dir)).toBe(true);
+      expect(existsSync(join(dir, "PROMPT.md"))).toBe(true);
+      expect(await readFile(join(dir, "PROMPT.md"), "utf-8")).toBe(prompt);
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.title).toBe("Recovered");
+      expect(fetched.prompt).toBe(prompt);
+    });
+
+    it("duplicateTask recreates the new task directory before copying PROMPT.md", async () => {
+      const task = await createTestTask();
+
+      const duplicate = await store.duplicateTask(task.id);
+      const duplicateDir = join(rootDir, ".kb", "tasks", duplicate.id);
+
+      expect(existsSync(duplicateDir)).toBe(true);
+      expect(existsSync(join(duplicateDir, "PROMPT.md"))).toBe(true);
+      expect(await readFile(join(duplicateDir, "PROMPT.md"), "utf-8")).toContain(task.description);
+    });
+  });
+
   describe("pauseTask", () => {
     it("sets paused flag to true and adds log entry", async () => {
       const task = await createTestTask();
@@ -994,6 +1117,14 @@ describe("TaskStore", () => {
 
     it("getAgentLogs returns empty array when no log file exists", async () => {
       const task = await createTestTask();
+      const logs = await store.getAgentLogs(task.id);
+      expect(logs).toEqual([]);
+    });
+
+    it("getAgentLogs returns empty array when the task directory is missing", async () => {
+      const task = await createTestTask();
+      await deleteTaskDir(task.id);
+
       const logs = await store.getAgentLogs(task.id);
       expect(logs).toEqual([]);
     });
@@ -1587,6 +1718,16 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("parseStepsFromPrompt", () => {
+    it("returns empty array when task directory is missing", async () => {
+      const task = await createTaskWithSteps();
+      await deleteTaskDir(task.id);
+
+      const steps = await store.parseStepsFromPrompt(task.id);
+      expect(steps).toEqual([]);
+    });
+  });
+
   describe("parseDependenciesFromPrompt", () => {
     it("returns single dependency from PROMPT.md", async () => {
       const task = await store.createTask({ description: "Task with dep" });
@@ -1678,8 +1819,15 @@ describe("TaskStore", () => {
       const task = await store.createTask({ description: "No prompt" });
       const dir = join(rootDir, ".kb", "tasks", task.id);
       // Delete the PROMPT.md that createTask generates
-      const { unlink } = await import("node:fs/promises");
       await unlink(join(dir, "PROMPT.md"));
+
+      const deps = await store.parseDependenciesFromPrompt(task.id);
+      expect(deps).toEqual([]);
+    });
+
+    it("returns empty array when task directory is missing", async () => {
+      const task = await store.createTask({ description: "No directory" });
+      await deleteTaskDir(task.id);
 
       const deps = await store.parseDependenciesFromPrompt(task.id);
       expect(deps).toEqual([]);
@@ -1764,8 +1912,15 @@ describe("TaskStore", () => {
     it("returns empty array when PROMPT.md does not exist", async () => {
       const task = await store.createTask({ description: "No prompt" });
       const dir = join(rootDir, ".kb", "tasks", task.id);
-      const { unlink } = await import("node:fs/promises");
       await unlink(join(dir, "PROMPT.md"));
+
+      const paths = await store.parseFileScopeFromPrompt(task.id);
+      expect(paths).toEqual([]);
+    });
+
+    it("returns empty array when task directory is missing", async () => {
+      const task = await store.createTask({ description: "No prompt directory" });
+      await deleteTaskDir(task.id);
 
       const paths = await store.parseFileScopeFromPrompt(task.id);
       expect(paths).toEqual([]);

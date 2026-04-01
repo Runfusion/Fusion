@@ -20,6 +20,12 @@ export interface TaskStoreEvents {
 }
 
 export class TaskStore extends EventEmitter<TaskStoreEvents> {
+  /**
+   * Hybrid storage note: task metadata lives in SQLite, while blob files remain on disk.
+   * Any write to `.kb/tasks/{id}` must recreate the directory on demand, and any read from
+   * optional blob files must tolerate missing files/directories because cleanup, migration,
+   * or manual filesystem changes can remove them independently of the database row.
+   */
   private kbDir: string;
   private tasksDir: string;
   private configPath: string;
@@ -616,6 +622,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const prompt = task.column === "triage"
       ? `# ${heading}\n\n${task.description}\n`
       : this.generateSpecifiedPrompt(task);
+    await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "PROMPT.md"), prompt);
 
     this.emit("task:created", task);
@@ -659,6 +666,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     // Copy source PROMPT.md content (the AI will re-specify it in triage)
     const sourcePrompt = sourceTask.prompt;
+    await mkdir(newDir, { recursive: true });
     await writeFile(join(newDir, "PROMPT.md"), sourcePrompt);
 
     // Update cache if watcher is active
@@ -717,6 +725,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     // Create a PROMPT.md for the refinement
     const heading = newTask.title;
     const prompt = `# ${heading}\n\n${newTask.description}\n`;
+    await mkdir(newDir, { recursive: true });
     await writeFile(join(newDir, "PROMPT.md"), prompt);
 
     // Copy attachments from source if any
@@ -932,6 +941,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (this.watcher) this.taskCache.set(id, { ...task });
 
       if (updates.prompt !== undefined) {
+        await mkdir(dir, { recursive: true });
         await writeFile(join(dir, "PROMPT.md"), updates.prompt);
       }
 
@@ -1878,6 +1888,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     };
     const dir = this.taskDir(taskId);
     const logPath = join(dir, "agent.log");
+    await mkdir(dir, { recursive: true });
     await appendFile(logPath, JSON.stringify(entry) + "\n");
     this.emit("agent:log", entry);
   }
@@ -2326,6 +2337,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     // Generate PROMPT.md with preserved steps
     const prompt = this.generatePromptFromArchiveEntry(entry);
+    await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "PROMPT.md"), prompt);
 
     // Create empty attachments directory if attachments existed
