@@ -467,11 +467,8 @@ export interface TaskCreateInput {
   validatorModelId?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
-<<<<<<< HEAD
   /** When true, trigger AI title summarization if description is long and no title provided */
   summarize?: boolean;
-=======
->>>>>>> origin/main
 }
 
 // ── Settings Scope Types ────────────────────────────────────────────────
