@@ -14,3 +14,4 @@ export { PrCommentHandler } from "./pr-comment-handler.js";
 export { NtfyNotifier, type NtfyNotifierOptions } from "./notifier.js";
 export { CronRunner, type CronRunnerOptions } from "./cron-runner.js";
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./stuck-task-detector.js";
+export { ProjectManager } from "./project-manager.js";

@@ -46,7 +46,8 @@ const { runSettingsImport } = await import("./commands/settings-import.js");
 const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
 const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
 const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice } = await import("./commands/mission.js");
-const { runProjectList, runProjectAdd, runProjectRemove, runProjectShow, runProjectSetDefault, runProjectDetect } = await import("./commands/project.js");
+const { runProjectList, runProjectAdd, runProjectRemove, runProjectInfo } = await import("./commands/project.js");
+const { getResolvedProject } = await import("./project-resolver.js");
 
 const HELP = `
 fn — AI-orchestrated task board
@@ -154,48 +155,56 @@ async function main() {
   let projectName: string | undefined;
   const projectFlagIdx = args.indexOf("--project");
   const projectFlagShortIdx = args.indexOf("-P");
-  const projectIdx = projectFlagIdx !== -1 ? projectFlagIdx : projectFlagShortIdx;
-  if (projectIdx !== -1 && projectIdx + 1 < args.length) {
-    projectName = args[projectIdx + 1];
+  const resolvedProjectIdx = projectFlagIdx !== -1 ? projectFlagIdx : projectFlagShortIdx;
+  if (resolvedProjectIdx !== -1 && resolvedProjectIdx + 1 < args.length) {
+    projectName = args[resolvedProjectIdx + 1];
     // Remove --project and its value from args
-    args.splice(projectIdx, 2);
+    args.splice(resolvedProjectIdx, 2);
   }
 
+  // Extract command early (needed for migration check)
   const command = args[0];
 
-  // Migration check for first-run experience
-  // Skip for init command and help flags
-  if (command !== "init" && command !== "--help" && command !== "-h") {
+  // ── First-Run Auto-Migration ─────────────────────────────────────────────
+  // Check if this is a fresh installation or if projects need to be migrated
+  // Skip migration check for 'project' commands to avoid circular issues
+  if (command !== "project" && !process.env.KB_SKIP_MIGRATION) {
     try {
-      const { FirstRunDetector, MigrationCoordinator } = await import("@fusion/core");
-      const { CentralCore } = await import("@fusion/core");
+      const { createMigrationOrchestrator, createFirstRunExperience, CentralCore } = await import("@fusion/core");
       
-      const detector = new FirstRunDetector();
-      const state = await detector.detectFirstRunState();
-      
-      if (state === "needs-migration") {
-        const cwd = process.cwd();
-        const central = new CentralCore();
-        await central.init();
-        
-        try {
-          const coordinator = new MigrationCoordinator(central);
-          const result = await coordinator.registerSingleProject(cwd);
+      const centralCore = new CentralCore();
+      await centralCore.init();
+
+      const migration = createMigrationOrchestrator(centralCore);
+
+      if (await migration.needsMigration()) {
+        const firstRun = createFirstRunExperience(centralCore);
+        const state = await firstRun.getSetupState();
+
+        if (state.isFirstRun && state.hasDetectedProjects) {
+          console.log("[kb] First run detected. Auto-registering projects...");
+          const result = await migration.runMigration({ 
+            startPath: process.cwd(),
+            autoRegister: true 
+          });
           
-          if (result.success && result.projectsRegistered.length > 0) {
-            const project = await central.getProject(result.projectsRegistered[0]);
-            if (project) {
-              console.log(`✓ Auto-registered project: ${project.name}`);
+          if (result.projectsRegistered.length > 0) {
+            console.log(`[kb] Auto-registered ${result.projectsRegistered.length} project(s):`);
+            for (const p of result.projectsRegistered) {
+              console.log(`       - ${p.name}: ${p.path}`);
             }
-          } else if (result.errors.length > 0) {
-            console.warn(`Migration warning: ${result.errors[0]}`);
           }
-        } finally {
-          await central.close();
+          
+          if (result.projectsSkipped.length > 0) {
+            console.log(`[kb] Skipped ${result.projectsSkipped.length} project(s) (already registered or invalid)`);
+          }
         }
       }
-    } catch {
-      // Silently ignore migration errors - user can manually run fn init
+
+      await centralCore.close();
+    } catch (err) {
+      // Migration is best-effort: log warning but don't block command execution
+      console.warn("[kb] Warning: Migration check failed:", (err as Error).message);
     }
   }
 
@@ -295,17 +304,17 @@ async function main() {
           }
           case "show": {
             const name = args[2];
-            await runProjectShow(name);
+            await runProjectInfo(name, { interactive: false });
             break;
           }
           case "set-default":
           case "default": {
             const name = args[2];
-            await runProjectSetDefault(name);
+            await runProjectInfo(name, { setAsDefault: true, interactive: false });
             break;
           }
           case "detect":
-            await runProjectDetect();
+            await runProjectInfo(undefined, { detect: true, interactive: false });
             break;
           default:
             console.error(`Unknown subcommand: project ${subcommand || ""}`);

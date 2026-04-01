@@ -1075,18 +1075,28 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/setup-state", async (_req, res) => {
     try {
-      const { FirstRunDetector } = await import("@fusion/core");
-      const { CentralCore } = await import("@fusion/core");
+      const { createFirstRunExperience, CentralCore } = await import("@fusion/core");
+      const { createMigrationOrchestrator } = await import("@fusion/core");
       
-      const detector = new FirstRunDetector();
-      const state = await detector.detectFirstRunState();
-      const detectedProjects = await detector.detectExistingProjects(process.cwd());
+      const central = new CentralCore();
+      await central.init();
       
-      res.json({
-        state,
-        detectedProjects,
-        hasCentralDb: detector.hasCentralDb(),
-      });
+      try {
+        const migration = createMigrationOrchestrator(central);
+        const firstRun = createFirstRunExperience(central);
+        
+        const needsMigration = await migration.needsMigration();
+        const state = await firstRun.getSetupState();
+        const detectedProjects = state.detectedProjects || [];
+        
+        res.json({
+          state: needsMigration ? "needs-migration" : state.isFirstRun ? "setup-wizard" : "normal-operation",
+          detectedProjects,
+          hasCentralDb: true,
+        });
+      } finally {
+        await central.close();
+      }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1106,19 +1116,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      const { CentralCore, MigrationCoordinator } = await import("@fusion/core");
+      const { CentralCore, createFirstRunExperience } = await import("@fusion/core");
       
       const central = new CentralCore();
       await central.init();
       
       try {
-        const coordinator = new MigrationCoordinator(central);
-        const result = await coordinator.completeSetup(projects);
+        const firstRun = createFirstRunExperience(central);
+        const result = await firstRun.completeSetup(projects);
         
         res.json({
           success: result.success,
-          registered: result.projectsRegistered,
-          errors: result.errors,
+          registered: result.projects.map(p => p.id),
+          errors: [],
         });
       } finally {
         await central.close();

@@ -178,12 +178,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         worktree, blockedBy, paused, baseBranch, baseCommitSha, modelPresetId, modelProvider,
         modelId, validatorModelProvider, validatorModelId, mergeRetries, error,
         summary, thinkingLevel, createdAt, updatedAt, columnMovedAt,
-        dependencies, steps, log, attachments,
+        dependencies, steps, log, attachments, steeringComments,
         comments, workflowStepResults, prInfo, issueInfo, mergeDetails,
         breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, sliceId
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `).run(
       task.id,
@@ -215,7 +215,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       toJson(task.steps || []),
       toJson(task.log || []),
       toJson(task.attachments || []),
-      "[]", // steeringComments column - no longer used, write empty array
+      toJson(task.steeringComments || []),
       toJson(task.comments || []),
       toJson(task.workflowStepResults || []),
       toJsonNullable(task.prInfo),
@@ -2706,5 +2706,98 @@ ${notificationsSection}`;
       this.missionStore = new MissionStore(this.kbDir, this.db);
     }
     return this.missionStore;
+  }
+
+  // ── Backward Compatibility (Multi-Project Support) ────────────────────────
+
+  /**
+   * Get or create a TaskStore for a project, supporting backward-compatible
+   * single-project mode and multi-project resolution.
+   *
+   * Resolution logic:
+   * - If `projectId` provided: look up in central registry, create store for that path
+   * - If no `projectId` and single project registered: use that project
+   * - If no `projectId` and multiple projects: throw requiring explicit selection
+   * - If no central DB available: fall back to legacy behavior (current directory)
+   *
+   * @param projectId — Optional project ID to resolve
+   * @param centralCore — Optional CentralCore instance (creates new if not provided)
+   * @returns TaskStore initialized for the resolved project
+   * @throws Error if project resolution fails or multiple projects require explicit selection
+   */
+  static async getOrCreateForProject(
+    projectId?: string,
+    centralCore?: import("./central-core.js").CentralCore
+  ): Promise<TaskStore> {
+    // If no centralCore provided, try to create one
+    let core = centralCore;
+    let shouldCleanupCore = false;
+    
+    if (!core) {
+      try {
+        const { CentralCore } = await import("./central-core.js");
+        core = new CentralCore();
+        await core.init();
+        shouldCleanupCore = true;
+      } catch {
+        // Central core not available - fall back to legacy mode
+      }
+    }
+
+    // Legacy mode: no central core available
+    if (!core) {
+      const store = new TaskStore(process.cwd());
+      await store.init();
+      return store;
+    }
+
+    try {
+      // If projectId provided, look it up directly
+      if (projectId) {
+        const project = await core.getProject(projectId);
+        if (!project) {
+          // Try to find by name
+          const allProjects = await core.listProjects();
+          const byName = allProjects.find(p => p.name === projectId);
+          if (!byName) {
+            throw new Error(`Project "${projectId}" not found`);
+          }
+          const store = new TaskStore(byName.path);
+          await store.init();
+          return store;
+        }
+        const store = new TaskStore(project.path);
+        await store.init();
+        return store;
+      }
+
+      // No projectId provided - check registered projects
+      const projects = await core.listProjects();
+
+      if (projects.length === 0) {
+        // No projects registered - fall back to legacy mode (current directory)
+        const store = new TaskStore(process.cwd());
+        await store.init();
+        return store;
+      }
+
+      if (projects.length === 1) {
+        // Exactly one project - use it
+        const store = new TaskStore(projects[0].path);
+        await store.init();
+        return store;
+      }
+
+      // Multiple projects - require explicit selection
+      const projectList = projects.map(p => `  - ${p.name}: ${p.path}`).join("\n");
+      throw new Error(
+        `Multiple projects registered. Use --project <name> to specify one.\n\nAvailable projects:\n${projectList}`
+      );
+    } finally {
+      // Clean up the central core if we created it
+      if (shouldCleanupCore && core) {
+        await core.close();
+      }
+    }
   }
 }

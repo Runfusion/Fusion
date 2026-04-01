@@ -76,7 +76,7 @@ import {
   fetchTasks,
   type ProjectInfo,
   type DetectedProject,
-} from "../../app/api";
+} from "../../app/api.js";
 
 function mockFetchResponse(
   ok: boolean,

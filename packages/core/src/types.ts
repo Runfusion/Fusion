@@ -386,6 +386,8 @@ export interface Task {
   baseCommitSha?: string;
   attachments?: TaskAttachment[];
   comments?: TaskComment[];
+  /** Steering comments injected during task execution for real-time guidance */
+  steeringComments?: TaskComment[];
   /** PR information for tasks linked to GitHub pull requests */
   prInfo?: PrInfo;
   mergeDetails?: MergeDetails;
@@ -531,7 +533,8 @@ export interface GlobalSettings {
    *  and ntfyTopic, notifications include a Click URL that opens the dashboard
    *  directly to the task. Example: "http://localhost:3000" or "https://fusion.example.com" */
   ntfyDashboardHost?: string;
-  /** Whether the first-run setup wizard has been completed. */
+  /** When true, indicates the first-run setup wizard has been completed.
+   *  Set by FirstRunExperience.completeSetup() after successful migration. */
   setupComplete?: boolean;
 }
 
@@ -1150,4 +1153,76 @@ export interface AgentUpdateInput {
   name?: string;
   role?: AgentCapability;
   metadata?: Record<string, unknown>;
+}
+
+// ── Migration & First-Run Types (Multi-Project Support) ───────────────────
+
+/** A project detected during filesystem scanning for auto-migration */
+export interface DetectedProject {
+  /** Absolute path to the project directory */
+  path: string;
+  /** Project name (derived from directory basename) */
+  name: string;
+  /** Whether the project has a valid kb database */
+  hasDb: boolean;
+}
+
+/** Options for migration orchestration */
+export interface MigrationOptions {
+  /** Starting path for project detection (default: process.cwd()) */
+  startPath?: string;
+  /** Whether to auto-register detected projects (default: false) */
+  autoRegister?: boolean;
+  /** Whether to perform a dry run (detect only, don't register) */
+  dryRun?: boolean;
+  /** Maximum depth to scan (default: 5) */
+  maxDepth?: number;
+  /** Progress callback for UI feedback */
+  onProgress?: (current: number, total: number, projectPath: string) => void;
+}
+
+/** Result of migration execution */
+export interface MigrationResult {
+  /** Projects detected during scan */
+  projectsDetected: DetectedProject[];
+  /** Projects successfully registered */
+  projectsRegistered: RegisteredProject[];
+  /** Projects skipped (already registered or invalid) */
+  projectsSkipped: Array<{ path: string; reason: string }>;
+  /** Errors encountered during migration */
+  errors: Array<{ path: string; error: string }>;
+}
+
+/** Input for setting up a project during first-run wizard */
+export interface ProjectSetupInput {
+  /** Absolute path to project directory */
+  path: string;
+  /** Display name for the project */
+  name: string;
+  /** Execution isolation mode (default: 'in-process') */
+  isolationMode?: IsolationMode;
+}
+
+/** Complete setup state for first-run experience */
+export interface SetupState {
+  /** Whether this is a fresh installation (no projects registered) */
+  isFirstRun: boolean;
+  /** Whether any projects were detected during scan */
+  hasDetectedProjects: boolean;
+  /** Projects detected but not yet registered */
+  detectedProjects: DetectedProject[];
+  /** Projects already registered in the system */
+  registeredProjects: RegisteredProject[];
+  /** Recommended action based on current state */
+  recommendedAction: 'auto-detect' | 'manual-setup' | 'create-new';
+}
+
+/** Result of completing the setup wizard */
+export interface SetupCompletionResult {
+  /** Whether setup completed successfully */
+  success: boolean;
+  /** Projects that were registered */
+  projects: RegisteredProject[];
+  /** Suggested next steps for the user */
+  nextSteps: string[];
 }
