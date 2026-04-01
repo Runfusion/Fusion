@@ -8,7 +8,6 @@ import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask,
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { AgentLogViewer } from "./AgentLogViewer";
-import { SteeringTab } from "./SteeringTab";
 import { ModelSelectorTab } from "./ModelSelectorTab";
 import { PrSection } from "./PrSection";
 import { TaskComments } from "./TaskComments";
@@ -106,7 +105,7 @@ export function TaskDetailModal({
   addToast,
   githubTokenConfigured,
 }: TaskDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "changes" | "steering" | "comments" | "model">("definition");
+  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "changes" | "comments" | "model">("definition");
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
@@ -681,12 +680,6 @@ export function TaskDetailModal({
               </button>
             )}
             <button
-              className={`detail-tab${activeTab === "steering" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("steering")}
-            >
-              Steering
-            </button>
-            <button
               className={`detail-tab${activeTab === "comments" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("comments")}
             >
@@ -714,8 +707,6 @@ export function TaskDetailModal({
             </div>
           ) : activeTab === "changes" ? (
             <TaskChangesTab taskId={task.id} worktree={task.worktree} />
-          ) : activeTab === "steering" ? (
-            <SteeringTab task={task} addToast={addToast} />
           ) : activeTab === "comments" ? (
             <TaskComments task={task} addToast={addToast} />
           ) : activeTab === "activity" ? (
