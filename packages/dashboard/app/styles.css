@@ -7514,6 +7514,8 @@ html .column.drag-over * {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  flex: 1;
+  min-height: 0;
 }
 
 .planning-summary-form .form-group {
