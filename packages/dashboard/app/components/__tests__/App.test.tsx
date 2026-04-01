@@ -36,19 +36,6 @@ vi.mock("../../api", async (importOriginal) => {
     fetchModels: vi.fn(() => Promise.resolve([])),
     fetchGitRemotes: vi.fn(() => Promise.resolve([])),
     fetchAgents: vi.fn(() => Promise.resolve([])),
-    fetchTaskDetail: vi.fn((id: string) => Promise.resolve({
-      id,
-      title: `Task ${id}`,
-      description: "Deep linked task",
-      column: "todo",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      log: [],
-      prompt: "",
-    })),
   };
 });
 
