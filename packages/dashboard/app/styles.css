@@ -1988,6 +1988,38 @@ body {
   outline-offset: 1px;
 }
 
+/* Expand button - visible on hover */
+.card-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.card:hover .card-expand-btn {
+  opacity: 1;
+}
+
+.card-expand-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.card-expand-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
 /* Archive/Unarchive buttons */
 .card-archive-btn,
 .card-unarchive-btn {
