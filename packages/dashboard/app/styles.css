@@ -10561,6 +10561,14 @@ html .column.drag-over * {
   width: 900px;
   max-width: 95vw;
   max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.gm-modal .modal-header {
+  flex-shrink: 0;
 }
 
 /* Main layout: sidebar + content */
@@ -10626,7 +10634,7 @@ html .column.drag-over * {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-lg);
-  min-height: 400px;
+  min-height: 0;
   position: relative;
 }
 
@@ -11658,7 +11666,8 @@ html .column.drag-over * {
   .gm-modal {
     width: 100%;
     max-width: 100%;
-    max-height: 100vh;
+    height: auto;
+    max-height: 90vh;
     border-radius: 0;
   }
 
@@ -11695,7 +11704,7 @@ html .column.drag-over * {
   }
 
   .gm-content {
-    min-height: 300px;
+    min-height: 200px;
     padding: var(--space-md);
   }
 
