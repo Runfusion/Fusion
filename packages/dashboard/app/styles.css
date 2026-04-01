@@ -2985,6 +2985,37 @@ body {
   color: var(--text-dim);
 }
 
+/* Inline Create Card main row with toggle */
+.inline-create-main-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.inline-create-main-row .inline-create-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.inline-create-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  height: 32px;
+  width: 32px;
+  flex-shrink: 0;
+}
+
+/* Collapsed state - minimal appearance */
+.inline-create-card--collapsed {
+  padding: 8px 10px;
+}
+
+.inline-create-card--collapsed .inline-create-input {
+  min-height: 32px;
+}
+
 .inline-create-footer {
   display: flex;
   align-items: flex-start;
@@ -9549,6 +9580,42 @@ html .column.drag-over * {
     width: 100%;
     text-align: center;
   }
+}
+
+/* Quick Entry Box main row with toggle */
+.quick-entry-main-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.quick-entry-main-row .quick-entry-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.quick-entry-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  height: 32px;
+  width: 32px;
+  flex-shrink: 0;
+}
+
+/* Collapsed state - minimal padding */
+.quick-entry-box--collapsed {
+  padding: 6px 8px;
+}
+
+.quick-entry-box--collapsed .quick-entry-input {
+  min-height: 32px;
+  border-bottom-color: transparent;
+}
+
+.quick-entry-box--collapsed .quick-entry-input:focus {
+  border-bottom-color: var(--triage);
 }
 
 /* === New Task Modal === */

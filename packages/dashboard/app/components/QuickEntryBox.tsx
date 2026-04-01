@@ -3,7 +3,7 @@ import type { ToastType } from "../hooks/useToast";
 import type { Task, TaskCreateInput } from "@fusion/core";
 import type { ModelInfo, RefinementType } from "../api";
 import { fetchModels, refineText, getRefineErrorMessage } from "../api";
-import { Link, Brain, Lightbulb, ListTree, Sparkles, Save } from "lucide-react";
+import { Link, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ModelSelectionModal } from "./ModelSelectionModal";
 
@@ -59,7 +59,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const justResetRef = useRef(false);
 
   // Rich creation state (mirrors InlineCreateCard)
@@ -140,12 +139,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     }
   }, [description]);
 
-  // Cleanup timeout on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (blurTimeoutRef.current) {
-        clearTimeout(blurTimeoutRef.current);
-      }
+      // No blur timeout to clean up
     };
   }, []);
 
@@ -209,7 +206,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setIsModelModalOpen(false);
     setIsRefineMenuOpen(false);
     setIsRefining(false);
-    setIsExpanded(false);
+    setIsExpanded(false); // Collapse on reset
     justResetRef.current = true;
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -296,16 +293,18 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           }
         }
         // Collapse on escape
-        resetForm();
-        // Clear any pending blur timeout
-        if (blurTimeoutRef.current) {
-          clearTimeout(blurTimeoutRef.current);
-          blurTimeoutRef.current = null;
-        }
+        setIsExpanded(false);
         textareaRef.current?.blur();
       }
     },
-    [handleSubmit, description, isExpanded, showDeps, isModelModalOpen, isRefineMenuOpen, resetForm],
+    [
+      handleSubmit,
+      description,
+      isExpanded,
+      showDeps,
+      isModelModalOpen,
+      isRefineMenuOpen,
+    ],
   );
 
   const handleFocus = useCallback(() => {
@@ -314,31 +313,16 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       justResetRef.current = false;
       return;
     }
-    // Only auto-expand if autoExpand prop is true (defaults to true for backward compatibility)
-    if (autoExpand) {
-      setIsExpanded(true);
-    }
-  }, [autoExpand]);
+    // No auto-expand on focus — manual toggle only
+  }, []);
 
   const handleBlur = useCallback(() => {
-    // Clear any existing timeout
-    if (blurTimeoutRef.current) {
-      clearTimeout(blurTimeoutRef.current);
+    // No auto-collapse on blur — state persists until manually toggled or task is submitted/cancelled
+    // Only clear the justResetRef flag if needed
+    if (justResetRef.current) {
+      justResetRef.current = false;
     }
-
-    // Collapse after a short delay to allow click events on dropdowns
-    // Collapse regardless of content - only check if dropdowns are open
-    blurTimeoutRef.current = setTimeout(() => {
-      if (!showDeps && !isModelModalOpen && !isRefineMenuOpen) {
-        setIsExpanded(false);
-        // Reset height when collapsing
-        if (textareaRef.current) {
-          textareaRef.current.style.height = "auto";
-        }
-      }
-      blurTimeoutRef.current = null;
-    }, 200);
-  }, [showDeps, isModelModalOpen, isRefineMenuOpen]);
+  }, []);
 
   const toggleDep = useCallback((id: string) => {
     setDependencies((prev) =>
@@ -443,26 +427,44 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     }
   }, [availableModels]);
 
-  // Show expanded controls only when focused/interacted (isExpanded)
+  // Show expanded controls only when manually expanded (isExpanded)
   const showExpandedControls = isExpanded;
 
+  const toggleExpanded = useCallback(() => {
+    setIsExpanded((prev) => !prev);
+  }, []);
+
   return (
-    <div className="quick-entry-box" data-testid="quick-entry-box">
-      <textarea
-        ref={textareaRef}
-        className={`quick-entry-input ${isExpanded ? "quick-entry-input--expanded" : ""}`}
-        placeholder={isSubmitting ? "Creating..." : "Add a task..."}
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onFocus={handleFocus}
-        onBlur={handleBlur}
-        disabled={isSubmitting || isDisabled}
-        data-testid="quick-entry-input"
-        rows={1}
-      />
+    <div className={`quick-entry-box ${isExpanded ? "quick-entry-box--expanded" : "quick-entry-box--collapsed"}`} data-testid="quick-entry-box">
+      <div className="quick-entry-main-row">
+        <textarea
+          ref={textareaRef}
+          className={`quick-entry-input ${isExpanded ? "quick-entry-input--expanded" : ""}`}
+          placeholder={isSubmitting ? "Creating..." : "Add a task..."}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          disabled={isSubmitting || isDisabled}
+          data-testid="quick-entry-input"
+          rows={1}
+          aria-controls="quick-entry-controls"
+        />
+        <button
+          type="button"
+          className="btn btn-sm quick-entry-toggle"
+          onClick={toggleExpanded}
+          aria-expanded={isExpanded}
+          aria-controls="quick-entry-controls"
+          data-testid="quick-entry-toggle"
+          title={isExpanded ? "Collapse" : "Expand"}
+        >
+          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+      </div>
       {showExpandedControls && (
-        <div className="quick-entry-controls">
+        <div id="quick-entry-controls" className="quick-entry-controls">
           <div className="quick-entry-controls-left">
             <div className="dep-trigger-wrap">
               <button
