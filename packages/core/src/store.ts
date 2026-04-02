@@ -165,6 +165,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       blockedBy: row.blockedBy || undefined,
       paused: row.paused ? true : undefined,
       baseBranch: row.baseBranch || undefined,
+      branch: row.branch || undefined,
       baseCommitSha: row.baseCommitSha || undefined,
       modelPresetId: row.modelPresetId || undefined,
       modelProvider: row.modelProvider || undefined,
@@ -208,7 +209,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.db.prepare(`
       INSERT OR REPLACE INTO tasks (
         id, title, description, "column", status, size, reviewLevel, currentStep,
-        worktree, blockedBy, paused, baseBranch, baseCommitSha, modelPresetId, modelProvider,
+        worktree, blockedBy, paused, baseBranch, branch, baseCommitSha, modelPresetId, modelProvider,
         modelId, validatorModelProvider, validatorModelId, mergeRetries, error,
         summary, thinkingLevel, createdAt, updatedAt, columnMovedAt,
         dependencies, steps, log, attachments, steeringComments,
@@ -216,7 +217,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, missionId, sliceId
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `).run(
       task.id,
@@ -231,6 +232,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.blockedBy ?? null,
       task.paused ? 1 : 0,
       task.baseBranch ?? null,
+      task.branch ?? null,
       task.baseCommitSha ?? null,
       task.modelPresetId ?? null,
       task.modelProvider ?? null,
@@ -925,7 +927,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; baseCommitSha?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; branch?: string; baseCommitSha?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Validate that task doesn't depend on itself
@@ -975,6 +977,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
       if (updates.paused !== undefined) task.paused = updates.paused || undefined;
       if (updates.baseBranch !== undefined) task.baseBranch = updates.baseBranch;
+      if (updates.branch !== undefined) task.branch = updates.branch;
       if (updates.baseCommitSha !== undefined) task.baseCommitSha = updates.baseCommitSha;
       if (updates.size !== undefined) task.size = updates.size;
       if (updates.reviewLevel !== undefined) task.reviewLevel = updates.reviewLevel;
@@ -1551,6 +1554,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           breakIntoSubtasks: task.breakIntoSubtasks,
           paused: task.paused,
           baseBranch: task.baseBranch,
+          branch: task.branch,
           baseCommitSha: task.baseCommitSha,
           mergeRetries: task.mergeRetries,
           error: task.error,
@@ -2365,6 +2369,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         breakIntoSubtasks: task.breakIntoSubtasks,
         paused: task.paused,
         baseBranch: task.baseBranch,
+        branch: task.branch,
         baseCommitSha: task.baseCommitSha,
         mergeRetries: task.mergeRetries,
         error: task.error,

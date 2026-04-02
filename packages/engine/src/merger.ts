@@ -557,7 +557,7 @@ export async function aiMergeTask(
     );
   }
 
-  const branch = `kb/${taskId.toLowerCase()}`;
+  const branch = task.branch || `kb/${taskId.toLowerCase()}`;
   const worktreePath = task.worktree;
   const result: MergeResult = {
     task,

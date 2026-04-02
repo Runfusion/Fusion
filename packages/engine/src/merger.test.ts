@@ -211,6 +211,54 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   });
 });
 
+describe("aiMergeTask — task.branch field", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    setupHappyPathExecSync();
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+  });
+
+  it("uses task.branch when set instead of deriving from task ID", async () => {
+    const store = createMockStore(
+      { id: "FN-050", branch: "kb/fn-050-2", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // Should use kb/fn-050-2, not kb/fn-050
+    expect(result.branch).toBe("kb/fn-050-2");
+
+    // Verify the suffixed branch was verified and deleted
+    const revParseCall = mockedExecSync.mock.calls.find(
+      (call) => String(call[0]).includes("rev-parse --verify") && String(call[0]).includes("kb/fn-050-2"),
+    );
+    expect(revParseCall).toBeDefined();
+
+    const branchDeleteCall = mockedExecSync.mock.calls.find(
+      (call) => String(call[0]).includes("branch -d") && String(call[0]).includes("kb/fn-050-2"),
+    );
+    expect(branchDeleteCall).toBeDefined();
+  });
+
+  it("falls back to conventional branch name when task.branch is not set", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.branch).toBe("kb/fn-050");
+  });
+});
+
 describe("aiMergeTask — empty squash merge (branch already merged via dep)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -425,12 +425,17 @@ export class TaskExecutor {
           const pooled = this.options.pool.acquire();
           if (pooled) {
             try {
-              this.options.pool.prepareForTask(pooled, branchName, baseBranch ?? undefined);
+              const actualBranch = this.options.pool.prepareForTask(pooled, branchName, baseBranch ?? undefined);
               worktreePath = pooled;
               acquiredFromPool = true;
               executorLog.log(`Acquired worktree from pool: ${pooled}`);
-              await this.store.updateTask(task.id, { worktree: worktreePath });
-              await this.store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath}`);
+              await this.store.updateTask(task.id, { worktree: worktreePath, branch: actualBranch });
+              if (actualBranch !== branchName) {
+                executorLog.log(`Branch conflict resolved: using ${actualBranch} instead of ${branchName}`);
+                await this.store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath} (branch conflict: using ${actualBranch})`);
+              } else {
+                await this.store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath}`);
+              }
             } catch (poolErr: any) {
               // Pool preparation failed — release the worktree back and fall through
               // to fresh worktree creation
@@ -447,7 +452,7 @@ export class TaskExecutor {
         // Fall through to fresh worktree creation if pool had nothing
         if (!acquiredFromPool) {
           worktreePath = await this.createWorktree(branchName, worktreePath, task.id, baseBranch ?? undefined);
-          await this.store.updateTask(task.id, { worktree: worktreePath });
+          await this.store.updateTask(task.id, { worktree: worktreePath, branch: branchName });
 
           if (baseBranch) {
             await this.store.logEntry(task.id, `Worktree created at ${worktreePath} (based on ${baseBranch})`);
@@ -1130,8 +1135,9 @@ export class TaskExecutor {
       // Worktree may already be gone
     }
 
-    // Delete the branch
-    const branch = `kb/${taskId.toLowerCase()}`;
+    // Delete the branch — use stored branch name if available, fall back to convention
+    const task = await this.store.getTask(taskId);
+    const branch = task.branch || `kb/${taskId.toLowerCase()}`;
     try {
       execSync(`git branch -D "${branch}"`, { cwd: this.rootDir, stdio: "pipe" });
     } catch {

@@ -426,6 +426,11 @@ export interface Task {
    *  unmerged branch. The executor reads this to branch from the
    *  dependency's branch instead of HEAD. Cleared after worktree creation. */
   baseBranch?: string;
+  /** Actual git branch name used for this task's worktree. May differ from
+   *  the conventional `kb/{task-id}` when conflict recovery generated a
+   *  unique suffixed name (e.g., `kb/fn-042-2`). The merger and PR systems
+   *  read this field instead of deriving the branch from the task ID. */
+  branch?: string;
   /** Base commit SHA for creating this task's worktree. Used with baseBranch
    *  to establish the exact starting point for the worktree. */
   baseCommitSha?: string;
@@ -947,6 +952,8 @@ export interface ArchivedTaskEntry {
   breakIntoSubtasks?: boolean;
   paused?: boolean;
   baseBranch?: string;
+  /** Actual git branch name used for this task's worktree */
+  branch?: string;
   /** Base commit SHA for the task's worktree */
   baseCommitSha?: string;
   /** List of files modified by this task */

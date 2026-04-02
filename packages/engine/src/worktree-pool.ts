@@ -110,11 +110,15 @@ export class WorktreePool {
    * 2. `git clean -fd` — remove untracked files (but not .gitignore'd caches)
    * 3. `git checkout -B <branchName> <startPoint>` — create/reset branch from start point
    *
+   * Returns the actual branch name used. This may differ from `branchName`
+   * when conflict recovery generates a suffixed name (e.g., `kb/fn-042-2`).
+   *
    * @param worktreePath — Absolute path to the recycled worktree
    * @param branchName — Branch name for the new task (e.g., `kb/kb-042`)
    * @param startPoint — Git ref to branch from (e.g., `kb/kb-041`). Defaults to `main`.
+   * @returns The actual branch name checked out in the worktree
    */
-  prepareForTask(worktreePath: string, branchName: string, startPoint?: string): void {
+  prepareForTask(worktreePath: string, branchName: string, startPoint?: string): string {
     // Clean tracked modifications
     try {
       execSync("git checkout -- .", { cwd: worktreePath, stdio: "pipe" });
@@ -133,6 +137,7 @@ export class WorktreePool {
         cwd: worktreePath,
         stdio: "pipe",
       });
+      return branchName;
     } catch (err: any) {
       const stderr = err?.stderr?.toString() ?? err?.message ?? "";
       const match = stderr.match(/already used by worktree at '([^']+)'/);
@@ -140,17 +145,37 @@ export class WorktreePool {
         throw err;
       }
 
-      // The branch is checked out in a different worktree — detach it there,
-      // delete the stale branch, then retry.
+      // The branch is checked out in a different worktree.
+      // First check if the conflicting worktree still exists on disk.
       const conflictingPath = match[1];
-      try {
-        execSync("git checkout --detach", { cwd: conflictingPath, stdio: "pipe" });
-      } catch {
-        // Conflicting worktree may no longer exist on disk — try pruning instead
+      if (!existsSync(conflictingPath)) {
+        // Conflicting worktree no longer exists — prune and retry with original name
         execSync("git worktree prune", { cwd: worktreePath, stdio: "pipe" });
+        execSync(checkoutCmd, { cwd: worktreePath, stdio: "pipe" });
+        return branchName;
       }
-      execSync(`git branch -D "${branchName}"`, { cwd: worktreePath, stdio: "pipe" });
-      execSync(checkoutCmd, { cwd: worktreePath, stdio: "pipe" });
+
+      // Conflicting worktree exists and is active — use a suffixed branch name
+      // to avoid disrupting the other worktree
+      for (let suffix = 2; suffix <= 6; suffix++) {
+        const suffixedName = `${branchName}-${suffix}`;
+        const suffixedCmd = `git checkout -B "${suffixedName}" ${base}`;
+        try {
+          execSync(suffixedCmd, { cwd: worktreePath, stdio: "pipe" });
+          return suffixedName;
+        } catch (suffixErr: any) {
+          const suffixStderr = suffixErr?.stderr?.toString() ?? "";
+          if (!suffixStderr.includes("already used by worktree")) {
+            throw suffixErr;
+          }
+          // This suffixed name is also in use — try the next one
+        }
+      }
+
+      // All suffixed names exhausted — should not happen in practice
+      throw new Error(
+        `Cannot create branch for task: "${branchName}" and suffixes -2 through -6 are all in use by other worktrees`,
+      );
     }
   }
 }

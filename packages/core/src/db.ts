@@ -402,8 +402,14 @@ export class Database {
       });
     }
 
+    if (version < 6) {
+      this.applyMigration(6, () => {
+        this.addColumnIfMissing("tasks", "branch", "TEXT");
+      });
+    }
+
     // Future migrations go here:
-    // if (version < 6) { this.applyMigration(6, () => { ... }); }
+    // if (version < 7) { this.applyMigration(7, () => { ... }); }
   }
 
   /**

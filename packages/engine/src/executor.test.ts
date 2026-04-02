@@ -426,6 +426,7 @@ describe("TaskExecutor worktree naming", () => {
     // The worktree path stored should use the generated name, not the task ID
     expect(store.updateTask).toHaveBeenCalledWith("FN-030", {
       worktree: "/tmp/test/.worktrees/swift-falcon",
+      branch: "kb/fn-030",
     });
     expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
   });
@@ -477,6 +478,7 @@ describe("TaskExecutor worktree naming", () => {
       // Should use task ID (lowercase) as worktree name
       expect(store.updateTask).toHaveBeenCalledWith("FN-042", {
         worktree: "/tmp/test/.worktrees/fn-042",
+        branch: "kb/fn-042",
       });
       // Should NOT call generateWorktreeName when using task-id
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
@@ -503,6 +505,7 @@ describe("TaskExecutor worktree naming", () => {
       const expectedSlug = slugify("Fix login bug with OAuth");
       expect(store.updateTask).toHaveBeenCalledWith("FN-043", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
+        branch: "kb/fn-043",
       });
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
     });
@@ -530,6 +533,7 @@ describe("TaskExecutor worktree naming", () => {
       const expectedSlug = slugify(taskDescription.slice(0, 60));
       expect(store.updateTask).toHaveBeenCalledWith("FN-044", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
+        branch: "kb/fn-044",
       });
     });
 
@@ -550,6 +554,7 @@ describe("TaskExecutor worktree naming", () => {
       // Should use generateWorktreeName for random mode
       expect(store.updateTask).toHaveBeenCalledWith("FN-045", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
+        branch: "kb/fn-045",
       });
       expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
     });
@@ -571,6 +576,7 @@ describe("TaskExecutor worktree naming", () => {
       // Should default to random naming
       expect(store.updateTask).toHaveBeenCalledWith("FN-046", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
+        branch: "kb/fn-046",
       });
       expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
     });
@@ -600,6 +606,7 @@ describe("TaskExecutor worktree naming", () => {
       // Should acquire from pool, ignoring the task-id naming preference
       expect(store.updateTask).toHaveBeenCalledWith("FN-047", {
         worktree: "/tmp/test/.worktrees/pooled-warm-wt",
+        branch: "kb/fn-047",
       });
       // Should NOT call generateWorktreeName when using pooled worktree
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
@@ -1148,7 +1155,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       (p) => p === "/tmp/test/.worktrees/idle-wt",
     );
 
-    const prepareSpy = vi.spyOn(pool, "prepareForTask");
+    const prepareSpy = vi.spyOn(pool, "prepareForTask").mockReturnValue("kb/fn-064");
 
     const store = createMockStore();
     store.getSettings.mockResolvedValue({
@@ -1181,7 +1188,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       (p) => p === "/tmp/test/.worktrees/idle-wt",
     );
 
-    const prepareSpy = vi.spyOn(pool, "prepareForTask");
+    const prepareSpy = vi.spyOn(pool, "prepareForTask").mockReturnValue("kb/fn-065");
 
     const store = createMockStore();
     store.getSettings.mockResolvedValue({
@@ -1204,6 +1211,39 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       "kb/fn-065",
       undefined,
     );
+  });
+
+  it("stores suffixed branch name when pool returns a different name", async () => {
+    const pool = new WorktreePool();
+    pool.release("/tmp/test/.worktrees/idle-wt");
+    mockedExistsSync.mockImplementation(
+      (p) => p === "/tmp/test/.worktrees/idle-wt",
+    );
+
+    // Pool returns a suffixed branch name due to conflict
+    vi.spyOn(pool, "prepareForTask").mockReturnValue("kb/fn-066-2");
+
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      recycleWorktrees: true,
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+
+    await executor.execute(makeTask({
+      id: "FN-066",
+    }));
+
+    // Should store the suffixed branch name
+    expect(store.updateTask).toHaveBeenCalledWith("FN-066", {
+      worktree: "/tmp/test/.worktrees/idle-wt",
+      branch: "kb/fn-066-2",
+    });
   });
 });
 
@@ -1352,6 +1392,10 @@ describe("TaskExecutor worktree pool integration", () => {
   it("falls through to fresh worktree when pool prepareForTask throws", async () => {
     const pool = new WorktreePool();
     pool.release("/tmp/test/.worktrees/bad-wt");
+    // Pool path must exist on disk for acquire() to return it
+    mockedExistsSync.mockImplementation(
+      (p) => p === "/tmp/test/.worktrees/bad-wt",
+    );
     // Make prepareForTask throw
     vi.spyOn(pool, "prepareForTask").mockImplementation(() => {
       throw new Error("branch conflict unrecoverable");
