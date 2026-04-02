@@ -79,10 +79,10 @@ export function PrSection({
       return (
         <div className="pr-section">
           <h4>
-            <GitPullRequest size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
+            <GitPullRequest size={16} className="pr-section-icon" />
             Pull Request
           </h4>
-          <div className="pr-hint" style={{ opacity: 0.8, fontSize: 13 }}>
+          <div className="pr-hint pr-hint--muted">
             kb is creating a pull request automatically for this task.
           </div>
         </div>
@@ -93,7 +93,7 @@ export function PrSection({
       return (
         <div className="pr-section">
           <h4>
-            <GitPullRequest size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
+            <GitPullRequest size={16} className="pr-section-icon" />
             Create Pull Request
           </h4>
           <div className="pr-form">
@@ -137,7 +137,7 @@ export function PrSection({
     return (
       <div className="pr-section">
         <h4>
-          <GitPullRequest size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
+          <GitPullRequest size={16} className="pr-section-icon" />
           Pull Request
         </h4>
         <button
@@ -146,11 +146,11 @@ export function PrSection({
           disabled={!hasGitHubToken}
           title={hasGitHubToken ? "Create a PR for this task" : "GitHub token not configured"}
         >
-          <Plus size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />
+          <Plus size={14} className="pr-section-icon--sm" />
           Create PR
         </button>
         {!hasGitHubToken && (
-          <div className="pr-hint" style={{ marginTop: 8, opacity: 0.7, fontSize: 12 }}>
+          <div className="pr-hint pr-hint--subtle">
             Set GITHUB_TOKEN env var to enable PR creation
           </div>
         )}
@@ -165,76 +165,58 @@ export function PrSection({
   return (
     <div className="pr-section">
       <h4>
-        <GitPullRequest size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
+        <GitPullRequest size={16} className="pr-section-icon" />
         Pull Request
       </h4>
       <div
-        className="pr-card"
-        style={{
-          border: "1px solid var(--border, #333)",
-          borderRadius: 8,
-          padding: 12,
-          background: statusStyle.bg,
-        }}
+        className="pr-card pr-card--status"
+        style={{ background: statusStyle.bg }}
       >
-        <div className="pr-header" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 16 }}>{statusStyle.icon}</span>
+        <div className="pr-header">
+          <span className="pr-status-icon">{statusStyle.icon}</span>
           <span
             className="pr-status-badge"
-            style={{
-              background: statusStyle.bg,
-              color: statusStyle.text,
-              padding: "2px 8px",
-              borderRadius: 12,
-              fontSize: 12,
-              fontWeight: 500,
-              textTransform: "capitalize",
-            }}
+            style={{ background: statusStyle.bg, color: statusStyle.text }}
           >
             {prInfo.status}
           </span>
-          <span className="pr-number" style={{ fontSize: 14, opacity: 0.8 }}>
-            #{prInfo.number}
-          </span>
-          <div style={{ flex: 1 }} />
+          <span className="pr-number">#{prInfo.number}</span>
+          <div className="pr-spacer" />
           <button
-            className="btn btn-sm"
+            className="btn btn-sm pr-refresh-btn"
             onClick={handleRefresh}
             disabled={isRefreshing}
             title="Refresh PR status"
-            style={{ padding: "4px 8px" }}
           >
             <RefreshCw size={14} style={{ verticalAlign: "middle", opacity: isRefreshing ? 0.5 : 1 }} />
           </button>
         </div>
-        <div className="pr-title" style={{ fontWeight: 500, marginBottom: 8 }}>
-          {prInfo.title}
-        </div>
-        <div className="pr-meta" style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
+        <div className="pr-title">{prInfo.title}</div>
+        <div className="pr-meta">
           <span>{prInfo.headBranch}</span>
-          <span style={{ margin: "0 8px" }}>→</span>
+          <span className="pr-meta-arrow">→</span>
           <span>{prInfo.baseBranch}</span>
         </div>
         {automationStatus === "merging-pr" && (
-          <div className="pr-hint" style={{ marginBottom: 8, fontSize: 12 }}>
+          <div className="pr-hint pr-hint--info">
             kb is merging this pull request automatically.
           </div>
         )}
         {automationStatus === "awaiting-pr-checks" && (
-          <div className="pr-hint" style={{ marginBottom: 8, fontSize: 12 }}>
+          <div className="pr-hint pr-hint--info">
             {blockingReasons.length > 0
               ? `Waiting for: ${blockingReasons.join("; ")}`
               : "Waiting for required checks or review feedback before auto-merge."}
           </div>
         )}
         {prInfo.status === "merged" && (
-          <div className="pr-hint" style={{ marginBottom: 8, fontSize: 12 }}>
+          <div className="pr-hint pr-hint--info">
             This PR is merged. kb will finish local cleanup and move the task to Done.
           </div>
         )}
-        <div className="pr-footer" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div className="pr-footer">
           {prInfo.commentCount > 0 && (
-            <span className="pr-comments" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span className="pr-comments">
               <MessageSquare size={14} />
               {prInfo.commentCount}
             </span>
@@ -244,14 +226,6 @@ export function PrSection({
             target="_blank"
             rel="noopener noreferrer"
             className="pr-link"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              color: "var(--link, #58a6ff)",
-              textDecoration: "none",
-              fontSize: 12,
-            }}
           >
             <ExternalLink size={14} />
             View on GitHub

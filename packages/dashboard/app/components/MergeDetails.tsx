@@ -19,7 +19,7 @@ export function MergeDetails({ task }: MergeDetailsProps) {
   return (
     <div className="detail-section">
       <h4>Merge Details</h4>
-      <div className="pr-card" style={{ border: "1px solid var(--border, #333)", borderRadius: 8, padding: 12 }}>
+      <div className="pr-card merge-details-card">
         <div className="detail-log-entry">
           <div className="detail-log-header">
             <span className="detail-log-action">Status</span>

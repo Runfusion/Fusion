@@ -117,19 +117,19 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
             const isAIGuidance = isAIGuidanceComment(comment.author);
             return (
               <div key={comment.id} className="detail-log-entry">
-                <div className="detail-log-header" style={{ justifyContent: "space-between", gap: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div className="detail-log-header comments-header-row">
+                  <div className="comments-author-row">
                     {isAIGuidance ? (
                       <span className="ai-guidance-badge" data-testid="ai-guidance-badge">AI Guidance</span>
                     ) : (
                       <strong>{comment.author}</strong>
                     )}
-                    <span className="detail-log-timestamp" style={{ marginLeft: isAIGuidance ? 0 : 8 }}>
+                    <span className="detail-log-timestamp">
                       {formatCommentTimestamp(comment)}
                     </span>
                   </div>
                   {canEdit && !isEditing ? (
-                    <div style={{ display: "flex", gap: 8 }}>
+                    <div className="comments-actions-row">
                       <button className="btn btn-sm" onClick={() => {
                         setEditingId(comment.id);
                         setEditingText(comment.text);
@@ -147,14 +147,14 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
                   ) : null}
                 </div>
                 {isEditing ? (
-                  <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                  <div className="comments-edit-form">
                     <textarea
                       value={editingText}
                       onChange={(event) => setEditingText(event.target.value)}
                       rows={3}
                       className="spec-editor-feedback"
                     />
-                    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <div className="comments-edit-actions">
                       <button
                         className="btn btn-sm"
                         onClick={() => {
@@ -175,7 +175,7 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
                     </div>
                   </div>
                 ) : (
-                  <div className="detail-log-outcome" style={{ whiteSpace: "pre-wrap" }}>
+                  <div className="detail-log-outcome comments-outcome-text">
                     {comment.text}
                   </div>
                 )}
@@ -185,8 +185,8 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
         </div>
       )}
 
-      <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-        <div style={{ display: "flex", gap: 8 }}>
+      <div className="comments-compose-form">
+        <div className="comments-type-toggle">
           <button
             className={`btn btn-sm ${commentType === "comment" ? "btn-primary" : ""}`}
             onClick={() => setCommentType("comment")}
@@ -201,7 +201,7 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
           </button>
         </div>
         {commentType === "guidance" && (
-          <div style={{ fontSize: "0.875rem", color: "var(--color-text-muted, #666)" }}>
+          <div className="comments-guidance-hint">
             AI Guidance comments are injected into the task execution context
           </div>
         )}
@@ -213,8 +213,8 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
           placeholder={placeholder}
           className="spec-editor-feedback"
         />
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: "0.75rem", color: isOverLimit ? "var(--color-danger, red)" : undefined }}>
+        <div className="comments-footer-row">
+          <span className={`comments-char-count${isOverLimit ? " comments-char-count--over" : ""}`}>
             {draft.length} / {MAX_COMMENT_LENGTH}
           </span>
           <button
