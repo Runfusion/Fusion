@@ -419,6 +419,89 @@ describe("TaskStore", () => {
     });
   });
 
+  // ── Planning/Validator Model Settings ────────────────────────────
+
+  describe("planning/validator model settings", () => {
+    it("saves and restores planning model settings via updateSettings", async () => {
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+      });
+      const settings = await store.getSettings();
+      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("saves and restores validator model settings via updateSettings", async () => {
+      await store.updateSettings({
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4o",
+      });
+      const settings = await store.getSettings();
+      expect(settings.validatorProvider).toBe("openai");
+      expect(settings.validatorModelId).toBe("gpt-4o");
+    });
+
+    it("saves and restores both planning and validator model settings via updateSettings", async () => {
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4o",
+      });
+      const settings = await store.getSettings();
+      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
+      expect(settings.validatorProvider).toBe("openai");
+      expect(settings.validatorModelId).toBe("gpt-4o");
+    });
+
+    it("clears planning model settings when set to undefined", async () => {
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+      });
+      await store.updateSettings({
+        planningProvider: undefined,
+        planningModelId: undefined,
+      });
+      const settings = await store.getSettings();
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
+    });
+
+    it("clears validator model settings when set to undefined", async () => {
+      await store.updateSettings({
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4o",
+      });
+      await store.updateSettings({
+        validatorProvider: undefined,
+        validatorModelId: undefined,
+      });
+      const settings = await store.getSettings();
+      expect(settings.validatorProvider).toBeUndefined();
+      expect(settings.validatorModelId).toBeUndefined();
+    });
+
+    it("persists planning/validator settings in project config", async () => {
+      await store.updateSettings({
+        planningProvider: "anthropic",
+        planningModelId: "claude-opus-4",
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4-turbo",
+      });
+
+      // Verify the settings are in the project config file
+      const configRaw = await readFile(join(rootDir, ".fusion", "config.json"), "utf-8");
+      const config = JSON.parse(configRaw);
+      expect(config.settings.planningProvider).toBe("anthropic");
+      expect(config.settings.planningModelId).toBe("claude-opus-4");
+      expect(config.settings.validatorProvider).toBe("openai");
+      expect(config.settings.validatorModelId).toBe("gpt-4-turbo");
+    });
+  });
+
   // ── Global/Project Settings Merging ─────────────────────────────
 
   describe("global/project settings merging", () => {

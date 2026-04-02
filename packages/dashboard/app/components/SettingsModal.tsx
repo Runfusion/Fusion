@@ -23,8 +23,10 @@ import { applyPresetToSelection, generatePresetId, validatePresetId } from "../u
  *
  * Sections:
  *   - general: Task prefix configuration (project)
- *   - model: Default AI model selection (global)
+ *   - default-model: Default AI model selection (global)
+ *   - execution-model: Planning and validator model selection (project)
  *   - model-presets: Reusable model presets (project)
+ *   - ai-summarization: Auto-summarization settings (project)
  *   - appearance: Theme and color settings (global)
  *   - scheduling: Concurrency, poll interval, file overlap serialization (project)
  *   - worktrees: Worktree limits, init commands, recycling (project)
@@ -35,7 +37,8 @@ import { applyPresetToSelection, generatePresetId, validatePresetId } from "../u
  */
 const SETTINGS_SECTIONS = [
   { id: "general", label: "General", scope: "project" as const },
-  { id: "model", label: "Model", scope: "global" as const },
+  { id: "default-model", label: "Default Model", scope: "global" as const },
+  { id: "execution-model", label: "Execution Model", scope: "project" as const },
   { id: "model-presets", label: "Model Presets", scope: "project" as const },
   { id: "ai-summarization", label: "AI Summarization", scope: "project" as const },
   { id: "appearance", label: "Appearance", scope: "global" as const },
@@ -140,7 +143,7 @@ export function SettingsModal({
   }, []);
 
   useEffect(() => {
-    if (activeSection === "model") {
+    if (activeSection === "default-model" || activeSection === "execution-model") {
       setModelsLoading(true);
       fetchModels()
         .then((response) => {
@@ -360,37 +363,40 @@ export function SettingsModal({
         taskPrefix: form.taskPrefix?.trim() || undefined,
       };
 
-      // Save only the scope matching the currently active section.
-      // This prevents stale values from one scope being accidentally
-      // overwritten when the user only changed fields in the other scope.
-      if (activeSectionScope === "global") {
-        const globalKeySet = new Set<string>(GLOBAL_SETTINGS_KEYS);
-        const globalPatch: Partial<GlobalSettings> = {};
-        for (const [key, value] of Object.entries(payload)) {
-          if (globalKeySet.has(key)) {
-            (globalPatch as any)[key] = value;
-          }
+      // Always save both global and project settings.
+      // The backend filters each appropriately (updateSettings ignores global keys,
+      // updateGlobalSettings ignores project keys). This ensures fields in sections
+      // are persisted correctly based on their scope.
+
+      const globalKeySet = new Set<string>(GLOBAL_SETTINGS_KEYS);
+      const globalPatch: Partial<GlobalSettings> = {};
+      for (const [key, value] of Object.entries(payload)) {
+        if (globalKeySet.has(key)) {
+          (globalPatch as any)[key] = value;
         }
-        await updateGlobalSettings(globalPatch);
-      } else if (activeSectionScope === "project") {
-        const projectKeySet = new Set<string>(PROJECT_SETTINGS_KEYS as readonly string[]);
-        const projectPatch: Partial<Settings> = {};
-        for (const [key, value] of Object.entries(payload)) {
-          if (key === "githubTokenConfigured") continue; // server-only field
-          if (projectKeySet.has(key)) {
-            (projectPatch as any)[key] = value;
-          }
-        }
-        await updateSettings(projectPatch);
       }
-      // Authentication section (scope: undefined) doesn't use the save button
+
+      const projectKeySet = new Set<string>(PROJECT_SETTINGS_KEYS as readonly string[]);
+      const projectPatch: Partial<Settings> = {};
+      for (const [key, value] of Object.entries(payload)) {
+        if (key === "githubTokenConfigured") continue; // server-only field
+        if (projectKeySet.has(key)) {
+          (projectPatch as any)[key] = value;
+        }
+      }
+
+      // Save both scopes in parallel if they have changes
+      await Promise.all([
+        Object.keys(globalPatch).length > 0 ? updateGlobalSettings(globalPatch) : Promise.resolve(),
+        Object.keys(projectPatch).length > 0 ? updateSettings(projectPatch) : Promise.resolve(),
+      ]);
 
       addToast("Settings saved", "success");
       onClose();
     } catch (err: any) {
       addToast(err.message, "error");
     }
-  }, [form, prefixError, presetDraft, activeSectionScope, onClose, addToast]);
+  }, [form, prefixError, presetDraft, onClose, addToast]);
 
   const savePresetDraft = () => {
     if (!presetDraft) return;
@@ -512,10 +518,76 @@ export function SettingsModal({
             </div>
           </>
         );
-      case "model": {
+      case "default-model": {
         const selectedValue = form.defaultProvider && form.defaultModelId
           ? `${form.defaultProvider}/${form.defaultModelId}`
           : "";
+        return (
+          <>
+            {renderScopeBanner()}
+            <h4 className="settings-section-heading">Default Model</h4>
+            {modelsLoading ? (
+              <div className="settings-empty-state">Loading available models…</div>
+            ) : availableModels.length === 0 ? (
+              <div className="settings-empty-state settings-muted">
+                No models available. Configure authentication first.
+              </div>
+            ) : (
+              <div className="form-group">
+                <label htmlFor="defaultModel">Default Model</label>
+                <CustomModelDropdown
+                  id="defaultModel"
+                  label="Default Model"
+                  models={availableModels}
+                  value={selectedValue}
+                  onChange={(val) => {
+                    if (!val) {
+                      setForm((f) => ({ ...f, defaultProvider: undefined, defaultModelId: undefined }));
+                    } else {
+                      const slashIdx = val.indexOf("/");
+                      setForm((f) => ({
+                        ...f,
+                        defaultProvider: val.slice(0, slashIdx),
+                        defaultModelId: val.slice(slashIdx + 1),
+                      }));
+                    }
+                  }}
+                  placeholder="Use default"
+                />
+                <small>Default AI model used for task execution when no per-task override is set. &quot;Use default&quot; lets the engine choose automatically.</small>
+              </div>
+            )}
+            {(() => {
+              const selectedModel = availableModels.find(
+                (m) => m.provider === form.defaultProvider && m.id === form.defaultModelId,
+              );
+              if (selectedModel && !selectedModel.reasoning) return null;
+              return (
+                <div className="form-group">
+                  <label htmlFor="defaultThinkingLevel">Thinking Effort</label>
+                  <select
+                    id="defaultThinkingLevel"
+                    value={form.defaultThinkingLevel || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setForm((f) => ({ ...f, defaultThinkingLevel: val || undefined } as any));
+                    }}
+                  >
+                    <option value="">Default</option>
+                    {THINKING_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {level.charAt(0).toUpperCase() + level.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                  <small>Controls how much reasoning effort the AI model uses. Higher levels produce better results but cost more.</small>
+                </div>
+              );
+            })()}
+          </>
+        );
+      }
+      case "execution-model": {
         const planningValue = form.planningProvider && form.planningModelId
           ? `${form.planningProvider}/${form.planningModelId}`
           : "";
@@ -525,7 +597,7 @@ export function SettingsModal({
         return (
           <>
             {renderScopeBanner()}
-            <h4 className="settings-section-heading">Model</h4>
+            <h4 className="settings-section-heading">Execution Model</h4>
             {modelsLoading ? (
               <div className="settings-empty-state">Loading available models…</div>
             ) : availableModels.length === 0 ? (
@@ -534,31 +606,6 @@ export function SettingsModal({
               </div>
             ) : (
               <>
-                <div className="form-group">
-                  <label htmlFor="defaultModel">Default Model</label>
-                  <CustomModelDropdown
-                    id="defaultModel"
-                    label="Default Model"
-                    models={availableModels}
-                    value={selectedValue}
-                    onChange={(val) => {
-                      if (!val) {
-                        setForm((f) => ({ ...f, defaultProvider: undefined, defaultModelId: undefined }));
-                      } else {
-                        const slashIdx = val.indexOf("/");
-                        setForm((f) => ({
-                          ...f,
-                          defaultProvider: val.slice(0, slashIdx),
-                          defaultModelId: val.slice(slashIdx + 1),
-                        }));
-                      }
-                    }}
-                    placeholder="Use default"
-                    favoriteProviders={favoriteProviders}
-                    onToggleFavorite={handleToggleFavorite}
-                  />
-                  <small>Default AI model used for task execution when no per-task override is set. &quot;Use default&quot; lets the engine choose automatically.</small>
-                </div>
                 <div className="form-group">
                   <label htmlFor="planningModel">Planning Model</label>
                   <CustomModelDropdown
@@ -611,33 +658,6 @@ export function SettingsModal({
                 </div>
               </>
             )}
-            {(() => {
-              const selectedModel = availableModels.find(
-                (m) => m.provider === form.defaultProvider && m.id === form.defaultModelId,
-              );
-              if (selectedModel && !selectedModel.reasoning) return null;
-              return (
-                <div className="form-group">
-                  <label htmlFor="defaultThinkingLevel">Thinking Effort</label>
-                  <select
-                    id="defaultThinkingLevel"
-                    value={form.defaultThinkingLevel || ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setForm((f) => ({ ...f, defaultThinkingLevel: val || undefined } as any));
-                    }}
-                  >
-                    <option value="">Default</option>
-                    {THINKING_LEVELS.map((level) => (
-                      <option key={level} value={level}>
-                        {level.charAt(0).toUpperCase() + level.slice(1)}
-                      </option>
-                    ))}
-                  </select>
-                  <small>Controls how much reasoning effort the AI model uses. Higher levels produce better results but cost more.</small>
-                </div>
-              );
-            })()}
           </>
         );
       }

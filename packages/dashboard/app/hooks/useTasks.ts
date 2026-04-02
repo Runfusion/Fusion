@@ -93,6 +93,20 @@ export function useTasks(options?: UseTasksOptions) {
     };
   }, [refreshTasks]);
 
+  // Fetch initial tasks and recover when the tab becomes visible again.
+  useEffect(() => {
+    void refreshTasks();
+
+    const handleVisibilityChange = () => {
+      void refreshTasks();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [refreshTasks]);
+
   // SSE live updates
   // Note: In multi-project mode, SSE receives all task events.
   // Tasks are filtered by ID match, so cross-project updates won't affect
