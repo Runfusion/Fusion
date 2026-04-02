@@ -237,6 +237,7 @@ describe("fetchModels", () => {
         { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
       ],
       favoriteProviders: ["anthropic"],
+      favoriteModels: ["anthropic/claude-sonnet-4-5"],
     };
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, response));
 

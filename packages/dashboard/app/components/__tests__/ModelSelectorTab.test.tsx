@@ -43,6 +43,7 @@ const MOCK_MODELS = [
 const MOCK_MODELS_RESPONSE = {
   models: MOCK_MODELS,
   favoriteProviders: [],
+  favoriteModels: [],
 };
 
 describe("ModelSelectorTab", () => {
