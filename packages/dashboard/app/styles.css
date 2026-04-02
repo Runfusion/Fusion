@@ -2759,6 +2759,130 @@ body {
   margin-top: 16px;
 }
 
+.detail-spec-edit-trigger {
+  margin-bottom: 12px;
+}
+
+.detail-attachments-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.detail-attachment-card {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  background: var(--card);
+}
+
+.detail-attachment-link {
+  display: block;
+}
+
+.detail-attachment-image {
+  display: block;
+  max-width: 150px;
+  max-height: 100px;
+  border-radius: 4px;
+}
+
+.detail-attachment-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.detail-attachment-delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.detail-empty-inline {
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+
+.detail-hidden-file-input {
+  display: none;
+}
+
+.dep-remove-btn {
+  margin-left: 6px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+
+.dep-trigger-wrap {
+  position: relative;
+}
+
+.modal-actions-spacer {
+  flex: 1;
+}
+
+.detail-refine-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 100;
+}
+
+.detail-refine-modal {
+  max-width: 500px;
+  width: 90%;
+  margin: 0;
+}
+
+.detail-refine-title {
+  margin: 0;
+}
+
+.detail-refine-help {
+  margin-bottom: 12px;
+  opacity: 0.8;
+}
+
+.detail-refine-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  resize: vertical;
+}
+
+.detail-refine-char-count {
+  margin-top: 8px;
+  text-align: right;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
 .task-changes-state {
   display: flex;
   flex-direction: column;
@@ -7011,6 +7135,53 @@ body {
 
 .model-combobox-optgroup-text {
   flex: 1;
+}
+
+/* Provider favorite star (in optgroup header) */
+.model-combobox-optgroup-favorite {
+  padding: 2px 4px;
+  font-size: 14px;
+  color: #6b7280;
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+}
+.model-combobox-optgroup-favorite:hover {
+  color: #f59e0b;
+}
+.model-combobox-optgroup-favorite--active {
+  color: #f59e0b;
+}
+
+/* Model favorite star (inside option row) */
+.model-combobox-option-favorite {
+  padding: 2px 4px;
+  font-size: 12px;
+  color: #6b7280;
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+  margin-left: auto;
+}
+.model-combobox-option-favorite:hover {
+  color: #f59e0b;
+}
+.model-combobox-option-favorite--active {
+  color: #f59e0b;
+}
+
+/* Favorited model pinned row */
+.model-combobox-option--favorite {
+  padding-left: 12px;
+  background: var(--bg-secondary);
+}
+
+.model-combobox-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
 }
 
 .model-combobox-no-results {
