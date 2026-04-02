@@ -1,0 +1,118 @@
+{
+  "id": "KB-320",
+  "description": "Make the quick add save button green and fix icon spacing and move it to the corner of the quick entry box. Both card view and list view",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Current Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Update QuickEntryBox (List View)",
+      "status": "done"
+    },
+    {
+      "name": "Update InlineCreateCard (Card View)",
+      "status": "done"
+    },
+    {
+      "name": "Update CSS Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T19:03:11.143Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T19:03:44.517Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T19:04:04.025Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and actionable. All referenced source files exist at the specified paths, the described components and CSS classes are correctly identified, and the task requirements are clear and verifiable. The spec correctly identifies that InlineCreateCard already has `btn-primary` but lacks the Save icon, while QuickEntryBox has the Save icon but needs repositioning and green styling."
+    },
+    {
+      "timestamp": "2026-03-31T19:04:15.854Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/merry-falcon"
+    },
+    {
+      "timestamp": "2026-03-31T19:04:15.855Z",
+      "action": "Step 0 (Analyze Current Implementation) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T19:04:17.248Z",
+      "action": "Step 0 (Analyze Current Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:04:29.560Z",
+      "action": "Step 0 (Analyze Current Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:04:29.562Z",
+      "action": "Step 1 (Update QuickEntryBox (List View)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:05:12.618Z",
+      "action": "Step 1 (Update QuickEntryBox (List View)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:05:12.620Z",
+      "action": "Step 2 (Update InlineCreateCard (Card View)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:05:23.887Z",
+      "action": "Step 2 (Update InlineCreateCard (Card View)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:05:23.890Z",
+      "action": "Step 3 (Update CSS Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:05:28.006Z",
+      "action": "Step 3 (Update CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:05:28.008Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:07:31.052Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:07:31.053Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:07:40.270Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:07:40.273Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:07:40.276Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T19:07:46.571Z",
+  "createdAt": "2026-03-31T19:03:11.143Z",
+  "updatedAt": "2026-03-31T19:07:46.571Z",
+  "size": "S",
+  "reviewLevel": 0,
+  "summary": "Successfully completed KB-320 - Made the quick add save button green with fixed icon spacing and corner positioning in both list view (QuickEntryBox) and card view (InlineCreateCard). Changes include: (1) Moved Save button from controls-left to new controls-right container with `btn-primary` class for green styling in QuickEntryBox, (2) Added Save icon import and rendering with consistent spacing in InlineCreateCard, (3) Added CSS classes `.quick-entry-controls-right`, `.quick-entry-save-btn`, and `.inline-create-save-btn` for proper layout and icon alignment, (4) Updated test mock to include Save icon, (5) Created changeset file for patch release. All 58 QuickEntryBox tests pass."
+}

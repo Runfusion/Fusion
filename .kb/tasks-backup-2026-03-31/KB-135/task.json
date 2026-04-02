@@ -1,0 +1,192 @@
+{
+  "id": "KB-135",
+  "description": "Design and implement authorization/security hardening for dashboard badge WebSocket connections beyond same-origin assumptions (if future deployment models require it).",
+  "column": "done",
+  "dependencies": [
+    "KB-063"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add signed badge WebSocket auth primitives and mint endpoint",
+      "status": "done"
+    },
+    {
+      "name": "Guard `/api/ws` upgrades with token and origin validation",
+      "status": "done"
+    },
+    {
+      "name": "Acquire fresh auth tokens inside the shared browser badge socket store",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T10:15:31.523Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T10:32:58.747Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:36:54.624Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The spec is strong overall: it targets the right server/client files, preserves the existing badge message contract, and requires real automated tests in the relevant route, websocket, and hook suites already present in the tree (`packages/dashboard/src/server.ts:333`, `packages/dashboard/src/websocket.ts:48`, `packages/dashboard/app/hooks/useBadgeWebSocket.ts:48`, `packages/dashboard/src/__tests__/websocket.test.ts:207`, `packages/dashboard/app/hooks/__tests__/useBadgeWebSocket.test.ts:63`).  \n"
+    },
+    {
+      "timestamp": "2026-03-30T10:38:08.156Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:46:07.251Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification is strong and grounded in the current codebase. It correctly identifies the unsecured `/api/ws` upgrade path in `packages/dashboard/src/server.ts:333-363`, the unauthenticated browser connection in `packages/dashboard/app/hooks/useBadgeWebSocket.ts:103-111`, and the existing integration/unit test surfaces in `packages/dashboard/src/__tests__/websocket.test.ts:190-258`, `packages/dashboard/src/routes.test.ts:45-88`, and `packages/dashboard/app/hooks/__tests__/useBadgeWebSocket."
+    },
+    {
+      "timestamp": "2026-03-31T00:58:42.739Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rapid-frost"
+    },
+    {
+      "timestamp": "2026-03-31T00:58:42.740Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:58:44.450Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:00:06.954Z",
+      "action": "Preflight complete: KB-063 baseline present, all required files exist",
+      "outcome": "Existing test failures are unrelated typecheck issues (duplicate function implementations in github.ts) and a Board re-render test - not in scope for this WebSocket auth hardening task"
+    },
+    {
+      "timestamp": "2026-03-31T01:00:06.954Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:00:08.287Z",
+      "action": "plan review requested for Step 1 (Add signed badge WebSocket auth primitives and mint endpoint)"
+    },
+    {
+      "timestamp": "2026-03-31T01:00:24.631Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and achievable. It correctly identifies the need to build authentication primitives (`badge-ws-auth.ts`) and a minting endpoint (`POST /api/ws/auth`) before enforcing validation in Step 2. The safe defaults strategy (per-process random secret, request-derived origin) ensures local `kb dashboard` continues working without configuration while multi-instance deployments can opt into explicit security."
+    },
+    {
+      "timestamp": "2026-03-31T01:00:26.204Z",
+      "action": "Step 1 (Add signed badge WebSocket auth primitives and mint endpoint) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:04:27.954Z",
+      "action": "code review requested for Step 1 (Add signed badge WebSocket auth primitives and mint endpoint)"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:00.472Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation successfully delivers Step 1 requirements. The `badge-ws-auth.ts` module provides a complete, security-conscious token system with HMAC-SHA256 signatures, constant-time comparison, origin binding, and safe defaults for single-instance deployments. The `POST /api/ws/auth` endpoint in `routes.ts` correctly implements the minting logic with proper HTTP status codes (400 for undeterminable origin, 403 for disallowed origin) and `Cache-Control: no-store` headers. Test coverage is c"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:01.620Z",
+      "action": "Step 1 (Add signed badge WebSocket auth primitives and mint endpoint) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:02.607Z",
+      "action": "plan review requested for Step 2 (Guard /api/ws upgrades with token and origin validation)"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:23.436Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the critical security upgrade points and leverages the well-designed auth primitives from Step 1. The approach will successfully harden the badge WebSocket endpoint while preserving the existing `WebSocketManager`, `githubPoller`, and subscription behaviors. The test requirements are appropriate and will validate the security boundary."
+    },
+    {
+      "timestamp": "2026-03-31T01:05:24.551Z",
+      "action": "Step 2 (Guard `/api/ws` upgrades with token and origin validation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:07:33.239Z",
+      "action": "code review requested for Step 2 (Guard /api/ws upgrades with token and origin validation)"
+    },
+    {
+      "timestamp": "2026-03-31T01:07:33.245Z",
+      "action": "Step 2 (Guard `/api/ws` upgrades with token and origin validation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:08:03.920Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The Step 2 implementation correctly implements token and origin validation for the `/api/ws` WebSocket upgrade endpoint. The authorization flow properly rejects missing tokens (401), invalid/expired tokens (401), origin mismatches (401 with specific message), and disallowed origins (403). However, there's a critical TypeScript error due to a missing import, along with minor code quality issues that should be addressed."
+    },
+    {
+      "timestamp": "2026-03-31T01:08:30.816Z",
+      "action": "code review requested for Step 2 (Guard /api/ws upgrades with token and origin validation)"
+    },
+    {
+      "timestamp": "2026-03-31T01:08:45.201Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly hardens the `/api/ws` WebSocket upgrade path with comprehensive token and origin validation. The code properly rejects unauthorized upgrades with appropriate HTTP status codes before `wss.handleUpgrade()`, preserves all existing successful-path behavior, and includes thorough integration test coverage. The security properties are sound: short-lived tokens, origin binding, constant-time signature verification, and safe defaults for single-instance deployments."
+    },
+    {
+      "timestamp": "2026-03-31T01:08:47.620Z",
+      "action": "plan review requested for Step 3 (Acquire fresh auth tokens inside the shared browser badge socket store)"
+    },
+    {
+      "timestamp": "2026-03-31T01:09:12.714Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan correctly identifies the artifacts and high-level outcomes for Step 3, but the critical \"Handle async connect races safely\" checkbox lacks sufficient detail to implement correctly. The race condition handling between token fetch and socket creation is the most complex part of this step, and the current description (\"only one auth fetch/socket open sequence should proceed\") is too vague to ensure correct implementation. Additionally, the plan omits test infrastructure requirements for mo"
+    },
+    {
+      "timestamp": "2026-03-31T01:09:14.118Z",
+      "action": "Step 3 (Acquire fresh auth tokens inside the shared browser badge socket store) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:10:42.371Z",
+      "action": "code review requested for Step 3 (Acquire fresh auth tokens inside the shared browser badge socket store)"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:22.725Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Step 3 implementation correctly adds frontend token acquisition to the badge WebSocket flow. The `useBadgeWebSocket` hook now fetches fresh auth tokens before each WebSocket connection (including reconnects), while preserving the existing shared-store behavior: singleton socket per page, ref-counted task subscriptions, cached badge snapshots, and stable subscription replay. Race condition handling is properly implemented using a `connectingPromise` guard and `AbortController` for in-flight c"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:23.794Z",
+      "action": "Step 3 (Acquire fresh auth tokens inside the shared browser badge socket store) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:25.223Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:04.405Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:04.407Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:23.205Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:43.089Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:14:38.070Z",
+  "createdAt": "2026-03-30T10:15:31.523Z",
+  "updatedAt": "2026-03-31T01:14:38.070Z",
+  "size": "M",
+  "reviewLevel": 3
+}

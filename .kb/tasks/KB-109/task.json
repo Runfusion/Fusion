@@ -1,0 +1,183 @@
+{
+  "id": "KB-109",
+  "description": "fix the layout of the file editor -the text for files is too narrow. also the styling is messed up, can't read text, its not taking themes properly\n\n(Duplicated from KB-077)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Audit Current CSS State",
+      "status": "done"
+    },
+    {
+      "name": "Consolidate and Fix CSS",
+      "status": "done"
+    },
+    {
+      "name": "Verify Component Integration",
+      "status": "done"
+    },
+    {
+      "name": "Create Component Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T05:23:38.458Z",
+      "action": "Duplicated from KB-077"
+    },
+    {
+      "timestamp": "2026-03-30T05:25:46.581Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:26:03.474Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes real issues in the dashboard's FileEditor component. My source inspection confirmed duplicate CSS definitions (`.file-editor-container` at lines 4424 and 4770, `.file-browser-content` at lines 4230 and 4615), missing `box-sizing` and focus styles, and the absence of a test file. The mission is clear, steps have verifiable outcomes, and the file scope is correct."
+    },
+    {
+      "timestamp": "2026-03-30T14:34:18.583Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/proud-ridge"
+    },
+    {
+      "timestamp": "2026-03-30T14:34:18.584Z",
+      "action": "Step 0 (Audit Current CSS State) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:34:39.980Z",
+      "action": "Step 0 (Audit Current CSS State) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:34:39.980Z",
+      "action": "Step 0 (Preflight) complete - Read all context files",
+      "outcome": "Found FileEditor.tsx with correct className usage. Found duplicate CSS rules in styles.css for .file-editor-container (lines 5622 and 5968). File editor textarea has basic styling but may need consolidation and focus/selection improvements. FileBrowserModal.tsx correctly wraps FileEditor in .file-editor-wrapper div."
+    },
+    {
+      "timestamp": "2026-03-30T14:34:42.436Z",
+      "action": "Step 0 (Audit Current CSS State) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:34:42.436Z",
+      "action": "Step 1 (Consolidate and Fix CSS) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:34:47.290Z",
+      "action": "plan review requested for Step 1 (Audit Current CSS State)"
+    },
+    {
+      "timestamp": "2026-03-30T14:35:14.058Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The step's approach will successfully identify the CSS issues. My inspection confirms the exact problems described in the task: duplicate `.file-editor-container` definitions, missing `min-width: 0` on `.file-editor-wrapper`, absent `:focus` styles, and no light theme overrides for the textarea. The CSS variables (`--bg`, `--surface`, `--text`, `--text-muted`, `--border`, `--todo`) are all properly defined in `:root` and `[data-theme=\"light\"]`."
+    },
+    {
+      "timestamp": "2026-03-30T14:35:16.862Z",
+      "action": "Step 1: CSS Audit Findings",
+      "outcome": "Found duplicate .file-editor-container rules at lines 5622 and 5968. .file-editor-textarea has width:100%, min-width:100%, good font styling with var(--font-mono), proper colors via CSS vars. .file-editor-wrapper exists at line 5962 with flex:1 and overflow:hidden. .file-browser-content has flex:1 but needs min-width:0 verification. No light-theme specific overrides found for file editor (relies on CSS vars which is correct). Missing focus styles for textarea."
+    },
+    {
+      "timestamp": "2026-03-30T14:35:16.864Z",
+      "action": "Step 1 (Consolidate and Fix CSS) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:35:21.431Z",
+      "action": "Step 2 (Verify Component Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:35:21.432Z",
+      "action": "plan review requested for Step 2 (Consolidate and Fix CSS)"
+    },
+    {
+      "timestamp": "2026-03-30T14:35:42.963Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 correctly identifies the CSS consolidation needs for the FileEditor component. Based on my audit of the current codebase, the plan addresses the actual issues: duplicate `.file-editor-container` definitions, missing `min-width: 0` on flex containers for proper width inheritance, absent focus states, and the need for `box-sizing: border-box`. The approach will fix the narrow text layout issue and ensure theme-aware styling."
+    },
+    {
+      "timestamp": "2026-03-30T14:36:07.278Z",
+      "action": "Step 2 (Verify Component Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:36:08.806Z",
+      "action": "Step 3 (Create Component Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:36:08.809Z",
+      "action": "plan review requested for Step 3 (Verify Component Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T14:36:23.657Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The step's checkboxes correctly identify the verification tasks needed for FileEditor component integration. Upon inspection, the FileEditor.tsx component is already properly implemented with the correct className (`\"file-editor-container file-editor-textarea\"`), `spellCheck={false}`, dynamic `aria-label` based on `filePath`, and no conflicting inline styles. The step appropriately treats this as a verification pass with minimal or no changes expected."
+    },
+    {
+      "timestamp": "2026-03-30T14:36:27.661Z",
+      "action": "Step 3: Component Integration Verified",
+      "outcome": "FileEditor.tsx correctly uses className 'file-editor-container file-editor-textarea', has spellCheck={false}, proper aria-label based on filePath prop, and no inline styles. No changes needed."
+    },
+    {
+      "timestamp": "2026-03-30T14:36:27.663Z",
+      "action": "Step 3 (Create Component Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:36:28.910Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:36:28.912Z",
+      "action": "plan review requested for Step 4 (Create Component Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T14:36:43.341Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is sound and will achieve its stated outcomes. The test cases listed cover all essential aspects of the FileEditor component: rendering with correct class names, content binding, change handling, readOnly behavior, accessibility attributes, and spellCheck configuration. The test file location (`packages/dashboard/app/components/FileEditor.test.tsx`) aligns with the project's vitest configuration which includes `app/**/*.test.{ts,tsx}`."
+    },
+    {
+      "timestamp": "2026-03-30T14:37:23.925Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:37:25.048Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:37:25.051Z",
+      "action": "plan review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T14:37:43.904Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 is sound and will achieve its stated outcomes. The checkboxes correctly specify running the dashboard test suite, build, and typecheck commands. The plan appropriately acknowledges that pre-existing test failures should be documented but not introduced by this change."
+    },
+    {
+      "timestamp": "2026-03-30T14:38:29.276Z",
+      "action": "Step 5: Testing & Verification Complete",
+      "outcome": "All 1224 dashboard tests pass. FileEditor tests (8) all pass. Build has pre-existing type errors related to @kb/core module declarations (unrelated to this task)."
+    },
+    {
+      "timestamp": "2026-03-30T14:38:29.279Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:38:34.058Z",
+      "action": "Step 6: Documentation & Delivery Complete",
+      "outcome": "Created changeset file .changeset/fix-file-editor-layout.md. No out-of-scope work identified - the CSS fixes address all layout and theme issues without requiring CodeMirror or other component restructuring."
+    },
+    {
+      "timestamp": "2026-03-30T14:38:41.302Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T14:39:15.012Z",
+  "createdAt": "2026-03-30T05:23:38.458Z",
+  "updatedAt": "2026-03-30T14:39:15.012Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,117 @@
+{
+  "id": "KB-162",
+  "description": "Fix TaskDetailModal dependency dropdown search reset test failure in packages/dashboard/app/components/__tests__/TaskDetailModal.test.tsx. The test \"resets search when dropdown closes and reopens\" is failing because the dependency dropdown search input is not being reset to empty string when reopened.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze the Issue",
+      "status": "done"
+    },
+    {
+      "name": "Implement the Fix",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T15:30:55.924Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T15:32:27.105Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T15:32:40.343Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a localized UI state bug in the dependency dropdown. The issue is correctly identified: `depSearch` state persists when the dropdown closes and reopens, failing the test \"resets search when dropdown closes and reopens\" at line 1357 in the test file. The fix is straightforward — reset `depSearch` to an empty string when toggling the dropdown closed."
+    },
+    {
+      "timestamp": "2026-03-30T16:03:10.391Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/noble-finch"
+    },
+    {
+      "timestamp": "2026-03-30T16:03:10.392Z",
+      "action": "Step 0 (Analyze the Issue) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T16:03:11.985Z",
+      "action": "Step 0 (Analyze the Issue) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:07:41.398Z",
+      "action": "Step 0 (Analyze the Issue) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:07:43.035Z",
+      "action": "plan review requested for Step 1 (Analyze the Issue)"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:11.219Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan's approach is sound for analyzing the test failure. The checkboxes in Step 1 correctly identify the key investigation tasks: reading the failing test, locating the toggle implementation, and identifying the state reset issue. However, I discovered that the TaskDetailModal.tsx component **already contains logic to reset `depSearch` when closing** (lines 833-836), which suggests either the fix was previously applied or the test is failing for a different reason than the plan assumes. The "
+    },
+    {
+      "timestamp": "2026-03-30T16:08:13.281Z",
+      "action": "Step 1 (Implement the Fix) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:16.671Z",
+      "action": "Analysis complete: The fix is already implemented in TaskDetailModal.tsx",
+      "outcome": "The code already has the correct implementation - when 'Add Dependency' is clicked to close the dropdown (showDepDropdown is true), depSearch is reset to empty string via setDepSearch(''). All tests pass."
+    },
+    {
+      "timestamp": "2026-03-30T16:08:17.913Z",
+      "action": "Step 1 (Implement the Fix) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:19.071Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:20.371Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:22.556Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:22.557Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:09:18.691Z",
+      "action": "Testing verification complete",
+      "outcome": "All TaskDetailModal tests pass (107 tests), full dashboard test suite passes (1307 tests), and build succeeds. No test failures found."
+    },
+    {
+      "timestamp": "2026-03-30T16:09:19.949Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:09:22.756Z",
+      "action": "Documentation & Delivery step complete",
+      "outcome": "No documentation updates needed per task requirements. The fix is a bug fix with no user-facing documentation changes."
+    },
+    {
+      "timestamp": "2026-03-30T16:09:23.607Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T16:09:29.599Z",
+  "createdAt": "2026-03-30T15:30:55.924Z",
+  "updatedAt": "2026-03-30T16:09:29.599Z",
+  "size": "S",
+  "reviewLevel": 1
+}

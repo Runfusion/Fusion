@@ -1,0 +1,178 @@
+{
+  "id": "KB-009",
+  "description": "in a task card in the dashboard move \"activity\" feed to its own tab",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Refactor Tab State and Add Activity Tab",
+      "status": "done"
+    },
+    {
+      "name": "Move Activity Feed to New Tab Content",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests for Activity Tab",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T00:33:12.503Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T00:39:43.361Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T00:39:54.578Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately describes the work needed. All referenced files exist with the expected patterns. The mission is clear, steps have concrete verifiable outcomes, and testing requirements are appropriate for a UI refactoring task."
+    },
+    {
+      "timestamp": "2026-03-30T01:19:46.586Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-orbit"
+    },
+    {
+      "timestamp": "2026-03-30T01:19:46.587Z",
+      "action": "Step 0 (Refactor Tab State and Add Activity Tab) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T01:19:55.391Z",
+      "action": "Step 0 (Refactor Tab State and Add Activity Tab) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:19:56.999Z",
+      "action": "Step 0 (Refactor Tab State and Add Activity Tab) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:19:58.139Z",
+      "action": "Step 1 (Move Activity Feed to New Tab Content) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:19:59.622Z",
+      "action": "plan review requested for Step 1 (Refactor Tab State and Add Activity Tab)"
+    },
+    {
+      "timestamp": "2026-03-30T01:20:15.166Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan is based on an outdated view of the codebase. The current implementation already has **three tabs** (Definition, Agent Log, Steering), not two as stated in the plan. Following this plan literally will cause confusion and incorrect implementation."
+    },
+    {
+      "timestamp": "2026-03-30T01:20:17.748Z",
+      "action": "Corrected plan: Adding Activity as 4th tab (Definition → Activity → Agent Log → Steering)",
+      "outcome": "Proceeding with implementation of 4-tab structure"
+    },
+    {
+      "timestamp": "2026-03-30T01:20:56.399Z",
+      "action": "code review requested for Step 1 (Refactor Tab State and Add Activity Tab)"
+    },
+    {
+      "timestamp": "2026-03-30T01:21:22.701Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The component changes for Step 1 are correct—the Activity tab is properly added with the right state type and styling. However, **existing tests will fail** because they expect 3 tabs but now 4 tabs exist. The task explicitly requires running targeted tests that must pass, so this is blocking."
+    },
+    {
+      "timestamp": "2026-03-30T01:21:42.787Z",
+      "action": "code review requested for Step 1 (Refactor Tab State and Add Activity Tab)"
+    },
+    {
+      "timestamp": "2026-03-30T01:22:29.612Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds the Activity tab button between Definition and Agent Log tabs, updates the state type to include `\"activity\"`, and uses the existing CSS classes for styling. The test file has been updated to expect four tabs (Definition, Activity, Agent Log, Steering) with Activity at index 1. While the Activity tab content rendering isn't yet implemented (falling through to definition content), this is acceptable since Step 2 handles the content migration."
+    },
+    {
+      "timestamp": "2026-03-30T01:22:31.419Z",
+      "action": "Step 1 (Move Activity Feed to New Tab Content) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:22:32.367Z",
+      "action": "Step 2 (Add Tests for Activity Tab) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:22:33.364Z",
+      "action": "plan review requested for Step 2 (Move Activity Feed to New Tab Content)"
+    },
+    {
+      "timestamp": "2026-03-30T01:22:53.729Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the work needed: extract the `.detail-activity` section (lines 431-451 of `TaskDetailModal.tsx`) from the definition tab's else-branch into a new conditional branch for `activeTab === \"activity\"`. The approach is straightforward and maintains the existing ternary-based tab switching pattern already used for agent-log and steering tabs."
+    },
+    {
+      "timestamp": "2026-03-30T01:23:32.065Z",
+      "action": "code review requested for Step 2 (Move Activity Feed to New Tab Content)"
+    },
+    {
+      "timestamp": "2026-03-30T01:24:09.948Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T01:24:15.420Z",
+      "action": "plan review requested for Step 2 (Add Tests for Activity Tab)"
+    },
+    {
+      "timestamp": "2026-03-30T01:24:34.837Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan step numbering is confused — the review request says \"Step 2: Add Tests for Activity Tab\" but per PROMPT.md, Step 2 is \"Move Activity Feed to New Tab Content\" and Step 3 is \"Add Tests for Activity Tab\". More critically, the current codebase already has Steps 1 and 2 completed (tabs exist, activity feed moved), but the proposed test plan in Step 3 has gaps that need clarification before implementation."
+    },
+    {
+      "timestamp": "2026-03-30T01:24:38.608Z",
+      "action": "Step 2 (Add Tests for Activity Tab) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:25:29.208Z",
+      "action": "Step 2 (Add Tests for Activity Tab) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:25:29.211Z",
+      "action": "Added 5 new Activity tab tests to TaskDetailModal.test.tsx",
+      "outcome": "All 57 tests pass, including: defaults to Definition tab (verifies activity NOT visible), switches to Activity tab, renders log entries correctly, shows empty state when no logs, and can switch between all four tabs"
+    },
+    {
+      "timestamp": "2026-03-30T01:25:32.155Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:26:04.074Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:26:04.075Z",
+      "action": "Completed Testing & Verification",
+      "outcome": "Core: 93 tests passed. Dashboard: 471 tests passed (including 57 TaskDetailModal tests). Build passes. Engine test failures are pre-existing module resolution issues unrelated to this task."
+    },
+    {
+      "timestamp": "2026-03-30T01:26:05.692Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:26:08.783Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:26:08.784Z",
+      "action": "Completed Documentation & Delivery step",
+      "outcome": "No documentation updates required per PROMPT.md. Mobile responsive tests all pass - no follow-up task needed for mobile adjustments."
+    },
+    {
+      "timestamp": "2026-03-30T01:26:12.323Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T01:26:32.915Z",
+  "createdAt": "2026-03-30T00:33:12.503Z",
+  "updatedAt": "2026-03-30T01:26:32.915Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,120 @@
+{
+  "id": "KB-340",
+  "description": "Sometimes worktree creation fails. Have a recovery state that automatically fixes this Task Failed\nFailed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/swift-spark\" \"kb/kb-328\" Preparing worktree (checking out 'kb/kb-328') fatal: 'kb/kb-328' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/green-sage'",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Current Worktree Creation Flow",
+      "status": "done"
+    },
+    {
+      "name": "Implement Robust Worktree Recovery",
+      "status": "done"
+    },
+    {
+      "name": "Handle Edge Cases in Recovery",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:30:08.353Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:30:56.276Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:31:17.014Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and grounded in actual codebase patterns. All referenced files, functions, and patterns exist at the specified locations. The mission is clear, steps have verifiable outcomes, and testing requirements are appropriate. Minor suggestions for tightening step descriptions and ensuring proper `vi.mocked()` typing in tests are noted but non-blocking."
+    },
+    {
+      "timestamp": "2026-03-31T20:37:19.915Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/jade-finch"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:19.916Z",
+      "action": "Step 0 (Analyze Current Worktree Creation Flow) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:21.657Z",
+      "action": "Step 0 (Analyze Current Worktree Creation Flow) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:32.035Z",
+      "action": "Step 0 (Analyze Current Worktree Creation Flow) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:32.037Z",
+      "action": "Step 1 (Implement Robust Worktree Recovery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:32.038Z",
+      "action": "Step 0 complete. Found createWorktree() at ~1134-1200 in executor.ts. Current implementation has basic conflict detection and cleanup but lacks robust retry logic. Key findings:\n\n1. createWorktree() creates worktree with -b flag for new branch\n2. On failure, it tries cleanup: removes conflicting worktree with --force, deletes branch\n3. If cleanup fails, it throws error\n4. extractWorktreeConflictPath() only handles 'already used by worktree' pattern\n5. No retry logic currently exists\n6. No handling for locked worktrees or directory-existing-but-not-registered cases\n\nTesting patterns from executor.test.ts:\n- Mock execSync and existsSync from node modules\n- Use vi.mocked() for type-safe mocks\n- Mock createKbAgent for agent testing\n- Use createMockStore() pattern for TaskStore mocking"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:33.172Z",
+      "action": "plan review requested for Step 1 (Implement Robust Worktree Recovery)"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:53.751Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan comprehensively addresses the worktree creation failure scenarios with a well-structured approach. The proposed retry logic with exponential backoff, expanded error pattern detection, and edge case handling (active task detection, locked worktrees, stale branches) will effectively solve the \"already used by worktree\" failure mode. The test coverage requirements are thorough and follow existing patterns."
+    },
+    {
+      "timestamp": "2026-03-31T20:39:16.642Z",
+      "action": "code review requested for Step 1 (Implement Robust Worktree Recovery)"
+    },
+    {
+      "timestamp": "2026-03-31T20:39:54.544Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly addresses the task requirements for automatic worktree recovery. The code adds robust retry logic with exponential backoff, detects multiple git error patterns, and handles edge cases like active task conflicts and stale branch references. While the core implementation is solid and existing tests pass, there are some test coverage gaps for specific edge cases that should be addressed in a follow-up."
+    },
+    {
+      "timestamp": "2026-03-31T20:39:58.207Z",
+      "action": "Step 1 (Implement Robust Worktree Recovery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:39:58.209Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:40:47.077Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:40:47.081Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:41:08.778Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:41:11.563Z",
+      "action": "Step 2 (Handle Edge Cases in Recovery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:41:11.566Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:41:22.265Z",
+  "createdAt": "2026-03-31T20:30:08.353Z",
+  "updatedAt": "2026-03-31T20:41:22.265Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Implemented automatic recovery for worktree creation failures (KB-340). The system now detects worktree conflicts, cleans up stale worktrees/branches, and retries automatically instead of failing tasks.\n\nKey changes:\n- Modified createWorktree() in executor.ts to async with retry loop (3 attempts, exponential backoff 100ms/500ms/1000ms)\n- Added isRegisteredWorktree() to detect if directory is a git worktree\n- Added shouldGenerateNewWorktreeName() to check if conflict worktree belongs to active task\n- Added cleanupConflictingWorktree() with unlock handling and force removal\n- Added cleanupStaleBranch() for invalid reference errors\n- Expanded extractWorktreeConflictInfo() to handle 4 error patterns: already-used, invalid-reference, leading-directories, already-exists\n- All recovery activity is logged to task log via store.logEntry()\n\nAdded 7 comprehensive tests covering: success on first attempt, conflict recovery, 3-attempt failure, active task conflict handling, stale branch cleanup, unregistered directory removal, and locked worktree handling. All 575 tests pass."
+}

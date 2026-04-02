@@ -1,0 +1,177 @@
+{
+  "id": "KB-157",
+  "description": "For transient failures on tasks like \"upstream connect error or disconnect/reset before headers. retried and the latest reset reason: remote connection failure, transport failure reason: delayed connect error: Connection refused\" don't mark the task failed if the execution is progressing",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Create Transient Error Detector Module",
+      "status": "done"
+    },
+    {
+      "name": "Add Unit Tests for Transient Error Detector",
+      "status": "done"
+    },
+    {
+      "name": "Modify Executor Error Handling",
+      "status": "done"
+    },
+    {
+      "name": "Export New Module and Verify Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T15:27:19.508Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T15:28:15.460Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T15:28:30.765Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, follows established patterns in the codebase, and has concrete verifiable outcomes for each step. The mission is clear: implement transient error classification to prevent temporary network failures from marking tasks as failed. The file scope is accurate and dependencies are correctly identified as none."
+    },
+    {
+      "timestamp": "2026-03-30T15:40:09.857Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/ivory-breeze"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:09.858Z",
+      "action": "Step 0 (Create Transient Error Detector Module) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:14.853Z",
+      "action": "Step 0 (Create Transient Error Detector Module) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:30.274Z",
+      "action": "Step 0 (Create Transient Error Detector Module) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:30.274Z",
+      "action": "Step 1 (Add Unit Tests for Transient Error Detector) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:30.275Z",
+      "action": "plan review requested for Step 1 (Create Transient Error Detector Module)"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:42.897Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan provides a solid foundation for implementing the transient error detector module. It correctly follows the established pattern from `usage-limit-detector.ts` and specifies appropriate regex patterns for common transient network failures. The approach maintains clean separation of concerns while providing a unified `classifyError()` entry point that properly prioritizes usage-limit detection over transient detection."
+    },
+    {
+      "timestamp": "2026-03-30T15:41:03.140Z",
+      "action": "code review requested for Step 1 (Create Transient Error Detector Module)"
+    },
+    {
+      "timestamp": "2026-03-30T15:41:22.849Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The transient error detector module is well-implemented following the established patterns from `usage-limit-detector.ts`. All required RegExp patterns are present, the `isTransientError` and `classifyError` functions are correctly implemented with proper edge case handling, and comprehensive JSDoc documentation explains the error classification strategy."
+    },
+    {
+      "timestamp": "2026-03-30T15:41:24.062Z",
+      "action": "Step 1 (Add Unit Tests for Transient Error Detector) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:41:24.062Z",
+      "action": "Step 2 (Modify Executor Error Handling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:41:24.063Z",
+      "action": "plan review requested for Step 2 (Add Unit Tests for Transient Error Detector)"
+    },
+    {
+      "timestamp": "2026-03-30T15:41:36.128Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows the established testing patterns in the codebase. The checkboxes appropriately cover testing each pattern, the full composite error message from the actual failure scenario, edge cases, and the classification function. The approach mirrors the existing `usage-limit-detector.test.ts` structure which provides a good template."
+    },
+    {
+      "timestamp": "2026-03-30T15:42:41.957Z",
+      "action": "code review requested for Step 2 (Add Unit Tests for Transient Error Detector)"
+    },
+    {
+      "timestamp": "2026-03-30T15:43:05.045Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The unit tests for the transient error detector are comprehensive, well-structured, and follow the established patterns in the codebase. All required test cases from the specification are implemented: pattern matching, case insensitivity, edge cases (null/undefined/empty), classification function behavior, and priority ordering. The tests use clear, descriptive names and provide good coverage for the 12 transient error patterns defined in the source."
+    },
+    {
+      "timestamp": "2026-03-30T15:43:06.457Z",
+      "action": "Step 2 (Modify Executor Error Handling) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:43:06.457Z",
+      "action": "Step 3 (Export New Module and Verify Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:43:06.458Z",
+      "action": "plan review requested for Step 3 (Modify Executor Error Handling)"
+    },
+    {
+      "timestamp": "2026-03-30T15:43:23.138Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan correctly identifies the catch block structure in `executor.ts` and proposes adding a transient error check in the right position. The approach follows the established pattern from `usage-limit-detector.ts`, correctly moves tasks to \"todo\" for retry (matching the behavior of paused tasks), and appropriately skips the `onError` callback since transient errors aren't true failures."
+    },
+    {
+      "timestamp": "2026-03-30T15:44:21.286Z",
+      "action": "code review requested for Step 3 (Modify Executor Error Handling)"
+    },
+    {
+      "timestamp": "2026-03-30T15:44:41.316Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The core implementation is correct: the catch block properly detects transient errors, moves tasks to \"todo\" for retry, logs appropriately, and avoids calling `onError`. Tests cover both the detector module and executor integration. However, the `index.ts` exports are missing as required by Step 4, which blocks external consumers from accessing the new classification functions."
+    },
+    {
+      "timestamp": "2026-03-30T15:44:47.116Z",
+      "action": "code review requested for Step 3 (Modify Executor Error Handling)"
+    },
+    {
+      "timestamp": "2026-03-30T15:45:12.964Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly modifies the executor's error handling to detect transient connection failures and move tasks back to \"todo\" for retry instead of marking them as failed. The code follows the existing patterns in the codebase, properly imports the new `isTransientError` function, and implements all requirements from the step specification."
+    },
+    {
+      "timestamp": "2026-03-30T15:45:14.402Z",
+      "action": "Step 3 (Export New Module and Verify Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:45:14.403Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:45:14.403Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:46:46.039Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:47:09.905Z",
+      "action": "Completed implementation of transient error handling",
+      "outcome": "Task KB-157 implemented: Created transient-error-detector.ts with pattern matching for 12 transient error patterns, added classifyError() function, integrated into executor.ts catch block to move tasks to 'todo' for retry instead of marking failed, added 29 unit tests for detector + 2 integration tests in executor.test.ts, exported from index.ts, and documented in AGENTS.md. All 533 tests pass."
+    },
+    {
+      "timestamp": "2026-03-30T15:47:10.829Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:47:14.879Z",
+  "createdAt": "2026-03-30T15:27:19.508Z",
+  "updatedAt": "2026-03-30T15:47:14.879Z",
+  "size": "M",
+  "reviewLevel": 2
+}

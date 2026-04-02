@@ -1,0 +1,100 @@
+{
+  "id": "KB-260",
+  "title": "Dropping a card back onto existing column should",
+  "description": "Dropping  a card back onto existing column should not send a request (now it shows a toast - Request failed: 400 Bad Request (Response: {\"error\":\"Invalid transition: 'todo' → 'todo'. Valid targets: in-progress, triage\"}))",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Same-Column Check in Column Drop Handler",
+      "status": "done"
+    },
+    {
+      "name": "Add Test Coverage",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T06:16:01.989Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T06:19:45.784Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T06:19:55.577Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and correctly identifies the bug location in the `handleDrop` callback at `packages/dashboard/app/components/Column.tsx:75-83`. The mission is clear, steps have verifiable outcomes, and the file scope is correctly limited to Column.tsx and its test file."
+    },
+    {
+      "timestamp": "2026-03-31T06:22:35.645Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/glad-ridge"
+    },
+    {
+      "timestamp": "2026-03-31T06:22:35.645Z",
+      "action": "Step 0 (Add Same-Column Check in Column Drop Handler) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T06:22:40.969Z",
+      "action": "Step 0 (Add Same-Column Check in Column Drop Handler) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:22:43.569Z",
+      "action": "Step 0 (Add Same-Column Check in Column Drop Handler) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:22:43.569Z",
+      "action": "Step 1 (Add Test Coverage) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:22:43.570Z",
+      "action": "plan review requested for Step 1 (Add Same-Column Check in Column Drop Handler)"
+    },
+    {
+      "timestamp": "2026-03-31T06:22:52.316Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-scoped and correctly identifies the fix location. The current `handleDrop` callback (lines 84-92 in `Column.tsx`) unconditionally calls `onMoveTask`, causing the 400 error when dropping onto the same column. The plan's approach—looking up the task in the `tasks` prop and comparing its `column` property before calling `onMoveTask`—will correctly prevent the unnecessary API call while ensuring `setDragOver(false)` still runs to clean up UI state."
+    },
+    {
+      "timestamp": "2026-03-31T06:22:57.390Z",
+      "action": "Step 1 (Add Test Coverage) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:22:57.391Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:23:06.791Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:23:06.792Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:04.834Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:08.285Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T06:31:15.742Z",
+  "createdAt": "2026-03-31T06:16:01.989Z",
+  "updatedAt": "2026-03-31T06:31:15.742Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Fixed the kanban board drag-and-drop behavior so that dropping a card back onto its current column no longer triggers an API request. Modified `handleDrop` in `Column.tsx` to check if the dropped task's current column matches the target column before calling `onMoveTask`. Added 3 new tests to verify: (1) same-column drops don't call `onMoveTask` or show toasts, (2) drag-over styling is cleaned up even on same-column drops, and (3) different-column drops still work correctly. Build passes and all relevant tests pass."
+}

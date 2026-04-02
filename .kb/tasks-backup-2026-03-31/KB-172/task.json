@@ -1,0 +1,219 @@
+{
+  "id": "KB-172",
+  "description": "Terminal from dashboard doesn't work - fails with - \"Failed to create session. Max sessions may be reached.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Session Activity Tracking to TerminalService",
+      "status": "done"
+    },
+    {
+      "name": "Implement Stale Session Eviction",
+      "status": "done"
+    },
+    {
+      "name": "Fix WebSocket Close Handler to Kill Sessions",
+      "status": "done"
+    },
+    {
+      "name": "Add Session Listing Endpoint for Observability",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:41:39.498Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T17:42:12.855Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:42:25.784Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies a real bug in the terminal session lifecycle management. The WebSocket close handler in `server.ts` (lines ~320-340) indeed only unsubscribes from events without calling `terminalService.killSession()`, causing PTY processes to leak. The `TerminalSession` interface in `terminal-service.ts` lacks activity tracking fields, and the session limit check (line ~236) can fail with \"Max sessions may be reached\" when stale sessions accumulate. The spec provides a c"
+    },
+    {
+      "timestamp": "2026-03-30T18:53:29.336Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sharp-panda"
+    },
+    {
+      "timestamp": "2026-03-30T18:53:29.337Z",
+      "action": "Step 0 (Add Session Activity Tracking to TerminalService) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T18:53:32.880Z",
+      "action": "Step 0 (Add Session Activity Tracking to TerminalService) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:54:04.745Z",
+      "action": "Step 0 (Add Session Activity Tracking to TerminalService) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:54:07.725Z",
+      "action": "Step 1 (Implement Stale Session Eviction) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:54:10.664Z",
+      "action": "plan review requested for Step 1 (Add Session Activity Tracking to TerminalService)"
+    },
+    {
+      "timestamp": "2026-03-30T18:54:20.843Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is clear, achievable, and correctly identifies the minimal changes needed to add activity tracking infrastructure. The checkboxes map directly to concrete code changes in `terminal-service.ts` that will enable stale session detection in Step 2."
+    },
+    {
+      "timestamp": "2026-03-30T18:54:53.920Z",
+      "action": "code review requested for Step 1 (Add Session Activity Tracking to TerminalService)"
+    },
+    {
+      "timestamp": "2026-03-30T18:55:12.870Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds session activity tracking to `TerminalService`. All required changes from Step 1 are present: the `lastActivityAt` timestamp field, the `updateActivity()` method, initialization on session creation, activity tracking on write operations, and the `getStaleSessions()` helper method."
+    },
+    {
+      "timestamp": "2026-03-30T18:55:15.736Z",
+      "action": "Step 1 (Implement Stale Session Eviction) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:55:18.432Z",
+      "action": "Step 2 (Fix WebSocket Close Handler to Kill Sessions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:55:21.387Z",
+      "action": "plan review requested for Step 2 (Implement Stale Session Eviction)"
+    },
+    {
+      "timestamp": "2026-03-30T18:55:39.258Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and will achieve its stated outcomes. The codebase already has Step 1 completed (`lastActivityAt` field, `updateActivity()`, `getStaleSessions()` methods are all present). The eviction logic as specified will properly clean up stale sessions when approaching the session limit."
+    },
+    {
+      "timestamp": "2026-03-30T18:56:07.449Z",
+      "action": "code review requested for Step 2 (Implement Stale Session Eviction)"
+    },
+    {
+      "timestamp": "2026-03-30T18:56:38.701Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Step 2 implementation is correct and complete for the stated requirements. The `lastActivityAt` tracking, `getStaleSessions()`, and `evictStaleSessions()` methods are properly implemented with correct sorting (oldest first), threshold handling, and logging. The auto-eviction trigger at 80% of session limit is correctly placed at the start of `createSession()`."
+    },
+    {
+      "timestamp": "2026-03-30T18:56:41.458Z",
+      "action": "Step 2 (Fix WebSocket Close Handler to Kill Sessions) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:56:44.392Z",
+      "action": "Step 3 (Add Session Listing Endpoint for Observability) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:56:47.352Z",
+      "action": "plan review requested for Step 3 (Fix WebSocket Close Handler to Kill Sessions)"
+    },
+    {
+      "timestamp": "2026-03-30T18:57:01.163Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan correctly identifies the session leak bug in the WebSocket close handler and provides a clear fix. After reviewing `server.ts` (lines 276-370), I confirmed the `close` and `error` handlers only unsubscribe from events without calling `killSession()`. The proposed approach—adding `terminalService.killSession(sessionId)` with try-catch protection—will fix the leak."
+    },
+    {
+      "timestamp": "2026-03-30T18:57:16.649Z",
+      "action": "code review requested for Step 3 (Fix WebSocket Close Handler to Kill Sessions)"
+    },
+    {
+      "timestamp": "2026-03-30T18:57:49.552Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The WebSocket close handler implementation correctly addresses the session leak issue. The `sessionId` is properly tracked in connection scope, and both `close` and `error` handlers now call `terminalService.killSession()` with appropriate error handling. The `onExit` callback will fire as expected because the PTY process's `onExit` handler triggers the exit callbacks when the process terminates."
+    },
+    {
+      "timestamp": "2026-03-30T18:57:51.958Z",
+      "action": "Step 3 (Add Session Listing Endpoint for Observability) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:57:54.457Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:57:57.244Z",
+      "action": "plan review requested for Step 4 (Add Session Listing Endpoint for Observability)"
+    },
+    {
+      "timestamp": "2026-03-30T18:58:11.907Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is straightforward and correctly identifies the minimal changes needed. The `GET /api/terminal/sessions` endpoint already exists and returns safe, non-sensitive data. The only required work is adding `lastActivityAt` to the response format, which aligns with the activity tracking added in Step 1."
+    },
+    {
+      "timestamp": "2026-03-30T18:58:31.255Z",
+      "action": "code review requested for Step 4 (Add Session Listing Endpoint for Observability)"
+    },
+    {
+      "timestamp": "2026-03-30T18:58:56.879Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The session listing endpoint implementation is correct and meets the stated outcomes. The `GET /api/terminal/sessions` endpoint returns active sessions with `createdAt`, `cwd`, and the newly added `lastActivityAt` field. The `getAllSessions()` method in `TerminalService` properly excludes sensitive data (scrollbackBuffer, PTY process, internal timeouts, etc.) from the response."
+    },
+    {
+      "timestamp": "2026-03-30T18:59:01.634Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:59:04.095Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:59:06.812Z",
+      "action": "plan review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T18:59:19.872Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 covers the essential test scenarios needed to verify the terminal session leak fix. The implementation (Steps 1-4) is already complete in the codebase—`terminal-service.ts` has the activity tracking and eviction logic, `server.ts` has the WebSocket close handler fixes, and `routes.ts` exposes the session listing endpoint with `lastActivityAt`."
+    },
+    {
+      "timestamp": "2026-03-30T19:06:53.031Z",
+      "action": "code review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T19:07:33.974Z",
+      "action": "code review Step 5: REVISE",
+      "outcome": "The Step 5 implementation includes comprehensive tests for activity tracking and stale session eviction in `terminal-service.test.ts`, and the WebSocket close handler implementation in `server.ts` is correct. However, **one required test is missing**: there is no test verifying that the WebSocket close handler kills the associated PTY session. Additionally, I cannot verify that all tests pass as the test suite hasn't been run."
+    },
+    {
+      "timestamp": "2026-03-30T19:08:48.119Z",
+      "action": "code review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T19:09:42.722Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The Step 5 implementation comprehensively covers all testing requirements. All required tests for `lastActivityAt` tracking, stale session eviction, auto-eviction at 80% capacity, and WebSocket close handler session cleanup have been implemented. The terminal service tests pass, and the build succeeds. The test coverage aligns with the PROMPT.md requirements and correctly validates the session lifecycle management fixes."
+    },
+    {
+      "timestamp": "2026-03-30T19:09:45.606Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:10:19.856Z",
+      "action": "All steps complete. Summary of changes:\n1. Added `lastActivityAt` field to TerminalSession and `updateActivity()`/`getStaleSessions()` methods\n2. Implemented `evictStaleSessions()` with auto-eviction at 80% capacity in `createSession()`\n3. Fixed WebSocket close/error handlers to call `killSession()` preventing PTY session leaks\n4. Added `lastActivityAt` to session listing endpoint response\n5. Added 12 new tests covering activity tracking, stale eviction, and WebSocket close handler\n6. Created changeset for patch release",
+      "outcome": "All tests pass (222 total across modified files), build succeeds"
+    },
+    {
+      "timestamp": "2026-03-30T19:10:23.120Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:11:17.897Z",
+  "createdAt": "2026-03-30T17:41:39.498Z",
+  "updatedAt": "2026-03-30T19:11:17.897Z",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "size": "M",
+  "reviewLevel": 2
+}

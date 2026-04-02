@@ -1,0 +1,200 @@
+{
+  "id": "KB-284",
+  "title": "Implement agent task session management Agents need the",
+  "description": "Implement agent task session management. Agents need the ability to claim, execute, and release task sessions — tracking which agent is working on which task, session duration, and handoff logic. Depends on the agent data model from KB-283.",
+  "column": "done",
+  "dependencies": [
+    "KB-283"
+  ],
+  "steps": [
+    {
+      "name": "Agent Session Type Definitions",
+      "status": "done"
+    },
+    {
+      "name": "AgentSessionManager Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Unit Tests for AgentSessionManager",
+      "status": "done"
+    },
+    {
+      "name": "AgentStore Task Assignment Integration",
+      "status": "done"
+    },
+    {
+      "name": "TaskExecutor Integration",
+      "status": "done"
+    },
+    {
+      "name": "Export Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-31T15:02:51.930Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:38.317Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:54.392Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, technically sound, and appropriately scoped for a Medium-sized task. It correctly identifies integration points with existing patterns (StuckTaskDetector's Map-based tracking, AgentSemaphore's resource management) and provides concrete, verifiable outcomes for each step. The dependency on KB-283 is correctly declared since AgentStore doesn't yet exist in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T16:09:32.750Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/plush-wren"
+    },
+    {
+      "timestamp": "2026-03-31T16:09:32.751Z",
+      "action": "Step 0 (Agent Session Type Definitions) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T16:09:36.562Z",
+      "action": "Step 0 (Agent Session Type Definitions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:10:03.064Z",
+      "action": "Step 0 (Agent Session Type Definitions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:10:03.066Z",
+      "action": "Step 1 (AgentSessionManager Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:10:03.067Z",
+      "action": "KB-284 Preflight complete - read context files from KB-283 (agent-types.ts, agent-store.ts). AgentStore exists but lacks task assignment methods, will add in Step 4 as per the plan.",
+      "outcome": "Ready to start implementing agent session management"
+    },
+    {
+      "timestamp": "2026-03-31T16:10:08.743Z",
+      "action": "plan review requested for Step 1 (Agent Session Type Definitions)"
+    },
+    {
+      "timestamp": "2026-03-31T16:10:40.966Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is technically sound and follows established codebase patterns. The type definitions are appropriately scoped for the agent session management feature. The `AgentSession` interface aligns with the existing domain model patterns in `types.ts`, and the state machine design is sufficient for the claim/execute/release lifecycle described in the task mission."
+    },
+    {
+      "timestamp": "2026-03-31T16:11:40.508Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:56.222Z",
+      "action": "Step 1 (AgentSessionManager Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:57.985Z",
+      "action": "plan review requested for Step 1 (AgentSessionManager Implementation)"
+    },
+    {
+      "timestamp": "2026-03-31T16:12:13.963Z",
+      "action": "plan review Step 1: RETHINK",
+      "outcome": "The plan for Step 1 is **factually incorrect**. The AgentSession type definitions already exist in `packages/core/src/types.ts` (lines 580–640) and are already exported from `packages/core/src/index.ts` (line 46). The worker would be attempting to add types that already exist, causing TypeScript redeclaration errors."
+    },
+    {
+      "timestamp": "2026-03-31T16:12:13.964Z",
+      "action": "Step 1 (AgentSessionManager Implementation) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T16:12:13.964Z",
+      "action": "RETHINK: Step 1 plan rewound — session checkpoint 1e286604",
+      "outcome": "The plan for Step 1 is **factually incorrect**. The AgentSession type definitions already exist in `packages/core/src/types.ts` (lines 580–640) and are already exported from `packages/core/src/index.ts` (line 46). The worker would be attempting to add types that already exist, causing TypeScript redeclaration errors."
+    },
+    {
+      "timestamp": "2026-03-31T16:12:58.255Z",
+      "action": "Starting Step 1: Creating AgentStore and AgentSessionManager",
+      "outcome": "Will create agent-store.ts with task assignment methods and agent-session-manager.ts with session lifecycle management"
+    },
+    {
+      "timestamp": "2026-03-31T16:15:31.217Z",
+      "action": "code review requested for Step 1 (AgentSessionManager Implementation)"
+    },
+    {
+      "timestamp": "2026-03-31T16:16:11.326Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation shows solid architecture following the StuckTaskDetector pattern with Map-based caching, file persistence, and EventEmitter. The test coverage is comprehensive with 40+ test cases covering claiming, releasing, handoffs, duration tracking, and events. However, there are critical blocking issues: the AgentSessionManager is not exported from the package index (breaking downstream usage), the state transition validation method exists but is never called (dead code), and the state "
+    },
+    {
+      "timestamp": "2026-03-31T16:16:56.769Z",
+      "action": "code review requested for Step 1 (AgentSessionManager Implementation)"
+    },
+    {
+      "timestamp": "2026-03-31T16:17:27.436Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly delivers all Step 1 requirements: agent session types are properly defined in `types.ts`, exported from `index.ts`, and the `AgentSessionManager` class implements the full claim/execute/release lifecycle with comprehensive test coverage. The code follows established patterns from `StuckTaskDetector` with Map-based caching, file-based persistence, and EventEmitter notifications. The test suite is thorough, covering claiming conflicts, handoffs, duration tracking, even"
+    },
+    {
+      "timestamp": "2026-03-31T16:17:30.904Z",
+      "action": "Step 1 (AgentSessionManager Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:17:30.908Z",
+      "action": "Step 2 (Unit Tests for AgentSessionManager) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:17:34.051Z",
+      "action": "Step 3 (AgentStore Task Assignment Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:17:34.052Z",
+      "action": "Step 4 (TaskExecutor Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:18:57.492Z",
+      "action": "Step 4 (TaskExecutor Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:18:57.492Z",
+      "action": "Step 5 (Export Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:19:00.588Z",
+      "action": "Step 5 (Export Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:19:00.589Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:19:12.354Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:19:12.355Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:19:19.095Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:19:19.097Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:19:19.099Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T16:19:26.442Z",
+  "createdAt": "2026-03-31T15:02:51.930Z",
+  "updatedAt": "2026-03-31T16:19:26.442Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Implemented agent task session management system (KB-284). Created AgentStore in @kb/core with CRUD operations and task assignment methods. Implemented AgentSessionManager in @kb/engine with session claiming, releasing, handoff support, and duration tracking. Integrated session management into TaskExecutor for automatic claim/release during task execution. Added comprehensive test coverage with 41 unit tests. All exports configured and changeset created for minor version bump."
+}

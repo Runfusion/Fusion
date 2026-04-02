@@ -1,0 +1,117 @@
+{
+  "id": "KB-062",
+  "description": "Don’t zoom in on the board on mobile when entering text to create a new issue",
+  "column": "done",
+  "dependencies": [
+    "KB-059"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add Mobile Font-Size Override",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T03:10:45.312Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T03:11:19.824Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T03:11:32.236Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted and accurate. It correctly identifies the issue (iOS Safari auto-zooms on inputs with font-size < 16px), references the exact file and CSS class that needs modification (`.inline-create-input` at `packages/dashboard/app/styles.css` line ~995), and provides concrete, verifiable steps. The dependency on KB-059 is appropriate, and the testing strategy follows the established pattern in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T03:24:10.195Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rusty-eagle"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:10.196Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:12.519Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:18.148Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:18.148Z",
+      "action": "Step 1 (Add Mobile Font-Size Override) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:18.149Z",
+      "action": "plan review requested for Step 1 (Add Mobile Font-Size Override)"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:34.741Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the iOS auto-zoom issue and proposes the standard fix: increasing font-size to 16px within a mobile media query. The approach is minimal, CSS-only as required, and correctly scoped to avoid affecting desktop styles."
+    },
+    {
+      "timestamp": "2026-03-30T03:24:39.986Z",
+      "action": "Step 1 (Add Mobile Font-Size Override) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:39.988Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:39.988Z",
+      "action": "plan review requested for Step 2 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:54.631Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows established patterns in the codebase. The CSS fix is already in place (lines 2154-2157 in styles.css), and the testing approach mirrors existing mobile CSS tests like `mobile-scroll-snap.test.ts` and `column-fixed-width.test.ts`."
+    },
+    {
+      "timestamp": "2026-03-30T03:30:35.503Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T03:30:41.110Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:31:27.480Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:31:28.532Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:31:31.791Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:31:33.238Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T03:31:41.621Z",
+  "createdAt": "2026-03-30T03:10:45.312Z",
+  "updatedAt": "2026-03-30T03:31:41.621Z",
+  "size": "S",
+  "reviewLevel": 1
+}

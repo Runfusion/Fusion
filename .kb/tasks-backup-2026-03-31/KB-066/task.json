@@ -1,0 +1,205 @@
+{
+  "id": "KB-066",
+  "description": "Github import is showing 429 too many requests. Batch them and throttle",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Throttled Request Utility to GitHubClient",
+      "status": "done"
+    },
+    {
+      "name": "Implement Batch Import Endpoint",
+      "status": "done"
+    },
+    {
+      "name": "Add Frontend API Client Function",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T03:16:57.900Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T03:17:35.110Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-30T03:18:09.140Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T03:18:28.706Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and technically accurate. All referenced files, classes, and line numbers exist and match the spec. The mission is clear, steps have verifiable outcomes, and testing requirements demand real automated tests. The approach correctly identifies the need for sequential processing with throttling to avoid 429 errors."
+    },
+    {
+      "timestamp": "2026-03-30T17:42:41.085Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/green-fern"
+    },
+    {
+      "timestamp": "2026-03-30T17:42:41.086Z",
+      "action": "Step 0 (Add Throttled Request Utility to GitHubClient) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T17:43:29.943Z",
+      "action": "Step 0 (Add Throttled Request Utility to GitHubClient) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:43:39.373Z",
+      "action": "Step 0 (Add Throttled Request Utility to GitHubClient) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:43:39.374Z",
+      "action": "Step 0 Preflight complete. Read context files:\n- packages/dashboard/src/github.ts - GitHubClient with existing API methods\n- packages/dashboard/src/routes.ts - API routes including single-issue import (lines 1340-1450)\n- packages/dashboard/src/rate-limit.ts - Rate limiting patterns with sliding window middleware\n- packages/dashboard/app/api.ts - Frontend API client with apiImportGitHubIssue\n- packages/dashboard/src/routes.test.ts - Existing GitHub import tests\n- packages/dashboard/src/github-poll.ts - GitHubRateLimiter class for polling service",
+      "outcome": "Ready to implement batch import with throttling"
+    },
+    {
+      "timestamp": "2026-03-30T17:43:40.483Z",
+      "action": "Step 1 (Implement Batch Import Endpoint) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:43:40.484Z",
+      "action": "plan review requested for Step 1 (Add Throttled Request Utility to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-30T17:43:55.300Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and achievable. It correctly identifies the need for a `fetchThrottled()` method in the `GitHubClient` class with configurable delays, exponential backoff for 429 responses, and proper header handling. The return type structure is sensible for batch import use cases."
+    },
+    {
+      "timestamp": "2026-03-30T17:45:53.976Z",
+      "action": "code review requested for Step 1 (Add Throttled Request Utility to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-30T17:46:17.716Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The `fetchThrottled()` method and related interfaces have been added to `GitHubClient`, but there are **critical logic errors** in the delay implementation and **zero test coverage** for the new functionality. The delay logic doesn't correctly implement \"delay between requests\" as specified — it only delays on retries, not between successful sequential calls. Additionally, 429 handling causes a double-delay bug."
+    },
+    {
+      "timestamp": "2026-03-30T17:47:30.905Z",
+      "action": "code review requested for Step 1 (Add Throttled Request Utility to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:13.362Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation of `fetchThrottled()` in `packages/dashboard/src/github.ts` meets all requirements from Step 1. The code includes proper throttling with configurable delays, exponential backoff on 429 responses, respect for `Retry-After` headers, and comprehensive test coverage. The `delay()` helper and interface exports are correctly implemented."
+    },
+    {
+      "timestamp": "2026-03-30T17:48:15.278Z",
+      "action": "Step 1 (Implement Batch Import Endpoint) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:15.287Z",
+      "action": "Step 2 (Add Frontend API Client Function) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:17.967Z",
+      "action": "plan review requested for Step 2 (Implement Batch Import Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:32.965Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and will achieve the stated outcomes. The approach correctly leverages the `fetchThrottled()` method from Step 1, maintains consistency with existing GitHub import patterns, and properly addresses rate limiting concerns. The sequential processing requirement is appropriately specified to avoid 429 errors."
+    },
+    {
+      "timestamp": "2026-03-30T17:49:03.233Z",
+      "action": "code review requested for Step 2 (Implement Batch Import Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:31.737Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds the batch import endpoint with proper throttling integration. The `fetchThrottled()` method in `github.ts` is well-designed with exponential backoff, Retry-After header support, and configurable delays. The batch import endpoint in `routes.ts` validates inputs correctly, processes issues sequentially (not parallel), skips duplicates, and includes IP-based rate limiting (1 request per 10 seconds). Tests for `fetchThrottled()` are comprehensive and already exist i"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:32.896Z",
+      "action": "Step 2 (Add Frontend API Client Function) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:32.896Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:33.976Z",
+      "action": "plan review requested for Step 3 (Add Frontend API Client Function)"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:46.356Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is straightforward and follows established patterns in the codebase. The worker needs to add a frontend API client function that mirrors the backend batch import endpoint, following the existing conventions in `api.ts`."
+    },
+    {
+      "timestamp": "2026-03-30T17:50:01.052Z",
+      "action": "code review requested for Step 3 (Add Frontend API Client Function)"
+    },
+    {
+      "timestamp": "2026-03-30T17:50:12.436Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly adds the `apiBatchImportGitHubIssues()` function and `BatchImportResult` type to `packages/dashboard/app/api.ts`. The code follows existing patterns in the file, uses the correct endpoint path, and properly exports both the function and type."
+    },
+    {
+      "timestamp": "2026-03-30T17:50:13.848Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:50:13.849Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:50:15.325Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T17:50:29.471Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 identifies the correct test scenarios for the batch import functionality. The test cases cover success paths, validation, rate limiting, duplicate detection, and partial failures. The existing test infrastructure in `routes.test.ts` uses a consistent pattern (mocked fetch, mock store, REQUEST helper) that the worker should follow."
+    },
+    {
+      "timestamp": "2026-03-30T17:53:00.882Z",
+      "action": "code review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T17:53:26.593Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The implementation is well-structured with comprehensive tests covering most scenarios. The `fetchThrottled()` method is properly tested in `github.test.ts`, and the batch import endpoint has good coverage for success cases, validation, partial failures, and sequential processing. However, one required test case from the PROMPT.md specification is missing: explicit verification of 429 rate limit handling at the routes level."
+    },
+    {
+      "timestamp": "2026-03-30T17:54:29.492Z",
+      "action": "code review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T17:55:01.822Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation includes comprehensive tests for the batch GitHub issue import feature. All required test cases from the specification are covered: batch import success, rate limit handling with retry logic, duplicate detection, input validation, partial failure scenarios, and sequential processing verification. The GitHub client's `fetchThrottled` method also has thorough unit tests. Both the full test suite and build pass successfully."
+    },
+    {
+      "timestamp": "2026-03-30T17:55:03.027Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:55:21.326Z",
+      "action": "All steps completed successfully for KB-066 - Batch GitHub Issue Import with Throttling",
+      "outcome": "Build passes, 179 route tests pass, 48 github client tests pass. Changes include: fetchThrottled() method in GitHubClient with exponential backoff and Retry-After support; POST /api/github/issues/batch-import endpoint with rate limiting; Frontend API client function; Comprehensive test coverage; Changeset file created for minor version bump."
+    },
+    {
+      "timestamp": "2026-03-30T17:55:22.144Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T17:56:39.449Z",
+  "createdAt": "2026-03-30T03:16:57.900Z",
+  "updatedAt": "2026-03-30T17:56:39.449Z",
+  "size": "M",
+  "reviewLevel": 2
+}

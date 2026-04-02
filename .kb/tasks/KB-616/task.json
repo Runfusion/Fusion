@@ -1,0 +1,208 @@
+{
+  "id": "KB-616",
+  "description": "Per-Project Runtime Abstraction: Create the ProjectRuntime interface and implementations that allow the engine to manage multiple project instances, each with its own TaskStore, Scheduler, Executor, and WorktreePool.\n\n1. **ProjectRuntime Interface** (`packages/engine/src/project-runtime.ts`) — Uniform interface for managing a project's engine components:\n   - `start()` / `stop()` — lifecycle management\n   - `getStatus()` — runtime health status (active/paused/errored/stopped)\n   - `getTaskStore()` — access project's TaskStore\n   - `getScheduler()` — access project's Scheduler\n   - `getMetrics()` — in-flight tasks, agent count, last activity\n   - Events: `task:created`, `task:moved`, `task:updated`, `error`, `health-changed`\n\n2. **InProcessRuntime** (`packages/engine/src/runtimes/in-process-runtime.ts`) — Default mode where project components run inside the main Node process:\n   - Instantiates TaskStore, Scheduler, TaskExecutor, WorktreePool for the project\n   - Forwards events to CentralCore activity feed\n   - Manages component lifecycle (start/stop/restart)\n   - Implements resource cleanup on stop\n\n3. **ChildProcessRuntime** (`packages/engine/src/runtimes/child-process-runtime.ts`) — Opt-in isolation mode where project runs in separate Node child process:\n   - Spawns child process with IPC channel\n   - Implements ProjectRuntime interface over IPC messages\n   - Health monitoring with heartbeat protocol\n   - Automatic restart on crash with backoff\n   - Graceful shutdown with timeout\n\n4. **IPC Protocol** (`packages/engine/src/ipc/`) — Message protocol for child process communication:\n   - `ipc-protocol.ts` — Message type definitions (commands, responses, events)\n   - `ipc-host.ts` — Host-side IPC handler (sends commands, receives events)\n   - `ipc-worker.ts` — Worker-side IPC handler (receives commands, sends events)\n   - Structured messages: `{ type, id, payload }` with request/response correlation\n\n5. **ProjectManager** (`packages/engine/src/project-manager.ts`) — Orchestrator that manages all ProjectRuntime instances:\n   - `addProject(config)` — create and start a ProjectRuntime\n   - `removeProject(id)` — stop and remove a ProjectRuntime\n   - `getRuntime(id)` — get a specific runtime\n   - `listRuntimes()` — list all active runtimes\n   - Respects global concurrency limits from CentralCore\n\n6. **Tests** — Unit tests for InProcessRuntime, ChildProcessRuntime, IPC protocol, and ProjectManager\n\n**File scope:**\n- `packages/engine/src/project-runtime.ts` (new)\n- `packages/engine/src/runtimes/in-process-runtime.ts` (new)\n- `packages/engine/src/runtimes/child-process-runtime.ts` (new)\n- `packages/engine/src/ipc/ipc-protocol.ts` (new)\n- `packages/engine/src/ipc/ipc-host.ts` (new)\n- `packages/engine/src/ipc/ipc-worker.ts` (new)\n- `packages/engine/src/project-manager.ts` (new)\n- `packages/engine/src/index.ts` (export new types)\n- `packages/engine/test/project-runtime.test.ts` (new)\n\n**Context:** Read `packages/engine/src/executor.ts` for TaskExecutor lifecycle, `packages/engine/src/scheduler.ts` for Scheduler implementation, `packages/core/src/central-core.ts` for CentralCore API.",
+  "column": "done",
+  "size": "L",
+  "reviewLevel": 3,
+  "currentStep": 8,
+  "baseBranch": "kb/kb-615",
+  "summary": "Created the ProjectRuntime abstraction for multi-project support including: ProjectRuntime interface with lifecycle methods, InProcessRuntime for default in-process execution, ChildProcessRuntime for isolated child-process execution, IPC protocol (IpcHost, IpcWorker) for cross-process communication, and ProjectManager for orchestrating multiple project runtimes with global concurrency enforcement. All TypeScript types are exported from the engine package. Tests created for IPC protocol and runtime components. Changeset added for the minor version bump.",
+  "createdAt": "2026-03-31T23:26:04.170Z",
+  "updatedAt": "2026-04-01T03:12:34.731Z",
+  "columnMovedAt": "2026-04-01T03:12:34.731Z",
+  "dependencies": [
+    "KB-615"
+  ],
+  "steps": [
+    {
+      "name": "Define ProjectRuntime Interface and Types",
+      "status": "done"
+    },
+    {
+      "name": "Implement IPC Protocol",
+      "status": "done"
+    },
+    {
+      "name": "Implement InProcessRuntime",
+      "status": "done"
+    },
+    {
+      "name": "Implement ChildProcessRuntime",
+      "status": "done"
+    },
+    {
+      "name": "Implement ProjectManager",
+      "status": "done"
+    },
+    {
+      "name": "Update Engine Exports and Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:26:04.170Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:32:21.607Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:32:38.011Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for the foundational multi-project runtime abstraction. The mission is clearly articulated, steps have concrete verifiable outcomes, testing requirements are explicit and demand real automated tests, and the file scope aligns with the work. The dependency on KB-615 is correctly noted with appropriate fallback guidance."
+    },
+    {
+      "timestamp": "2026-04-01T03:01:36.734Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/solar-plume (based on kb/kb-615)"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:36.736Z",
+      "action": "Step 0 (Define ProjectRuntime Interface and Types) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:40.745Z",
+      "action": "Step 0 (Define ProjectRuntime Interface and Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:52.044Z",
+      "action": "Step 0 (Define ProjectRuntime Interface and Types) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:52.046Z",
+      "action": "Step 1 (Implement IPC Protocol) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:52.046Z",
+      "action": "Preflight complete. CentralCore from KB-615 is already implemented. Starting Step 1: Define ProjectRuntime Interface and Types."
+    },
+    {
+      "timestamp": "2026-04-01T03:01:54.693Z",
+      "action": "plan review requested for Step 1 (Define ProjectRuntime Interface and Types)"
+    },
+    {
+      "timestamp": "2026-04-01T03:02:19.131Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and will achieve its stated outcomes. The interface design follows existing codebase patterns (EventEmitter from `node:events`, similar to `TaskStore` in `packages/core/src/store.ts:32`), and the type definitions align with the existing multi-project types from KB-615 (`IsolationMode`, `ProjectStatus`). The inclusion of the logger export is a good attention to detail."
+    },
+    {
+      "timestamp": "2026-04-01T03:02:49.256Z",
+      "action": "Step 1 (Implement IPC Protocol) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:02:49.258Z",
+      "action": "Step 2 (Implement InProcessRuntime) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:02:50.318Z",
+      "action": "plan review requested for Step 2 (Implement IPC Protocol)"
+    },
+    {
+      "timestamp": "2026-04-01T03:03:10.285Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan provides a solid foundation for the IPC protocol implementation. The message type definitions are comprehensive with proper correlation IDs for request/response matching, and the separation between host-side and worker-side handlers follows clean architectural patterns. The plan aligns well with existing codebase patterns like the EventEmitter usage in TaskStore and logger conventions."
+    },
+    {
+      "timestamp": "2026-04-01T03:06:05.391Z",
+      "action": "Step 2 (Implement InProcessRuntime) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:06:05.393Z",
+      "action": "Step 3 (Implement ChildProcessRuntime) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:06:05.394Z",
+      "action": "plan review requested for Step 3 (Implement InProcessRuntime)"
+    },
+    {
+      "timestamp": "2026-04-01T03:06:36.792Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and will achieve its stated outcomes. The step builds correctly on the completed Step 1 (ProjectRuntime interface) and Step 2 (IPC protocol). I've verified that all prerequisite infrastructure exists: the `ProjectRuntime` interface is fully defined in `packages/engine/src/project-runtime.ts`, the IPC protocol is implemented in `packages/engine/src/ipc/`, and the necessary loggers (`runtimeLog`, `ipcLog`) are already exported from `packages/engine/src/logger"
+    },
+    {
+      "timestamp": "2026-04-01T03:07:48.364Z",
+      "action": "Step 3 (Implement ChildProcessRuntime) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:07:48.365Z",
+      "action": "Step 4 (Implement ProjectManager) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:07:48.366Z",
+      "action": "plan review requested for Step 4 (Implement ChildProcessRuntime)"
+    },
+    {
+      "timestamp": "2026-04-01T03:08:14.488Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is well-structured and technically sound. It correctly builds upon the previously implemented IPC protocol (Step 2) and InProcessRuntime (Step 3) to create a child-process isolation mode. The health monitoring, auto-restart logic, and event forwarding patterns are appropriate for the complexity of the feature."
+    },
+    {
+      "timestamp": "2026-04-01T03:09:22.883Z",
+      "action": "Step 4 (Implement ProjectManager) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:09:22.884Z",
+      "action": "Step 5 (Update Engine Exports and Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:09:22.885Z",
+      "action": "plan review requested for Step 5 (Implement ProjectManager)"
+    },
+    {
+      "timestamp": "2026-04-01T03:09:47.747Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The plan outlines the correct components for ProjectManager, but there are critical gaps in the specified behavior that will cause integration failures with CentralCore. The plan mentions CentralCore methods (`recordActivity()`) that don't exist, misses important concurrency lifecycle management, and lacks clarity on ProjectManager's role as a CentralCore consumer vs. a separate orchestrator. The test plan is also insufficient for the complexity of multi-runtime orchestration."
+    },
+    {
+      "timestamp": "2026-04-01T03:10:34.118Z",
+      "action": "Step 5 (Update Engine Exports and Integration) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:10:34.120Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:10:34.121Z",
+      "action": "plan review requested for Step 6 (Update Engine Exports and Integration)"
+    },
+    {
+      "timestamp": "2026-04-01T03:11:08.735Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The plan for Step 6 is structurally sound and will achieve its stated outcomes. The checklist appropriately covers exporting the new multi-project runtime abstractions while maintaining backward compatibility. The approach of re-exporting from `project-runtime.ts` through `index.ts` follows the existing engine export pattern."
+    },
+    {
+      "timestamp": "2026-04-01T03:11:34.888Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:11:36.888Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:11:46.505Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:11:47.719Z",
+      "action": "plan review requested for Step 8 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-04-01T03:12:08.190Z",
+      "action": "plan review Step 8: APPROVE",
+      "outcome": "Step 8 outlines appropriate documentation and delivery tasks to finalize the KB-616 implementation. The step's checkboxes align with project standards: adding JSDoc comments (already present in the implementation), updating exports in `index.ts` (already organized), creating a changeset for the feature, and staging it with the final commit. The implementation files already contain comprehensive JSDoc documentation, so this step focuses on final verification and release artifact creation."
+    },
+    {
+      "timestamp": "2026-04-01T03:12:19.304Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

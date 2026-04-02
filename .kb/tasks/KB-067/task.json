@@ -1,0 +1,158 @@
+{
+  "id": "KB-067",
+  "description": "Refactor GitHub issue routes to use gh CLI\n\nThe issue routes in `packages/dashboard/src/routes.ts` still use direct REST API calls via `fetch()`:\n- `POST /github/issues/fetch` - uses `fetch()` to GitHub API issues endpoint\n- `POST /github/issues/import` - uses `fetch()` to GitHub API issue endpoint\n\nThese should be refactored to use the `GitHubClient` class (which now uses gh CLI) for consistency with the PR routes. The `GitHubClient` already has `listIssues()` and `getIssue()` methods that use gh CLI.\n\nChanges needed:\n1. Update `POST /github/issues/fetch` to use `client.listIssues()` instead of direct `fetch()`\n2. Update `POST /github/issues/import` to use `client.getIssue()` instead of direct `fetch()`\n3. Update error handling to use gh CLI error messages\n4. Remove token-based auth checks in favor of `gh auth status`\n5. Update tests in routes.test.ts to mock `gh` CLI instead of `fetch()`",
+  "column": "done",
+  "dependencies": [
+    "KB-052"
+  ],
+  "steps": [
+    {
+      "name": "Verify KB-052 Deliverables",
+      "status": "done"
+    },
+    {
+      "name": "Refactor POST /github/issues/fetch",
+      "status": "done"
+    },
+    {
+      "name": "Refactor POST /github/issues/import",
+      "status": "done"
+    },
+    {
+      "name": "Update GitHub Issue Route Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T03:51:22.491Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:03.226Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:33.092Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, actionable specification for refactoring GitHub issue routes. The mission is clear, dependencies are accurate (KB-052's `GitHubClient` already provides `listIssues()` and `getIssue()` methods), and the step breakdown follows a logical progression from verification through implementation to testing. The file scope is appropriately limited, and test requirements are comprehensive with specific test cases listed."
+    },
+    {
+      "timestamp": "2026-03-30T18:04:56.169Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/keen-delta"
+    },
+    {
+      "timestamp": "2026-03-30T18:04:56.170Z",
+      "action": "Step 0 (Verify KB-052 Deliverables) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T18:05:14.004Z",
+      "action": "Step 0 (Verify KB-052 Deliverables) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:05:27.418Z",
+      "action": "Step 0 (Verify KB-052 Deliverables) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:05:27.419Z",
+      "action": "Step 0 (Preflight) - Verified KB-052 deliverables are available",
+      "outcome": "KB-052 has delivered:\n- @kb/core gh-cli module (isGhAuthenticated, runGh, runGhJsonAsync, etc.)\n- GitHubClient with listIssues() and getIssue() methods\n- Tests in github.test.ts for the new methods\nReady to proceed with refactoring."
+    },
+    {
+      "timestamp": "2026-03-30T18:05:30.224Z",
+      "action": "Step 2 (Refactor POST /github/issues/import) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:05:30.225Z",
+      "action": "plan review requested for Step 2 (Refactor POST /github/issues/fetch)"
+    },
+    {
+      "timestamp": "2026-03-30T18:06:00.110Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and will achieve the stated outcomes. The approach correctly leverages the existing `GitHubClient.listIssues()` method from KB-052, which already implements gh CLI integration with REST API fallback. The key work involves replacing the direct `fetch()` implementation, updating auth error handling to reference `gh auth login`, and removing the `GITHUB_TOKEN` dependency."
+    },
+    {
+      "timestamp": "2026-03-30T18:06:15.325Z",
+      "action": "code review requested for Step 2 (Refactor POST /github/issues/fetch)"
+    },
+    {
+      "timestamp": "2026-03-30T18:06:53.658Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The route implementation has been correctly refactored to use `GitHubClient.listIssues()` and `isGhAuthenticated()` from `@kb/core`, with proper error handling and preserved response format. However, **the tests were not updated** and will fail because they still mock `globalThis.fetch` instead of the new gh CLI dependencies. The task PROMPT.md explicitly states \"Do NOT: Skip updating tests — must mock gh CLI, not just skip failing tests.\""
+    },
+    {
+      "timestamp": "2026-03-30T18:13:46.077Z",
+      "action": "code review requested for Step 2 (Refactor POST /github/issues/fetch)"
+    },
+    {
+      "timestamp": "2026-03-30T18:14:23.249Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly refactors the `/github/issues/fetch` route from direct `fetch()` calls to use the `GitHubClient.listIssues()` method with gh CLI. The route now uses `isGhAuthenticated()` for auth checks, has updated error handling for the new status codes, and tests have been properly updated to mock the GitHubClient methods instead of `fetch()`."
+    },
+    {
+      "timestamp": "2026-03-30T18:14:24.349Z",
+      "action": "Step 2 (Refactor POST /github/issues/import) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:14:24.350Z",
+      "action": "plan review requested for Step 3 (Refactor POST /github/issues/import)"
+    },
+    {
+      "timestamp": "2026-03-30T18:14:43.833Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The Step 3 plan correctly identifies all required changes for refactoring the issue import route. Notably, **the implementation has already been completed** in the current codebase at `/Users/eclipxe/Projects/kb/.worktrees/keen-delta/packages/dashboard/src/routes.ts` (lines 1360-1456). The route successfully uses `GitHubClient.getIssue()`, `isGhAuthenticated()`, and preserves all business logic (duplicate detection, title truncation, description formatting) while removing the `GITHUB_TOKEN` depe"
+    },
+    {
+      "timestamp": "2026-03-30T18:14:46.530Z",
+      "action": "code review requested for Step 3 (Refactor POST /github/issues/import)"
+    },
+    {
+      "timestamp": "2026-03-30T18:15:25.877Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly refactors the `POST /github/issues/import` route to use `GitHubClient.getIssue()` instead of direct `fetch()` calls to the GitHub REST API. The code follows the established patterns from KB-052, properly handles all required error cases, maintains backward compatibility with the response format, and includes comprehensive test coverage."
+    },
+    {
+      "timestamp": "2026-03-30T18:15:26.941Z",
+      "action": "Step 3 (Update GitHub Issue Route Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:15:26.942Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:15:29.964Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:18:16.556Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:18:23.514Z",
+      "action": "Task KB-067 completed successfully",
+      "outcome": "- Refactored POST /github/issues/fetch to use GitHubClient.listIssues() with gh CLI\n- Refactored POST /github/issues/import to use GitHubClient.getIssue() with gh CLI\n- Removed GITHUB_TOKEN dependency - now uses isGhAuthenticated() check\n- Updated all tests to mock gh CLI infrastructure (isGhAuthenticated, GitHubClient methods)\n- Added new test cases for 401 (not authenticated) and 502 (CLI failure) scenarios\n- Created changeset for the internal refactor\n- Build passes, all GitHub-related tests pass"
+    },
+    {
+      "timestamp": "2026-03-30T18:18:24.288Z",
+      "action": "Step 1 (Refactor POST /github/issues/fetch) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:18:24.289Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T18:19:12.813Z",
+  "createdAt": "2026-03-30T03:51:22.491Z",
+  "updatedAt": "2026-03-30T18:19:12.813Z",
+  "size": "M",
+  "reviewLevel": 2
+}

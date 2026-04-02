@@ -1,0 +1,90 @@
+{
+  "id": "KB-191",
+  "description": "Change the request refinement button to just say refine",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Button and Modal Title Text",
+      "status": "done"
+    },
+    {
+      "name": "Update Test Assertions",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:08:04.944Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:18:49.140Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:18:57.582Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-defined and accurate. It correctly identifies the two locations requiring text changes (button on line 943 and modal title on line 1014 in `TaskDetailModal.tsx`) and appropriately scopes the test updates needed in the corresponding test file. The Review Level 0 assignment is justified for this straightforward UI text polish."
+    },
+    {
+      "timestamp": "2026-03-30T19:30:00.460Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/solar-quail"
+    },
+    {
+      "timestamp": "2026-03-30T19:30:00.461Z",
+      "action": "Step 0 (Update Button and Modal Title Text) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:30:08.432Z",
+      "action": "Step 1 (Update Test Assertions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:30:13.605Z",
+      "action": "Step 1 (Update Test Assertions) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:30:13.610Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:30:48.648Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:30:48.649Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:39:26.722Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:39:31.853Z",
+      "action": "Completed all steps: Updated button text from \"Request Refinement\" to \"Refine\" in TaskDetailModal.tsx, updated all test assertions in TaskDetailModal.test.tsx, verified tests pass and build succeeds, created changeset file.",
+      "outcome": "All changes committed successfully with proper changeset for the published package."
+    },
+    {
+      "timestamp": "2026-03-30T19:39:31.854Z",
+      "action": "Step 0 (Update Button and Modal Title Text) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:39:31.854Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:39:44.211Z",
+  "createdAt": "2026-03-30T18:08:04.944Z",
+  "updatedAt": "2026-03-30T19:39:44.211Z",
+  "size": "S",
+  "reviewLevel": 0
+}

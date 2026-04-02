@@ -1,0 +1,122 @@
+{
+  "id": "KB-205",
+  "description": "increase max test concurrency",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Vitest Configurations",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T19:23:42.362Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T19:26:18.657Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:26:26.540Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and appropriately scoped for a simple configuration change. All four referenced vitest config files exist with the exact pattern described (`maxWorkers` default of \"8\" with `VITEST_MAX_WORKERS` environment variable override). The steps are concrete and verifiable, testing requirements are appropriate, and the review level (0 - None) is correctly assessed for this low-risk change."
+    },
+    {
+      "timestamp": "2026-03-30T20:37:06.110Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/noble-heron"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:06.111Z",
+      "action": "Step 0 (Update Vitest Configurations) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:13.938Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:16.466Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:16.468Z",
+      "action": "Updated all 4 vitest.config.ts files to increase maxWorkers default from 8 to 16",
+      "outcome": "Core, CLI, Dashboard, and Engine packages now default to 16 workers"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:18.076Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:43:02.775Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:43:02.777Z",
+      "action": "Testing completed with 16 workers",
+      "outcome": "Core: 224 passed, Engine: 536 passed. CLI and Dashboard have pre-existing test failures unrelated to this change (same failures occur with 8 workers). Build passes."
+    },
+    {
+      "timestamp": "2026-03-30T20:43:05.657Z",
+      "action": "Step 3 complete - no documentation updates required for internal configuration change",
+      "outcome": "All 4 vitest.config.ts files updated, tests pass (core and engine fully pass; CLI and Dashboard have pre-existing unrelated failures), build passes"
+    },
+    {
+      "timestamp": "2026-03-30T20:43:09.876Z",
+      "action": "Step 0 (Update Vitest Configurations) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:43:09.878Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T22:05:48.705Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T22:08:23.447Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T22:19:37.598Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T22:21:51.816Z",
+      "action": "Verified all 4 vitest.config.ts files have maxWorkers default updated from 8 to 16",
+      "outcome": "All packages (core, cli, dashboard, engine) correctly configured. Git commit 1320be4 contains the changes. Working tree clean."
+    },
+    {
+      "timestamp": "2026-03-30T22:21:51.819Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T22:38:05.349Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T22:40:34.362Z",
+      "action": "Verified all 4 vitest.config.ts files have maxWorkers default of 16",
+      "outcome": "All configurations updated correctly, build passes"
+    },
+    {
+      "timestamp": "2026-03-30T22:40:34.363Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T22:40:51.828Z",
+  "createdAt": "2026-03-30T19:23:42.362Z",
+  "updatedAt": "2026-03-30T22:40:51.828Z",
+  "size": "S",
+  "reviewLevel": 0
+}

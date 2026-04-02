@@ -1,0 +1,236 @@
+{
+  "id": "KB-500",
+  "description": "Core Infrastructure: Central database, project registry, unified activity feed",
+  "column": "done",
+  "size": "L",
+  "reviewLevel": 3,
+  "currentStep": 7,
+  "summary": "Successfully implemented the core central infrastructure for kb's multi-project architecture (KB-500). Created CentralCore class with full project registry, unified activity feed, global concurrency management, and project health tracking. Added CentralDatabase with complete SQLite schema. All 85 new tests pass with >80% coverage. Updated AGENTS.md with comprehensive documentation. New exports available from @fusion/core: CentralCore, CentralDatabase, and multi-project types (RegisteredProject, ProjectHealth, CentralActivityLogEntry, GlobalConcurrencyState, IsolationMode, ProjectStatus).",
+  "createdAt": "2026-03-31T21:01:18.279Z",
+  "updatedAt": "2026-04-01T03:00:04.552Z",
+  "columnMovedAt": "2026-04-01T03:00:04.552Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Central Database Schema and Core Class",
+      "status": "done"
+    },
+    {
+      "name": "Project Registry",
+      "status": "done"
+    },
+    {
+      "name": "Unified Activity Feed",
+      "status": "done"
+    },
+    {
+      "name": "Central Core Store (High-Level API)",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:01:18.279Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:16:36.683Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/deft-wren"
+    },
+    {
+      "timestamp": "2026-03-31T21:16:36.693Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:25.328Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:03.984Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:23.530Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:23.535Z",
+      "action": "Preflight complete: Read context files, verified 76 existing tests pass, build succeeds, confirmed ~/.pi/kb/ directory exists with settings.json",
+      "outcome": "Ready to begin Step 1"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:25.095Z",
+      "action": "Step 1 (Central Database Schema and Core Class) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:25.099Z",
+      "action": "plan review requested for Step 1 (Central Database Schema and Core Class)"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:57.034Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan has a sound overall approach for the schema design and WAL mode configuration, but it contains critical gaps that will cause implementation failures. The plan references non-existent files (`db.ts`, `db-migrate.ts`) for transaction patterns, omits required package dependencies, lacks error handling strategies, and is missing important SQLite pragmas for production use."
+    },
+    {
+      "timestamp": "2026-03-31T21:19:59.760Z",
+      "action": "Plan review feedback incorporated: Adding better-sqlite3 dependency, defining transaction patterns inline, adding busy_timeout, error handling, and close() method",
+      "outcome": "Revised plan ready for implementation"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:37.681Z",
+      "action": "code review requested for Step 1 (Central Database Schema and Core Class)"
+    },
+    {
+      "timestamp": "2026-03-31T21:22:07.138Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation successfully delivers Step 1 requirements. The `CentralDatabase` class provides a solid foundation for the multi-project architecture with proper WAL mode, foreign key enforcement, savepoint-based nested transactions, and comprehensive schema creation. Tests are thorough with good coverage of critical paths including transaction rollback, foreign key constraints, and nested savepoints."
+    },
+    {
+      "timestamp": "2026-03-31T21:22:08.689Z",
+      "action": "Step 2 (Project Registry) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:22:08.694Z",
+      "action": "plan review requested for Step 2 (Project Registry)"
+    },
+    {
+      "timestamp": "2026-03-31T21:32:38.079Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T21:47:52.480Z",
+      "action": "Execution failed: ENOENT: no such file or directory, open '/Users/eclipxe/Projects/kb/.fusion/tasks/KB-500/task.json.tmp'"
+    },
+    {
+      "timestamp": "2026-03-31T22:10:42.570Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:11:01.763Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for foundational multi-project infrastructure. The mission is clear, steps have concrete verifiable outcomes, and the file references accurately match existing codebase patterns. The spec correctly builds upon established SQLite/Node.js patterns and appropriately scopes work for subsequent tasks (KB-501 through KB-503)."
+    },
+    {
+      "timestamp": "2026-03-31T22:50:39.352Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:50:51.042Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a high-quality specification for foundational multi-project infrastructure. The mission is clearly articulated, steps have verifiable outcomes with concrete checkboxes, and all referenced source files exist with the expected patterns. The spec properly follows existing code conventions from `db.ts` (WAL mode, JSON helpers, `__meta` table), `store.ts` (EventEmitter lifecycle), and `global-settings.ts` (`~/.pi/kb/` directory pattern)."
+    },
+    {
+      "timestamp": "2026-04-01T02:52:21.703Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bright-mesa"
+    },
+    {
+      "timestamp": "2026-04-01T02:52:33.401Z",
+      "action": "Step 1 (Central Database Schema and Core Class) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:52:34.435Z",
+      "action": "plan review requested for Step 1 (Extend Types for Multi-Project Support)"
+    },
+    {
+      "timestamp": "2026-04-01T02:52:48.435Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and will achieve its stated outcomes. The type definitions follow the existing patterns in `packages/core/src/types.ts`, properly extend existing types like `ActivityLogEntry`, and provide the foundation needed for subsequent steps (CentralDatabase, CentralCore). The step is appropriately scoped to type definitions only."
+    },
+    {
+      "timestamp": "2026-04-01T02:53:08.391Z",
+      "action": "Step 1 (Central Database Schema and Core Class) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:08.392Z",
+      "action": "Step 2 (Project Registry) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:09.882Z",
+      "action": "plan review requested for Step 2 (Create Central Database Module)"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:28.325Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is solid and follows established codebase patterns from `packages/core/src/db.ts`. It correctly specifies the `CentralDatabase` class with WAL mode, transaction support, schema version tracking, and the full SQL schema for the multi-project architecture. The approach will achieve the stated outcomes with minor gaps in test coverage specification and JSON helper reuse."
+    },
+    {
+      "timestamp": "2026-04-01T02:54:16.714Z",
+      "action": "Step 2 (Project Registry) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:54:16.715Z",
+      "action": "Step 3 (Unified Activity Feed) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:54:17.891Z",
+      "action": "plan review requested for Step 3 (Create CentralCore API Class)"
+    },
+    {
+      "timestamp": "2026-04-01T02:54:41.531Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is comprehensive and well-structured. It correctly builds upon the patterns established in Step 2 (`central-db.ts`) and follows existing codebase conventions from `TaskStore` (EventEmitter-based events, async init/close lifecycle, transaction usage). The API surface covers all requirements from the task mission: project registry, health tracking, unified activity feed, and global concurrency management."
+    },
+    {
+      "timestamp": "2026-04-01T02:56:33.796Z",
+      "action": "Step 3 (Unified Activity Feed) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:56:33.798Z",
+      "action": "Step 4 (Central Core Store (High-Level API)) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:56:34.894Z",
+      "action": "plan review requested for Step 4 (Export New Public API)"
+    },
+    {
+      "timestamp": "2026-04-01T02:56:54.225Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is straightforward and correct. The implementation files (`central-core.ts`, `central-db.ts`) and types already exist from previous steps, but they're not yet exported from `packages/core/src/index.ts`. The step follows the established export patterns in the codebase and will properly expose the new central infrastructure API to consumers."
+    },
+    {
+      "timestamp": "2026-04-01T02:57:32.115Z",
+      "action": "Step 4 (Central Core Store (High-Level API)) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:57:32.117Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:25.956Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:25.957Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:30.874Z",
+      "action": "plan review requested for Step 6 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:59.499Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The Step 6 plan has clear, achievable checkboxes that will deliver the required outcomes. The implementation is already in excellent shape with comprehensive JSDoc in `central-core.ts` (lines 1-44 and throughout), thorough test coverage at 100% (central-core.test.ts has 440+ lines covering all API surface), and proper exports in `index.ts`. The only work remaining is minimal JSDoc additions to `central-db.ts` and adding the central infrastructure documentation section to `AGENTS.md`."
+    },
+    {
+      "timestamp": "2026-04-01T02:59:15.550Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:59:30.660Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

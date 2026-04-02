@@ -1,0 +1,147 @@
+{
+  "id": "KB-318",
+  "description": "Fix @kb/core package build - missing agent-store.ts module. The packages/core/src/index.ts exports from './agent-store.js' but the file doesn't exist. This breaks the build and prevents engine tests from running that depend on @kb/core.",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 4,
+  "summary": "Successfully added autoUpdatePrStatus and autoCreatePr boolean fields to the ProjectSettings interface in packages/core/src/types.ts. Added JSDoc comments explaining each field's purpose, included both in DEFAULT_PROJECT_SETTINGS with default value false, and added to PROJECT_SETTINGS_KEYS array. @fusion/core builds without errors and all 419 core tests pass. Created changeset file for patch bump. Pre-existing engine test failures (unrelated to these changes) were documented as KB-600.",
+  "createdAt": "2026-03-31T18:41:20.295Z",
+  "updatedAt": "2026-03-31T21:32:21.860Z",
+  "columnMovedAt": "2026-03-31T21:32:21.860Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Missing Fields to ProjectSettings",
+      "status": "done"
+    },
+    {
+      "name": "Verify Build",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T18:41:20.295Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T18:45:33.953Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T18:45:43.097Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies missing `autoUpdatePrStatus` and `autoCreatePr` fields that are referenced in `packages/engine/src/cron-runner.test.ts` (lines 30-31) but absent from the `ProjectSettings` interface. The mission is clear, file scope is correct, and the review level (1 — Plan Only) is appropriate for this simple type addition with zero blast radius."
+    },
+    {
+      "timestamp": "2026-03-31T21:13:50.162Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-crane"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:50.163Z",
+      "action": "Step 0 (Add Missing Fields to ProjectSettings) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:52.213Z",
+      "action": "Step 0 (Add Missing Fields to ProjectSettings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:56.136Z",
+      "action": "Step 0 (Add Missing Fields to ProjectSettings) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:56.138Z",
+      "action": "Step 1 (Verify Build) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:57.664Z",
+      "action": "plan review requested for Step 1 (Add Missing Fields to ProjectSettings)"
+    },
+    {
+      "timestamp": "2026-03-31T21:14:22.602Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes to `packages/core/src/types.ts`. The approach is sound: adding two boolean fields (`autoUpdatePrStatus` and `autoCreatePr`) to the `ProjectSettings` interface with JSDoc documentation and default values of `false` in `DEFAULT_PROJECT_SETTINGS`. This is a straightforward type-only change that will unblock engine package TypeScript errors."
+    },
+    {
+      "timestamp": "2026-03-31T21:30:14.214Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T21:30:14.477Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-crane"
+    },
+    {
+      "timestamp": "2026-03-31T21:30:41.641Z",
+      "action": "Step 0 (Add Missing Fields to ProjectSettings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:30:54.032Z",
+      "action": "Step 0 (Add Missing Fields to ProjectSettings) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:30:54.035Z",
+      "action": "Added autoUpdatePrStatus and autoCreatePr fields to ProjectSettings interface with JSDoc comments, DEFAULT_PROJECT_SETTINGS with default value false, and PROJECT_SETTINGS_KEYS array",
+      "outcome": "packages/core/src/types.ts builds without errors"
+    },
+    {
+      "timestamp": "2026-03-31T21:30:55.928Z",
+      "action": "plan review requested for Step 1 (Verify Build)"
+    },
+    {
+      "timestamp": "2026-03-31T21:31:18.199Z",
+      "action": "plan review Step 1: RETHINK",
+      "outcome": "The plan for Step 1 is based on a false premise. The PROMPT.md states that `autoUpdatePrStatus` and `autoCreatePr` fields are \"missing\" from the `ProjectSettings` interface, but these fields **already exist** in `packages/core/src/types.ts` (both in the interface at lines 601-605 and in `DEFAULT_PROJECT_SETTINGS` at lines 661-662). The step's checkboxes describe work that has already been completed, which will lead to confusion and wasted effort."
+    },
+    {
+      "timestamp": "2026-03-31T21:31:18.203Z",
+      "action": "Step 1 (Verify Build) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T21:31:18.206Z",
+      "action": "RETHINK: Step 1 plan rewound — session checkpoint N/A",
+      "outcome": "The plan for Step 1 is based on a false premise. The PROMPT.md states that `autoUpdatePrStatus` and `autoCreatePr` fields are \"missing\" from the `ProjectSettings` interface, but these fields **already exist** in `packages/core/src/types.ts` (both in the interface at lines 601-605 and in `DEFAULT_PROJECT_SETTINGS` at lines 661-662). The step's checkboxes describe work that has already been completed, which will lead to confusion and wasted effort."
+    },
+    {
+      "timestamp": "2026-03-31T21:31:22.380Z",
+      "action": "Step 1 (Verify Build) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:31:32.357Z",
+      "action": "Verified @fusion/core builds successfully. @fusion/engine has pre-existing errors in executor.test.ts unrelated to the added fields (mocked function name issues). No errors related to autoUpdatePrStatus or autoCreatePr fields.",
+      "outcome": "Fields added successfully, core builds clean, engine errors are pre-existing"
+    },
+    {
+      "timestamp": "2026-03-31T21:31:35.116Z",
+      "action": "Step 1 (Verify Build) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:31:36.309Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:32:02.403Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:32:03.890Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:32:08.549Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:32:10.646Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

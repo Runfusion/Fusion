@@ -1,0 +1,409 @@
+{
+  "id": "KB-041",
+  "description": "Add a refine task option for tasks that are done or in recview - users can provide follow up comments that get triaged and then re processed by the execution engine",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core TaskStore — Add refineTask Method",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard API — Add Refine Endpoint",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard Frontend — Add Refine UI",
+      "status": "done"
+    },
+    {
+      "name": "CLI Extension — Add kb_task_refine Tool",
+      "status": "done"
+    },
+    {
+      "name": "CLI Commands — Add refine Command",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "in-progress"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T02:17:19.753Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T02:18:12.113Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:18:32.231Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a medium-complexity feature that spans core, dashboard, and CLI layers. The spec correctly identifies existing patterns (particularly `duplicateTask` in `packages/core/src/store.ts:197-236`) to follow and provides concrete, verifiable outcomes for each step. File references are accurate, and testing requirements demand real automated tests with specific test commands."
+    },
+    {
+      "timestamp": "2026-03-30T03:52:15.048Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/glad-wren"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:15.049Z",
+      "action": "Step 0 (Core TaskStore — Add refineTask Method) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:16.945Z",
+      "action": "Step 0 (Core TaskStore — Add refineTask Method) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:28.424Z",
+      "action": "Step 0 (Core TaskStore — Add refineTask Method) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:28.428Z",
+      "action": "Step 1 (Dashboard API — Add Refine Endpoint) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:28.431Z",
+      "action": "Preflight complete. Read all context files:\n- packages/core/src/store.ts — TaskStore with duplicateTask pattern\n- packages/core/src/types.ts — Task types and Column types\n- packages/dashboard/src/routes.ts — API routes pattern\n- packages/dashboard/app/api.ts — Frontend API client pattern\n- packages/dashboard/app/components/TaskDetailModal.tsx — UI patterns\n- packages/cli/src/extension.ts — Pi extension tool patterns\n- packages/cli/src/commands/task.ts — CLI command patterns",
+      "outcome": "Ready to implement Step 1: Core TaskStore refineTask method"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:29.626Z",
+      "action": "plan review requested for Step 1 (Core TaskStore — Add refineTask Method)"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:44.454Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows established patterns in the codebase. The `refineTask` method specification is clear, aligns with the existing `duplicateTask` implementation (lines 210-257 in `store.ts`), and correctly implements the requirements from the task mission. The validation rules (only done/in-review tasks can be refined), the new task structure (triage column with dependency on original), and event emission all match the expected behavior."
+    },
+    {
+      "timestamp": "2026-03-30T03:53:12.746Z",
+      "action": "code review requested for Step 1 (Core TaskStore — Add refineTask Method)"
+    },
+    {
+      "timestamp": "2026-03-30T03:53:12.747Z",
+      "action": "Step 1 (Dashboard API — Add Refine Endpoint) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:53:12.769Z",
+      "action": "Step 2 (Dashboard Frontend — Add Refine UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:53:29.342Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The `refineTask` method implementation in `store.ts` is functionally correct and follows established patterns from `duplicateTask`. However, **critical tests for the new method are missing** from `store.test.ts`, which is a requirement from the task specification. The step checklist explicitly requires running targeted tests, but no tests exist for the new functionality."
+    },
+    {
+      "timestamp": "2026-03-30T03:54:00.342Z",
+      "action": "code review requested for Step 1 (Core TaskStore — Add refineTask Method)"
+    },
+    {
+      "timestamp": "2026-03-30T03:54:39.719Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The `refineTask` method is implemented with the correct core logic, validation, and comprehensive test coverage. However, there's a **critical bug** in the attachment handling that creates a shared reference between the original task and the refinement task, which can cause data corruption when attachments are modified on either task."
+    },
+    {
+      "timestamp": "2026-03-30T03:54:48.347Z",
+      "action": "code review requested for Step 1 (Core TaskStore — Add refineTask Method)"
+    },
+    {
+      "timestamp": "2026-03-30T03:55:19.452Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The `refineTask` method has been correctly implemented in `packages/core/src/store.ts` following the existing patterns in the codebase (similar to `duplicateTask`). Comprehensive test coverage has been added with 21 test cases covering all requirements and edge cases. The targeted test suite passes successfully."
+    },
+    {
+      "timestamp": "2026-03-30T03:55:20.996Z",
+      "action": "Step 1 (Dashboard API — Add Refine Endpoint) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:55:20.996Z",
+      "action": "plan review requested for Step 2 (Dashboard API — Add Refine Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T03:55:33.269Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan for Step 2 is sound and follows established patterns in the codebase. The step correctly identifies the need for a POST `/tasks/:id/refine` endpoint with proper validation, error handling, and logging. The approach mirrors existing endpoints like `/tasks/:id/duplicate` and `/tasks/:id/spec/revise` for consistency."
+    },
+    {
+      "timestamp": "2026-03-30T03:55:49.939Z",
+      "action": "code review requested for Step 2 (Dashboard API — Add Refine Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T03:56:10.227Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T03:56:15.336Z",
+      "action": "Step 2 (Dashboard Frontend — Add Refine UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:56:15.339Z",
+      "action": "plan review requested for Step 2 (Dashboard Frontend — Add Refine UI)"
+    },
+    {
+      "timestamp": "2026-03-30T03:56:17.662Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The POST `/tasks/:id/refine` endpoint is correctly implemented in `routes.ts` with proper validation, error handling, and logging. However, **tests for the new endpoint are completely missing** from `routes.test.ts`, which violates the step requirement to \"Run targeted tests\" and breaks the established testing pattern for similar endpoints like `duplicate`, `archive`, and `unarchive`."
+    },
+    {
+      "timestamp": "2026-03-30T03:56:49.333Z",
+      "action": "code review requested for Step 2 (Dashboard API — Add Refine Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T03:56:51.289Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 3 correctly identifies the required changes to complete the refine feature frontend. Steps 1 and 2 are already implemented (the `refineTask` method exists in `store.ts` at line 266, and the POST `/tasks/:id/refine` endpoint exists in `routes.ts` at line 655). The frontend implementation requires adding the API client function and UI components, which this plan addresses appropriately."
+    },
+    {
+      "timestamp": "2026-03-30T03:57:18.472Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds the POST `/tasks/:id/refine` endpoint with proper request validation, error handling, and comprehensive test coverage. The endpoint follows established patterns in the codebase (similar to `duplicateTask` endpoint) and correctly delegates to the `store.refineTask()` method added in Step 1."
+    },
+    {
+      "timestamp": "2026-03-30T03:57:19.882Z",
+      "action": "Step 2 (Dashboard Frontend — Add Refine UI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:57:19.885Z",
+      "action": "plan review requested for Step 3 (Dashboard Frontend — Add Refine UI)"
+    },
+    {
+      "timestamp": "2026-03-30T03:57:42.418Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The implementation for Step 3 is already complete in the codebase. The `refineTask` API client exists in `api.ts`, and `TaskDetailModal.tsx` has the full UI implementation: conditional \"Request Refinement\" button, modal with textarea and character counter, submit/cancel buttons, success/error toast handling, and proper placement in the modal actions area. The only gap is missing test coverage for the new refine functionality in `TaskDetailModal.test.tsx`."
+    },
+    {
+      "timestamp": "2026-03-30T03:57:42.943Z",
+      "action": "code review requested for Step 2 (Dashboard Frontend — Add Refine UI)"
+    },
+    {
+      "timestamp": "2026-03-30T03:57:44.108Z",
+      "action": "Step 3 (CLI Extension — Add kb_task_refine Tool) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:58:08.372Z",
+      "action": "code review requested for Step 3 (Dashboard Frontend — Add Refine UI)"
+    },
+    {
+      "timestamp": "2026-03-30T03:58:15.159Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The UI implementation for the refine feature is functionally complete and follows the existing patterns in the codebase. However, there are two blocking issues: a **duplicate function definition** in `api.ts` that will cause build failures, and **missing test coverage** for the new functionality, which violates the step requirements that explicitly require running targeted tests."
+    },
+    {
+      "timestamp": "2026-03-30T03:58:59.206Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The UI implementation in `TaskDetailModal.tsx` is functionally correct and follows the existing patterns in the codebase. The `refineTask` API client is properly implemented. However, **tests are missing** for the new functionality, which violates the task requirement to \"Run targeted tests\" and the project guideline that \"Tests are required. Typechecks and manual verification are not substitutes for real tests with assertions.\""
+    },
+    {
+      "timestamp": "2026-03-30T03:59:18.493Z",
+      "action": "code review requested for Step 3 (Dashboard Frontend — Add Refine UI)"
+    },
+    {
+      "timestamp": "2026-03-30T03:59:37.327Z",
+      "action": "code review requested for Step 2 (Dashboard Frontend — Add Refine UI)"
+    },
+    {
+      "timestamp": "2026-03-30T03:59:39.412Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly adds the Refine UI to the TaskDetailModal component with all required functionality: conditional button visibility for done/in-review tasks, a modal dialog with feedback textarea and character counter, proper API integration, and comprehensive test coverage. The code follows existing patterns in the codebase and handles edge cases appropriately."
+    },
+    {
+      "timestamp": "2026-03-30T03:59:40.681Z",
+      "action": "Step 3 (CLI Extension — Add kb_task_refine Tool) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:59:40.683Z",
+      "action": "plan review requested for Step 4 (CLI Extension — Add kb_task_refine Tool)"
+    },
+    {
+      "timestamp": "2026-03-30T03:59:52.304Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds the Refine UI to the dashboard frontend. All requirements from Step 2 are met: the `refineTask` API client is added, the \"Request Refinement\" button appears only for done/in-review tasks, the modal with feedback textarea and character counter works as specified, and comprehensive tests are included."
+    },
+    {
+      "timestamp": "2026-03-30T03:59:53.695Z",
+      "action": "Step 2 (Dashboard Frontend — Add Refine UI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:59:53.697Z",
+      "action": "Step 3 (CLI Extension — Add kb_task_refine Tool) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:59:55.099Z",
+      "action": "plan review requested for Step 3 (CLI Extension — Add kb_task_refine Tool)"
+    },
+    {
+      "timestamp": "2026-03-30T03:59:57.456Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T04:00:01.304Z",
+      "action": "Step 3 (CLI Extension — Add kb_task_refine Tool) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:00:05.089Z",
+      "action": "plan review requested for Step 3 (CLI Extension — Add kb_task_refine Tool)"
+    },
+    {
+      "timestamp": "2026-03-30T04:00:13.368Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is clear, well-scoped, and follows existing patterns in the codebase. The `refineTask` method already exists in `TaskStore` (from completed Step 1), and the extension has established patterns for similar tools like `kb_task_duplicate`. The plan correctly identifies the tool registration pattern and the need for prompt guidelines."
+    },
+    {
+      "timestamp": "2026-03-30T04:00:28.691Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan covers the basic tool registration but misses critical validation requirements that the `refineTask` store method enforces. The store method validates that feedback is non-empty and the original task is in \"done\" or \"in-review\" status. Without explicit parameter constraints in the tool definition, the LLM may receive unclear error messages when these validations fail."
+    },
+    {
+      "timestamp": "2026-03-30T04:00:35.358Z",
+      "action": "code review requested for Step 3 (CLI Extension — Add kb_task_refine Tool)"
+    },
+    {
+      "timestamp": "2026-03-30T04:00:38.367Z",
+      "action": "code review requested for Step 3 (CLI Extension — Add kb_task_refine Tool)"
+    },
+    {
+      "timestamp": "2026-03-30T04:00:57.325Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The implementation adds the `kb_task_refine` tool but contains a **critical bug**: the tool is registered **twice** in the extension file. The first registration (lines 347-378) appears under the `kb_task_duplicate` comment header and overwrites that tool's position, while the second registration (lines 407-436) is the intended one. Additionally, the extension tests were not updated to include the new tool in the expected tools list."
+    },
+    {
+      "timestamp": "2026-03-30T04:01:04.951Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The implementation adds the `kb_task_refine` tool to the CLI extension and the dashboard UI, but there's a **critical bug** in `extension.ts` where `kb_task_refine` is registered twice and `kb_task_duplicate` is misplaced in the wrong section. The dashboard frontend changes are correct, but the CLI extension has structural issues that would cause runtime failures."
+    },
+    {
+      "timestamp": "2026-03-30T04:01:20.612Z",
+      "action": "code review requested for Step 3 (CLI Extension — Add kb_task_refine Tool)"
+    },
+    {
+      "timestamp": "2026-03-30T04:01:29.757Z",
+      "action": "code review requested for Step 3 (CLI Extension — Add kb_task_refine Tool)"
+    },
+    {
+      "timestamp": "2026-03-30T04:01:45.332Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The `kb_task_refine` tool is correctly implemented in `packages/cli/src/extension.ts` following the established patterns of other tools in the file. The tool properly delegates to `store.refineTask()` and returns appropriate response data. Extension tests correctly include the new tool in the registration verification."
+    },
+    {
+      "timestamp": "2026-03-30T04:01:46.456Z",
+      "action": "Step 3 (CLI Extension — Add kb_task_refine Tool) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:01:46.458Z",
+      "action": "Step 4 (CLI Commands — Add refine Command) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:01:55.738Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The `kb_task_refine` tool is correctly implemented in `packages/cli/src/extension.ts` following the established patterns of other task tools. The implementation properly delegates to the `store.refineTask()` method, includes appropriate prompt guidelines for the LLM, and validates parameters using TypeBox schemas. The test suite includes the new tool in the expected tools list."
+    },
+    {
+      "timestamp": "2026-03-30T04:01:56.816Z",
+      "action": "Step 3 (CLI Extension — Add kb_task_refine Tool) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:01:56.836Z",
+      "action": "Step 4 (CLI Commands — Add refine Command) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:01:58.935Z",
+      "action": "plan review requested for Step 4 (CLI Commands — Add refine Command)"
+    },
+    {
+      "timestamp": "2026-03-30T04:01:59.836Z",
+      "action": "plan review requested for Step 4 (CLI Commands — Add refine Command)"
+    },
+    {
+      "timestamp": "2026-03-30T04:02:21.851Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is clear and achievable. The `refineTask` method already exists in TaskStore (from Step 1), and the pi extension tool `kb_task_refine` is already implemented in `packages/cli/src/extension.ts`. The worker only needs to add the CLI command (`kb task refine <id>`) to `packages/cli/src/commands/task.ts` and wire it up in `bin.ts`."
+    },
+    {
+      "timestamp": "2026-03-30T04:02:25.320Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is **already fully implemented** in the codebase. The `kb_task_refine` tool exists in `packages/cli/src/extension.ts` (lines 236-272) with complete parameter validation, prompt guidelines, and proper integration with `store.refineTask()`. The worker should verify the implementation is complete and mark this step as done. Note: The user's review request mentions \"Step 4: CLI Commands\" but the PROMPT.md identifies Step 4 as \"CLI Extension\" — the extension tool is already presen"
+    },
+    {
+      "timestamp": "2026-03-30T04:04:02.628Z",
+      "action": "Step 4 (CLI Commands — Add refine Command) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:04:05.316Z",
+      "action": "code review requested for Step 4 (CLI Commands — Add refine Command)"
+    },
+    {
+      "timestamp": "2026-03-30T04:04:07.056Z",
+      "action": "code review requested for Step 4 (CLI Commands — Add refine Command)"
+    },
+    {
+      "timestamp": "2026-03-30T04:04:25.504Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation of Step 4 is complete and follows established patterns. The `runTaskRefine` function, `kb_task_refine` pi tool, and CLI command integration are all correctly implemented with comprehensive test coverage. The code properly handles interactive and non-interactive feedback input, validates the 2000-character limit, and displays appropriate output."
+    },
+    {
+      "timestamp": "2026-03-30T04:04:26.708Z",
+      "action": "Step 4 (CLI Commands — Add refine Command) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:04:26.710Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:05:03.048Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:05:03.049Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:05:08.237Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation of Step 4 is complete and correct. The `kb_task_refine` tool has been added to the pi extension, the `runTaskRefine` function has been added to the CLI commands, and comprehensive tests cover all the required functionality. The code follows the existing patterns in the codebase and properly integrates with the core `refineTask` method."
+    },
+    {
+      "timestamp": "2026-03-30T04:05:09.573Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:05:20.553Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:05:47.856Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:05:47.858Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:05:53.666Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:05:53.668Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:06:15.995Z",
+      "action": "Agent finished without calling task_done — moved to in-review for inspection"
+    },
+    {
+      "timestamp": "2026-03-30T04:06:16.000Z",
+      "action": "Execution failed: Invalid transition: 'done' → 'in-review'. Valid targets: archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T04:06:05.236Z",
+  "createdAt": "2026-03-30T02:17:19.753Z",
+  "updatedAt": "2026-03-30T04:06:21.318Z",
+  "size": "M",
+  "reviewLevel": 2
+}

@@ -1,0 +1,115 @@
+{
+  "id": "KB-018",
+  "description": "the github import shouldn't have repo/owner in the dashboard - just show a dropdown with the remotes (or if only one remote, just use that)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update GitHubImportModal Component",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:05:05.937Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:09:34.085Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:09:50.706Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is clear, actionable, and accurately reflects the current codebase. The mission is well-defined (remove redundant owner/repo inputs, rely solely on remote selection), file references are correct, and steps have concrete verifiable outcomes. Testing requirements appropriately demand real automated tests with assertions and zero test failures as a quality gate."
+    },
+    {
+      "timestamp": "2026-03-30T01:10:43.189Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/clear-lotus"
+    },
+    {
+      "timestamp": "2026-03-30T01:10:43.190Z",
+      "action": "Step 0 (Update GitHubImportModal Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T01:10:47.237Z",
+      "action": "Step 0 (Update GitHubImportModal Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:10:49.459Z",
+      "action": "Step 0 Preflight complete. Working tree clean, ready to implement changes to GitHubImportModal component and tests."
+    },
+    {
+      "timestamp": "2026-03-30T01:10:49.460Z",
+      "action": "Step 0 (Update GitHubImportModal Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:10:49.461Z",
+      "action": "plan review requested for Step 1 (Update GitHubImportModal Component)"
+    },
+    {
+      "timestamp": "2026-03-30T01:11:01.671Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan is well-structured and achievable. The current implementation already has the foundational pieces (remote fetching, auto-population logic, `handleRemoteChange` callback) — it just needs UI adjustments to hide the owner/repo inputs and change how the remote selection is presented based on remote count."
+    },
+    {
+      "timestamp": "2026-03-30T01:11:22.629Z",
+      "action": "Step 1 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:11:23.534Z",
+      "action": "plan review requested for Step 2 (Update Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T01:11:34.582Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan direction is correct but has critical gaps. The test file currently references removed owner/repo inputs (lines 44-48, 50-62, 68-79) and uses a static `fetchGitRemotes` mock that returns an empty array. The plan must explicitly address: (1) how to structure the mock to support different remote scenarios per-test, and (2) that existing tests using owner/repo inputs need significant rewriting, not just minor updates."
+    },
+    {
+      "timestamp": "2026-03-30T01:12:09.588Z",
+      "action": "Step 1 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:12:09.590Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:12:09.594Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:12:51.690Z",
+      "action": "Step 3 complete: All 458 tests pass, build succeeds with no TypeScript errors"
+    },
+    {
+      "timestamp": "2026-03-30T01:12:51.690Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:12:57.732Z",
+      "action": "Step 4 complete: Created changeset file for the UI improvement"
+    },
+    {
+      "timestamp": "2026-03-30T01:12:59.029Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T01:13:16.464Z",
+  "createdAt": "2026-03-30T01:05:05.937Z",
+  "updatedAt": "2026-03-30T01:13:16.464Z",
+  "size": "S",
+  "reviewLevel": 1
+}

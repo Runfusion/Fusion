@@ -1,0 +1,32 @@
+{
+  "id": "KB-641",
+  "description": "Terminal still doesn't work. Failed to create session. Max sessions may be reached",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "blockedBy": "KB-618",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "createdAt": "2026-04-01T01:52:07.518Z",
+  "updatedAt": "2026-04-01T03:17:36.844Z",
+  "columnMovedAt": "2026-04-01T01:53:06.056Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T01:52:07.518Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T01:52:49.204Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T01:53:04.221Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a surgical diagnostic improvement. The mission is clear, the approach using a discriminated union type is idiomatic TypeScript, and the file scope is correctly limited to the four affected files. Steps have concrete outcomes and the testing strategy builds on existing patterns in the codebase."
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "id": "KB-126",
+  "description": "the new task modal needs to be scrollable so the contents all fit",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Scroll CSS",
+      "status": "done"
+    },
+    {
+      "name": "Add Scroll Behavior Test",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:16:48.516Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T06:17:39.585Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T06:17:51.676Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is clear, accurate, and appropriately scoped. The task correctly identifies a real UI issue (modal content overflow) and provides a straightforward CSS fix. File references are valid, steps have verifiable outcomes, and testing requirements are reasonable for the scope."
+    },
+    {
+      "timestamp": "2026-03-30T15:10:08.617Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/light-stone"
+    },
+    {
+      "timestamp": "2026-03-30T15:10:08.617Z",
+      "action": "Step 0 (Add Scroll CSS) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:11:10.686Z",
+      "action": "Step 0 (Add Scroll CSS) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:11:12.205Z",
+      "action": "Step 1 (Add Scroll Behavior Test) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:11:14.166Z",
+      "action": "Step 1 (Add Scroll Behavior Test) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:11:15.482Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:12:46.301Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:12:50.218Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:44.766Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:47.259Z",
+      "action": "KB-126 completion verification",
+      "outcome": "Verified: overflow-y: auto is present in .new-task-modal .modal-body CSS (line 7421 in styles.css). Added test confirming modal body element exists within new-task-modal. All 22 NewTaskModal tests pass (1246 total dashboard tests pass). Build succeeds with no errors."
+    },
+    {
+      "timestamp": "2026-03-30T15:13:48.663Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:14:04.740Z",
+  "createdAt": "2026-03-30T06:16:48.516Z",
+  "updatedAt": "2026-03-30T15:14:04.740Z",
+  "size": "S",
+  "reviewLevel": 0
+}

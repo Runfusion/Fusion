@@ -1,0 +1,261 @@
+{
+  "id": "KB-152",
+  "description": "Show weekly pace indicators on usage drop down on dashboard. Add minimax and zai also",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Minimax Provider Backend",
+      "status": "done"
+    },
+    {
+      "name": "Add Zai (Zhipu AI) Provider Backend",
+      "status": "done"
+    },
+    {
+      "name": "Add Pace Calculation to UsageWindow",
+      "status": "done"
+    },
+    {
+      "name": "Frontend Pace Indicator UI",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles for Pace Indicators",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T14:51:42.969Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T14:52:48.986Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:53:04.960Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and follows established patterns. The task correctly identifies the existing provider fetcher architecture in `packages/dashboard/src/usage.ts` and the UI component structure in `UsageIndicator.tsx`. Steps have concrete, verifiable outcomes with clear testing requirements. The scope is appropriately sized for a medium task with Review Level 2."
+    },
+    {
+      "timestamp": "2026-03-30T18:06:56.130Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/brave-ridge"
+    },
+    {
+      "timestamp": "2026-03-30T18:06:56.131Z",
+      "action": "Step 0 (Add Minimax Provider Backend) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T18:07:08.235Z",
+      "action": "Step 0 (Add Minimax Provider Backend) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:07:09.440Z",
+      "action": "Step 0 (Add Minimax Provider Backend) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:07:09.441Z",
+      "action": "Step 1 (Add Zai (Zhipu AI) Provider Backend) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:07:11.094Z",
+      "action": "plan review requested for Step 1 (Add Minimax Provider Backend)"
+    },
+    {
+      "timestamp": "2026-03-30T18:07:31.330Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan follows the established patterns in `packages/dashboard/src/usage.ts` (Claude/Codex/Gemini fetchers) and provides clear specifications for credentials path, API endpoint, response format, and error handling. The step will successfully produce a working Minimax provider fetcher. Three gaps were identified: missing explicit integration instruction, missing test creation requirement, and missing test expectation updates. These don't fundamentally break the approach but should be addressed "
+    },
+    {
+      "timestamp": "2026-03-30T18:07:32.201Z",
+      "action": "Step 1 (Add Zai (Zhipu AI) Provider Backend) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:09:06.964Z",
+      "action": "code review requested for Step 1 (Add Minimax Provider Backend)"
+    },
+    {
+      "timestamp": "2026-03-30T18:09:26.644Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The `fetchMinimaxUsage()` implementation follows the established patterns correctly and handles credentials, API calls, and error cases appropriately. However, **the tests were not updated** to account for the new provider, which will cause test failures. The task explicitly requires tests for new providers and running the backend tests."
+    },
+    {
+      "timestamp": "2026-03-30T18:11:39.325Z",
+      "action": "code review requested for Step 1 (Add Minimax Provider Backend)"
+    },
+    {
+      "timestamp": "2026-03-30T18:12:01.063Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds the `fetchMinimaxUsage()` function following the established patterns from Claude, Codex, and Gemini providers. The code handles credentials loading, API requests, response parsing, and error handling appropriately. Tests are comprehensive with 5 specific test cases covering no-auth scenarios, missing tokens, successful data parsing, and both 401/403 auth errors."
+    },
+    {
+      "timestamp": "2026-03-30T18:12:02.202Z",
+      "action": "Step 1 (Add Zai (Zhipu AI) Provider Backend) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:12:02.203Z",
+      "action": "Step 2 (Add Pace Calculation to UsageWindow) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:12:03.246Z",
+      "action": "plan review requested for Step 2 (Add Zai (Zhipu AI) Provider Backend)"
+    },
+    {
+      "timestamp": "2026-03-30T18:12:13.337Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows the established patterns in the codebase. The requirements are clear: implement `fetchZaiUsage()` with daily/monthly windows, yellow circle emoji icon, auth error handling, and integrate into the main fetcher. The test expectations are correctly identified for updating from 4 to 5 providers."
+    },
+    {
+      "timestamp": "2026-03-30T18:13:00.642Z",
+      "action": "code review requested for Step 2 (Add Zai (Zhipu AI) Provider Backend)"
+    },
+    {
+      "timestamp": "2026-03-30T18:13:25.880Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Zai (Zhipu AI) provider backend has been correctly implemented following the established patterns from Claude, Codex, and Gemini fetchers. The `fetchZaiUsage()` function properly handles credential loading, API requests, error handling, and window parsing. The `fetchAllProviderUsage()` function has been updated to include both new providers, and tests have been added with good coverage."
+    },
+    {
+      "timestamp": "2026-03-30T18:13:27.478Z",
+      "action": "Step 2 (Add Pace Calculation to UsageWindow) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:13:27.479Z",
+      "action": "plan review requested for Step 3 (Add Pace Calculation to UsageWindow)"
+    },
+    {
+      "timestamp": "2026-03-30T18:13:45.997Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan has architectural merit in moving pace calculation to the backend, but there are critical inconsistencies with existing frontend logic that will cause regressions, missing edge case handling, and insufficient testing specificity."
+    },
+    {
+      "timestamp": "2026-03-30T18:13:49.544Z",
+      "action": "Step 3 (Frontend Pace Indicator UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:14:41.943Z",
+      "action": "code review requested for Step 3 (Add Pace Calculation to UsageWindow)"
+    },
+    {
+      "timestamp": "2026-03-30T18:15:01.788Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly adds pace calculation to the UsageWindow type with a well-structured `calculatePace()` function, comprehensive tests, and proper integration into the provider fetch pipeline. The `UsageWindow` interface has been updated with the optional `pace` field in both backend (`usage.ts`) and frontend API types (`api.ts`). The 5% threshold (instead of spec's 10%) is consistently applied across both backend and frontend."
+    },
+    {
+      "timestamp": "2026-03-30T18:15:03.036Z",
+      "action": "Step 3 (Frontend Pace Indicator UI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:15:03.037Z",
+      "action": "Step 4 (Add CSS Styles for Pace Indicators) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:15:04.722Z",
+      "action": "plan review requested for Step 4 (Frontend Pace Indicator UI)"
+    },
+    {
+      "timestamp": "2026-03-30T18:15:35.216Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "Step 4 is already functionally implemented in `UsageIndicator.tsx` (lines 50-140). The pace indicator displays correctly for weekly windows, shows appropriate status messages (\"ahead of pace\", \"behind pace\", \"On pace\"), and has comprehensive test coverage in `UsageIndicator.test.tsx` (lines 573-862). The implementation is functional and well-tested.\n\nHowever, there are **material deviations from the plan specification** that should be acknowledged. The implementation uses different icons, colors"
+    },
+    {
+      "timestamp": "2026-03-30T18:16:58.268Z",
+      "action": "code review requested for Step 4 (Frontend Pace Indicator UI)"
+    },
+    {
+      "timestamp": "2026-03-30T18:17:23.845Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The pace indicator UI has been implemented with the correct structure and test coverage, but **critical visual design requirements from the spec are not followed**. The colors and icons deviate significantly from the specification, which will cause user confusion about the semantic meaning of pace status."
+    },
+    {
+      "timestamp": "2026-03-30T18:17:46.155Z",
+      "action": "code review requested for Step 4 (Frontend Pace Indicator UI)"
+    },
+    {
+      "timestamp": "2026-03-30T19:24:49.697Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-30T19:24:53.047Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-30T19:27:03.794Z",
+      "action": "Steering comment added",
+      "outcome": "by user"
+    },
+    {
+      "timestamp": "2026-03-30T19:28:14.450Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The Step 4 implementation successfully adds the Pace Indicator UI component to the UsageIndicator. The code correctly displays visual pace indicators for weekly usage windows, showing whether the user is ahead of, on-track with, or behind their expected consumption rate. The implementation follows existing patterns in the codebase and includes comprehensive test coverage."
+    },
+    {
+      "timestamp": "2026-03-30T19:28:16.147Z",
+      "action": "Step 4 (Add CSS Styles for Pace Indicators) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:28:16.148Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:28:29.328Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:28:29.328Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:28:34.651Z",
+      "action": "Completed all steps for KB-152",
+      "outcome": "- Added Minimax provider backend with credentials support\n- Added Zai (Zhipu AI) provider backend with daily/monthly windows\n- Added UsagePace type and calculatePace helper function\n- Backend now calculates pace for weekly windows automatically\n- Frontend updated to use backend-provided pace data\n- CSS colors fixed: ahead=red, on-track=green, behind=blue\n- Icons updated to use lucide-react (TrendingUp, CheckCircle, Info)\n- All 66 usage tests passing\n- Build successful\n- Changeset created for minor version bump"
+    },
+    {
+      "timestamp": "2026-03-30T19:28:35.674Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T20:40:46.101Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-30T20:40:48.517Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-30T20:40:57.167Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T20:45:43.134Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:45:43.914Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T20:45:59.657Z",
+  "createdAt": "2026-03-30T14:51:42.969Z",
+  "updatedAt": "2026-03-30T20:45:59.657Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "steeringComments": [
+    {
+      "id": "1774898823794-yogoj0",
+      "text": "stuck?",
+      "createdAt": "2026-03-30T19:27:03.794Z",
+      "author": "user"
+    }
+  ]
+}

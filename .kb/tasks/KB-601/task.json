@@ -1,0 +1,121 @@
+{
+  "id": "KB-601",
+  "description": "Unpausing tasks fail with ENOENT: no such file or directory, open '/Users/eclipxe/Projects/kb/.fusion/tasks/KB-503/task.json.tmp",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 4,
+  "summary": "Fixed ENOENT error when unpausing tasks with missing directories. Added `mkdir(dir, { recursive: true })` to `atomicWriteTaskJson` in packages/core/src/store.ts to ensure the task directory exists before writing task.json. Tests for the missing directory scenario were already added in prior commits. Created changeset file for the patch release.",
+  "createdAt": "2026-03-31T21:32:31.905Z",
+  "updatedAt": "2026-03-31T23:38:21.220Z",
+  "columnMovedAt": "2026-03-31T23:38:21.220Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix atomicWriteTaskJson to Ensure Directory Exists",
+      "status": "done"
+    },
+    {
+      "name": "Add Test for Missing Directory Scenario",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:32:31.905Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:33:54.412Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:34:04.796Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies the bug and provides a clear, minimal fix. The file references are correct, steps are verifiable, and the testing strategy appropriately covers the regression scenario. Review level 1 (Plan Only) is appropriate for this defensive fix with zero blast radius."
+    },
+    {
+      "timestamp": "2026-03-31T21:37:57.152Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rusty-marsh"
+    },
+    {
+      "timestamp": "2026-03-31T21:37:57.153Z",
+      "action": "Step 0 (Fix atomicWriteTaskJson to Ensure Directory Exists) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T21:42:56.061Z",
+      "action": "Step 1 (Add Test for Missing Directory Scenario) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:42:56.067Z",
+      "action": "plan review requested for Step 1 (Fix atomicWriteTaskJson to Ensure Directory Exists)"
+    },
+    {
+      "timestamp": "2026-03-31T21:43:11.635Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the fix location and approach. The `mkdir` import already exists in `store.ts` (line 2), so no import changes are needed. Adding `mkdir(dir, { recursive: true })` at the start of `atomicWriteTaskJson` (line 391) is the minimal, correct fix that will resolve the ENOENT error for all callers—not just `pauseTask`."
+    },
+    {
+      "timestamp": "2026-03-31T21:43:19.830Z",
+      "action": "Step 1 (Add Test for Missing Directory Scenario) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:43:21.482Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:43:21.485Z",
+      "action": "plan review requested for Step 2 (Add Test for Missing Directory Scenario)"
+    },
+    {
+      "timestamp": "2026-03-31T21:43:35.039Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is solid and follows the existing test patterns in `packages/core/src/store.test.ts`. The test scenario directly validates the fix in `atomicWriteTaskJson` by simulating the exact failure condition (missing directory) that triggers the ENOENT error. The plan correctly covers both pause and unpause operations to ensure complete coverage."
+    },
+    {
+      "timestamp": "2026-03-31T21:43:55.557Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:43:56.731Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:37:54.393Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pale-tiger"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:03.859Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:09.672Z",
+      "action": "Created changeset file for the patch fix",
+      "outcome": "Changeset .changeset/fix-unpause-missing-directory.md created with patch bump type for @gsxdsm/fusion"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:11.691Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:11.693Z",
+      "action": "Step 0 (Fix atomicWriteTaskJson to Ensure Directory Exists) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:11.693Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:11.695Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

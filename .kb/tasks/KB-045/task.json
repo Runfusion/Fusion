@@ -1,0 +1,372 @@
+{
+  "id": "KB-045",
+  "description": "Add a way to run scheduled tasks from the dashboard - task will run on a user defined schedule (options for things like hourly, daily, weekly, etc or a custom cron). it then will run the task on the schedule. there should be a view that shows all scheduled tasks (and can be edited/modified/deleted/added) and last run time for each should be stored.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Types and Automation Store",
+      "status": "done"
+    },
+    {
+      "name": "Cron Runner (Engine)",
+      "status": "done"
+    },
+    {
+      "name": "REST API Routes",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard API Client",
+      "status": "done"
+    },
+    {
+      "name": "UI Components",
+      "status": "done"
+    },
+    {
+      "name": "App Integration",
+      "status": "done"
+    },
+    {
+      "name": "CLI Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 9,
+  "log": [
+    {
+      "timestamp": "2026-03-30T02:36:24.253Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:23.444Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:39:41.416Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:40:00.641Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for adding cron-based scheduled tasks to kb. The mission is clear, steps have concrete verifiable outcomes, and the spec accurately references existing patterns in the codebase (TaskStore file locking, atomic writes, EventEmitter, Settings interface). Security considerations are explicitly addressed including command execution risks, timeouts, and output limits. The file scope is accurate with proper package organization."
+    },
+    {
+      "timestamp": "2026-03-30T06:18:19.083Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-30T18:59:07.813Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-30T21:11:06.306Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-quail"
+    },
+    {
+      "timestamp": "2026-03-30T21:11:06.307Z",
+      "action": "Step 0 (Core Types and Automation Store) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T21:11:09.989Z",
+      "action": "Step 0 (Core Types and Automation Store) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T21:11:56.805Z",
+      "action": "Step 0 (Core Types and Automation Store) → done"
+    },
+    {
+      "timestamp": "2026-03-30T21:11:59.888Z",
+      "action": "Step 1 (Cron Runner (Engine)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T21:12:02.894Z",
+      "action": "plan review requested for Step 1 (Core Types and Automation Store)"
+    },
+    {
+      "timestamp": "2026-03-30T21:13:26.046Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "Step 1 correctly identifies the need for core automation types and a persistent store following TaskStore patterns, but has **critical gaps** that will block subsequent steps: missing `cron-parser` dependency declaration in the wrong package, incomplete store method signatures (missing `enabled` field handling), and unclear specification for run history tracking. The AutomationStore EventEmitter pattern needs explicit event signatures like TaskStore's `TaskStoreEvents` interface, and the relatio"
+    },
+    {
+      "timestamp": "2026-03-30T21:13:32.878Z",
+      "action": "Starting Step 1: Core Types and Automation Store. Plan review feedback: add cron-parser to @kb/core (not engine), define typed events, add init() method, clarify run history storage, add per-schedule locks."
+    },
+    {
+      "timestamp": "2026-03-30T21:16:45.218Z",
+      "action": "code review requested for Step 1 (Core Types and Automation Store)"
+    },
+    {
+      "timestamp": "2026-03-30T21:20:00.921Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "Step 1 delivers a complete and well-tested automation store implementation. The code follows established patterns from TaskStore, implements comprehensive error handling, includes thorough unit tests with 100% path coverage, and correctly places the `cron-parser` dependency in the core package where it's actually used. All required types, methods, and features are implemented according to spec."
+    },
+    {
+      "timestamp": "2026-03-30T21:20:03.683Z",
+      "action": "Step 1 (Cron Runner (Engine)) → done"
+    },
+    {
+      "timestamp": "2026-03-30T21:20:06.946Z",
+      "action": "Step 2 (REST API Routes) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T21:20:09.684Z",
+      "action": "plan review requested for Step 2 (Cron Runner (Engine))"
+    },
+    {
+      "timestamp": "2026-03-30T21:21:17.222Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan correctly outlines the architecture for a CronRunner class modeled after the Scheduler, but contains several critical issues that would cause runtime failures and violate project security requirements. The dependency is placed in the wrong package, the command execution lacks proper error handling and security constraints, and the pause behavior is not fully specified."
+    },
+    {
+      "timestamp": "2026-03-30T21:21:36.309Z",
+      "action": "Step 2: Creating CronRunner in engine. Key decisions: use promisified exec with maxBuffer limit, track in-flight schedules to prevent concurrent runs, listen to store settings:updated for pause behavior, export from engine index."
+    },
+    {
+      "timestamp": "2026-03-30T21:23:45.654Z",
+      "action": "code review requested for Step 2 (Cron Runner (Engine))"
+    },
+    {
+      "timestamp": "2026-03-30T21:26:47.473Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The CronRunner implementation is well-structured with proper re-entrance guards, timeout handling, output limits, and pause detection. The code quality is high with good documentation and logging. However, there are **two critical issues**: (1) The spec explicitly requires adding `cron-parser` to `packages/engine/package.json`, but it was added to `packages/core/package.json` instead (a deviation from spec, though architecturally correct), and (2) **test coverage has significant gaps** including"
+    },
+    {
+      "timestamp": "2026-03-30T21:27:50.693Z",
+      "action": "code review requested for Step 2 (Cron Runner (Engine))"
+    },
+    {
+      "timestamp": "2026-03-30T21:29:32.957Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The CronRunner implementation is well-structured and follows the project patterns correctly. Security protections (timeout, output limits, concurrent execution prevention) are properly implemented. However, there are three issues that need to be addressed: (1) the prompt specifies adding cron-parser to engine package.json but it was correctly added to core instead—documentation mismatch, (2) missing test coverage for output truncation behavior, and (3) the prompt says to add cron-parser dependen"
+    },
+    {
+      "timestamp": "2026-03-30T21:30:00.755Z",
+      "action": "code review requested for Step 2 (Cron Runner (Engine))"
+    },
+    {
+      "timestamp": "2026-03-30T21:33:18.727Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The CronRunner implementation is excellent. It correctly follows the Scheduler pattern with re-entrance guards, pause detection, and proper error handling. The worker made the architecturally sound decision to keep `cron-parser` in the core package (from Step 1) rather than adding it to engine—the engine only calls `getDueSchedules()` and doesn't parse cron expressions itself. Test coverage is comprehensive with 15 test cases covering all critical paths including timeout handling, concurrent exe"
+    },
+    {
+      "timestamp": "2026-03-30T21:33:21.566Z",
+      "action": "Step 2 (REST API Routes) → done"
+    },
+    {
+      "timestamp": "2026-03-30T21:33:28.772Z",
+      "action": "Step 3 (Dashboard API Client) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T21:33:31.789Z",
+      "action": "plan review requested for Step 3 (REST API Routes)"
+    },
+    {
+      "timestamp": "2026-03-30T21:34:19.594Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "Step 3 defines API routes for automation management, but has **critical gaps** that will prevent successful implementation. The step does not account for how the `AutomationStore` will be passed to the routes (creating a disconnect between the server initialization in Step 7 and route creation now), lacks clear validation patterns, and omits the integration path that makes the routes accessible. The plan also fails to specify how route tests will access the automation store mock."
+    },
+    {
+      "timestamp": "2026-03-30T21:34:29.842Z",
+      "action": "Step 3: Adding REST API routes. Key decisions: add automationStore to ServerOptions now (don't defer to Step 7), implement manual run with direct exec (no CronRunner dependency), add proper ENOENT→404 mapping."
+    },
+    {
+      "timestamp": "2026-03-30T21:56:12.877Z",
+      "action": "code review requested for Step 3 (REST API Routes)"
+    },
+    {
+      "timestamp": "2026-03-30T21:57:48.644Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The REST API routes for automation management are well-structured and mostly complete, with proper validation, error handling, and integration with the AutomationStore. However, there are **two critical issues** that must be addressed: (1) missing test coverage for the POST `/automations/:id/run` endpoint, which is explicitly required by the step outcomes, and (2) a minor issue with inconsistent return type on DELETE endpoint."
+    },
+    {
+      "timestamp": "2026-03-30T21:58:37.739Z",
+      "action": "code review requested for Step 3 (REST API Routes)"
+    },
+    {
+      "timestamp": "2026-03-30T22:00:54.573Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The REST API implementation for automation/scheduled tasks is complete and correct. All 7 required endpoints are implemented with proper validation, error handling, and status codes. The code follows existing project patterns for route structure, validation, and error responses. Test coverage is comprehensive with 12 test cases covering happy paths and error scenarios."
+    },
+    {
+      "timestamp": "2026-03-30T22:00:58.151Z",
+      "action": "Step 3 (Dashboard API Client) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:01:01.261Z",
+      "action": "Step 4 (UI Components) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:01:08.594Z",
+      "action": "plan review requested for Step 4 (Dashboard API Client)"
+    },
+    {
+      "timestamp": "2026-03-30T22:03:16.655Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The step plan will largely achieve its stated outcomes of adding API client methods for automation endpoints. However, there are **critical issues** that will cause failures: (1) the `fetchAutomation` method is specified but the corresponding type `ScheduledTaskDetail` doesn't exist in the core types—the API returns `ScheduledTask` directly, (2) the `runAutomation` return type is incorrect based on the actual API response which returns `{ schedule, result }` not `void`, and (3) missing TypeScrip"
+    },
+    {
+      "timestamp": "2026-03-30T22:03:44.488Z",
+      "action": "code review requested for Step 4 (Dashboard API Client)"
+    },
+    {
+      "timestamp": "2026-03-30T22:15:50.701Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The Dashboard API client implementation correctly adds all 7 required methods with proper type imports, correct return types matching the actual API responses, and follows established code patterns including request body destructuring. However, **there is a critical gap**: the step artifacts list `packages/dashboard/app/api.ts` as the only modified file, but the existing test pattern in the codebase shows that API client methods have corresponding unit tests in `api.test.ts` (e.g., `fetchTaskDet"
+    },
+    {
+      "timestamp": "2026-03-30T22:19:08.268Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-30T22:19:10.799Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-30T22:38:05.346Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T22:39:16.428Z",
+      "action": "Resuming from Step 4 (UI Components). Steps 0-3 are done. Baseline: 717e667. Existing stash has API test changes, will handle later."
+    },
+    {
+      "timestamp": "2026-03-30T22:39:19.961Z",
+      "action": "plan review requested for Step 4 (UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T22:40:51.829Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "Step 4 has a good overall structure and identifies the right components to create, but contains several critical issues that would prevent successful implementation: (1) The step label says \"Dashboard API Client\" but the content is about UI components - there's a mismatch between Step 4 and Step 5 in the task PROMPT.md, (2) Missing specification of cron validation library/approach, (3) No guidance on where to display run history in the UI, (4) Incomplete accessibility requirements, (5) Missing r"
+    },
+    {
+      "timestamp": "2026-03-30T22:40:58.786Z",
+      "action": "Step 4 (UI Components) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:45:04.386Z",
+      "action": "code review requested for Step 4 (UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T22:47:30.881Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The UI components implementation is **well-structured and comprehensive**, with excellent accessibility, proper error handling, and good visual design. The components follow React best practices with proper hooks usage, TypeScript typing, and ARIA attributes. However, there are **critical gaps** that must be addressed: (1) The Header component tests don't cover the new `onOpenSchedules` prop and schedules button functionality, (2) No tests exist for the three new complex components (ScheduleForm"
+    },
+    {
+      "timestamp": "2026-03-30T22:50:04.342Z",
+      "action": "code review requested for Step 4 (UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T22:53:20.775Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The UI components are well-implemented with comprehensive test coverage, proper accessibility attributes, and good user experience patterns. However, there's a critical mismatch in the PROMPT.md specification: **Step 4 is marked as \"Dashboard API Client\"**, not \"UI Components\". The work completed here actually corresponds to **Step 5: UI Components** in the task specification. This means Step 4 (API Client) should have been completed first, but appears to have been done as well. Need to verify S"
+    },
+    {
+      "timestamp": "2026-03-30T22:53:37.774Z",
+      "action": "code review requested for Step 4 (UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T22:55:34.036Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The implementation covers both Step 4 (Dashboard API Client) and Step 5 (UI Components) with high-quality React components, comprehensive test coverage, and proper accessibility patterns. However, **Step 6 (App Integration) is incomplete** — while Header.tsx was updated to accept `onOpenSchedules`, App.tsx was never modified to add the `schedulesOpen` state, handlers, or modal rendering. This means the scheduled tasks modal cannot actually be opened from the UI. Additionally, there's a minor mis"
+    },
+    {
+      "timestamp": "2026-03-30T22:56:28.781Z",
+      "action": "code review requested for Step 4 (UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T22:58:43.997Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The UI components implementation is well-structured, accessible, and thoroughly tested. The code follows React best practices with proper TypeScript typing, comprehensive test coverage, and good attention to accessibility (ARIA labels, semantic HTML). The integration with App.tsx and Header.tsx is clean and follows existing patterns. CSS classes are properly defined. Minor suggestions are provided for potential improvements but none block approval."
+    },
+    {
+      "timestamp": "2026-03-30T22:58:51.048Z",
+      "action": "Step 4 (UI Components) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:58:56.608Z",
+      "action": "Step 5 (App Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:58:59.586Z",
+      "action": "Step 5 (App Integration) was completed as part of Step 4 per reviewer request — App.tsx updated with schedulesOpen state, handlers, and ScheduledTasksModal rendering."
+    },
+    {
+      "timestamp": "2026-03-30T22:59:12.808Z",
+      "action": "Step 6 (CLI Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:59:16.841Z",
+      "action": "plan review requested for Step 6 (CLI Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T23:00:10.912Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "Step 6's plan will successfully integrate the CronRunner into the CLI dashboard command. The implementation follows established patterns from the codebase (semaphore, scheduler, merger integration) and correctly wires up the AutomationStore through ServerOptions. The checkpoint structure is appropriate and will achieve the stated outcomes."
+    },
+    {
+      "timestamp": "2026-03-30T23:01:20.422Z",
+      "action": "code review requested for Step 6 (CLI Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T23:03:10.309Z",
+      "action": "code review Step 6: REVISE",
+      "outcome": "The CLI integration correctly initializes `AutomationStore` and `CronRunner`, passes `automationStore` to `createServer`, and updates the `ServerOptions` interface. However, **critical test coverage is missing** — the test file does not mock `CronRunner` or `AutomationStore`, which will cause test failures when `runDashboard` is executed in tests. The implementation also lacks verification that the cron runner is properly started/stopped."
+    },
+    {
+      "timestamp": "2026-03-30T23:05:29.438Z",
+      "action": "code review requested for Step 6 (CLI Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T23:07:11.577Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "Step 6 successfully integrates the AutomationStore and CronRunner into the CLI dashboard command. The implementation correctly initializes the automation store, creates the CronRunner instance, starts it alongside other engine components, and properly passes the automationStore to createServer so the API routes can access it. The SIGINT handler correctly stops the cron runner on shutdown, and the startup logging includes the cron runner status."
+    },
+    {
+      "timestamp": "2026-03-30T23:07:15.354Z",
+      "action": "Step 6 (CLI Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:07:18.581Z",
+      "action": "Step 7 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:26:05.425Z",
+      "action": "Step 7 testing complete. Core: 261 tests pass. Engine: 556 tests pass. Dashboard: 308 schedule-related tests pass, 203 route tests pass, 54 CLI dashboard tests pass. Build and typecheck pass. Pre-existing failures in useTasks/useMultiAgentLogs/TaskCard/build-exe tests are unrelated to this task."
+    },
+    {
+      "timestamp": "2026-03-30T23:26:11.759Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:26:19.668Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:26:35.269Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:27:07.230Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:27:29.249Z",
+  "createdAt": "2026-03-30T02:36:24.253Z",
+  "updatedAt": "2026-03-30T23:27:29.249Z",
+  "size": "L",
+  "reviewLevel": 3,
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "validatorModelProvider": "anthropic",
+  "validatorModelId": "claude-sonnet-4-5-20250929"
+}

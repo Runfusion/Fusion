@@ -1,0 +1,22 @@
+{
+  "id": "KB-663",
+  "description": "Research Paperclip.ai for best practices in agent management UI. Implement a full-featured agent screen with:\n1. Agent detail view with tabs (Dashboard, Configuration, Logs, Settings)\n2. Real-time chat/interaction with agents\n3. Agent status monitoring (health, heartbeat, active runs)\n4. Agent configuration options (model settings, etc.)\n5. Live transcript streaming\n6. Agent action controls (pause/resume/terminate)\n7. Agent metrics and statistics",
+  "column": "triage",
+  "dependencies": [],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-04-02T03:22:36.945Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-02T03:30:41.018Z",
+      "action": "Task paused"
+    }
+  ],
+  "columnMovedAt": "2026-04-02T03:22:36.945Z",
+  "createdAt": "2026-04-02T03:22:36.945Z",
+  "updatedAt": "2026-04-02T03:30:41.018Z",
+  "paused": true
+}

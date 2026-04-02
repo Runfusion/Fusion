@@ -1,0 +1,122 @@
+{
+  "id": "KB-299",
+  "description": "Add server-side SSE events for agent lifecycle: Extend packages/dashboard/src/sse.ts to emit agent:created, agent:updated, agent:deleted, and agent:heartbeat events from AgentStore, similar to existing task:* events. The frontend hooks (useAgents, useAgentDetail) already listen for these events on /api/events but the server doesn't emit them yet.",
+  "column": "done",
+  "dependencies": [
+    "KB-291"
+  ],
+  "steps": [
+    {
+      "name": "Update Server to Create Shared AgentStore",
+      "status": "done"
+    },
+    {
+      "name": "Extend createSSE to Support AgentStore",
+      "status": "done"
+    },
+    {
+      "name": "Update Route Registration to Pass AgentStore",
+      "status": "done"
+    },
+    {
+      "name": "Update createApiRoutes to Accept and Use AgentStore",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:50:03.624Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T16:51:59.724Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:52:20.004Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. It correctly identifies the need to extend the existing SSE infrastructure to emit AgentStore events, matching the established patterns from task events. The file references are correct, the AgentStore events match the actual implementation, and the steps have concrete, verifiable outcomes."
+    },
+    {
+      "timestamp": "2026-03-31T18:11:27.297Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bright-marsh"
+    },
+    {
+      "timestamp": "2026-03-31T18:11:27.297Z",
+      "action": "Step 0 (Update Server to Create Shared AgentStore) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T18:11:29.161Z",
+      "action": "Step 0 (Update Server to Create Shared AgentStore) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:11:50.255Z",
+      "action": "KB-291 branch exists with AgentStore implementation but KB-299 worktree doesn't have it yet. Need to merge KB-291 changes.",
+      "outcome": "The merge base is 349fc3b, but KB-291 has 10 additional commits including the AgentStore implementation."
+    },
+    {
+      "timestamp": "2026-03-31T18:11:55.689Z",
+      "action": "Step 1 (Extend createSSE to Support AgentStore) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:11:55.690Z",
+      "action": "Step 1: Starting to update server.ts to create shared AgentStore"
+    },
+    {
+      "timestamp": "2026-03-31T18:12:46.980Z",
+      "action": "Step 2 (Update Route Registration to Pass AgentStore) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:26:22.609Z",
+      "action": "Step 1 (Extend createSSE to Support AgentStore) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:26:22.611Z",
+      "action": "Step 2 (Update Route Registration to Pass AgentStore) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:26:27.276Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:26:52.371Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:26:55.071Z",
+      "action": "Step 5 (Testing) complete. All relevant tests passing: Core (340), Engine (604), Dashboard server-side (268). SubtaskBreakdownModal failures are pre-existing issues unrelated to this task.",
+      "outcome": "Build passes, all core functionality tests pass. Pre-existing drag-and-drop test failures in SubtaskBreakdownModal are unrelated to agent SSE changes."
+    },
+    {
+      "timestamp": "2026-03-31T18:27:00.994Z",
+      "action": "Step 0 (Update Server to Create Shared AgentStore) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:00.996Z",
+      "action": "Step 3 (Update createApiRoutes to Accept and Use AgentStore) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:00.998Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:01.004Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:27:08.572Z",
+  "createdAt": "2026-03-31T16:50:03.624Z",
+  "updatedAt": "2026-03-31T18:27:08.572Z",
+  "size": "S",
+  "reviewLevel": 0,
+  "summary": "Successfully implemented server-side SSE events for agent lifecycle. Extended the dashboard's SSE endpoint (/api/events) to emit agent lifecycle events from AgentStore. Key changes:\n\n1. Server (server.ts): Added shared AgentStore instance with lazy initialization to avoid breaking test environments. The store is initialized only when agent routes are accessed.\n\n2. SSE Handler (sse.ts): Extended createSSE() to accept optional AgentStore and listen to agent:created, agent:updated, agent:deleted, and agent:heartbeat events. Events are emitted in the same format as task events with proper cleanup on connection close.\n\n3. Routes (routes.ts): Updated createApiRoutes() signature to accept optional AgentStore and modified all agent routes to use the shared store via a getAgentStore() helper.\n\nBuild passes and all relevant tests pass (340 core, 604 engine, 268 dashboard server-side). Pre-existing SubtaskBreakdownModal test failures are unrelated to this change."
+}

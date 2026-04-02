@@ -1,0 +1,114 @@
+{
+  "id": "KB-642",
+  "title": "Refinement: KB-322",
+  "description": "I don't see the icon\n\nRefines: KB-322",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 5,
+  "summary": "Added missing expand icon (Maximize2) to TaskCard components. The card body no longer opens the detail modal on click - only the expand button does. Double-click to edit still works on the card body, and all drag functionality is preserved. Updated 136 tests which all pass. Created changeset for @fusion/dashboard patch release.",
+  "createdAt": "2026-04-01T01:52:58.444Z",
+  "updatedAt": "2026-04-01T02:20:59.137Z",
+  "columnMovedAt": "2026-04-01T02:20:59.137Z",
+  "dependencies": [
+    "KB-322"
+  ],
+  "steps": [
+    {
+      "name": "Add Expand Button and Fix Click Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles for Expand Button",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T01:52:58.444Z",
+      "action": "Created as refinement of KB-322"
+    },
+    {
+      "timestamp": "2026-04-01T01:53:40.276Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T01:54:01.572Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification is well-crafted and technically accurate. It correctly identifies the gap in KB-322's implementation (missing expand icon), provides precise file references with approximate line numbers that match the actual code, and outlines concrete, verifiable steps. The testing requirements appropriately demand real assertions and full test suite passage. The size (S) and review level (0) are appropriate for this low-risk UI completion work."
+    },
+    {
+      "timestamp": "2026-04-01T02:13:01.249Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/calm-dune"
+    },
+    {
+      "timestamp": "2026-04-01T02:13:01.250Z",
+      "action": "Step 0 (Add Expand Button and Fix Click Behavior) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T02:14:34.768Z",
+      "action": "Step 0 (Add Expand Button and Fix Click Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:14:46.043Z",
+      "action": "Step 0 (Add Expand Button and Fix Click Behavior) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:14:46.044Z",
+      "action": "Step 1 (Add CSS Styles for Expand Button) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:15:33.196Z",
+      "action": "Step 1 (Add CSS Styles for Expand Button) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:15:33.197Z",
+      "action": "Step 2 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:15:39.961Z",
+      "action": "Step 2 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:15:39.963Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:16:14.498Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:16:14.500Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:20:22.963Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:20:27.416Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:20:29.089Z",
+      "action": "Completed KB-642: Added missing expand icon to TaskCard components",
+      "outcome": "All 136 TaskCard tests pass. Changes include: 1) Added Maximize2 expand icon button to card header actions, 2) Removed card-wide click handler (only expand button opens modal now), 3) Added CSS styles for expand button following .card-edit-btn pattern, 4) Updated tests to reflect new interaction pattern, 5) Created changeset file for @fusion/dashboard patch release."
+    },
+    {
+      "timestamp": "2026-04-01T02:20:32.328Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

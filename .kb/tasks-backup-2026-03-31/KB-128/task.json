@@ -1,0 +1,25 @@
+{
+  "id": "KB-128",
+  "title": "Add support for creating (and merging) pull requests",
+  "description": "Amazing project - it works really well!\n\nIt would be great if there was an option to have the tool create a pull request instead of merge - and then watch the pull request for comments and suggestions, then merges the pull request once checks pass\n\nSource: https://github.com/dustinbyrne/kb/issues/9\n\n(Duplicated from KB-093)",
+  "column": "triage",
+  "dependencies": [],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:18:36.450Z",
+      "action": "Duplicated from KB-093"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:40.249Z",
+      "action": "Task paused"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T06:18:36.450Z",
+  "createdAt": "2026-03-30T06:18:36.450Z",
+  "updatedAt": "2026-03-30T06:24:35.176Z",
+  "paused": true,
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4"
+}

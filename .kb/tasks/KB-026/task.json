@@ -1,0 +1,199 @@
+{
+  "id": "KB-026",
+  "description": "add support for ntfy.sh notifications on task completion and failures - configure topic from dashboard and template (pre-fill with sane defaults).",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Types — Add ntfy Settings",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard Settings UI — Notifications Section",
+      "status": "done"
+    },
+    {
+      "name": "Engine Notification Service",
+      "status": "done"
+    },
+    {
+      "name": "Wire Up Notifier in Engine",
+      "status": "done"
+    },
+    {
+      "name": "Template Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:16:59.479Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:19:24.222Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:19:42.819Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and comprehensive. It correctly identifies the touch points across core types, dashboard UI, and engine events. Steps have concrete, verifiable outcomes. Testing requirements demand real automated tests. The file scope is accurate with one minor clarification needed on where the notifier gets instantiated."
+    },
+    {
+      "timestamp": "2026-03-30T02:36:55.822Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/amber-spark"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:55.823Z",
+      "action": "Step 0 (Core Types — Add ntfy Settings) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:58.339Z",
+      "action": "Step 0 (Core Types — Add ntfy Settings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:01.943Z",
+      "action": "Step 0 (Core Types — Add ntfy Settings) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:01.948Z",
+      "action": "Preflight complete - reviewed all context files",
+      "outcome": "Understand codebase structure for implementing ntfy notifications"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:04.292Z",
+      "action": "plan review requested for Step 1 (Core Types — Add ntfy Settings)"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:09.155Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is straightforward and correctly identifies the minimal changes needed to add ntfy configuration fields. The approach follows the existing Settings interface pattern exactly, adding optional fields with appropriate defaults in DEFAULT_SETTINGS."
+    },
+    {
+      "timestamp": "2026-03-30T02:37:11.994Z",
+      "action": "Step 1 (Dashboard Settings UI — Notifications Section) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:31.938Z",
+      "action": "Step 1 (Dashboard Settings UI — Notifications Section) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:33.257Z",
+      "action": "plan review requested for Step 2 (Dashboard Settings UI — Notifications Section)"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:24.823Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:27.297Z",
+      "action": "Step 2 (Engine Notification Service) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:48.288Z",
+      "action": "Step 1 (Dashboard Settings UI — Notifications Section) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:48.289Z",
+      "action": "Step 1 (Dashboard Settings UI) appears incomplete - SettingsModal.tsx missing notifications section. Completing Step 1 before proceeding to Step 2."
+    },
+    {
+      "timestamp": "2026-03-30T02:38:49.370Z",
+      "action": "plan review requested for Step 1 (Dashboard Settings UI — Notifications Section)"
+    },
+    {
+      "timestamp": "2026-03-30T02:39:08.677Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for adding the Notifications section to the SettingsModal is well-structured and follows the established patterns in the codebase. The ntfy types are already in place in `packages/core/src/types.ts`, so this step focuses purely on UI implementation. The approach mirrors existing sections like \"Merge\" and \"Worktrees\" with checkbox-toggled fields."
+    },
+    {
+      "timestamp": "2026-03-30T02:40:07.278Z",
+      "action": "Step 1 (Dashboard Settings UI — Notifications Section) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:40:07.279Z",
+      "action": "Step 2 (Engine Notification Service) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:40:08.347Z",
+      "action": "plan review requested for Step 2 (Engine Notification Service)"
+    },
+    {
+      "timestamp": "2026-03-30T02:40:38.690Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan for the NtfyNotifier service has good foundational elements but has critical gaps in runtime configuration handling, error resilience, and filtering design. The approach will work for basic scenarios, but the missing pieces will cause issues in production usage."
+    },
+    {
+      "timestamp": "2026-03-30T02:41:31.354Z",
+      "action": "Step 2 (Engine Notification Service) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:31.355Z",
+      "action": "Step 3 (Wire Up Notifier in Engine) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:32.409Z",
+      "action": "plan review requested for Step 3 (Wire Up Notifier in Engine)"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:59.269Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The step checkboxes describe a reasonable wiring approach, but there are several gaps and a critical issue with the file scope. The `packages/engine/src/index.ts` file is a barrel file (only exports), so it cannot contain initialization logic. The actual composition happens in `packages/cli/src/commands/dashboard.ts`. Additionally, the plan lacks clarity on event filtering configuration and the shutdown sequence."
+    },
+    {
+      "timestamp": "2026-03-30T02:43:50.886Z",
+      "action": "Step 3 (Wire Up Notifier in Engine) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:50.887Z",
+      "action": "Step 4 (Template Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:52.289Z",
+      "action": "plan review requested for Step 4 (Template Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T02:44:05.928Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 correctly identifies the necessary changes to `generateSpecifiedPrompt`. The approach of accepting a settings parameter and conditionally appending a Notifications section when `ntfyEnabled` and `ntfyTopic` are set is sound. The output format (using backticks for the topic name) is consistent with existing patterns like the Dependencies section."
+    },
+    {
+      "timestamp": "2026-03-30T02:44:29.366Z",
+      "action": "Step 4 (Template Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:44:29.367Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:03.321Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:03.325Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:22.537Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:42.429Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:46:43.383Z",
+  "createdAt": "2026-03-30T01:16:59.479Z",
+  "updatedAt": "2026-03-30T02:46:43.383Z",
+  "size": "M",
+  "reviewLevel": 1
+}

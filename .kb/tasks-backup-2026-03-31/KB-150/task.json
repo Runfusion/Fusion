@@ -1,0 +1,134 @@
+{
+  "id": "KB-150",
+  "description": "Remove task title from edit and new task dialog",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove Title from NewTaskModal",
+      "status": "done"
+    },
+    {
+      "name": "Remove Title from PlanningModeModal SummaryView",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T14:03:50.185Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T14:29:50.010Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:30:06.272Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and well-structured. All file references have been verified against actual source code locations. Steps have concrete, verifiable outcomes with specific line references. Testing requirements properly demand real automated tests with assertions."
+    },
+    {
+      "timestamp": "2026-03-30T15:20:38.684Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/lemon-mesa"
+    },
+    {
+      "timestamp": "2026-03-30T15:20:38.684Z",
+      "action": "Step 0 (Remove Title from NewTaskModal) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:20:45.161Z",
+      "action": "Step 0 (Remove Title from NewTaskModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:20:48.467Z",
+      "action": "Step 0 (Remove Title from NewTaskModal) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:20:49.814Z",
+      "action": "plan review requested for Step 1 (Remove Title from NewTaskModal)"
+    },
+    {
+      "timestamp": "2026-03-30T15:21:00.814Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan comprehensively addresses all necessary changes to remove the title field from `NewTaskModal`. All seven checkboxes correctly identify the specific state, JSX, and logic modifications needed. The approach maintains backward compatibility with the API (sending `undefined` for title) and preserves all other modal functionality including the planning mode flow."
+    },
+    {
+      "timestamp": "2026-03-30T15:21:02.368Z",
+      "action": "Step 1 (Remove Title from PlanningModeModal SummaryView) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:23:03.087Z",
+      "action": "Step 1 (Remove Title from PlanningModeModal SummaryView) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:23:04.225Z",
+      "action": "plan review requested for Step 2 (Remove Title from PlanningModeModal SummaryView)"
+    },
+    {
+      "timestamp": "2026-03-30T15:23:34.673Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the title form-group in the `SummaryView` component (lines 598-605 of PlanningModeModal.tsx). The checkboxes cover the essential UI removal steps and verify that other fields continue to work. The implementation approach is sound — the title input removal is straightforward and won't break other functionality since `onSummaryChange` is already correctly invoked for description, size, and dependency changes."
+    },
+    {
+      "timestamp": "2026-03-30T15:23:36.967Z",
+      "action": "Step 2 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:23:41.950Z",
+      "action": "Step 2 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:23:42.964Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:28:53.401Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:28:54.926Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:29:36.425Z",
+      "action": "Test results: 1262 passed, 4 failed. The 4 failures are pre-existing issues unrelated to title removal (typecheck environment, TaskDetailModal dropdown, PlanningModeModal auto-start timing). NewTaskModal tests all pass.",
+      "outcome": "Tests confirm title removal works correctly"
+    },
+    {
+      "timestamp": "2026-03-30T15:29:42.444Z",
+      "action": "Build: Client-side vite build succeeded. Server-side TypeScript build fails due to pre-existing @kb/engine module resolution issue - not related to title removal changes.",
+      "outcome": "UI changes build successfully"
+    },
+    {
+      "timestamp": "2026-03-30T15:29:54.477Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:00.624Z",
+      "action": "Documentation check complete: No AGENTS.md or README references to title input found. Changeset not required per task spec (UI-only change, no published package API changes).",
+      "outcome": "No documentation updates needed"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:04.183Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:30:17.651Z",
+  "createdAt": "2026-03-30T14:03:50.185Z",
+  "updatedAt": "2026-03-30T15:30:17.651Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,41 @@
+{
+  "id": "KB-334",
+  "description": "After KB-330 completes, execute KB-332: rename task ID prefix and branch naming from KB-XXX / kb/ to FN-XXX / fusion/",
+  "column": "todo",
+  "dependencies": [
+    "KB-330"
+  ],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:20:34.273Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:21:40.962Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:22:09.192Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification correctly identifies the core work: changing the default task prefix from \"KB\" to \"FN\" and branch naming from `kb/` to `fusion/`. File references and line numbers are accurate. However, the spec is **missing several test files** that contain hardcoded `kb/kb-XXX` patterns, and the verification commands provided won't catch all occurrences. Without these files in scope, tests will fail after implementation."
+    },
+    {
+      "timestamp": "2026-03-31T20:22:37.757Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:23:07.473Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-researched mechanical rename specification. The spec correctly identifies all source locations needing updates, provides concrete line number references verified against the actual codebase, and includes comprehensive test file updates. The approach of changing the default `taskPrefix` from `undefined` to `\"FN\"` (which flows through the `|| \"KB\"` fallback in `allocateId()`) is the correct mechanism for new tasks while preserving existing KB-XXX IDs."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:23:09.690Z",
+  "createdAt": "2026-03-31T20:20:34.273Z",
+  "updatedAt": "2026-03-31T21:01:04.963Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued",
+  "blockedBy": "KB-313"
+}

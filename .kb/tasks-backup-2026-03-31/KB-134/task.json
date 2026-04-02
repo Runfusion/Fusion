@@ -1,0 +1,142 @@
+{
+  "id": "KB-134",
+  "description": "Stabilize unrelated dashboard test regressions blocking full package test pass (Header brand expectation, useTerminal hook API mismatch, and dashboard typecheck test failures) so workspace verification can run cleanly again.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Refresh stale dashboard regression tests",
+      "status": "done"
+    },
+    {
+      "name": "Repair the strict dashboard typecheck gate",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T07:23:02.660Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T08:34:48.023Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T08:37:05.131Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This specification is not actionable as written. `.fusion/tasks/KB-134/PROMPT.md:1` contains only `DUPLICATE: KB-097`, which provides no executable scope, no verifiable steps, and no testing or documentation requirements.  \nThe duplicate target is also stale against the current repository, so using it as the canonical spec would point an implementer at work that is already present or inaccurately scoped."
+    },
+    {
+      "timestamp": "2026-03-30T08:44:27.125Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T08:47:01.467Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a strong, concrete specification with clear success criteria tied to real regressions in the repo. The cited failures map cleanly to existing source: `Header.tsx` already renders `Fusion` / `tasks` at `packages/dashboard/app/components/Header.tsx:35-37` while the legacy test still asserts `kb` / `board` at `packages/dashboard/app/components/Header.test.tsx:24-25`; `useTerminal()` constructs its socket directly via `new WebSocket(...)` at `packages/dashboard/app/hooks/useTerminal.ts:156` "
+    },
+    {
+      "timestamp": "2026-03-30T14:49:53.462Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fresh-reef"
+    },
+    {
+      "timestamp": "2026-03-30T14:49:53.463Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:49:55.497Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:52:09.342Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:52:09.343Z",
+      "action": "Preflight complete. Found: (1) Header.test.tsx already has correct Fusion/tasks branding and passes, (2) useTerminal.test.ts passes with 6 tests, (3) typecheck.test.ts is skipped (describe.skip) and when enabled will fail due to @modelcontextprotocol/sdk not being available for @google/genai types",
+      "outcome": "All required files exist. Dependencies installed. Build passes. Need to fix typecheck regression."
+    },
+    {
+      "timestamp": "2026-03-30T14:55:21.430Z",
+      "action": "Step 1 (Refresh stale dashboard regression tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:55:21.431Z",
+      "action": "plan review requested for Step 1 (Refresh stale dashboard regression tests)"
+    },
+    {
+      "timestamp": "2026-03-30T14:55:45.098Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan's approach is fundamentally sound. The WebSocket mocking strategy using a `MockWebSocket` class that replaces `globalThis.WebSocket` is the correct pattern for Vitest/jsdom environments. The Header.test.tsx file already contains the correct branding assertions (`Fusion`/`tasks`), suggesting either the file was previously fixed or the PROMPT.md description is outdated. The useTerminal.test.ts has a reasonable foundation but may need additional coverage for the `reconnect` function."
+    },
+    {
+      "timestamp": "2026-03-30T14:56:25.598Z",
+      "action": "Step 1 (Refresh stale dashboard regression tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:56:27.460Z",
+      "action": "Step 2 (Repair the strict dashboard typecheck gate) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:56:27.461Z",
+      "action": "plan review requested for Step 2 (Repair the strict dashboard typecheck gate)"
+    },
+    {
+      "timestamp": "2026-03-30T14:56:45.369Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the root cause (unresolved optional peer dependency `@modelcontextprotocol/sdk` from `@google/genai@1.46.0` transitively through `@mariozechner/pi-ai`) and offers two viable, minimal fix strategies: satisfy the peer at the engine level where the dependency originates, or add a local type declaration shim in dashboard. The checkboxes are specific, verifiable, and appropriately strict about preserving the `--skipLibCheck false` gate."
+    },
+    {
+      "timestamp": "2026-03-30T14:57:35.003Z",
+      "action": "code review requested for Step 2 (Repair the strict dashboard typecheck gate)"
+    },
+    {
+      "timestamp": "2026-03-30T14:57:59.614Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly fixes the strict typecheck regression by adding `@modelcontextprotocol/sdk` to `packages/engine/package.json` devDependencies. This satisfies the unresolved optional peer dependency from `@google/genai` that was causing `Cannot find module '@modelcontextprotocol/sdk/client/index.js'` errors when the dashboard's `src/planning.ts` imported engine types. The strict `--skipLibCheck false` gate is preserved without modification to the test."
+    },
+    {
+      "timestamp": "2026-03-30T14:58:00.781Z",
+      "action": "Step 2 (Repair the strict dashboard typecheck gate) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:58:02.903Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:59:45.586Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:59:46.795Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:59:51.075Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:00:33.527Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:00:47.299Z",
+  "createdAt": "2026-03-30T07:23:02.660Z",
+  "updatedAt": "2026-03-30T15:00:47.299Z",
+  "size": "M",
+  "reviewLevel": 2
+}

@@ -1,0 +1,99 @@
+{
+  "id": "KB-611",
+  "description": "Serialize tasks with overlapping files should default on",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 4,
+  "summary": "Changed `groupOverlappingFiles` default from `false` to `true` in both `DEFAULT_PROJECT_SETTINGS` (packages/core/src/types.ts) and the SettingsModal form initialization (packages/dashboard/app/components/SettingsModal.tsx). Created changeset file for the patch release. Build passes. Pre-existing test failure in store.test.ts is unrelated to this change.",
+  "createdAt": "2026-03-31T21:52:12.243Z",
+  "updatedAt": "2026-03-31T22:48:13.768Z",
+  "columnMovedAt": "2026-03-31T22:48:13.768Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Default Settings in Types",
+      "status": "done"
+    },
+    {
+      "name": "Update Dashboard Form Default",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:52:12.243Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T22:09:51.458Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:10:03.643Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. All file references are verified, the mission is clearly stated, and the testing strategy correctly anticipates the cascading test updates needed. The review level (0 - None) is appropriate for this simple default value change."
+    },
+    {
+      "timestamp": "2026-03-31T22:26:11.985Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/cool-thorn"
+    },
+    {
+      "timestamp": "2026-03-31T22:26:11.986Z",
+      "action": "Step 0 (Update Default Settings in Types) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T22:40:33.132Z",
+      "action": "Step 0 (Update Default Settings in Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:40:34.533Z",
+      "action": "Step 0 (Update Default Settings in Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:40:53.866Z",
+      "action": "Step 0 (Update Default Settings in Types) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:40:54.629Z",
+      "action": "Step 1 (Update Dashboard Form Default) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:41:07.023Z",
+      "action": "Step 1 (Update Dashboard Form Default) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:41:07.673Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:44:38.820Z",
+      "action": "Test failure in store.test.ts is pre-existing and unrelated to groupOverlappingFiles change",
+      "outcome": "The 'produces valid config.json with unique sequential IDs after 5 parallel createTask calls' test was failing before my changes - it's a race condition in the test suite, not caused by this PR. Proceeding with verification of my specific changes."
+    },
+    {
+      "timestamp": "2026-03-31T22:46:56.598Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:46:57.326Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:47:03.093Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:47:06.110Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

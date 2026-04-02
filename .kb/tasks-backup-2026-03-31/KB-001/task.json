@@ -1,0 +1,107 @@
+{
+  "id": "KB-001",
+  "description": "Core Infrastructure: Central database, project registry, unified activity feed",
+  "column": "triage",
+  "currentStep": 2,
+  "paused": true,
+  "createdAt": "2026-03-31T21:01:18.279Z",
+  "updatedAt": "2026-03-31T21:22:08.694Z",
+  "columnMovedAt": "2026-03-31T21:20:50.074Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Central Database Schema and Core Class",
+      "status": "in-progress"
+    },
+    {
+      "name": "Project Registry",
+      "status": "in-progress"
+    },
+    {
+      "name": "Unified Activity Feed",
+      "status": "pending"
+    },
+    {
+      "name": "Central Core Store (High-Level API)",
+      "status": "pending"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:01:18.279Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:16:36.683Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/deft-wren"
+    },
+    {
+      "timestamp": "2026-03-31T21:16:36.693Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:25.328Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:03.984Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:23.530Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:23.535Z",
+      "action": "Preflight complete: Read context files, verified 76 existing tests pass, build succeeds, confirmed ~/.pi/kb/ directory exists with settings.json",
+      "outcome": "Ready to begin Step 1"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:25.095Z",
+      "action": "Step 1 (Central Database Schema and Core Class) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:25.099Z",
+      "action": "plan review requested for Step 1 (Central Database Schema and Core Class)"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:57.034Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan has a sound overall approach for the schema design and WAL mode configuration, but it contains critical gaps that will cause implementation failures. The plan references non-existent files (`db.ts`, `db-migrate.ts`) for transaction patterns, omits required package dependencies, lacks error handling strategies, and is missing important SQLite pragmas for production use."
+    },
+    {
+      "timestamp": "2026-03-31T21:19:59.760Z",
+      "action": "Plan review feedback incorporated: Adding better-sqlite3 dependency, defining transaction patterns inline, adding busy_timeout, error handling, and close() method",
+      "outcome": "Revised plan ready for implementation"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:37.681Z",
+      "action": "code review requested for Step 1 (Central Database Schema and Core Class)"
+    },
+    {
+      "timestamp": "2026-03-31T21:22:07.138Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation successfully delivers Step 1 requirements. The `CentralDatabase` class provides a solid foundation for the multi-project architecture with proper WAL mode, foreign key enforcement, savepoint-based nested transactions, and comprehensive schema creation. Tests are thorough with good coverage of critical paths including transaction rollback, foreign key constraints, and nested savepoints."
+    },
+    {
+      "timestamp": "2026-03-31T21:22:08.689Z",
+      "action": "Step 2 (Project Registry) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:22:08.694Z",
+      "action": "plan review requested for Step 2 (Project Registry)"
+    }
+  ]
+}

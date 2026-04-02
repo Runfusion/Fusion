@@ -1,0 +1,196 @@
+{
+  "id": "KB-251",
+  "title": "The title truncation should use ai to create a",
+  "description": "The title truncation should use ai to create a title that is a better summary",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Types and Store Updates",
+      "status": "done"
+    },
+    {
+      "name": "Engine Title Generator Module",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard API and Integration",
+      "status": "done"
+    },
+    {
+      "name": "Frontend Updates for AI-Generated Titles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T03:04:39.708Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:21.933Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:45.945Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured with a clear mission, concrete step outcomes, and appropriate file scope. The async approach using an event-driven processor is consistent with existing patterns (TriageProcessor, Scheduler). Testing requirements demand real assertions, not just typechecks. Minor naming corrections are needed but don't block implementation."
+    },
+    {
+      "timestamp": "2026-03-31T06:25:55.413Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/brave-peach"
+    },
+    {
+      "timestamp": "2026-03-31T06:25:55.414Z",
+      "action": "Step 0 (Core Types and Store Updates) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:11.567Z",
+      "action": "Step 0 (Core Types and Store Updates) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:22.520Z",
+      "action": "Step 0 (Core Types and Store Updates) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:22.523Z",
+      "action": "Step 1 (Engine Title Generator Module) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:22.525Z",
+      "action": "plan review requested for Step 1 (Core Types and Store Updates)"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:55.180Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and will achieve its stated outcomes. It correctly identifies the minimal set of changes needed to the core types and store infrastructure to support AI-powered title generation. The approach of adding the flag to the Task type and creating an event-emitting method in the store aligns well with the existing architecture."
+    },
+    {
+      "timestamp": "2026-03-31T06:28:49.403Z",
+      "action": "code review requested for Step 1 (Core Types and Store Updates)"
+    },
+    {
+      "timestamp": "2026-03-31T06:29:21.837Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds the foundational types and store infrastructure for AI-powered title generation. The `aiTitleGenerated` flag is properly added to the `Task` type, the `generateAITitle` option is added to `TaskCreateInput`, and the `requestAITitleGeneration` method emits the appropriate event for the TitleGenerator (to be implemented in Step 2) to listen for. The async, non-blocking pattern is correctly implemented—tasks are created immediately with simple truncation fallback, a"
+    },
+    {
+      "timestamp": "2026-03-31T06:29:23.161Z",
+      "action": "Step 1 (Engine Title Generator Module) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:29:23.163Z",
+      "action": "Step 2 (Dashboard API and Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:29:23.165Z",
+      "action": "plan review requested for Step 2 (Engine Title Generator Module)"
+    },
+    {
+      "timestamp": "2026-03-31T06:29:43.341Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly follows established patterns in the codebase (TriageProcessor, createKbAgent usage, EventEmitter-based communication). Step 1 has already been implemented (`requestAITitleGeneration()` exists in `packages/core/src/store.ts:2015-2020`, types are updated). The title generator architecture aligns with the existing processor pattern and properly uses the event system already in place."
+    },
+    {
+      "timestamp": "2026-03-31T06:30:40.125Z",
+      "action": "code review requested for Step 2 (Engine Title Generator Module)"
+    },
+    {
+      "timestamp": "2026-03-31T06:31:24.191Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Title Generator implementation is well-structured and follows project patterns. The module provides asynchronous AI-powered title generation with proper fallback mechanisms, timeout handling, and event-driven architecture. The test coverage is comprehensive with 14 test cases covering lifecycle, success paths, error handling, and edge cases."
+    },
+    {
+      "timestamp": "2026-03-31T06:31:25.596Z",
+      "action": "Step 2 (Dashboard API and Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:31:25.597Z",
+      "action": "Step 3 (Frontend Updates for AI-Generated Titles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:31:25.597Z",
+      "action": "plan review requested for Step 3 (Dashboard API and Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T06:31:49.571Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is sound and will achieve the stated outcomes. The core infrastructure (types, store method, and TitleGenerator class) is already implemented in previous steps. The remaining work correctly identifies the three integration points needed: the REST API endpoint, the client-side API function, and server startup wiring. The test approach aligns with existing patterns in routes.test.ts."
+    },
+    {
+      "timestamp": "2026-03-31T06:37:06.308Z",
+      "action": "code review requested for Step 3 (Dashboard API and Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T06:37:48.168Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "Step 3 is well-implemented with all required components properly connected. The API endpoint follows RESTful patterns, the client integration is clean, the TitleGenerator is correctly wired into the server lifecycle, and the test coverage is comprehensive with 7 test cases covering all branches."
+    },
+    {
+      "timestamp": "2026-03-31T06:37:49.576Z",
+      "action": "Step 3 (Frontend Updates for AI-Generated Titles) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:37:49.576Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:37:49.577Z",
+      "action": "plan review requested for Step 4 (Frontend Updates for AI-Generated Titles)"
+    },
+    {
+      "timestamp": "2026-03-31T06:38:18.514Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step has a clear, achievable scope that builds correctly on Steps 1-3. The `aiTitleGenerated` field is already in the Task type (line 139 of types.ts), and the `regenerateTaskTitle` API client is already implemented (line 183 of api.ts). The visual design uses existing patterns (Sparkles icon from lucide-react, data-tooltip CSS pattern)."
+    },
+    {
+      "timestamp": "2026-03-31T06:38:56.025Z",
+      "action": "code review requested for Step 4 (Frontend Updates for AI-Generated Titles)"
+    },
+    {
+      "timestamp": "2026-03-31T06:39:27.074Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The implementation adds visual indicators for AI-generated titles and a regenerate button to TaskCard, along with the API client function. However, there's a critical issue in the memoization comparator that could cause stale UI, and some minor styling and testing gaps need addressing."
+    },
+    {
+      "timestamp": "2026-03-31T06:42:58.498Z",
+      "action": "code review requested for Step 4 (Frontend Updates for AI-Generated Titles)"
+    },
+    {
+      "timestamp": "2026-03-31T06:43:26.998Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation correctly adds AI-generated title indicators to the dashboard UI. The sparkle icon visual indicator, hover tooltip, manual regeneration button, and CSS styling are all properly implemented. The memo comparator includes `aiTitleGenerated` to ensure proper re-rendering, and comprehensive tests cover all UI states."
+    },
+    {
+      "timestamp": "2026-03-31T06:43:28.878Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:43:28.880Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:46:30.224Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:47:16.966Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T06:47:19.888Z",
+  "createdAt": "2026-03-31T03:04:39.708Z",
+  "updatedAt": "2026-03-31T06:47:19.888Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Implemented AI-powered task title generation for KB-251:\n\n1. **Core Types & Store** (Step 1): Added `aiTitleGenerated` field to Task type, `generateAITitle` option to TaskCreateInput, `title:generate` event, and `requestAITitleGeneration` method to TaskStore.\n\n2. **Engine Title Generator** (Step 2): Created `TitleGenerator` class in `packages/engine/src/title-generator.ts` that uses AI to generate concise (max 60 chars) titles from descriptions, with 10s timeout and fallback to simple word extraction.\n\n3. **Dashboard API** (Step 3): Added `POST /api/tasks/:id/regenerate-title` endpoint, `regenerateTaskTitle` API client function, and wired up TitleGenerator in server startup.\n\n4. **Frontend Updates** (Step 4): Updated TaskCard to show sparkle icon for AI-generated titles, added regenerate button with hover visibility, disabled state when no description, and added CSS styles. Fixed memoization comparator to include `aiTitleGenerated`. Added comprehensive tests.\n\n5. **Documentation** (Step 6): Added AI Title Generation section to AGENTS.md documenting the feature, task type fields, API endpoints, and dashboard UI behavior.\n\nAll code reviews passed. Core tests (282), engine tests (588), and TaskCard tests (123+15) all pass. Build succeeds for all packages."
+}

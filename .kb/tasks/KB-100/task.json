@@ -1,0 +1,93 @@
+{
+  "id": "KB-100",
+  "description": "Update legacy dashboard Header test at packages/dashboard/app/components/Header.test.tsx to match current Fusion branding (text assertions still expect kb/board).",
+  "column": "done",
+  "dependencies": [
+    "KB-099"
+  ],
+  "steps": [
+    {
+      "name": "Update Branding Assertions",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:58:09.929Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:59:43.444Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:59:57.304Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and appropriate for its stated review level. The technical details are verified: Header.tsx (lines 35-37) renders \"Fusion\" and \"tasks\", while Header.test.tsx (lines 20-21) incorrectly asserts \"kb\" and \"board\". The dependency KB-099 exists and appropriately scopes this task to only branding-related test fixes."
+    },
+    {
+      "timestamp": "2026-03-30T05:00:44.964Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:56.557Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a straightforward test update task. All referenced files exist and contain exactly the content described. The branding mismatch is verified: Header.tsx shows \"Fusion\" and \"tasks\" (lines 35-36), while Header.test.tsx currently asserts \"kb\" and \"board\" (lines 18-19). The reference test in `__tests__/Header.test.tsx` demonstrates the correct \"Fusion logo\" pattern. Steps are concrete with verifiable outcomes."
+    },
+    {
+      "timestamp": "2026-03-30T19:33:30.427Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/crisp-trout"
+    },
+    {
+      "timestamp": "2026-03-30T19:33:30.428Z",
+      "action": "Step 0 (Update Branding Assertions) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:35:56.862Z",
+      "action": "Step 0 (Update Branding Assertions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:35:58.772Z",
+      "action": "Step 0 (Update Branding Assertions) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:35:58.773Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:04.169Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:04.171Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:10.280Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:10.282Z",
+      "action": "Task KB-100 completed - Header test already has correct Fusion branding assertions",
+      "outcome": "All 46 tests in Header.test.tsx pass, build succeeds, changeset created and committed"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:11.348Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:36:21.206Z",
+  "createdAt": "2026-03-30T04:58:09.929Z",
+  "updatedAt": "2026-03-30T19:36:21.206Z",
+  "size": "S",
+  "reviewLevel": 0
+}

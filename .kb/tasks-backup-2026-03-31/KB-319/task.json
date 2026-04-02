@@ -1,0 +1,43 @@
+{
+  "id": "KB-319",
+  "description": "Implement proactive orphaned task monitoring that periodically checks for and alerts on tasks with missing or corrupted task.json files. This should run as a background check (e.g., every hour) and log warnings or send notifications when orphaned tasks are detected, allowing early intervention before users notice missing tasks.",
+  "column": "todo",
+  "dependencies": [],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T18:48:59.011Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T18:50:15.466Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T18:50:28.588Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and technically sound. It correctly references existing patterns (`StuckTaskDetector`, `NtfyNotifier`), provides concrete implementation details, and defines verifiable outcomes for each step. The mission is clear, file scope is accurate, and testing requirements are comprehensive."
+    },
+    {
+      "timestamp": "2026-03-31T19:45:21.926Z",
+      "action": "Steering comment added",
+      "outcome": "by user"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:50:31.213Z",
+  "createdAt": "2026-03-31T18:48:59.011Z",
+  "updatedAt": "2026-03-31T21:01:04.960Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued",
+  "blockedBy": "KB-313",
+  "steeringComments": [
+    {
+      "id": "1774986321926-k9mqf8",
+      "text": "Try to automatically recover",
+      "createdAt": "2026-03-31T19:45:21.926Z",
+      "author": "user"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "id": "KB-656",
+  "description": "Don't auto expand the quick add view in list view",
+  "column": "todo",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "createdAt": "2026-04-01T02:38:16.858Z",
+  "updatedAt": "2026-04-01T02:45:53.690Z",
+  "columnMovedAt": "2026-04-01T02:45:53.690Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:38:16.858Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:45:40.871Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:45:52.170Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted and technically accurate. It correctly identifies the minimal change needed—adding an `autoExpand` prop to QuickEntryBox with default `true` for backward compatibility, passing `autoExpand={false}` in ListView, and leaving Column.tsx unchanged. File references, function names, and testing requirements are all correct."
+    }
+  ]
+}

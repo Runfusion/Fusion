@@ -1,0 +1,130 @@
+{
+  "id": "KB-278",
+  "title": "When inputting a plan there is an error that",
+  "description": "When inputting a plan there is an error that initial plan must be 500 characters or less. Remove this restriction on backend and frotnened",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove Backend Validation",
+      "status": "done"
+    },
+    {
+      "name": "Update Backend Tests",
+      "status": "done"
+    },
+    {
+      "name": "Update Frontend API Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T14:41:49.538Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T14:42:34.297Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T14:42:43.669Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and well-structured. All file references have been verified against the actual source code, and the exact line numbers and code blocks match perfectly. The steps are concrete with verifiable outcomes, and the testing strategy appropriately requires real automated tests as quality gates."
+    },
+    {
+      "timestamp": "2026-03-31T14:42:59.248Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bold-spark"
+    },
+    {
+      "timestamp": "2026-03-31T14:42:59.249Z",
+      "action": "Step 0 (Remove Backend Validation) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T14:43:01.524Z",
+      "action": "Step 0 (Remove Backend Validation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:43:13.400Z",
+      "action": "Step 0 (Remove Backend Validation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:43:13.403Z",
+      "action": "Step 1 (Update Backend Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:43:16.519Z",
+      "action": "plan review requested for Step 1 (Remove Backend Validation)"
+    },
+    {
+      "timestamp": "2026-03-31T14:43:34.227Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan accurately identifies the two validation blocks to remove (lines 3900-3903 and 3937-3940 in routes.ts) and correctly specifies keeping the required field validation. The line numbers in the PROMPT.md are slightly offset from actual file locations, but the plan's description of \"around line\" is appropriately lenient. The approach is straightforward and will achieve the stated outcomes."
+    },
+    {
+      "timestamp": "2026-03-31T14:44:01.926Z",
+      "action": "Step 1 (Update Backend Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:01.928Z",
+      "action": "Step 2 (Update Frontend API Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:04.033Z",
+      "action": "plan review requested for Step 2 (Update Backend Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:23.048Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is straightforward and correct. The backend validation has already been removed in Step 1 (the 500-character validation blocks are no longer present in `routes.ts` for either `/planning/start` or `/planning/start-streaming`). The only remaining work is to remove the now-obsolete test case `\"rejects initialPlan longer than 500 chars\"` from `packages/dashboard/src/routes.test.ts` (found at lines 3695-3707, not 3928-3939 as stated in the PROMPT - the line numbers appear to be es"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:22.768Z",
+      "action": "Step 2 (Update Frontend API Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:22.768Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:23.587Z",
+      "action": "plan review requested for Step 3 (Update Frontend API Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:36.898Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The step correctly identifies that the frontend API test for the 500 character validation error must be removed. The test description matches exactly what's in the codebase. There is a minor discrepancy in line numbers (plan says 1117-1122, actual is 926-932), but the test description is unambiguous and will guide the worker to the correct test."
+    },
+    {
+      "timestamp": "2026-03-31T14:46:48.658Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:48.659Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:49:03.199Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:49:11.102Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T14:50:10.370Z",
+  "createdAt": "2026-03-31T14:41:49.538Z",
+  "updatedAt": "2026-03-31T14:50:10.370Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Removed the 500 character limit from the initialPlan field in Planning Mode. Deleted validation blocks from both /api/planning/start and /api/planning/start-streaming routes in routes.ts, removed corresponding tests from routes.test.ts and api.test.ts, and added a changeset. Build passes and all planning-related tests pass."
+}

@@ -1,0 +1,117 @@
+{
+  "id": "KB-181",
+  "description": "Add planning mode to the CLI",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Planning Command Implementation",
+      "status": "done"
+    },
+    {
+      "name": "CLI Integration",
+      "status": "done"
+    },
+    {
+      "name": "Terminal UI Helpers",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Extension Tool & Documentation",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:55:53.436Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:00:46.215Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:01:13.785Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification has a solid overall approach but contains **critical inaccuracies** that will cause implementation issues. The main problems are: (1) incorrect path for test files, (2) incorrect recommendation to use the `PlanningSession` class directly when the functional API (`createSession`, `submitResponse`) is the working implementation, and (3) a file reference that doesn't exist."
+    },
+    {
+      "timestamp": "2026-03-30T18:01:32.196Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:01:44.787Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification that correctly identifies the existing dashboard planning infrastructure and extends it to the CLI. The mission is clear, steps have concrete verifiable outcomes, file references are accurate, and the testing requirements are comprehensive. The review level (1 - Plan Only) is appropriate for this medium-sized integration task."
+    },
+    {
+      "timestamp": "2026-03-30T18:42:59.296Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/keen-cedar"
+    },
+    {
+      "timestamp": "2026-03-30T18:42:59.297Z",
+      "action": "Step 0 (Planning Command Implementation) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T18:43:00.589Z",
+      "action": "Step 0 (Planning Command Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:43:06.054Z",
+      "action": "Step 0 (Planning Command Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:43:06.054Z",
+      "action": "Preflight complete: Read all context files",
+      "outcome": "Understood CLI patterns, planning API from dashboard, and extension tool structure"
+    },
+    {
+      "timestamp": "2026-03-30T18:43:08.367Z",
+      "action": "plan review requested for Step 1 (Planning Command Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T18:43:23.749Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and achievable. It correctly identifies the functional API from `@kb/dashboard/src/planning.ts` (`createSession`, `submitResponse`) and the error types to handle. The interactive Q&A loop design with support for all four question types (text, single_select, multi_select, confirm) follows the existing CLI patterns and aligns with the type definitions in `@kb/core`."
+    },
+    {
+      "timestamp": "2026-03-30T18:43:25.012Z",
+      "action": "Step 1 (CLI Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:47:15.759Z",
+      "action": "Step 1 (CLI Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:47:15.761Z",
+      "action": "Step 2 (Terminal UI Helpers) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:47:15.761Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:52:27.940Z",
+      "action": "Step 4 (Extension Tool & Documentation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:52:27.940Z",
+      "action": "Step 4 completed: Testing & Verification",
+      "outcome": "Created task-plan.test.ts with 17 tests, all passing. Extension test updated for 14 tools."
+    },
+    {
+      "timestamp": "2026-03-30T18:53:07.968Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T18:53:21.307Z",
+  "createdAt": "2026-03-30T17:55:53.436Z",
+  "updatedAt": "2026-03-30T18:53:21.307Z",
+  "size": "M",
+  "reviewLevel": 1
+}

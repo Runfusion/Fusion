@@ -1,0 +1,156 @@
+{
+  "id": "KB-170",
+  "description": "On a failure, when a task is retried, try to clean-up worktree/branch (Execution failed: Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/clear-marsh\" \"kb/kb-064\" Preparing worktree (checking out 'kb/kb-064') fatal: 'kb/kb-064' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/sharp-stone')",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Implement Worktree Conflict Detection and Cleanup",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests for Retry Cleanup Scenario",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:39:58.355Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T17:40:45.163Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:40:57.665Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification correctly identifies a real failure mode in worktree creation during task retries and provides a sound approach for detecting and resolving \"branch already used by worktree\" errors. The file scope is accurate, testing requirements demand real automated tests, and the sizing/review level is appropriate for the work."
+    },
+    {
+      "timestamp": "2026-03-30T17:41:11.033Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bright-eagle"
+    },
+    {
+      "timestamp": "2026-03-30T17:41:11.034Z",
+      "action": "Step 0 (Implement Worktree Conflict Detection and Cleanup) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T17:41:15.575Z",
+      "action": "Step 0 (Implement Worktree Conflict Detection and Cleanup) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:41:20.818Z",
+      "action": "Completed preflight: reviewed executor worktree creation flow, existing executor tests, and worktree pool cleanup patterns to scope the retry fix.",
+      "outcome": "Confirmed the change is isolated to packages/engine/src/executor.ts and matching tests in packages/engine/src/executor.test.ts."
+    },
+    {
+      "timestamp": "2026-03-30T17:41:22.078Z",
+      "action": "Step 0 (Implement Worktree Conflict Detection and Cleanup) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:41:24.309Z",
+      "action": "Step 1 (Add Tests for Retry Cleanup Scenario) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:41:25.982Z",
+      "action": "plan review requested for Step 1 (Implement Worktree Conflict Detection and Cleanup)"
+    },
+    {
+      "timestamp": "2026-03-30T17:41:36.830Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the failure mode and proposes a targeted fix in the `createWorktree` method. The approach of parsing the git error message, cleaning up the conflicting worktree and branch, then retrying is sound. The plan's checkboxes cover all necessary behaviors including error handling, cleanup commands, and retry logic."
+    },
+    {
+      "timestamp": "2026-03-30T17:42:33.260Z",
+      "action": "Implemented executor retry cleanup logic and added targeted executor tests for branch-already-used worktree conflicts.",
+      "outcome": "Local test execution is currently blocked because this worktree has no installed node_modules/vitest binary yet; will need dependency install or full test environment before final verification."
+    },
+    {
+      "timestamp": "2026-03-30T17:42:38.443Z",
+      "action": "code review requested for Step 1 (Implement Worktree Conflict Detection and Cleanup)"
+    },
+    {
+      "timestamp": "2026-03-30T17:42:56.023Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly addresses the worktree conflict detection and cleanup requirements. The code properly parses the git error message, extracts the conflicting worktree path, performs cleanup (worktree removal + branch deletion), and retries. Tests cover both the success and failure paths. The implementation follows existing patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T17:48:05.466Z",
+      "action": "Step 1 (Add Tests for Retry Cleanup Scenario) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:06.975Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:12.604Z",
+      "action": "plan review requested for Step 2 (Add Tests for Retry Cleanup Scenario)"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:24.987Z",
+      "action": "plan review Step 2: RETHINK",
+      "outcome": "The Step 2 plan is **fundamentally misaligned with the current codebase state**. Looking at `executor.test.ts`, the tests described in Step 2 **already exist** at lines 1054–1124. Both test cases were implemented as part of Step 1:\n\n1. `\"retries worktree creation after cleaning up conflicting worktree\"` (lines 1054–1091)\n2. `\"throws original error if cleanup also fails\"` (lines 1093–1124)\n\nThe tests verify all the requirements listed in Step 2's checkboxes: mocking `execSync` for the conflict er"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:24.988Z",
+      "action": "Step 2 (Testing & Verification) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:24.988Z",
+      "action": "RETHINK: Step 2 plan rewound — session checkpoint 64ac85b3",
+      "outcome": "The Step 2 plan is **fundamentally misaligned with the current codebase state**. Looking at `executor.test.ts`, the tests described in Step 2 **already exist** at lines 1054–1124. Both test cases were implemented as part of Step 1:\n\n1. `\"retries worktree creation after cleaning up conflicting worktree\"` (lines 1054–1091)\n2. `\"throws original error if cleanup also fails\"` (lines 1093–1124)\n\nThe tests verify all the requirements listed in Step 2's checkboxes: mocking `execSync` for the conflict er"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:28.418Z",
+      "action": "Plan review for Step 2 identified that the requested retry-cleanup tests were already completed during Step 1 implementation.",
+      "outcome": "Proceeding by treating Step 2 as verification of the newly added tests and environment readiness rather than adding duplicate coverage."
+    },
+    {
+      "timestamp": "2026-03-30T17:49:16.199Z",
+      "action": "code review requested for Step 2 (Add Tests for Retry Cleanup Scenario)"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:39.520Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The tests for the worktree retry cleanup scenario are well-implemented and follow the project's testing patterns. Both test cases cover the required functionality: successful retry after cleanup and proper error handling when cleanup fails. The tests use consistent mocking patterns with the existing test suite and properly verify the expected git command invocations."
+    },
+    {
+      "timestamp": "2026-03-30T17:49:42.311Z",
+      "action": "Ran verification after installing workspace dependencies.",
+      "outcome": "Executor test coverage now passes for the new retry-cleanup scenario; full engine test invocation still exposes pre-existing workspace resolution failures for @kb/core in unrelated suites, while pnpm build passes successfully."
+    },
+    {
+      "timestamp": "2026-03-30T17:49:46.989Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:48.577Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:58.773Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:50:00.140Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T17:50:48.216Z",
+  "createdAt": "2026-03-30T17:39:58.355Z",
+  "updatedAt": "2026-03-30T17:50:48.216Z",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "size": "M",
+  "reviewLevel": 2
+}

@@ -1801,6 +1801,42 @@ export interface FirstRunStatus {
   singleProjectPath: string | null;
 }
 
+/** Setup state for first-run wizard */
+export interface SetupState {
+  /** The first-run state: fresh-install, needs-migration, setup-wizard, normal-operation */
+  state: "fresh-install" | "needs-migration" | "setup-wizard" | "normal-operation";
+  /** Projects detected on the filesystem (not yet registered) */
+  detectedProjects: Array<{
+    path: string;
+    name: string;
+    hasDb: boolean;
+  }>;
+  /** Whether the central database exists */
+  hasCentralDb: boolean;
+  /** Projects already registered in the central database */
+  registeredProjects: Array<{
+    id: string;
+    name: string;
+    path: string;
+  }>;
+}
+
+/** Input for completing setup */
+export interface CompleteSetupInput {
+  projects: Array<{
+    path: string;
+    name: string;
+    isolationMode?: "in-process" | "child-process";
+  }>;
+}
+
+/** Result of completing setup */
+export interface CompleteSetupResult {
+  success: boolean;
+  projectsRegistered: string[];
+  errors: string[];
+}
+
 /** Fetch all registered projects */
 export function fetchProjects(): Promise<ProjectInfo[]> {
   return api<ProjectInfo[]>("/projects");
@@ -1855,6 +1891,19 @@ export function resumeProject(id: string): Promise<ProjectInfo> {
 /** Fetch first run status to detect if user needs setup wizard */
 export function fetchFirstRunStatus(): Promise<FirstRunStatus> {
   return api<FirstRunStatus>("/first-run-status");
+}
+
+/** Fetch detailed setup state including detected projects */
+export function fetchSetupState(): Promise<SetupState> {
+  return api<SetupState>("/setup-state");
+}
+
+/** Complete first-run setup by registering projects */
+export function completeSetup(input: CompleteSetupInput): Promise<CompleteSetupResult> {
+  return api<CompleteSetupResult>("/complete-setup", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 /** Fetch global concurrency state */

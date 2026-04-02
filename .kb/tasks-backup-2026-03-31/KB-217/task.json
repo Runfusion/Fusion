@@ -1,0 +1,172 @@
+{
+  "id": "KB-217",
+  "title": "In planning mode after answering the first question",
+  "description": "In planning mode after answering the first question, It goes to a spinner and hangs indefinitely. I want to see a preview of the ai output as its planning the next question. Also on the main screen the ai output shoudl show in a box that scrolls not a horizontal thing",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Planning Mode Hanging Race Condition",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS for AI Thinking Output Display",
+      "status": "done"
+    },
+    {
+      "name": "Update Loading State Layout",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:07:23.854Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:16:09.729Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:16:26.240Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes two real UI/UX bugs in the planning mode: a race condition where the SSE connection is closed before the response is submitted (causing missed events and hanging), and missing CSS for the AI thinking output container. The file scope is correct, the steps are concrete with verifiable outcomes, and testing requirements are appropriate."
+    },
+    {
+      "timestamp": "2026-03-31T00:56:31.300Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/noble-sage"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:31.300Z",
+      "action": "Step 0 (Fix Planning Mode Hanging Race Condition) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:33.865Z",
+      "action": "Step 0 (Fix Planning Mode Hanging Race Condition) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:59.595Z",
+      "action": "Step 0 (Fix Planning Mode Hanging Race Condition) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:59.596Z",
+      "action": "Preflight complete. Analyzed the race condition: handleSubmitResponse closes SSE connection before calling respondToPlanning, then tries to create a new connection after the response. The AI agent broadcasts events before the new connection is established, causing the hanging bug. Fix: keep connection open during submit."
+    },
+    {
+      "timestamp": "2026-03-31T00:57:02.056Z",
+      "action": "Step 1 (Add CSS for AI Thinking Output Display) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:57:04.720Z",
+      "action": "plan review requested for Step 1 (Fix Planning Mode Hanging Race Condition)"
+    },
+    {
+      "timestamp": "2026-03-31T00:57:51.084Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan correctly identifies the race condition issue but the proposed solution has a critical flaw. The plan suggests keeping the SSE connection alive during `handleSubmitResponse`, but the current implementation architecture doesn't support this approach effectively. The code shows that `respondToPlanning` is a REST API call that returns immediately (the AI processing happens asynchronously server-side), and a new connection setup is needed to receive the subsequent events. The real issue is "
+    },
+    {
+      "timestamp": "2026-03-31T01:01:03.073Z",
+      "action": "code review requested for Step 1 (Fix Planning Mode Hanging Race Condition)"
+    },
+    {
+      "timestamp": "2026-03-31T01:03:21.499Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation attempts to fix the race condition by establishing a new SSE connection **before** calling `respondToPlanning`, but this approach has a critical flaw: it **still closes the previous connection** before submitting the response. The task requirements explicitly state to \"keep the SSE connection alive during the response submission\" and \"NOT close the existing stream connection before calling `respondToPlanning`\", but the code violates this by doing `streamConnectionRef.current?."
+    },
+    {
+      "timestamp": "2026-03-31T01:04:27.077Z",
+      "action": "code review requested for Step 1 (Fix Planning Mode Hanging Race Condition)"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:33.379Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation successfully addresses the race condition that caused the planning modal to hang after submitting the first question. The fix keeps the SSE connection alive throughout the planning session instead of closing and reconnecting it, which prevents missing events that are broadcast while the frontend is disconnected. The solution is clean, well-implemented, and includes comprehensive test coverage validating the fix."
+    },
+    {
+      "timestamp": "2026-03-31T01:05:36.449Z",
+      "action": "Step 1 (Add CSS for AI Thinking Output Display) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:38.546Z",
+      "action": "Step 2 (Update Loading State Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:41.061Z",
+      "action": "plan review requested for Step 2 (Add CSS for AI Thinking Output Display)"
+    },
+    {
+      "timestamp": "2026-03-31T01:07:00.951Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies all three CSS classes needed (`.planning-thinking-container`, `.planning-thinking-toggle`, `.planning-thinking-output`) and the proposed CSS matches existing design system patterns in the codebase. The styles follow established conventions for scrollable containers, use appropriate CSS variables, and will achieve the stated outcome of displaying AI thinking output in a scrollable box with vertical scrolling."
+    },
+    {
+      "timestamp": "2026-03-31T01:07:37.925Z",
+      "action": "code review requested for Step 2 (Add CSS for AI Thinking Output Display)"
+    },
+    {
+      "timestamp": "2026-03-31T01:08:47.836Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The CSS implementation successfully adds all required styles for the AI thinking output display in the planning modal. The styles match the specification exactly, follow the dashboard's design system patterns, include proper responsive adjustments for mobile, and are correctly integrated with the existing component markup."
+    },
+    {
+      "timestamp": "2026-03-31T01:08:50.514Z",
+      "action": "Step 2 (Update Loading State Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:08:52.388Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:08:54.486Z",
+      "action": "plan review requested for Step 3 (Update Loading State Layout)"
+    },
+    {
+      "timestamp": "2026-03-31T01:09:28.922Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "Step 3 addresses layout improvements for the loading state when thinking output is displayed. The CSS styles for the thinking output were already added in Step 2 (confirmed by examining `styles.css` lines 6922-6969), so this step focuses on ensuring proper spacing and layout constraints. The existing implementation in `PlanningModeModal.tsx` (lines 280-298) already shows the thinking output correctly within the loading state, with the thinking container properly nested. The step's objectives are"
+    },
+    {
+      "timestamp": "2026-03-31T01:09:43.183Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:09:45.809Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:25.906Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:31.427Z",
+      "action": "All tests passing (13 PlanningModeModal tests including new race condition test). Build has pre-existing TypeScript error in github.ts (duplicate delay function) not related to this task."
+    },
+    {
+      "timestamp": "2026-03-31T01:11:46.936Z",
+      "action": "Task complete. Fixed race condition in PlanningModeModal by keeping SSE connection alive during response submission. Added CSS for scrollable AI thinking output. Added test verifying multi-question flow uses single connection."
+    },
+    {
+      "timestamp": "2026-03-31T01:11:50.440Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:12:56.691Z",
+  "createdAt": "2026-03-31T00:07:23.854Z",
+  "updatedAt": "2026-03-31T01:12:56.691Z",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-5-20251101",
+  "validatorModelProvider": "anthropic",
+  "validatorModelId": "claude-sonnet-4-5-20250929",
+  "size": "M",
+  "reviewLevel": 2
+}

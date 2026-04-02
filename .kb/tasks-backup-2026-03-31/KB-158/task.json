@@ -1,0 +1,103 @@
+{
+  "id": "KB-158",
+  "description": "fix spacing on the refresh button on the usage indicaotr drop down",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Diagnose Spacing Issue",
+      "status": "done"
+    },
+    {
+      "name": "Fix the Spacing",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T15:28:01.492Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T15:29:05.922Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T15:29:28.073Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. All referenced files exist at the specified paths, and the spacing issue is correctly identified—the refresh button in `UsageIndicator.tsx` (lines 192-200) lacks the flex/gap styling that other icon+text buttons in the dashboard use. The testing requirements are appropriate, and the review level (0) is correctly sized for this simple UI fix."
+    },
+    {
+      "timestamp": "2026-03-30T15:53:24.911Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/coral-marsh"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:24.911Z",
+      "action": "Step 0 (Diagnose Spacing Issue) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:47.173Z",
+      "action": "Step 0 (Diagnose Spacing Issue) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:48.888Z",
+      "action": "Step 0: Diagnosed spacing issue in UsageIndicator refresh button",
+      "outcome": "The RefreshCw icon and 'Refresh' text have no spacing between them. Need to add margin-right: 6px to the icon to match dashboard patterns (similar to GitManagerModal which uses marginRight: 8)"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:48.889Z",
+      "action": "Step 0 (Diagnose Spacing Issue) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:48.891Z",
+      "action": "Step 1 (Fix the Spacing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:52.805Z",
+      "action": "Step 1 (Fix the Spacing) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:52.806Z",
+      "action": "Step 1: Applied spacing fix to refresh button",
+      "outcome": "Added style={{ marginRight: 6 }} to RefreshCw icon to add spacing between icon and text"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:52.806Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:55:04.332Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:55:04.334Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:55:09.125Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:55:09.129Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:55:09.131Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:55:25.280Z",
+  "createdAt": "2026-03-30T15:28:01.492Z",
+  "updatedAt": "2026-03-30T15:55:25.280Z",
+  "size": "S",
+  "reviewLevel": 0
+}

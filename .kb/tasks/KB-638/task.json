@@ -1,0 +1,104 @@
+{
+  "id": "KB-638",
+  "description": "The subtask breakdown modal is too tall and bottom is off screen",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 4,
+  "summary": "Fixed the subtask breakdown modal height issue by adding `flex: 1` and `min-height: 0` to `.planning-summary-form` in `packages/dashboard/app/styles.css`. This ensures the form area properly shrinks within its scrollable container and respects the modal's `max-height: 90vh` constraint, keeping the Cancel/Create Tasks buttons visible and accessible. All 19 SubtaskBreakdownModal tests pass, confirming drag-and-drop and keyboard reordering still work correctly. Created changeset file documenting the fix.",
+  "createdAt": "2026-04-01T01:49:57.809Z",
+  "updatedAt": "2026-04-01T01:58:47.886Z",
+  "columnMovedAt": "2026-04-01T01:58:47.886Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Current Layout Issue",
+      "status": "done"
+    },
+    {
+      "name": "Implement CSS Fix",
+      "status": "done"
+    },
+    {
+      "name": "Test the Fix",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T01:49:57.809Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T01:50:33.869Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T01:50:47.620Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted for a straightforward CSS layout fix. The mission is clear, steps are concrete and verifiable, file scope is accurate, and testing requirements are appropriate for a CSS-only change. The spec correctly identifies the flexbox chain issue and proposes sensible fixes using `overflow-y: auto` and proper flex constraints."
+    },
+    {
+      "timestamp": "2026-04-01T01:52:21.081Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/lunar-dune"
+    },
+    {
+      "timestamp": "2026-04-01T01:52:21.089Z",
+      "action": "Step 0 (Analyze Current Layout Issue) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T01:53:02.384Z",
+      "action": "Step 0 (Analyze Current Layout Issue) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:53:02.386Z",
+      "action": "Step 0 (Analyze Current Layout Issue) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:53:03.887Z",
+      "action": "Step 1 (Implement CSS Fix) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:53:03.888Z",
+      "action": "plan review requested for Step 1 (Analyze Current Layout Issue)"
+    },
+    {
+      "timestamp": "2026-04-01T01:53:22.189Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause of the modal height issue. Step 1's checkboxes appropriately focus on understanding the flex container hierarchy from `.planning-modal` through `.planning-summary-form`. The analysis will reveal that `.planning-summary-form` (lines 7312-7315 in styles.css) lacks `overflow-y: auto` and proper flex constraints, causing it to expand beyond the `max-height: 90vh` container."
+    },
+    {
+      "timestamp": "2026-04-01T01:55:30.622Z",
+      "action": "Step 1 (Implement CSS Fix) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:55:30.623Z",
+      "action": "Step 1 & 2 completed - CSS fix implemented: Added `flex: 1` and `min-height: 0` to `.planning-summary-form` to ensure it properly shrinks within its scrollable container. All 19 SubtaskBreakdownModal tests pass.",
+      "outcome": "Modal layout should now properly constrain the form area and allow scrolling within the 90vh max-height container."
+    },
+    {
+      "timestamp": "2026-04-01T01:55:32.425Z",
+      "action": "Step 2 (Test the Fix) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:57:15.059Z",
+      "action": "Step 2 (Test the Fix) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:57:15.060Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:57:21.416Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:57:24.838Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

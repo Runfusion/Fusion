@@ -1,0 +1,130 @@
+{
+  "id": "KB-261",
+  "description": "Add a git component in dashboard that lets you see recent commits, diffs, worktrees, and full features git management tasks. View and manage branches. Pull and push and etc\n\n(Duplicated from KB-030)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Git Button to Header",
+      "status": "done"
+    },
+    {
+      "name": "Wire Up Git Manager in App.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T06:17:09.956Z",
+      "action": "Duplicated from KB-030"
+    },
+    {
+      "timestamp": "2026-03-31T06:20:24.021Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-31T06:22:07.816Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T06:22:27.683Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and complete. The task accurately describes a straightforward UI integration: wiring an already-built `GitManagerModal` component into the dashboard. All referenced files exist with the expected patterns, and the steps have concrete, verifiable outcomes."
+    },
+    {
+      "timestamp": "2026-03-31T06:24:20.652Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/deft-olive"
+    },
+    {
+      "timestamp": "2026-03-31T06:24:20.653Z",
+      "action": "Step 0 (Add Git Button to Header) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T06:24:27.710Z",
+      "action": "Step 0 (Add Git Button to Header) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:10.595Z",
+      "action": "Step 0 (Add Git Button to Header) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:10.598Z",
+      "action": "Preflight complete. GitManagerModal has 15 passing tests. Pre-existing failures in Board.test.tsx and mobile-planning-input-font-size.test.ts are unrelated to this integration task."
+    },
+    {
+      "timestamp": "2026-03-31T06:27:12.384Z",
+      "action": "plan review requested for Step 1 (Add Git Button to Header)"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:29.054Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows established patterns in the codebase. The checkboxes are concrete and verifiable. After reviewing Header.tsx, App.tsx, and GitManagerModal.tsx, I confirm the approach aligns with existing modal trigger patterns and the mobile/desktop split conventions."
+    },
+    {
+      "timestamp": "2026-03-31T06:27:30.386Z",
+      "action": "Step 1 (Wire Up Git Manager in App.tsx) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:52.883Z",
+      "action": "Step 1 (Wire Up Git Manager in App.tsx) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:52.886Z",
+      "action": "Step 1 complete. Added GitBranch icon import, onOpenGitManager prop to HeaderProps, destructured prop in component, desktop button next to Files button, and mobile overflow menu item with proper testids."
+    },
+    {
+      "timestamp": "2026-03-31T06:27:54.781Z",
+      "action": "plan review requested for Step 2 (Wire Up Git Manager in App.tsx)"
+    },
+    {
+      "timestamp": "2026-03-31T06:28:09.943Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is clear, follows established patterns in the codebase, and will achieve the stated outcomes. The Header component already has the `onOpenGitManager` prop defined and both desktop/mobile buttons implemented from Step 1. Step 2 correctly identifies the remaining work: adding state, handlers, and rendering the GitManagerModal in App.tsx."
+    },
+    {
+      "timestamp": "2026-03-31T06:28:10.872Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:28:31.389Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:28:31.392Z",
+      "action": "Step 2 complete. Added gitManagerOpen state, handleOpenGitManager/handleCloseGitManager callbacks, passed onOpenGitManager to Header, and rendered GitManagerModal with proper props positioned after ActivityLogModal.",
+      "outcome": "GitManagerModal is now integrated into the app with proper state management and handlers."
+    },
+    {
+      "timestamp": "2026-03-31T06:28:32.499Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:30:12.110Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:30:12.112Z",
+      "action": "Step 3 complete. All GitManagerModal tests pass (15/15). Build passes. TypeScript compiles without errors. Updated README with accurate button placement description.",
+      "outcome": "No new test failures introduced. Pre-existing 8 failures in unrelated tests remain unchanged."
+    },
+    {
+      "timestamp": "2026-03-31T06:30:27.040Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T06:32:04.303Z",
+  "createdAt": "2026-03-31T06:17:09.956Z",
+  "updatedAt": "2026-03-31T06:32:04.303Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully integrated GitManagerModal into the dashboard UI. Added git branch icon button to Header.tsx (desktop inline placement + mobile overflow menu), wired up state management and handlers in App.tsx, positioned GitManagerModal in the render tree after ActivityLogModal, and updated README documentation. All 15 GitManagerModal tests pass, TypeScript compiles without errors, and build completes successfully. No new test failures introduced."
+}

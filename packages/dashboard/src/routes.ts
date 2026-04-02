@@ -6198,6 +6198,80 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * GET /api/setup-state
+   * Returns the first-run state and any detected projects for migration.
+   * This is used by the dashboard to determine what UI to show on startup.
+   */
+  router.get("/setup-state", async (_req, res) => {
+    try {
+      const { FirstRunDetector } = await import("@fusion/core");
+      const { CentralCore } = await import("@fusion/core");
+
+      const detector = new FirstRunDetector();
+      const state = await detector.detectFirstRunState();
+      const detectedProjects = await detector.detectExistingProjects(process.cwd());
+
+      // Get central DB info
+      const central = new CentralCore();
+      await central.init();
+      const projects = await central.listProjects();
+      await central.close();
+
+      res.json({
+        state,
+        detectedProjects,
+        hasCentralDb: detector.hasCentralDb(),
+        registeredProjects: projects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          path: p.path,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/complete-setup
+   * Complete the first-run setup by registering projects.
+   * Body: { projects: Array<{ path: string, name: string, isolationMode?: "in-process" | "child-process" }> }
+   */
+  router.post("/complete-setup", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const { MigrationCoordinator } = await import("@fusion/core");
+
+      const { projects } = req.body as {
+        projects: Array<{ path: string; name: string; isolationMode?: "in-process" | "child-process" }>;
+      };
+
+      if (!Array.isArray(projects)) {
+        res.status(400).json({ error: "projects must be an array" });
+        return;
+      }
+
+      const central = new CentralCore();
+      await central.init();
+
+      try {
+        const coordinator = new MigrationCoordinator(central);
+        const result = await coordinator.completeSetup(projects);
+
+        res.json({
+          success: result.success,
+          projectsRegistered: result.projectsRegistered,
+          errors: result.errors,
+        });
+      } finally {
+        await central.close();
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * GET /api/tasks/:id/diff
    * Fetch git diff for a task's changes.
    * Query: ?worktree=path

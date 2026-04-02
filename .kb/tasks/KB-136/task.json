@@ -1,0 +1,207 @@
+{
+  "id": "KB-136",
+  "description": "Scale dashboard badge WebSocket broadcasts across multiple app instances using shared pub/sub (for example Redis) so real-time badge updates stay consistent in multi-instance deployments.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add a shared badge pub/sub adapter and package it correctly for the published API + CLI",
+      "status": "done"
+    },
+    {
+      "name": "Refactor `/api/ws` and poller wiring for cross-instance delivery with per-server isolation",
+      "status": "done"
+    },
+    {
+      "name": "Prove multi-instance delivery and poller isolation with real automated tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T10:15:47.615Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T10:26:24.902Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:29:30.010Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The spec is well-scoped and mostly concrete: it correctly targets `/api/ws`, keeps payloads badge-only, requires real automated tests, and calls out the key cross-instance risks. However, it misses one published-package packaging requirement and underspecifies how to preserve truly instance-local polling in the required two-server test setup."
+    },
+    {
+      "timestamp": "2026-03-30T10:31:27.361Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:35:05.228Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a strong, code-grounded spec overall: it correctly identifies that `/api/ws` fan-out is currently process-local in `packages/dashboard/src/server.ts:333-488`, that `WebSocketManager` only broadcasts to in-process subscribers in `packages/dashboard/src/websocket.ts:138-155`, and that badge polling is tied to the process-wide singleton `githubPoller` in `packages/dashboard/src/github-poll.ts:383`. The main gap is that the spec explicitly changes `createApiRoutes()` and route-side poller us"
+    },
+    {
+      "timestamp": "2026-03-30T10:36:08.955Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:39:43.467Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a strong, well-scoped specification overall: the mission is clear, the cross-instance websocket failure mode is accurately described, and the steps line up with the current code in `packages/dashboard/src/server.ts`, `packages/dashboard/src/websocket.ts`, `packages/dashboard/src/routes.ts`, and `packages/dashboard/src/github-poll.ts`. The main gap is that one of the stated outcomes—shipping the Redis-backed pub/sub support correctly in the published CLI package—is not backed by a require"
+    },
+    {
+      "timestamp": "2026-03-30T10:40:50.562Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:44:06.038Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a strong spec overall: it correctly identifies the real single-process bottlenecks in the current implementation, especially the local-only badge fan-out in `packages/dashboard/src/server.ts:333-488` and the process-global poller reads in `packages/dashboard/src/routes.ts:1549-1681`. It is also concrete about automated testing and packaging. The main blocking gap is that it promises an embedder-injectable `ServerOptions.githubPoller` / `badgePubSub` surface without explicitly requiring t"
+    },
+    {
+      "timestamp": "2026-03-30T10:45:21.970Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:50:12.159Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a strong spec that maps well to the current implementation. It correctly identifies the existing single-process limitation in `/api/ws` fan-out (`packages/dashboard/src/server.ts:333-488`, `packages/dashboard/src/websocket.ts:111-132`) and the current process-global poller coupling used by both websocket setup and stale-status routes (`packages/dashboard/src/github-poll.ts:383`, `packages/dashboard/src/routes.ts:1563-1564`, `packages/dashboard/src/routes.ts:1678-1679`). The steps are con"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:15.454Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sandy-stone"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:15.454Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:17.079Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:36.553Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:36.553Z",
+      "action": "Step 0 (Preflight) complete. Verified all required files and dependencies exist. Key architecture understanding:\n\n1. Current badge updates are process-local via WebSocketManager\n2. githubPoller is a singleton exported from github-poll.ts\n3. ServerOptions currently lacks injection points for pub/sub and poller\n4. Routes use the hardcoded githubPoller singleton\n5. CLI package needs Redis as runtime dependency for published builds\n6. WebSocket messages follow BadgeUpdatedMessage contract: { type: \"badge:updated\", taskId, prInfo?, issueInfo?, timestamp }"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:38.237Z",
+      "action": "Step 1 (Add a shared badge pub/sub adapter and package it correctly for the published API + CLI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:38.238Z",
+      "action": "plan review requested for Step 1 (Add shared badge pub/sub adapter and package it correctly)"
+    },
+    {
+      "timestamp": "2026-03-30T19:36:58.184Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and will achieve the stated outcomes. It correctly identifies the need for a badge-pubsub adapter with envelope validation, Redis-backed implementation with proper env var naming, injectable surfaces for testing, CLI packaging requirements, and test coverage. The approach maintains backward compatibility through env-based construction with fallback defaults."
+    },
+    {
+      "timestamp": "2026-03-30T19:39:28.928Z",
+      "action": "code review requested for Step 1 (Add shared badge pub/sub adapter and package it correctly)"
+    },
+    {
+      "timestamp": "2026-03-30T19:40:05.490Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The badge pub/sub adapter implementation is well-structured and handles most Step 1 requirements: the envelope contract is correct, Redis adapter uses the proper env variable names, malformed message handling is defensive, and the ioredis dependency is correctly declared in both the dashboard and CLI packages. However, a critical requirement from Step 1 is missing—the `ServerOptions` interface has not been extended to expose the injectable surfaces for `badgePubSub` and `githubPoller` that tests"
+    },
+    {
+      "timestamp": "2026-03-30T19:41:21.965Z",
+      "action": "code review requested for Step 1 (Add shared badge pub/sub adapter and package it correctly)"
+    },
+    {
+      "timestamp": "2026-03-30T19:42:20.379Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation creates the badge pub/sub adapter interfaces and Redis-backed implementation, exports them from the package index, adds the `ioredis` dependency to both packages, and updates the test for dependency assertions. However, there is a **critical runtime bug** in `server.ts` where the renamed import `globalGithubPoller` is not being used correctly, and the `ServerOptions.githubPoller` injection surface is declared but never actually used in `setupBadgeWebSocket()`. Additionally, a "
+    },
+    {
+      "timestamp": "2026-03-30T19:42:40.277Z",
+      "action": "code review requested for Step 1 (Add shared badge pub/sub adapter and package it correctly)"
+    },
+    {
+      "timestamp": "2026-03-30T19:43:15.775Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The Step 1 implementation is complete and well-executed. The new `badge-pubsub.ts` module provides a clean adapter boundary with proper envelope validation, the Redis and in-memory implementations handle the required environment configuration correctly, `ServerOptions` exposes both `badgePubSub` and `githubPoller` injection surfaces, and the CLI package declares the required `ioredis` runtime dependency. Tests cover the core functionality including malformed message handling and no-config fallba"
+    },
+    {
+      "timestamp": "2026-03-30T19:43:17.549Z",
+      "action": "Step 1 (Add a shared badge pub/sub adapter and package it correctly for the published API + CLI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:43:17.550Z",
+      "action": "Step 2 (Refactor `/api/ws` and poller wiring for cross-instance delivery with per-server isolation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:43:17.550Z",
+      "action": "plan review requested for Step 2 (Refactor /api/ws and poller wiring for cross-instance delivery with per-server isolation)"
+    },
+    {
+      "timestamp": "2026-03-30T19:43:38.515Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 correctly identifies the necessary changes to achieve cross-instance badge delivery while maintaining per-server poller isolation. The approach follows the architecture established in Step 1 (badge-pubsub.ts) and properly respects the constraints in AGENTS.md regarding WebSocket message shapes, polling behavior, and backwards compatibility."
+    },
+    {
+      "timestamp": "2026-03-30T19:44:37.355Z",
+      "action": "code review requested for Step 2 (Refactor /api/ws and poller wiring for cross-instance delivery with per-server isolation)"
+    },
+    {
+      "timestamp": "2026-03-30T19:45:17.412Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly refactors the WebSocket and poller infrastructure to support cross-instance badge delivery. The key changes include injectable `ServerOptions.badgePubSub` and `ServerOptions.githubPoller` surfaces, structured snapshot caching with late-subscription replay, and proper echo-loop prevention via sourceId filtering. The code preserves backward compatibility with local-only deployments while enabling multi-instance scaling."
+    },
+    {
+      "timestamp": "2026-03-30T19:45:18.656Z",
+      "action": "Step 2 (Refactor `/api/ws` and poller wiring for cross-instance delivery with per-server isolation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:45:20.414Z",
+      "action": "Step 3 (Prove multi-instance delivery and poller isolation with real automated tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:00.316Z",
+      "action": "Step 3 (Prove multi-instance delivery and poller isolation with real automated tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:01.387Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:51:31.442Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:51:33.462Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:51:47.002Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:51:54.689Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:52:14.643Z",
+  "createdAt": "2026-03-30T10:15:47.615Z",
+  "updatedAt": "2026-03-30T19:52:14.643Z",
+  "size": "L",
+  "reviewLevel": 3
+}

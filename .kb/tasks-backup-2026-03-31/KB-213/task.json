@@ -1,0 +1,125 @@
+{
+  "id": "KB-213",
+  "title": "Fix useMultiAgentLogs hook tests 8 tests failing with",
+  "description": "Fix useMultiAgentLogs hook tests - 8 tests failing with \"EventSource is not a constructor\" and mock cleanup issues similar to what was fixed in useTasks tests. The tests need proper EventSource mock setup and cleanup between tests. See useTasks.test.ts for the cleanup pattern that works.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update MockEventSource Class",
+      "status": "done"
+    },
+    {
+      "name": "Fix beforeEach and afterEach Hooks",
+      "status": "done"
+    },
+    {
+      "name": "Refactor Tests to Use Static Instance Tracking",
+      "status": "done"
+    },
+    {
+      "name": "Fix Specific Test Issues",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T23:04:25.540Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T23:07:30.500Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-30T23:07:51.860Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-30T23:08:38.820Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T23:08:51.856Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification accurately identifies the test failures in `useMultiAgentLogs.test.ts` and correctly maps them to the proven pattern from `useTasks.test.ts`. The mission is clear, steps have concrete verifiable outcomes, and the testing requirements demand real automated verification with zero tolerance for failures."
+    },
+    {
+      "timestamp": "2026-03-30T23:19:38.066Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sandy-heron"
+    },
+    {
+      "timestamp": "2026-03-30T23:19:38.067Z",
+      "action": "Step 0 (Update MockEventSource Class) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:19:45.496Z",
+      "action": "Step 0 (Update MockEventSource Class) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:19:46.536Z",
+      "action": "plan review requested for Step 1 (Update MockEventSource Class)"
+    },
+    {
+      "timestamp": "2026-03-30T23:20:04.505Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and will achieve the stated outcomes. The MockEventSource class in vitest.setup.ts already has most required features, but the test file needs to move to a self-contained mock pattern (matching useTasks.test.ts) to ensure proper isolation. The step correctly identifies removing the unused `getActiveConnections()` helper and properly aligning the mock class with the working reference pattern."
+    },
+    {
+      "timestamp": "2026-03-30T23:24:47.446Z",
+      "action": "Step 0 (Update MockEventSource Class) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:24:49.562Z",
+      "action": "code review requested for Step 0 (Update MockEventSource Class)"
+    },
+    {
+      "timestamp": "2026-03-30T23:25:21.732Z",
+      "action": "code review Step 0: APPROVE",
+      "outcome": "The implementation correctly updates `useMultiAgentLogs.test.ts` to use the global `MockEventSource` class from `vitest.setup.ts` instead of any locally-defined mock. The `MockEventSource` class in `vitest.setup.ts` already contains all required properties: static `instances` array, static `CLOSED` constant, constructor instance tracking, and proper `close()` method implementation. The test file now properly imports this class and uses helper functions that leverage `MockEventSource.instances` f"
+    },
+    {
+      "timestamp": "2026-03-30T23:26:27.002Z",
+      "action": "Fixed useMultiAgentLogs hook tests",
+      "outcome": "All 16 tests now pass consistently. Applied proper EventSource mock cleanup pattern from useTasks.test.ts: added header comment explaining cleanup requirements, updated beforeEach to reset MockEventSource.instances and use real timers, updated afterEach to close lingering connections and cleanup instances."
+    },
+    {
+      "timestamp": "2026-03-30T23:26:28.011Z",
+      "action": "Step 1 (Fix beforeEach and afterEach Hooks) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:26:28.013Z",
+      "action": "Step 2 (Refactor Tests to Use Static Instance Tracking) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:26:28.015Z",
+      "action": "Step 3 (Fix Specific Test Issues) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:26:28.016Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:26:28.018Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:26:28.020Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:26:39.717Z",
+  "createdAt": "2026-03-30T23:04:25.540Z",
+  "updatedAt": "2026-03-30T23:26:39.717Z",
+  "size": "S",
+  "reviewLevel": 2
+}

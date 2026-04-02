@@ -1,0 +1,192 @@
+{
+  "id": "KB-309",
+  "description": "The notification setting doesn’t persist when I enable it",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Diagnose Root Cause",
+      "status": "done"
+    },
+    {
+      "name": "Fix Form State Initialization",
+      "status": "done"
+    },
+    {
+      "name": "Fix Save Handler",
+      "status": "done"
+    },
+    {
+      "name": "Write Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T17:25:16.419Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T17:29:11.146Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T17:29:26.814Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted and technically accurate. It correctly identifies a real bug in the form state initialization for notification settings and provides a focused, verifiable plan to fix it. The file scope is precise, testing requirements demand real assertions, and the review level is appropriate for a Small task."
+    },
+    {
+      "timestamp": "2026-03-31T17:51:15.217Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/brave-breeze"
+    },
+    {
+      "timestamp": "2026-03-31T17:51:15.217Z",
+      "action": "Step 0 (Diagnose Root Cause) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T17:51:16.327Z",
+      "action": "Step 0 (Diagnose Root Cause) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:51:26.720Z",
+      "action": "Step 0 (Diagnose Root Cause) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:51:27.667Z",
+      "action": "Step 1 (Fix Form State Initialization) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:51:32.673Z",
+      "action": "plan review requested for Step 1 (Diagnose Root Cause)"
+    },
+    {
+      "timestamp": "2026-03-31T17:51:50.783Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The step's checkboxes correctly identify the diagnostic areas needed. The root cause is already visible from my analysis: the initial `useState` form initialization is missing `ntfyEnabled` and `ntfyTopic` fields. While `fetchSettings()` properly populates these via the merged Settings view, having them absent from the initial state creates a potential undefined state during the brief loading period and is inconsistent with other form fields that have explicit defaults."
+    },
+    {
+      "timestamp": "2026-03-31T17:55:40.325Z",
+      "action": "Root Cause Analysis Complete",
+      "outcome": "The SettingsModal.tsx initial form state (useState) does NOT include default values for `ntfyEnabled` and `ntfyTopic`. While the useEffect that calls fetchSettings() populates these fields, the initial state is incomplete. This can cause issues if the form is saved before settings finish loading, or if the checkbox is rendered as uncontrolled initially. The fix is to add `ntfyEnabled: false` and `ntfyTopic: undefined` to the initial form state."
+    },
+    {
+      "timestamp": "2026-03-31T17:55:41.145Z",
+      "action": "Step 1 (Fix Form State Initialization) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:55:42.696Z",
+      "action": "Step 2 (Fix Save Handler) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:55:44.389Z",
+      "action": "plan review requested for Step 2 (Fix Form State Initialization)"
+    },
+    {
+      "timestamp": "2026-03-31T17:55:57.163Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the root cause: the form state initialization in SettingsModal.tsx needs to ensure `ntfyEnabled` and `ntfyTopic` are properly initialized with defaults when missing from fetched settings. The approach will work — adding default values to the initial state and ensuring the `useEffect` that loads settings populates these fields."
+    },
+    {
+      "timestamp": "2026-03-31T17:56:10.337Z",
+      "action": "code review requested for Step 2 (Fix Form State Initialization)"
+    },
+    {
+      "timestamp": "2026-03-31T17:56:33.251Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Step 2 implementation correctly addresses the form state initialization requirements for `ntfyEnabled` and `ntfyTopic`. The form state now properly initializes with default values (`ntfyEnabled: false`, `ntfyTopic: undefined`) and the `useEffect` that loads settings via `fetchSettings()` will populate these fields from the fetched settings object. The GLOBAL_SETTINGS_KEYS constant already includes both notification fields, confirming proper global scope recognition."
+    },
+    {
+      "timestamp": "2026-03-31T17:56:34.184Z",
+      "action": "Step 2 (Fix Save Handler) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:56:37.446Z",
+      "action": "Step 3 (Write Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:56:38.666Z",
+      "action": "plan review requested for Step 3 (Fix Save Handler)"
+    },
+    {
+      "timestamp": "2026-03-31T17:57:07.906Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "After reviewing the codebase, the plan for Step 3 appropriately focuses on verification of the save handler logic. The existing implementation in `SettingsModal.tsx` already correctly routes notification settings to the global settings endpoint, and comprehensive tests already exist verifying this behavior. The step's checkboxes represent necessary verification points to confirm the implementation is working correctly."
+    },
+    {
+      "timestamp": "2026-03-31T17:57:17.660Z",
+      "action": "Step 3 verification complete",
+      "outcome": "The save handler in SettingsModal.tsx correctly filters form values by GLOBAL_SETTINGS_KEYS and calls updateGlobalSettings() when the Notifications section is active. All 11 ntfy-related tests pass. The save handler was already working correctly - the issue was only in the initial form state (fixed in Step 2)."
+    },
+    {
+      "timestamp": "2026-03-31T17:57:18.585Z",
+      "action": "Step 3 (Write Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:57:19.699Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:57:20.919Z",
+      "action": "plan review requested for Step 4 (Write Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:57:36.637Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan's Step 4 checkboxes cover the essential test scenarios for the notification settings persistence fix. The existing test file already has good coverage for notification settings (enabling ntfy, topic validation, saving via `updateGlobalSettings`), but the step correctly identifies the missing persistence verification tests—specifically testing that settings actually reload when the modal reopens."
+    },
+    {
+      "timestamp": "2026-03-31T17:57:57.509Z",
+      "action": "code review requested for Step 4 (Write Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:58:23.197Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The test implementation for Step 4 is comprehensive and covers all requirements specified in the task PROMPT.md. The worker added 18 new ntfy-related tests that verify form initialization, persistence through `updateGlobalSettings`, validation, UI state transitions, and the test notification button functionality. All required tests from Step 4 are present and follow the existing test patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T17:58:24.160Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:58:24.971Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:58:26.202Z",
+      "action": "plan review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T17:58:39.418Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 is appropriate and will achieve the stated outcomes. The step correctly identifies running the full test suite (`pnpm test`) and build (`pnpm build`) as quality gates, plus manual verification of the persistence fix. The codebase already has comprehensive notification settings tests in place from Step 4."
+    },
+    {
+      "timestamp": "2026-03-31T18:00:38.767Z",
+      "action": "Step 5 Testing & Verification Results",
+      "outcome": "All 82 SettingsModal tests pass. The dashboard client builds successfully (690.30 kB bundle). Build errors in other packages (core, engine) are pre-existing issues unrelated to notification settings - they're about missing agent-related exports. My changes only modified SettingsModal.tsx and SettingsModal.test.tsx."
+    },
+    {
+      "timestamp": "2026-03-31T18:00:41.474Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:00:49.599Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:01:04.626Z",
+  "createdAt": "2026-03-31T17:25:16.419Z",
+  "updatedAt": "2026-03-31T18:01:04.626Z",
+  "size": "S",
+  "reviewLevel": 2,
+  "summary": "Fixed notification settings persistence bug (KB-309) by adding `ntfyEnabled: false` and `ntfyTopic: undefined` to the initial form state in SettingsModal.tsx. The save handler was already working correctly - it filters form values by GLOBAL_SETTINGS_KEYS and calls updateGlobalSettings() when saving from the Notifications section. Added two new tests: one verifying re-opening the modal shows previously saved notification settings, and another verifying disabling ntfy persists correctly. All 82 SettingsModal tests pass."
+}

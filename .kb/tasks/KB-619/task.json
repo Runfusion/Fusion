@@ -1,0 +1,33 @@
+{
+  "id": "KB-619",
+  "description": "CLI Multi-Project Commands: Add `fn project` subcommands for managing multiple projects from the command line, plus `--project` flag support on existing commands.\n\n1. **`fn project list`** — List all registered projects:\n   - Table output: name, directory, status, in-flight tasks, last activity\n   - JSON output with `--json` flag\n   - Status indicators (active/paused/errored)\n\n2. **`fn project add [dir]`** — Register a new project:\n   - Interactive wizard if no directory specified (prompt for path and name)\n   - Auto-detect project name from directory\n   - Validate directory has `.fusion/` or offer to run `fn init`\n   - Options: `--name <name>`, `--isolation <in-process|child-process>`\n\n3. **`fn project remove <name>`** — Unregister a project:\n   - Confirmation prompt (or `--force` to skip)\n   - Only removes from registry, does NOT delete `.fusion/` data\n   - Stops runtime if project is active\n\n4. **`fn project info [name]`** — Show project details:\n   - Project name, directory, status, isolation mode\n   - Task counts by column\n   - Active agents count\n   - Last activity timestamp\n\n5. **`--project` flag** — Add to all task/settings commands:\n   - `fn task list --project myapp`\n   - `fn task create --project myapp \"description\"`\n   - `fn settings --project myapp`\n   - Auto-detect project from cwd (walk up to find `.fusion/`)\n   - Error if cwd doesn't match any registered project and no `--project` flag\n\n6. **Auto-detection** — Walk up from cwd to find `.fusion/` directory, match against registry:\n   - If found, use that project context\n   - If not found and only one project registered, use it as default\n   - If multiple projects and no match, prompt or error\n\n**File scope:**\n- `packages/cli/src/commands/project.ts` (new)\n- `packages/cli/src/bin.ts` (add project subcommand, --project flag)\n- `packages/cli/src/project-resolver.ts` (new — cwd auto-detection logic)\n- `packages/cli/test/project-commands.test.ts` (new)\n\n**Context:** Read `packages/cli/src/bin.ts` for CLI command structure, `packages/core/src/central-core.ts` for CentralCore API.",
+  "column": "todo",
+  "status": "queued",
+  "size": "L",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-503",
+  "createdAt": "2026-03-31T23:26:33.164Z",
+  "updatedAt": "2026-04-01T03:17:36.801Z",
+  "columnMovedAt": "2026-03-31T23:34:08.949Z",
+  "dependencies": [
+    "KB-616",
+    "KB-615"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:26:33.164Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:33:39.306Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:34:05.220Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for adding multi-project CLI support. The spec correctly identifies dependencies on KB-615 (CentralCore) and KB-616 (ProjectManager), provides concrete step-by-step implementation plans with verifiable outcomes, and mandates comprehensive testing. The file scope is accurate and follows established CLI patterns in the codebase."
+    }
+  ]
+}

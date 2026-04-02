@@ -1,0 +1,34 @@
+{
+  "id": "KB-659",
+  "description": "Add a toggle in the same selector as board and list view to view agent view",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "blockedBy": "KB-618",
+  "modelProvider": "anthropic",
+  "modelId": "claude-sonnet-4-6",
+  "createdAt": "2026-04-01T02:40:10.133Z",
+  "updatedAt": "2026-04-01T03:17:36.850Z",
+  "columnMovedAt": "2026-04-01T02:47:33.715Z",
+  "dependencies": [
+    "KB-646"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:40:10.133Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:47:11.412Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:47:31.876Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a small UI enhancement. The mission is clear, steps are concrete and verifiable, file references match real code, and testing requirements are appropriately rigorous. The spec correctly identifies that this is a view-layer refactoring that extracts existing AgentListModal patterns into a first-class inline view alongside board and list views."
+    }
+  ]
+}

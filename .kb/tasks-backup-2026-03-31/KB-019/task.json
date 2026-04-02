@@ -1,0 +1,227 @@
+{
+  "id": "KB-019",
+  "description": "in the list view on the dashboard, group the list into sections based on the columns",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Current List View Structure",
+      "status": "done"
+    },
+    {
+      "name": "Design Grouped List Layout",
+      "status": "done"
+    },
+    {
+      "name": "Implement Task Grouping Logic",
+      "status": "done"
+    },
+    {
+      "name": "Implement Section Header UI",
+      "status": "done"
+    },
+    {
+      "name": "Update Table Rendering",
+      "status": "done"
+    },
+    {
+      "name": "Preserve and Test Drag-and-Drop",
+      "status": "done"
+    },
+    {
+      "name": "Update Empty States",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 9,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:05:23.461Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:09:50.252Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:10:05.787Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, technically accurate, and appropriately scoped. It correctly references existing code patterns (`COLUMNS`, `COLUMN_LABELS`, `filteredAndSortedTasks`), provides concrete implementation guidance with code snippets, and demands rigorous testing with the \"ZERO test failures\" policy. The step-by-step breakdown is logical and each step has verifiable outcomes."
+    },
+    {
+      "timestamp": "2026-03-30T01:34:10.184Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pale-aspen"
+    },
+    {
+      "timestamp": "2026-03-30T01:34:10.184Z",
+      "action": "Step 0 (Analyze Current List View Structure) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T01:36:01.285Z",
+      "action": "Step 0 (Analyze Current List View Structure) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:36:02.519Z",
+      "action": "Step 0 (Analyze Current List View Structure) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:36:04.011Z",
+      "action": "Step 1 (Design Grouped List Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:36:11.381Z",
+      "action": "Step 1: Analyzed current ListView.tsx structure",
+      "outcome": "Found flat table rendering via filteredAndSortedTasks useMemo. Drag-and-drop uses drop zones at top. Table has thead with 8 sortable columns, tbody maps tasks to rows with conditional styling (failed, paused, agent-active, dragging). No file changes needed for this analysis step."
+    },
+    {
+      "timestamp": "2026-03-30T01:36:11.385Z",
+      "action": "plan review requested for Step 1 (Analyze Current List View Structure)"
+    },
+    {
+      "timestamp": "2026-03-30T01:36:27.450Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The step's checkboxes appropriately cover the key areas needed to understand the current implementation. The analysis targets the correct locations: the `filteredAndSortedTasks` useMemo (lines 92-117), flat table rendering (lines 215-223), and drag-and-drop handlers (lines 163-185 for drop zones, lines 226-235 for row dragging)."
+    },
+    {
+      "timestamp": "2026-03-30T01:36:28.476Z",
+      "action": "Step 1 (Design Grouped List Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:36:28.479Z",
+      "action": "Step 2 (Implement Task Grouping Logic) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:36:32.440Z",
+      "action": "Step 2: Designed grouped list layout approach",
+      "outcome": "Using single table with section header rows (tr with th colspan) between groups. Will add .list-section-header, .list-section-dot, .list-section-title, .list-section-count classes. Global sort then group maintains sort order within each section. Filter applies before grouping - empty sections hidden when filter active, shown with 'No tasks' placeholder when no filter."
+    },
+    {
+      "timestamp": "2026-03-30T01:36:32.444Z",
+      "action": "plan review requested for Step 2 (Design Grouped List Layout)"
+    },
+    {
+      "timestamp": "2026-03-30T01:36:48.279Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the key design decisions for transforming the flat list view into a grouped view. The decision to use a single table with section header rows (`tr` with `th colspan`) is sound—it preserves column alignment, sticky header behavior, and maintains accessibility. The section header design appropriately mirrors the Board view's column headers (dot + label + count) for visual consistency."
+    },
+    {
+      "timestamp": "2026-03-30T01:36:51.608Z",
+      "action": "Step 2 (Implement Task Grouping Logic) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:36:51.610Z",
+      "action": "Step 3 (Implement Section Header UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:37:52.031Z",
+      "action": "Step 3 (Implement Section Header UI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:37:52.035Z",
+      "action": "Step 4 (Update Table Rendering) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:37:54.997Z",
+      "action": "code review requested for Step 3 (Implement Task Grouping Logic)"
+    },
+    {
+      "timestamp": "2026-03-30T01:38:34.398Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The task grouping logic implementation has the correct approach and computes grouped tasks correctly, but there are critical React rendering issues that will cause runtime warnings and potential rendering problems. The fragment key issue must be fixed, and the missing section header CSS classes need to be added."
+    },
+    {
+      "timestamp": "2026-03-30T01:38:50.901Z",
+      "action": "code review requested for Step 3 (Implement Task Grouping Logic)"
+    },
+    {
+      "timestamp": "2026-03-30T01:39:30.710Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Step 3 implementation correctly modifies the grouping logic in `ListView.tsx`. The `filteredAndSortedTasks` useMemo has been transformed into `groupedTasks` that returns a `Record<Column, Task[]>` structure. The implementation correctly maintains sort order within each column group and handles the filter → sort → group pipeline as specified."
+    },
+    {
+      "timestamp": "2026-03-30T01:39:33.777Z",
+      "action": "Step 3 (Implement Section Header UI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:39:33.777Z",
+      "action": "Step 4 (Update Table Rendering) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:39:35.688Z",
+      "action": "plan review requested for Step 4 (Implement Section Header UI)"
+    },
+    {
+      "timestamp": "2026-03-30T01:39:53.809Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step's checkboxes are well-defined and will achieve the stated outcomes. The ListView.tsx component already has the grouped structure with section header rows rendered using the correct classes (`list-section-header`, `list-section-dot`, `list-section-title`, `list-section-count`), but the corresponding CSS styles are missing from styles.css. The step correctly identifies the need to add these styles following existing patterns from the Column component."
+    },
+    {
+      "timestamp": "2026-03-30T01:40:05.964Z",
+      "action": "Step 4 (Update Table Rendering) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:40:05.967Z",
+      "action": "Step 5 (Preserve and Test Drag-and-Drop) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:40:09.015Z",
+      "action": "code review requested for Step 5 (Update Table Rendering)"
+    },
+    {
+      "timestamp": "2026-03-30T01:40:28.120Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The implementation correctly transforms the flat task table into a grouped view with section headers for each column. The rendering logic properly iterates over `COLUMNS`, renders section headers with color dots and counts, handles empty states appropriately, and preserves all existing row-level functionality including drag-and-drop and styling states."
+    },
+    {
+      "timestamp": "2026-03-30T01:40:29.927Z",
+      "action": "Step 5 (Preserve and Test Drag-and-Drop) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:40:29.928Z",
+      "action": "Step 6 (Update Empty States) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:40:29.928Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:40:29.928Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:41:57.716Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:42:00.359Z",
+      "action": "code review requested for Step 8 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T01:42:29.364Z",
+      "action": "code review Step 8: APPROVE",
+      "outcome": "The test implementation for the grouped list view is comprehensive and correctly validates all the key behaviors introduced in Steps 3-7. The tests cover section header rendering, task counts, empty states, filter-aware section hiding, and sort order preservation within sections. Existing tests were appropriately updated to work with the new grouped structure by filtering for `data-id` attributes to distinguish data rows from section headers."
+    },
+    {
+      "timestamp": "2026-03-30T01:42:33.964Z",
+      "action": "Task KB-019 complete",
+      "outcome": "List view now displays tasks grouped by column with section headers showing color dot, label, and task count. All tests passing (483 passed), build successful, changeset created."
+    },
+    {
+      "timestamp": "2026-03-30T01:42:33.966Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T01:43:59.698Z",
+  "createdAt": "2026-03-30T01:05:23.461Z",
+  "updatedAt": "2026-03-30T01:43:59.698Z",
+  "size": "M",
+  "reviewLevel": 2
+}

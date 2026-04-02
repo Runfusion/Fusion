@@ -1,0 +1,150 @@
+{
+  "id": "KB-606",
+  "description": "Improve test coverage. Add tests for uncovered areas that are critical",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 1,
+  "currentStep": 6,
+  "summary": "Successfully added comprehensive unit tests for critical uncovered areas across kb packages:\n\n1. **packages/core/src/board.test.ts** (24 tests) - Tests for column transition logic (`canTransition`, `getValidTransitions`) and dependency resolution (`resolveDependencyOrder`) including linear dependencies, diamond dependencies, disconnected components, and circular dependency handling.\n\n2. **packages/engine/src/agent-heartbeat.test.ts** (32 tests) - Tests for the `HeartbeatMonitor` class covering constructor options, start/stop lifecycle, agent tracking, heartbeat recording, health checking, missed heartbeat detection with callback triggers, and unresponsive agent termination.\n\n3. **packages/dashboard/app/utils/modelFilter.test.ts** (21 tests) - Tests for the `filterModels` utility function including empty/whitespace filters, case-insensitive matching, provider/ID/name filtering, multi-word AND logic, and substring matching.\n\n4. **packages/dashboard/app/hooks/useToast.test.tsx** (18 tests + 1 skipped) - Tests for the `useToast` React hook covering provider rendering, error handling outside provider, toast addition with various types, auto-assigned sequential IDs, auto-removal after 4000ms, manual removal, and multiple simultaneous toasts.\n\nAll tests pass, TypeScript type checking passes for core and engine packages, and build succeeds.",
+  "createdAt": "2026-03-31T21:47:45.020Z",
+  "updatedAt": "2026-04-01T00:27:35.020Z",
+  "columnMovedAt": "2026-04-01T00:27:35.020Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Board Logic Tests",
+      "status": "done"
+    },
+    {
+      "name": "Agent Heartbeat Monitor Tests",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard Utility Tests",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard React Hook Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:47:45.020Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:51:59.089Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:52:21.380Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive, accurate, and ready for implementation. All referenced source files exist with the described functions and classes. The test steps have concrete, verifiable outcomes using established testing patterns (vitest, @testing-library/react). The scope is appropriately bounded to adding tests for four critical uncovered areas."
+    },
+    {
+      "timestamp": "2026-04-01T00:17:26.036Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/green-petal"
+    },
+    {
+      "timestamp": "2026-04-01T00:17:26.037Z",
+      "action": "Step 0 (Core Board Logic Tests) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T00:17:27.639Z",
+      "action": "Step 0 (Core Board Logic Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:17:36.725Z",
+      "action": "Step 0 (Core Board Logic Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:17:38.034Z",
+      "action": "Step 1 (Agent Heartbeat Monitor Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:17:38.035Z",
+      "action": "plan review requested for Step 1 (Core Board Logic Tests)"
+    },
+    {
+      "timestamp": "2026-04-01T00:17:47.666Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is comprehensive and well-structured. The checkboxes cover all exported functions from `packages/core/src/board.ts` (`canTransition`, `getValidTransitions`, `resolveDependencyOrder`) with appropriate edge cases. The testing approach follows the established patterns in `store.test.ts` using vitest."
+    },
+    {
+      "timestamp": "2026-04-01T00:18:26.123Z",
+      "action": "Step 1 (Agent Heartbeat Monitor Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:18:26.124Z",
+      "action": "Step 2 (Dashboard Utility Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:18:26.125Z",
+      "action": "plan review requested for Step 2 (Agent Heartbeat Monitor Tests)"
+    },
+    {
+      "timestamp": "2026-04-01T00:18:51.973Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan provides solid coverage of the `HeartbeatMonitor` class with 17 checkbox items that address the main functional requirements. The test structure follows the established `StuckTaskDetector` patterns correctly, using fake timers for deterministic polling tests and callback-based assertions. The plan will achieve comprehensive coverage of the public API surface."
+    },
+    {
+      "timestamp": "2026-04-01T00:19:17.904Z",
+      "action": "Step 2 (Dashboard Utility Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:19:17.906Z",
+      "action": "Step 3 (Dashboard React Hook Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:19:17.906Z",
+      "action": "plan review requested for Step 3 (Dashboard Utility Tests)"
+    },
+    {
+      "timestamp": "2026-04-01T00:19:36.075Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and covers all critical functionality of the `filterModels` utility. The test cases align with the implementation in `packages/dashboard/app/utils/modelFilter.ts` and follow the established testing patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-04-01T00:20:10.622Z",
+      "action": "Step 3 (Dashboard React Hook Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:20:10.624Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:20:10.624Z",
+      "action": "plan review requested for Step 4 (Dashboard React Hook Tests)"
+    },
+    {
+      "timestamp": "2026-04-01T00:20:35.279Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The plan checkboxes cover the basic functionality of `useToast.ts`, but there's a critical gap: the test plan doesn't include verification that setTimeout timers are cleaned up when the ToastProvider unmounts. Without this cleanup test, the implementation's potential memory leak (setTimeout callbacks calling `removeToast` after unmount) would go undetected."
+    },
+    {
+      "timestamp": "2026-04-01T00:21:03.833Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:21:03.834Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:27:12.504Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:27:21.825Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

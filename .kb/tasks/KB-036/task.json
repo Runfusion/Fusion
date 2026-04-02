@@ -1,0 +1,177 @@
+{
+  "id": "KB-036",
+  "description": "If reuse worktree isn't turned on add a setting to generate branch/worktree name from the task",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Setting Type and Default",
+      "status": "done"
+    },
+    {
+      "name": "Update Executor to Use Setting",
+      "status": "done"
+    },
+    {
+      "name": "Add Dashboard UI Control",
+      "status": "done"
+    },
+    {
+      "name": "Add Executor Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:41:14.150Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:47:40.855Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:47:55.005Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for adding a new `worktreeNaming` setting. The mission is clear, steps have concrete verifiable outcomes, all referenced files exist and are correctly identified, and testing/documentation requirements are appropriate. The Review Level 1 designation is suitable for this straightforward settings addition."
+    },
+    {
+      "timestamp": "2026-03-30T03:22:08.316Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-lotus"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:08.329Z",
+      "action": "Step 0 (Add Setting Type and Default) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:09.764Z",
+      "action": "Step 0 (Add Setting Type and Default) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:18.053Z",
+      "action": "Step 0 (Add Setting Type and Default) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:19.416Z",
+      "action": "plan review requested for Step 1 (Add Setting Type and Default)"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:28.763Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is straightforward and correctly identifies the necessary changes to `packages/core/src/types.ts`. The approach follows the established pattern in the codebase: adding an optional union type property to the `Settings` interface and including the default value in `DEFAULT_SETTINGS`."
+    },
+    {
+      "timestamp": "2026-03-30T03:22:31.584Z",
+      "action": "Step 1 (Update Executor to Use Setting) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:52.584Z",
+      "action": "Step 1 (Update Executor to Use Setting) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:53.416Z",
+      "action": "plan review requested for Step 2 (Update Executor to Use Setting)"
+    },
+    {
+      "timestamp": "2026-03-30T03:23:24.994Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step's plan correctly identifies the key modification points in `executor.ts`. The checkboxes cover all required behaviors: task-id mode, task-title mode, random fallback, and the critical constraint that pooled worktrees must be unaffected. The logic placement around the fresh worktree creation block (lines 256-278) is the correct approach."
+    },
+    {
+      "timestamp": "2026-03-30T03:23:26.684Z",
+      "action": "Step 2 (Add Dashboard UI Control) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:30.650Z",
+      "action": "Step 2 (Add Dashboard UI Control) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:31.816Z",
+      "action": "plan review requested for Step 3 (Add Dashboard UI Control)"
+    },
+    {
+      "timestamp": "2026-03-30T03:24:41.911Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and achievable. The checkboxes cover the essential implementation requirements: placing the control in the correct section, using appropriate labeling, handling the conditional dependency on `recycleWorktrees`, and including test execution. The plan correctly identifies placement below the recycle worktrees checkbox in the worktrees section (around line 336-349 in SettingsModal.tsx)."
+    },
+    {
+      "timestamp": "2026-03-30T03:24:42.903Z",
+      "action": "Step 3 (Add Executor Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:30:35.501Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T03:30:38.886Z",
+      "action": "Step 3 (Add Executor Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:30:46.710Z",
+      "action": "plan review requested for Step 3 (Add Executor Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T03:30:59.861Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan's checkboxes for Step 3 are missing critical context about existing test infrastructure and have an incorrect test file path. While the executor implementation already exists (I can see it in `executor.ts` lines 227-241), the current test file already has a \"TaskExecutor worktree naming\" describe block (lines 360-430) that tests random naming. The plan needs to clarify whether to **extend** this existing block or create a new one, and fix the path reference for SettingsModal tests."
+    },
+    {
+      "timestamp": "2026-03-30T03:33:49.968Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T03:34:03.970Z",
+      "action": "Step 3 (Add Executor Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:46:40.729Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T03:46:43.458Z",
+      "action": "Step 3 (Add Executor Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:47:17.204Z",
+      "action": "Step 3 (Add Executor Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:47:17.206Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:47:53.928Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:47:53.932Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:48:43.061Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:48:43.063Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:48:43.064Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T03:48:57.618Z",
+  "createdAt": "2026-03-30T01:41:14.150Z",
+  "updatedAt": "2026-03-30T03:48:57.618Z",
+  "size": "M",
+  "reviewLevel": 1
+}

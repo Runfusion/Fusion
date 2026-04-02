@@ -1,0 +1,129 @@
+{
+  "id": "KB-297",
+  "description": "When a steering comment is added to a done task it should create a refinement task with the steering comment in the prompt",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Implement Auto-Refinement in addSteeringComment",
+      "status": "done"
+    },
+    {
+      "name": "Add Unit Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:33:09.904Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T16:39:02.168Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:39:16.415Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted and technically accurate. All file references (store.ts at lines 1561 and 475, store.test.ts at lines 1020 and 1888) are correct. The mission is clear, steps have verifiable outcomes, and the testing strategy covers all relevant edge cases. The size (S) and review level (2) are appropriate for this focused behavioral change."
+    },
+    {
+      "timestamp": "2026-03-31T17:29:41.986Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pale-robin"
+    },
+    {
+      "timestamp": "2026-03-31T17:29:41.986Z",
+      "action": "Step 0 (Implement Auto-Refinement in addSteeringComment) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T17:29:44.245Z",
+      "action": "Step 0 (Implement Auto-Refinement in addSteeringComment) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:29:50.952Z",
+      "action": "Step 0 (Implement Auto-Refinement in addSteeringComment) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:29:50.955Z",
+      "action": "Preflight complete. Understood addSteeringComment (line ~1558) and refineTask (line ~475) implementations. Review level 2 requires plan review before implementing Step 1."
+    },
+    {
+      "timestamp": "2026-03-31T17:29:51.940Z",
+      "action": "plan review requested for Step 1 (Implement Auto-Refinement in addSteeringComment)"
+    },
+    {
+      "timestamp": "2026-03-31T17:30:11.441Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan's approach is directionally correct but has a critical gap: it doesn't specify WHERE in `addSteeringComment` to add the refinement logic. Since the method uses `withTaskLock`, the auto-refinement must happen **outside** the lock callback to avoid holding the original task's lock during the refinement creation (which writes to a different task directory). The step checkboxes miss this architectural constraint."
+    },
+    {
+      "timestamp": "2026-03-31T17:30:13.238Z",
+      "action": "Plan review feedback: refineTask must be called OUTSIDE the withTaskLock callback to avoid lock contention, and should only trigger for author === 'user'. Will revise implementation accordingly."
+    },
+    {
+      "timestamp": "2026-03-31T17:30:14.784Z",
+      "action": "Step 1 (Add Unit Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:30:26.601Z",
+      "action": "code review requested for Step 1 (Implement Auto-Refinement in addSteeringComment)"
+    },
+    {
+      "timestamp": "2026-03-31T17:30:51.651Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds auto-refinement behavior to `addSteeringComment`. When a user adds a steering comment to a task in the \"done\" column, the method now automatically calls `refineTask` with the comment text. The implementation preserves existing behavior, handles errors gracefully, and maintains backward compatibility by keeping the same method signature."
+    },
+    {
+      "timestamp": "2026-03-31T17:30:52.775Z",
+      "action": "Step 1 (Add Unit Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:30:52.777Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:31:22.694Z",
+      "action": "code review requested for Step 2 (Add Unit Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:31:35.405Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The unit tests for the auto-refinement feature are well-implemented and comprehensive. All 8 required test cases from the PROMPT.md are present, plus 2 additional edge case tests (agent-authored comments and empty/whitespace handling). The tests follow the existing patterns in the codebase and correctly verify the behavior implemented in Step 1."
+    },
+    {
+      "timestamp": "2026-03-31T17:31:36.590Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:31:36.593Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:31:59.941Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:32:02.339Z",
+      "action": "Step 3 complete - all 340 core package tests pass, build succeeds. Proceeding to create changeset for minor version bump."
+    },
+    {
+      "timestamp": "2026-03-31T17:32:09.777Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T17:35:50.079Z",
+  "createdAt": "2026-03-31T16:33:09.904Z",
+  "updatedAt": "2026-03-31T17:35:50.079Z",
+  "size": "S",
+  "reviewLevel": 2,
+  "summary": "Implemented auto-creation of refinement tasks when steering comments are added to done tasks. Modified `addSteeringComment` in `packages/core/src/store.ts` to automatically call `refineTask` when a user comment is added to a task in the \"done\" column. Added 8 comprehensive unit tests covering the new behavior, edge cases, and error handling. Created changeset for minor version bump. All 340 core package tests pass."
+}

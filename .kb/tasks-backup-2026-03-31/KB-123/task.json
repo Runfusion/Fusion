@@ -1,0 +1,222 @@
+{
+  "id": "KB-123",
+  "description": "Add a toggle on the dashboard during new task creation to request the ai triage to break the task into subtasks\n\n(Duplicated from KB-040)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Verify UI Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Verify Type Definitions",
+      "status": "done"
+    },
+    {
+      "name": "Verify API Transport",
+      "status": "done"
+    },
+    {
+      "name": "Verify Storage Layer",
+      "status": "done"
+    },
+    {
+      "name": "Verify Triage Agent Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:11:46.869Z",
+      "action": "Duplicated from KB-040"
+    },
+    {
+      "timestamp": "2026-03-30T06:14:26.824Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-30T06:16:51.432Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T06:17:12.179Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-constructed verification task specification. All referenced files exist, the implementation details match the actual code, and the verification steps have concrete, verifiable outcomes. The task correctly identifies this as a \"verification only\" task with no expected changes."
+    },
+    {
+      "timestamp": "2026-03-31T00:39:38.700Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/happy-panda"
+    },
+    {
+      "timestamp": "2026-03-31T00:39:38.701Z",
+      "action": "Step 0 (Verify UI Implementation) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:39:40.298Z",
+      "action": "Step 0 (Verify UI Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:39:49.558Z",
+      "action": "Step 1 (Verify Type Definitions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:39:49.559Z",
+      "action": "plan review requested for Step 1 (Verify UI Implementation)"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:01.908Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and the checkboxes align with actual implementation. After reviewing all relevant source files, I can confirm the UI implementation is complete and matches the expected artifacts. The verification steps are appropriately scoped for a verification-only task."
+    },
+    {
+      "timestamp": "2026-03-31T00:41:22.688Z",
+      "action": "Step 1 (Verify Type Definitions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:22.691Z",
+      "action": "Step 1 verification complete: UI toggle implementation verified",
+      "outcome": "28 tests passed including 4 breakIntoSubtasks toggle tests"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:24.375Z",
+      "action": "Step 2 (Verify API Transport) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:24.377Z",
+      "action": "plan review requested for Step 2 (Verify Type Definitions)"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:37.215Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The verification plan for Step 2 is appropriate and well-scoped. The checkboxes correctly identify the critical type definitions that need verification. All three `breakIntoSubtasks` field declarations are already present in the codebase as expected."
+    },
+    {
+      "timestamp": "2026-03-31T00:41:45.777Z",
+      "action": "Step 2 (Verify API Transport) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:45.779Z",
+      "action": "Step 2 verification complete: Type definitions verified",
+      "outcome": "breakIntoSubtasks field present in Task interface (with JSDoc) and TaskCreateInput interface; typecheck passes"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:47.132Z",
+      "action": "Step 3 (Verify Storage Layer) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:47.134Z",
+      "action": "plan review requested for Step 3 (Verify API Transport)"
+    },
+    {
+      "timestamp": "2026-03-31T00:42:04.081Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is appropriate and will achieve its stated outcomes. The API transport layer is already correctly implemented: `api.ts` destructures and passes `breakIntoSubtasks` in the request body (line 73, 84), `routes.ts` validates it as a boolean with proper 400 error handling (lines ~552-555), and tests exist covering both the success case (line 218-243) and validation rejection case (line 350-360). Running the specified test command will verify this functionality works correctly."
+    },
+    {
+      "timestamp": "2026-03-31T00:42:16.216Z",
+      "action": "Step 3: API transport verified via code inspection",
+      "outcome": "api.ts correctly passes breakIntoSubtasks; routes.ts validates and passes to store. Pre-existing github.ts duplicate 'delay' function prevents routes tests from running - unrelated to subtask toggle feature"
+    },
+    {
+      "timestamp": "2026-03-31T00:42:16.217Z",
+      "action": "Step 3 (Verify Storage Layer) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:42:17.317Z",
+      "action": "Step 4 (Verify Triage Agent Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:42:17.319Z",
+      "action": "plan review requested for Step 4 (Verify Storage Layer)"
+    },
+    {
+      "timestamp": "2026-03-31T00:42:34.353Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "Step 4's verification plan is accurate and sufficient. The `breakIntoSubtasks` field is correctly implemented in the storage layer at `packages/core/src/store.ts:187` with the exact pattern specified in the plan: `breakIntoSubtasks: input.breakIntoSubtasks === true ? true : undefined`. Comprehensive tests already exist in `packages/core/src/store.test.ts:111-133` covering both the \"true persists\" and \"undefined by default\" scenarios."
+    },
+    {
+      "timestamp": "2026-03-31T00:42:40.375Z",
+      "action": "Step 4 (Verify Triage Agent Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:42:40.375Z",
+      "action": "Step 4 verification complete: Storage layer verified",
+      "outcome": "Storage correctly saves breakIntoSubtasks=true only when explicitly set; store tests pass (including 2 specific breakIntoSubtests tests)"
+    },
+    {
+      "timestamp": "2026-03-31T00:42:42.442Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:42:42.443Z",
+      "action": "plan review requested for Step 5 (Verify Triage Agent Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:00.257Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "Step 5's checkboxes accurately identify the key integration points for triage agent subtask handling. The implementation is complete and properly connected across the system prompt, specification prompt builder, tool registration, and parent task lifecycle management. All verification items map to specific, inspectable code locations."
+    },
+    {
+      "timestamp": "2026-03-31T00:43:08.262Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:08.263Z",
+      "action": "Step 5 verification complete: Triage agent integration verified",
+      "outcome": "TRIAGE_SYSTEM_PROMPT includes subtask breakdown section; buildSpecificationPrompt() adds instructions when flag is true; task_create tool conditionally enabled; parent deletion logic after subtask creation works; all 24 triage tests pass"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:09.535Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:09.536Z",
+      "action": "plan review requested for Step 6 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:32.862Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The plan for Step 6 is appropriate and will achieve its stated outcomes. The verification task has confirmed that the \"Break into subtasks\" toggle feature is fully implemented across all layers. The step correctly focuses on running the test suite to validate end-to-end integration rather than making implementation changes. All expected artifacts exist in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T00:43:51.580Z",
+      "action": "Step 6 verification complete: Full test suite analysis",
+      "outcome": "Core package: all tests pass. Engine package: 389 tests pass (5 test files fail due to package resolution issues, not subtask toggle). Dashboard package: 1405 tests pass (failures due to pre-existing github.ts duplicate function and unrelated test issues). Build: Core and Engine build successfully. Dashboard build fails due to pre-existing duplicate 'delay' function - created KB-235 to track this."
+    },
+    {
+      "timestamp": "2026-03-31T00:43:51.581Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:59.604Z",
+      "action": "Step 7 (Documentation & Delivery) complete",
+      "outcome": "No changes needed - feature is fully implemented. Verified: UI toggle (28 tests pass), types (typecheck passes), API transport (code inspection verified), storage (tests pass), triage agent (24 tests pass). Working tree clean - committing verification completion."
+    },
+    {
+      "timestamp": "2026-03-31T00:44:00.602Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:44:00.604Z",
+      "action": "Step 0 (Verify UI Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:44:00.605Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:45:24.701Z",
+  "createdAt": "2026-03-30T06:11:46.869Z",
+  "updatedAt": "2026-03-31T00:45:24.701Z",
+  "size": "S",
+  "reviewLevel": 1
+}

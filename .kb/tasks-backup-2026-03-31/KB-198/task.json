@@ -1,0 +1,159 @@
+{
+  "id": "KB-198",
+  "description": "Add CLI command `kb task delete <id>` to delete tasks from the command line.\n\n## Background\nCurrently, users must use the dashboard web UI to delete tasks. This is a critical gap for headless/automation workflows and CI/CD cleanup.\n\n## Acceptance Criteria\n- [ ] Add `kb task delete <id>` command to `packages/cli/src/bin.ts`\n- [ ] Implement `runTaskDelete(id)` function in `packages/cli/src/commands/task.ts`\n- [ ] Use `store.deleteTask(id)` from TaskStore\n- [ ] Add confirmation prompt (`Are you sure? [y/N]`) with `--force` flag to skip\n- [ ] Display success message: \"✓ Deleted KB-001\"\n- [ ] Handle errors gracefully (task not found, dependencies blocking deletion)\n- [ ] Add corresponding Pi extension tool `kb_task_delete` in `packages/cli/src/extension.ts`\n- [ ] Update CLI help text\n\n## Technical Notes\n- TaskStore has `deleteTask(id)` method already implemented\n- Follow existing CLI patterns from other task commands\n- Pi extension tool should follow pattern of `kb_task_duplicate` for consistency\n\n## Parent Task\nThis subtask was identified as part of KB-182 dashboard vs CLI gap analysis.",
+  "column": "done",
+  "dependencies": [
+    "KB-182"
+  ],
+  "steps": [
+    {
+      "name": "Implement runTaskDelete() in task.ts",
+      "status": "done"
+    },
+    {
+      "name": "Add CLI command routing in bin.ts",
+      "status": "done"
+    },
+    {
+      "name": "Add Pi extension tool in extension.ts",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T19:12:16.035Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T19:12:51.470Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:13:03.821Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for adding a `kb task delete <id>` CLI command. The mission is clear, steps have concrete verifiable outcomes, and the file references are accurate. The pattern follows existing CLI commands (duplicate, archive) correctly, and testing requirements are appropriately rigorous."
+    },
+    {
+      "timestamp": "2026-03-30T20:20:05.999Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/glad-otter"
+    },
+    {
+      "timestamp": "2026-03-30T20:20:05.999Z",
+      "action": "Step 0 (Implement runTaskDelete() in task.ts) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T20:20:15.503Z",
+      "action": "Step 0 (Implement runTaskDelete() in task.ts) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:20:45.181Z",
+      "action": "Step 0 (Implement runTaskDelete() in task.ts) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:20:45.181Z",
+      "action": "Step 0 (Preflight) complete. Tests baseline: 213 passing, 1 unrelated failure in build-exe.test.ts"
+    },
+    {
+      "timestamp": "2026-03-30T20:20:46.289Z",
+      "action": "plan review requested for Step 1 (Implement runTaskDelete() in task.ts)"
+    },
+    {
+      "timestamp": "2026-03-30T20:21:01.386Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the implementation patterns from existing code and provides a clear path for implementing `runTaskDelete()`. The step checkboxes cover all required functionality: confirmation prompt with `--force` bypass, proper error handling, and integration with the existing `store.deleteTask()` API."
+    },
+    {
+      "timestamp": "2026-03-30T20:21:06.472Z",
+      "action": "Step 1 (Add CLI command routing in bin.ts) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:21:47.174Z",
+      "action": "Step 1 (Add CLI command routing in bin.ts) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:21:47.177Z",
+      "action": "Step 1 complete: runTaskDelete() implemented in task.ts with confirmation prompt and --force support"
+    },
+    {
+      "timestamp": "2026-03-30T20:21:48.700Z",
+      "action": "plan review requested for Step 2 (Add CLI command routing in bin.ts)"
+    },
+    {
+      "timestamp": "2026-03-30T20:22:04.000Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and follows established patterns in the codebase. The checkboxes correctly identify the necessary modifications: adding the dynamic import, implementing the case handler with proper `--force` flag parsing, validating the ID argument, and updating the HELP text. The approach aligns with existing command implementations like `kb task archive` and `kb task refine`."
+    },
+    {
+      "timestamp": "2026-03-30T20:22:07.512Z",
+      "action": "Step 2 (Add Pi extension tool in extension.ts) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:22:20.011Z",
+      "action": "Step 2 (Add Pi extension tool in extension.ts) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:22:20.014Z",
+      "action": "Step 2 complete: Added CLI command routing in bin.ts with import, case handler, and HELP text"
+    },
+    {
+      "timestamp": "2026-03-30T20:22:21.139Z",
+      "action": "plan review requested for Step 3 (Add Pi extension tool in extension.ts)"
+    },
+    {
+      "timestamp": "2026-03-30T20:22:50.645Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan contains a fundamental contradiction: it describes the Pi extension tool as requiring confirmation (\"Requires confirmation unless --force is used\"), but Pi extension tools are non-interactive and cannot prompt for user confirmation. The `force` parameter would be meaningless since the store's `deleteTask()` method performs immediate deletion without any confirmation mechanism."
+    },
+    {
+      "timestamp": "2026-03-30T20:22:52.554Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:23:01.511Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:23:01.512Z",
+      "action": "Step 3 complete: Added Pi extension tool kb_task_delete following the duplicate/archive patterns"
+    },
+    {
+      "timestamp": "2026-03-30T20:23:02.698Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T20:23:22.783Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 appropriately covers the test requirements for the `kb task delete` command. The step is well-scoped with clear test cases covering the main functionality (force flag, confirmation prompts, error handling, and exit behaviors). The plan correctly identifies the need to update the extension registration test to include the new `kb_task_delete` tool."
+    },
+    {
+      "timestamp": "2026-03-30T20:23:23.900Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:27:37.928Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:27:37.933Z",
+      "action": "Step 4 complete: All tests passing (43 task tests, 14 extension tests). Build passes."
+    },
+    {
+      "timestamp": "2026-03-30T20:27:49.947Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T20:28:02.312Z",
+  "createdAt": "2026-03-30T19:12:16.035Z",
+  "updatedAt": "2026-03-30T20:28:02.312Z",
+  "size": "S",
+  "reviewLevel": 1
+}

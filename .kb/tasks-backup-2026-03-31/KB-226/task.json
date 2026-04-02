@@ -1,0 +1,128 @@
+{
+  "id": "KB-226",
+  "title": "the file editor show allow scrolling of files and",
+  "description": "the file editor show allow scrolling of files and markdown preview",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix File Browser Scrolling",
+      "status": "done"
+    },
+    {
+      "name": "Add Markdown Preview to FileEditor",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:19:08.965Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:20:43.510Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:21:00.742Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and achievable. The mission is clear (add markdown preview toggle to FileEditor and verify file browser scrolling), file scope is accurate, and the SpecEditor reference pattern is correctly identified. Steps have concrete, verifiable outcomes with appropriate testing requirements."
+    },
+    {
+      "timestamp": "2026-03-31T01:36:48.561Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/green-panda"
+    },
+    {
+      "timestamp": "2026-03-31T01:36:48.561Z",
+      "action": "Step 0 (Fix File Browser Scrolling) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:00.941Z",
+      "action": "Step 0 (Fix File Browser Scrolling) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:00.942Z",
+      "action": "Step 0 (Preflight) complete - Read all context files",
+      "outcome": "Found FileEditor is a simple textarea, FileBrowser has scroll setup with flex:1 and overflow-y:auto, SpecEditor has the View/Edit toggle pattern to follow. FileEditor.test.tsx exists at packages/dashboard/app/components/FileEditor.test.tsx"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:01.998Z",
+      "action": "plan review requested for Step 1 (Fix File Browser Scrolling)"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:23.756Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the need to verify and fix scrolling in the file browser sidebar. Analysis of the current CSS shows the scroll infrastructure is partially in place (`.file-browser-list` has `flex: 1` and `overflow-y: auto`), but there's a **height constraint gap** in the parent chain that will prevent scrolling from working correctly with long file lists."
+    },
+    {
+      "timestamp": "2026-03-31T01:37:31.531Z",
+      "action": "Step 1 (Add Markdown Preview to FileEditor) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:43.911Z",
+      "action": "Step 1 (Add Markdown Preview to FileEditor) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:45.067Z",
+      "action": "plan review requested for Step 2 (Add Markdown Preview to FileEditor)"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:01.590Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is solid and follows established patterns from the codebase. The step checkboxes appropriately cover the key implementation requirements: state management for the preview toggle, markdown file detection via extension checking, conditional UI rendering, and proper handling of the readOnly edge case. The approach mirrors the proven `SpecEditor` component pattern while accounting for `FileEditor`'s simpler props interface."
+    },
+    {
+      "timestamp": "2026-03-31T01:38:02.980Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:39:59.145Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:40:00.245Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T01:40:18.074Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan's checkboxes appropriately cover the verification requirements for the markdown preview and scrolling features. The test file already contains comprehensive test coverage for all required functionality. The step correctly prioritizes running the full test suite as a quality gate and includes both automated testing and manual verification."
+    },
+    {
+      "timestamp": "2026-03-31T01:40:19.446Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:40:44.836Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:40:44.837Z",
+      "action": "Step 3 (Testing & Verification) complete",
+      "outcome": "All FileEditor tests pass (21/21). Build passes. 2 pre-existing test failures in other test files unrelated to this task (mobile-planning-input-font-size and Board re-render tests)."
+    },
+    {
+      "timestamp": "2026-03-31T01:41:06.772Z",
+      "action": "Task KB-226 complete",
+      "outcome": "All 4 steps completed:\n- Step 1: Fixed file browser scrolling with overflow-x: hidden and min-height: 0\n- Step 2: Added markdown preview to FileEditor with Edit/Preview toggle, ReactMarkdown + remarkGfm integration\n- Step 3: All 21 FileEditor tests pass, build passes\n- Step 4: Updated README documentation, created changeset for patch release\n\nFiles modified:\n- packages/dashboard/app/components/FileEditor.tsx\n- packages/dashboard/app/components/FileEditor.test.tsx  \n- packages/dashboard/app/styles.css\n- packages/dashboard/README.md\n- .changeset/file-editor-markdown-preview.md"
+    },
+    {
+      "timestamp": "2026-03-31T01:41:06.773Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:41:17.973Z",
+  "createdAt": "2026-03-31T00:19:08.965Z",
+  "updatedAt": "2026-03-31T01:41:17.973Z",
+  "size": "S",
+  "reviewLevel": 1
+}

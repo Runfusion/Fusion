@@ -1,0 +1,144 @@
+{
+  "id": "KB-246",
+  "title": "On mobile view the file editor should just show",
+  "description": "On mobile view the file editor should just show the file list - once a file is selected it shows the full file editor/viewer with a back button to go back to the file list",
+  "column": "done",
+  "dependencies": [],
+  "breakIntoSubtasks": true,
+  "steps": [
+    {
+      "name": "Implement Mobile View State Logic",
+      "status": "done"
+    },
+    {
+      "name": "Add Back Button and Conditional Layout",
+      "status": "done"
+    },
+    {
+      "name": "Add Mobile CSS for Two-State Layout",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:21:16.627Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:27:16.166Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:27:31.626Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and follows an established pattern in the codebase. The mission is clear, file references are accurate, and steps have concrete, verifiable outcomes. The testing requirements demand real automated tests with assertions, matching the patterns in GitHubImportModal.test.tsx."
+    },
+    {
+      "timestamp": "2026-03-31T02:45:58.366Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/noble-panda"
+    },
+    {
+      "timestamp": "2026-03-31T02:45:58.367Z",
+      "action": "Step 0 (Implement Mobile View State Logic) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T02:46:12.663Z",
+      "action": "Step 0 (Implement Mobile View State Logic) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:46:23.818Z",
+      "action": "Step 0 (Implement Mobile View State Logic) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:46:23.820Z",
+      "action": "plan review requested for Step 1 (Implement Mobile View State Logic)"
+    },
+    {
+      "timestamp": "2026-03-31T02:46:40.913Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan is sound and follows an established pattern from `GitHubImportModal`. The step correctly identifies the need for mobile detection, view state management, and proper integration with existing file loading hooks. All checkboxes are concrete and achievable."
+    },
+    {
+      "timestamp": "2026-03-31T02:46:44.024Z",
+      "action": "Step 1 (Add Back Button and Conditional Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:46:55.233Z",
+      "action": "Step 1 (Add Back Button and Conditional Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:46:55.235Z",
+      "action": "plan review requested for Step 2 (Add Back Button and Conditional Layout)"
+    },
+    {
+      "timestamp": "2026-03-31T02:47:12.117Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan has a significant misalignment with the established GitHubImportModal pattern. The back button placement specification contradicts the reference implementation, which will lead to inconsistent UX and CSS complications. Additionally, the conditional rendering logic needs clarification to match the working pattern."
+    },
+    {
+      "timestamp": "2026-03-31T02:47:13.667Z",
+      "action": "Step 2 (Add Mobile CSS for Two-State Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:47:25.543Z",
+      "action": "Step 2 (Add Mobile CSS for Two-State Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:47:25.545Z",
+      "action": "plan review requested for Step 3 (Add Mobile CSS for Two-State Layout)"
+    },
+    {
+      "timestamp": "2026-03-31T02:47:45.794Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The Step 3 plan has a **critical mismatch** between the CSS class names it proposes (`.file-browser-mobile-list`, `.file-browser-mobile-editor`) and the actual class names already implemented in the FileBrowserModal component (`.file-browser-sidebar.mobile.active`, `.file-browser-content.mobile.active`). The plan's checkboxes describe a non-existent implementation pattern that would create broken CSS if followed literally.\n\nAdditionally, the plan omits the back button styles that are needed (the"
+    },
+    {
+      "timestamp": "2026-03-31T02:47:47.601Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:48:01.603Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:48:01.605Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T02:48:16.988Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step's checkboxes provide a solid testing strategy that will achieve the stated outcomes. The test plan follows established patterns in the codebase (GitHubImportModal.test.tsx) and covers both desktop and mobile behaviors. The test cases align well with the implementation details found in FileBrowserModal.tsx and the mobile CSS classes already defined in styles.css."
+    },
+    {
+      "timestamp": "2026-03-31T02:48:32.004Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:50:19.101Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:50:25.861Z",
+      "action": "KB-246 Mobile File Editor View implementation complete",
+      "outcome": "Successfully implemented mobile two-state file browser view:\n\n1. Added mobile detection using window.matchMedia with 768px breakpoint\n2. Added 'mobileView' state ('list' | 'editor') to control view switching\n3. Added back button (ArrowLeft icon) in content toolbar, visible only on mobile when in editor view\n4. Added CSS classes for mobile state management (.mobile, .active) following GitHubImportModal pattern\n5. Added mobile-specific CSS for two-state layout with full-height panes\n6. Created comprehensive tests for FileBrowserModal covering desktop and mobile views\n\nAll relevant tests pass (FileBrowserModal, FileEditor, useProjectFileEditor). Build succeeds. Changeset created for patch release."
+    },
+    {
+      "timestamp": "2026-03-31T02:50:26.788Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T02:50:40.556Z",
+  "createdAt": "2026-03-31T02:21:16.627Z",
+  "updatedAt": "2026-03-31T02:50:40.556Z",
+  "size": "S",
+  "reviewLevel": 1
+}

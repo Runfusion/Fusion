@@ -1,0 +1,203 @@
+{
+  "id": "KB-085",
+  "description": "ntfy.sh notifications not working",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Identify and Remove Duplicate Notification",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests for Correct Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:39:21.985Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:40:29.244Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:40:40.474Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies a floating promise bug where `notifier.start()` is called without await in the dashboard command. The mission is clear, files are correctly scoped, and steps have verifiable outcomes. The line number reference is slightly off (line 91 vs line 97), but this is a minor issue that won't block implementation."
+    },
+    {
+      "timestamp": "2026-03-30T04:40:46.338Z",
+      "action": "Execution failed: Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/faint-iris\" \"kb/kb-085\"\nPreparing worktree (checking out 'kb/kb-085')\nfatal: 'kb/kb-085' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/sandy-lotus'\n"
+    },
+    {
+      "timestamp": "2026-03-30T04:40:46.386Z",
+      "action": "Execution failed: ENOENT: no such file or directory, rename '/Users/eclipxe/Projects/kb/.fusion/tasks/KB-085/task.json.tmp' -> '/Users/eclipxe/Projects/kb/.fusion/tasks/KB-085/task.json'"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:20.146Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:31.559Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies a real bug: when tasks are merged, both `task:moved` (to \"done\") and `task:merged` events trigger notifications, causing duplicates. The fix—removing the notification from `handleTaskMoved` for the \"done\" column—is correct. The spec references real code locations, has concrete verifiable outcomes, and includes proper test requirements."
+    },
+    {
+      "timestamp": "2026-03-30T04:41:37.960Z",
+      "action": "Execution failed: Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/jade-crane\" \"kb/kb-085\"\nPreparing worktree (checking out 'kb/kb-085')\nfatal: 'kb/kb-085' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/sandy-lotus'\n"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:38.190Z",
+      "action": "Execution failed: Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/vivid-olive\" \"kb/kb-085\"\nPreparing worktree (checking out 'kb/kb-085')\nfatal: 'kb/kb-085' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/sandy-lotus'\n"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:34.338Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:34.790Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/azure-breeze"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:34.895Z",
+      "action": "Step 0 (Identify and Remove Duplicate Notification) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:37.723Z",
+      "action": "Step 0 (Identify and Remove Duplicate Notification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:43.520Z",
+      "action": "Step 0 (Identify and Remove Duplicate Notification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:43.524Z",
+      "action": "Preflight complete. Understood the bug: duplicate notifications occur because both task:moved to \"done\" AND task:merged events send notifications. The fix removes the notification from handleTaskMoved for the \"done\" column.",
+      "outcome": "Ready to implement Step 1"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:45.036Z",
+      "action": "Step 1 (Update Tests for Correct Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:45.039Z",
+      "action": "plan review requested for Step 1 (Identify and Remove Duplicate Notification)"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:14.049Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause of the duplicate notification bug. In `notifier.ts`, both `handleTaskMoved` (when `to === \"done\"`) and `handleTaskMerged` send notifications for the same merge event. This happens because `completeTask()` in `merger.ts` calls `store.moveTask(taskId, \"done\")` (which emits `task:moved`) and then explicitly emits `task:merged`. The proposed fix to remove the `to === \"done\"` notification block from `handleTaskMoved` is the correct approach, as `task:merge"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:34.096Z",
+      "action": "Step 1 (Update Tests for Correct Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:34.098Z",
+      "action": "Step 1 complete: Removed duplicate notification from handleTaskMoved for 'done' column. The 'sends notification when task moves to done' test now fails (as expected) - it tested the old duplicate behavior.",
+      "outcome": "Ready for Step 2 - update tests"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:34.099Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:34.100Z",
+      "action": "plan review requested for Step 2 (Update Tests for Correct Behavior)"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:49.134Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies that the test \"sends notification when task moves to done\" needs to be updated to verify NO notification is sent on `task:moved` to \"done\". It also correctly identifies the need for a new test to verify only one notification is sent when both events fire. The approach aligns with the code's current state and the bug fix requirements."
+    },
+    {
+      "timestamp": "2026-03-30T04:45:58.698Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:58.700Z",
+      "action": "Step 2 complete: Updated tests. Changed 'sends notification when task moves to done' to verify NO notification is sent on task:moved to 'done'. Added new test 'sends notification only once on merge' to verify single notification. All 21 tests pass.",
+      "outcome": "Ready for Step 3 - full test suite verification"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:58.701Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:58.701Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:13.962Z",
+      "action": "Retry requested from dashboard"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:14.794Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The step's verification approach is sound. Running the three test commands provides progressive validation from the specific module up to the full workspace. The \"ZERO test failures\" requirement is appropriate for a bug fix that must not introduce regressions."
+    },
+    {
+      "timestamp": "2026-03-30T04:46:43.459Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:43.460Z",
+      "action": "All 495 engine tests pass, including the updated notifier tests. Proceeding to create changeset and commit."
+    },
+    {
+      "timestamp": "2026-03-30T04:46:48.891Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:48.894Z",
+      "action": "Step 3 complete: Created changeset file and committed all changes.",
+      "outcome": "Changes committed as f354fdd with changeset for patch release."
+    },
+    {
+      "timestamp": "2026-03-30T04:46:49.674Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:50.679Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:50.680Z",
+      "action": "Step 3 complete: Full test verification. Core (179 tests) and Engine (495 tests) all pass. Dashboard failures are pre-existing issues in useTerminal tests, unrelated to notifier changes.",
+      "outcome": "Ready for Step 4 - Documentation & Delivery"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:50.682Z",
+      "action": "plan review requested for Step 4 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-30T04:47:00.857Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "Step 4 has straightforward documentation requirements that align with the project guidelines. The changeset file already exists at `.changeset/fix-ntfy-duplicate-notifications.md` with the correct patch bump for `@dustinbyrne/kb` and an appropriate description of the fix. The commit message follows the established convention (`fix(KB-XXX): description`). No documentation updates are required per the PROMPT.md's \"Must Update: None\" directive."
+    },
+    {
+      "timestamp": "2026-03-30T04:47:32.425Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:47:35.327Z",
+      "action": "Execution failed: Invalid transition: 'in-review' → 'in-review'. Valid targets: done, in-progress"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T04:48:46.278Z",
+  "createdAt": "2026-03-30T04:39:21.985Z",
+  "updatedAt": "2026-03-30T04:48:46.278Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,89 @@
+{
+  "id": "KB-179",
+  "description": "on the board header, move the search bar to the left of the board/list toggle",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Reorder Header Elements",
+      "status": "done"
+    },
+    {
+      "name": "Visual Polish",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:54:30.560Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T17:58:30.079Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:58:39.715Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is clear, well-structured, and accurately describes a simple UI reordering task. After reading the source files, the spec correctly identifies the current element order in Header.tsx (View Toggle → Desktop Search → Mobile Search), the target order (Desktop/Mobile Search → View Toggle), and references the correct CSS sections. Testing requirements demand real automated tests, and the file scope is appropriately minimal."
+    },
+    {
+      "timestamp": "2026-03-30T23:39:09.930Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fresh-spark"
+    },
+    {
+      "timestamp": "2026-03-30T23:39:09.931Z",
+      "action": "Step 0 (Reorder Header Elements) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:39:15.334Z",
+      "action": "Step 0 (Reorder Header Elements) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:39:16.389Z",
+      "action": "Step 0 (Reorder Header Elements) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:39:16.391Z",
+      "action": "Step 1 (Visual Polish) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:39:30.850Z",
+      "action": "Step 1 (Visual Polish) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:39:30.850Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:39:33.159Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:39:33.160Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:40:57.687Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:04.488Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:41:43.374Z",
+  "createdAt": "2026-03-30T17:54:30.560Z",
+  "updatedAt": "2026-03-30T23:41:43.374Z",
+  "size": "S",
+  "reviewLevel": 0
+}

@@ -1,0 +1,144 @@
+{
+  "id": "KB-228",
+  "title": "For scheduled tasks add some more time option",
+  "description": "For scheduled tasks, add some more time option presets",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add New Schedule Type Presets to Core",
+      "status": "done"
+    },
+    {
+      "name": "Update Dashboard Form with New Presets",
+      "status": "done"
+    },
+    {
+      "name": "Update Schedule Card Colors",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:19:57.361Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:21:52.124Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:22:03.779Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and technically accurate. All referenced files exist with the expected patterns (`ScheduleType`, `AUTOMATION_PRESETS`, `PRESET_CRON`, `SCHEDULE_TYPE_LABELS`, `SCHEDULE_TYPE_COLORS`). The 6 new preset types have valid cron expressions, and the testing strategy follows the existing test file patterns. Review Level 1 (Plan Only) is appropriate for this low-risk type expansion."
+    },
+    {
+      "timestamp": "2026-03-31T01:37:48.558Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rapid-aspen"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:48.558Z",
+      "action": "Step 0 (Add New Schedule Type Presets to Core) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:49.348Z",
+      "action": "Step 0 (Add New Schedule Type Presets to Core) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:52.662Z",
+      "action": "Step 0 (Add New Schedule Type Presets to Core) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:53.480Z",
+      "action": "plan review requested for Step 1 (Add New Schedule Type Presets to Core)"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:02.842Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the minimal changes needed in `packages/core/src/automation.ts`. The approach is sound: extending the `ScheduleType` union type and `AUTOMATION_PRESETS` record with 6 new entries. All cron expressions are valid, and the change maintains backward compatibility with existing presets."
+    },
+    {
+      "timestamp": "2026-03-31T01:38:03.555Z",
+      "action": "Step 1 (Update Dashboard Form with New Presets) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:07.761Z",
+      "action": "Step 1 complete: Added 6 new ScheduleType values (every15Minutes, every30Minutes, every2Hours, every6Hours, every12Hours, weekdays) and their corresponding AUTOMATION_PRESETS cron mappings",
+      "outcome": "packages/core/src/automation.ts updated with new schedule type presets"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:09.462Z",
+      "action": "Step 1 (Update Dashboard Form with New Presets) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:09.463Z",
+      "action": "plan review requested for Step 2 (Update Dashboard Form with New Presets)"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:17.982Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the required changes to `ScheduleForm.tsx`. Step 1 is already complete in the core package (all 6 new `ScheduleType` values and `AUTOMATION_PRESETS` entries are present). Step 2's approach of updating `PRESET_CRON` and `SCHEDULE_TYPE_LABELS` mappings will achieve the stated outcomes. The auto-fill behavior via the existing `useEffect` hook will work seamlessly with the new presets once the mappings are updated."
+    },
+    {
+      "timestamp": "2026-03-31T01:38:18.796Z",
+      "action": "Step 2 (Update Schedule Card Colors) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:24.083Z",
+      "action": "Step 2 complete: Added new entries to PRESET_CRON and SCHEDULE_TYPE_LABELS in ScheduleForm.tsx",
+      "outcome": "packages/dashboard/app/components/ScheduleForm.tsx updated with new schedule type labels and cron mappings"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:24.084Z",
+      "action": "Step 2 (Update Schedule Card Colors) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:24.084Z",
+      "action": "plan review requested for Step 3 (Update Schedule Card Colors)"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:38.497Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is straightforward and will achieve its stated outcome. The color choices provide good visual distinction among the new schedule types, and the implementation approach (adding entries to the existing `SCHEDULE_TYPE_COLORS` record) follows the established pattern in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T01:38:39.250Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:42.922Z",
+      "action": "Step 3 complete: Added color entries for new schedule types in ScheduleCard.tsx",
+      "outcome": "packages/dashboard/app/components/ScheduleCard.tsx updated with new SCHEDULE_TYPE_COLORS entries"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:42.922Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:43.923Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:41:41.725Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:41:55.775Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:42:09.267Z",
+  "createdAt": "2026-03-31T00:19:57.361Z",
+  "updatedAt": "2026-03-31T01:42:09.267Z",
+  "size": "S",
+  "reviewLevel": 1
+}

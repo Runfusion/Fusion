@@ -1,0 +1,193 @@
+{
+  "id": "KB-153",
+  "description": "For usage dropdoen have toggle to switch between remaining and used. Also use real provider icons",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Usage View Toggle to UsageWindowRow",
+      "status": "done"
+    },
+    {
+      "name": "Add Global Toggle Control to UsageIndicator Modal",
+      "status": "done"
+    },
+    {
+      "name": "Integrate Real Provider Icons",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles for Toggle and Icons",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T14:53:37.720Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T14:54:12.545Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:54:24.610Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification is well-crafted with clear outcomes, accurate file references, and comprehensive test coverage. The mission addresses two focused UX improvements: a view toggle for usage percentages and SVG provider icon integration. Steps are logically ordered with verifiable artifacts at each boundary."
+    },
+    {
+      "timestamp": "2026-03-30T15:42:09.854Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sandy-finch"
+    },
+    {
+      "timestamp": "2026-03-30T15:42:09.854Z",
+      "action": "Step 0 (Add Usage View Toggle to UsageWindowRow) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:42:10.910Z",
+      "action": "Step 0 (Add Usage View Toggle to UsageWindowRow) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:42:15.475Z",
+      "action": "Step 0 (Add Usage View Toggle to UsageWindowRow) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:42:15.476Z",
+      "action": "Step 1 (Add Global Toggle Control to UsageIndicator Modal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:42:16.882Z",
+      "action": "plan review requested for Step 1 (Add Usage View Toggle to UsageWindowRow)"
+    },
+    {
+      "timestamp": "2026-03-30T15:42:33.221Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and will achieve its stated outcomes. The approach correctly identifies the component modification needs: adding a `viewMode` prop to `UsageWindowRow`, conditionally rendering percentages based on the mode, maintaining the color logic based on actual usage (regardless of view mode), and inverting the footer text. The step appropriately scopes changes to only the `UsageWindowRow` component, leaving the state management and wiring for Step 2."
+    },
+    {
+      "timestamp": "2026-03-30T15:43:45.023Z",
+      "action": "code review requested for Step 1 (Add Usage View Toggle to UsageWindowRow)"
+    },
+    {
+      "timestamp": "2026-03-30T15:44:04.418Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds the `viewMode` prop to `UsageWindowRow` and `ProviderCard` components, with proper type definitions and display logic. The progress bar coloring correctly remains based on actual usage (`percentUsed`) regardless of view mode, while the displayed percentage and text adapt to the selected mode. The footer text correctly shows the inverse of the header."
+    },
+    {
+      "timestamp": "2026-03-30T15:44:05.621Z",
+      "action": "Step 1 (Add Global Toggle Control to UsageIndicator Modal) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:44:05.622Z",
+      "action": "Step 2 (Integrate Real Provider Icons) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:44:06.767Z",
+      "action": "plan review requested for Step 2 (Add Global Toggle Control to UsageIndicator Modal)"
+    },
+    {
+      "timestamp": "2026-03-30T15:44:17.181Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and will achieve the stated outcomes. The step correctly builds upon Step 1's `viewMode` prop addition by introducing global state management with localStorage persistence. The approach is sound with proper use of `useState` and `useEffect` patterns."
+    },
+    {
+      "timestamp": "2026-03-30T15:45:22.541Z",
+      "action": "code review requested for Step 2 (Add Global Toggle Control to UsageIndicator Modal)"
+    },
+    {
+      "timestamp": "2026-03-30T15:45:48.673Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds the global toggle control to the UsageIndicator modal. The code properly manages view mode state with localStorage persistence, renders an accessible toggle UI in the modal header, and propagates the viewMode to all child components (ProviderCard and UsageWindowRow). The CSS styles for the toggle are well-defined and the implementation follows existing codebase patterns."
+    },
+    {
+      "timestamp": "2026-03-30T15:45:49.859Z",
+      "action": "Step 2 (Integrate Real Provider Icons) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:45:49.860Z",
+      "action": "Step 3 (Add CSS Styles for Toggle and Icons) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:45:50.816Z",
+      "action": "plan review requested for Step 3 (Integrate Real Provider Icons)"
+    },
+    {
+      "timestamp": "2026-03-30T15:46:08.152Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is solid and will achieve the stated outcomes. The provider-to-icon mapping correctly matches the backend data (\"Claude\" → \"anthropic\", \"Codex\" → \"openai\", \"Gemini\" → \"google\"), and the approach of using the existing `ProviderIcon` component is appropriate. The step correctly identifies the need to keep the `icon` field in types for backward compatibility while stopping its rendering."
+    },
+    {
+      "timestamp": "2026-03-30T15:47:06.023Z",
+      "action": "code review requested for Step 3 (Integrate Real Provider Icons)"
+    },
+    {
+      "timestamp": "2026-03-30T15:47:35.638Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly integrates the `ProviderIcon` component into the `UsageIndicator` modal, replacing emoji-based provider icons with professional SVG icons. The `getProviderIconKey` mapping function properly handles all specified provider name mappings (Claude→anthropic, Codex→openai, Gemini→google), and the CSS flex layout in `.usage-provider-info` ensures proper alignment."
+    },
+    {
+      "timestamp": "2026-03-30T15:47:38.455Z",
+      "action": "Step 3 (Add CSS Styles for Toggle and Icons) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:47:38.457Z",
+      "action": "Step 4 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:47:38.459Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:47:39.351Z",
+      "action": "plan review requested for Step 5 (Update Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T15:47:56.798Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The test plan for Step 5 adequately covers the required functionality. The checkboxes correctly identify all major test scenarios: toggle rendering and interaction, localStorage persistence, view mode percentage display, and ProviderIcon mapping for the three provider types. The component implementation already includes `data-testid` attributes (`usage-view-toggle-used`, `usage-view-toggle-remaining`) that will enable reliable test queries."
+    },
+    {
+      "timestamp": "2026-03-30T15:49:49.367Z",
+      "action": "code review requested for Step 5 (Update Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:11.969Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The test implementation is comprehensive and correctly covers all requirements from Step 5. The tests validate view mode toggle functionality, localStorage persistence, and ProviderIcon integration with proper provider name mapping. All test assertions align with the component implementation."
+    },
+    {
+      "timestamp": "2026-03-30T15:50:14.070Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:14.072Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:27.997Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:28.818Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:50:48.309Z",
+  "createdAt": "2026-03-30T14:53:37.720Z",
+  "updatedAt": "2026-03-30T15:50:48.309Z",
+  "size": "S",
+  "reviewLevel": 2
+}

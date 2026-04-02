@@ -1,0 +1,79 @@
+{
+  "id": "KB-308",
+  "description": "When I try to test notification after just checking it to enable, it says not enabled",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix the test-ntfy route handler",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T17:24:47.886Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T17:28:16.607Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T17:28:32.697Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a focused bug fix with precise file references, clear reproduction steps, and specific testing requirements. All referenced source locations are verified: the `/settings/test-ntfy` route handler exists at `packages/dashboard/src/routes.ts:1163`, the frontend sends request body parameters via `testNtfyNotification()` in `packages/dashboard/app/api.ts:226`, and `SettingsModal.tsx:185-196` passes form values directly to the API. The testing strategy aligns wit"
+    },
+    {
+      "timestamp": "2026-03-31T18:59:44.822Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/brave-lotus"
+    },
+    {
+      "timestamp": "2026-03-31T18:59:44.822Z",
+      "action": "Step 0 (Fix the test-ntfy route handler) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T18:59:46.691Z",
+      "action": "Step 0 (Fix the test-ntfy route handler) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:59:59.430Z",
+      "action": "Step 0 (Fix the test-ntfy route handler) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:59:59.431Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:02:24.039Z",
+      "action": "Fixed test-ntfy route handler to read from req.body first, falling back to stored settings",
+      "outcome": "All 5 new tests pass. The route now accepts { ntfyEnabled, ntfyTopic } from request body with fallback to stored settings."
+    },
+    {
+      "timestamp": "2026-03-31T19:02:31.123Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:02:31.125Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:02:36.706Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T19:02:42.829Z",
+  "createdAt": "2026-03-31T17:24:47.886Z",
+  "updatedAt": "2026-03-31T19:02:42.829Z",
+  "size": "S",
+  "reviewLevel": 0,
+  "summary": "Fixed the test notification feature in KB-308. Modified the `/api/settings/test-ntfy` route handler to read `ntfyEnabled` and `ntfyTopic` from the request body first, falling back to stored settings only when not provided. Added 5 comprehensive tests covering: (1) request body values taking precedence over stored settings, (2) fallback to stored settings when body values absent, (3) rejection when ntfy disabled in both, (4) rejection for invalid topic format, (5) rejection for missing topic. The fix enables users to test notifications immediately after enabling ntfy in the UI without requiring a save first."
+}

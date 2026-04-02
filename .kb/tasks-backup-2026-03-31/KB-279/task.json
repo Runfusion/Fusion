@@ -1,0 +1,148 @@
+{
+  "id": "KB-279",
+  "title": "The title auto creation isn t summarizing the text",
+  "description": "The title auto creation isn’t summarizing the text it’s just truncating it. Make a proper call to an agent to summarize the text. And insert it as a title. Otherwise don’t use titles.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Make Title Generation Async with AI",
+      "status": "done"
+    },
+    {
+      "name": "Update createTask to Await Title Generation",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T14:43:08.814Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T14:43:51.373Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:14.469Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured with a clear mission, accurate file references, and concrete, verifiable step outcomes. The scope is appropriately sized as an S-level task, and the testing requirements correctly demand real automated tests with zero tolerance for failures. The referenced patterns in `ai-refine.ts` and `pi.ts` are accurate for the dynamic import and `createKbAgent` usage."
+    },
+    {
+      "timestamp": "2026-03-31T14:44:29.256Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fleet-delta"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:29.330Z",
+      "action": "Step 0 (Make Title Generation Async with AI) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:31.999Z",
+      "action": "Step 0 (Make Title Generation Async with AI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:37.274Z",
+      "action": "Step 0 (Make Title Generation Async with AI) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:37.275Z",
+      "action": "Step 1 (Update createTask to Await Title Generation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:39.323Z",
+      "action": "plan review requested for Step 1 (Make Title Generation Async with AI)"
+    },
+    {
+      "timestamp": "2026-03-31T14:45:01.247Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the key changes needed: making `generateTitleFromDescription` async, using dynamic import of `@kb/engine` following the established pattern from `ai-refine.ts`, creating a system prompt for concise title generation, and returning empty string on AI failure. The approach follows existing codebase patterns and will achieve the stated outcomes."
+    },
+    {
+      "timestamp": "2026-03-31T14:45:25.965Z",
+      "action": "code review requested for Step 1 (Make Title Generation Async with AI)"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:04.333Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly transforms `generateTitleFromDescription` into an async AI-powered function. The code follows the established pattern from `ai-refine.ts` for dynamic engine imports, uses `readonly` tools as specified, and properly returns empty strings on AI failure without falling back to truncation. The `createTask` function correctly awaits the async title generation."
+    },
+    {
+      "timestamp": "2026-03-31T14:46:06.813Z",
+      "action": "Step 1 (Update createTask to Await Title Generation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:06.814Z",
+      "action": "code review requested for Step 2 (Update createTask to Await Title Generation)"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:38.529Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly makes `createTask` await the now-async `generateTitleFromDescription` function. The code properly handles empty title returns (no fallback to truncation per requirements) and the task creation flow remains intact."
+    },
+    {
+      "timestamp": "2026-03-31T14:46:39.693Z",
+      "action": "Step 2 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:39.696Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:46:40.575Z",
+      "action": "plan review requested for Step 3 (Update Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T14:47:14.284Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan's checkboxes for Step 3 are too vague and miss critical implementation details for mocking the AI agent. The `store.ts` implementation uses a dynamic import of `@kb/engine` with module-level state (`createKbAgent`, `engineReady`), which requires a specific mocking strategy that the plan doesn't specify. Additionally, the plan doesn't address the short-circuit behavior for short descriptions (≤3 words) or how PROMPT.md tests should handle empty titles."
+    },
+    {
+      "timestamp": "2026-03-31T14:48:57.271Z",
+      "action": "code review requested for Step 3 (Update Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T14:49:26.248Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The test updates for KB-279 are comprehensive and well-structured. The tests properly mock the `@kb/engine` module, cover all required scenarios including AI success/failure cases, short-circuit behavior for short descriptions, quote cleaning, and PROMPT.md integration. The test suite correctly expects `undefined` for titles when AI fails (due to `title || undefined` in the store implementation)."
+    },
+    {
+      "timestamp": "2026-03-31T14:49:27.677Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:49:27.680Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:52:00.321Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:52:07.416Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:52:07.419Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T14:52:47.135Z",
+  "createdAt": "2026-03-31T14:43:08.814Z",
+  "updatedAt": "2026-03-31T14:52:47.135Z",
+  "size": "S",
+  "reviewLevel": 2,
+  "summary": "Fixed the title auto-creation feature to use AI summarization instead of simple truncation. The `generateTitleFromDescription` function in `packages/core/src/store.ts` now uses `createKbAgent` with readonly tools to generate a proper 3-8 word summary (max 60 chars) from task descriptions. Short descriptions (≤3 words, ≤60 chars) bypass AI and use the description as-is. If AI fails or returns empty, the task is created without a title rather than falling back to truncated text. Updated all 334 tests in the core package to work with the new AI-based title generation, including mocking the `@kb/engine` module and testing both success and failure cases. Build passes and all core/engine tests pass."
+}

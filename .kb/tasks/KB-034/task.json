@@ -1,0 +1,257 @@
+{
+  "id": "KB-034",
+  "description": "add a way to archive done tasks",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Types and Store Methods",
+      "status": "done"
+    },
+    {
+      "name": "CLI Commands",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard API Routes",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard UI Components",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:38:01.162Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:46:38.548Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:46:57.249Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and follows project conventions. The mission is clear, steps have concrete verifiable outcomes, and file scope accurately reflects the codebase. The pattern of adding a new column mirrors existing conventions (COLUMNS, VALID_TRANSITIONS, COLUMN_LABELS, COLUMN_DESCRIPTIONS in types.ts). Testing requirements appropriately demand real automated tests."
+    },
+    {
+      "timestamp": "2026-03-30T02:47:29.732Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rosy-cedar"
+    },
+    {
+      "timestamp": "2026-03-30T02:47:29.733Z",
+      "action": "Step 0 (Core Types and Store Methods) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:47:32.079Z",
+      "action": "Step 0 (Core Types and Store Methods) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:47:41.696Z",
+      "action": "Step 0 (Core Types and Store Methods) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:47:41.697Z",
+      "action": "Step 1 (CLI Commands) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:47:44.964Z",
+      "action": "plan review requested for Step 1 (Core Types and Store Methods)"
+    },
+    {
+      "timestamp": "2026-03-30T02:48:01.563Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies all necessary changes to core types and store methods. The approach follows established patterns in the codebase and will achieve the stated outcomes. The implementation leverages existing infrastructure (moveTask with VALID_TRANSITIONS validation, task locking, event emission) appropriately."
+    },
+    {
+      "timestamp": "2026-03-30T02:48:39.910Z",
+      "action": "code review requested for Step 1 (Core Types and Store Methods)"
+    },
+    {
+      "timestamp": "2026-03-30T02:49:07.295Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation of core types and store methods is correct and follows existing patterns. The `COLUMNS` array, `VALID_TRANSITIONS`, labels, and descriptions are all properly updated. The `archiveTask()` and `unarchiveTask()` methods in `TaskStore` correctly validate column state, log actions, and emit events. However, **the required tests for this functionality are completely missing**, which violates explicit step requirements."
+    },
+    {
+      "timestamp": "2026-03-30T02:50:37.927Z",
+      "action": "code review requested for Step 1 (Core Types and Store Methods)"
+    },
+    {
+      "timestamp": "2026-03-30T02:50:53.677Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation is complete, correct, and follows all existing project patterns. All required type definitions have been updated, both `archiveTask()` and `unarchiveTask()` methods are properly implemented with locking, logging, and event emission, and comprehensive tests have been added."
+    },
+    {
+      "timestamp": "2026-03-30T02:50:55.122Z",
+      "action": "Step 1 (CLI Commands) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:50:55.123Z",
+      "action": "Step 2 (Dashboard API Routes) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:50:56.472Z",
+      "action": "plan review requested for Step 2 (CLI Commands)"
+    },
+    {
+      "timestamp": "2026-03-30T02:51:08.623Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the necessary CLI additions to expose the archive functionality that already exists in the core store. Step 1 appears complete (types and store methods for archiving are already implemented), so Step 2 can proceed as written. The approach follows existing patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T02:51:28.601Z",
+      "action": "code review requested for Step 2 (CLI Commands)"
+    },
+    {
+      "timestamp": "2026-03-30T02:51:57.235Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The CLI commands for `kb task archive` and `kb task unarchive` are correctly implemented and registered in `bin.ts`. The commands properly delegate to the store methods and display appropriate success messages. However, the pi extension (`extension.ts`) is missing tools for these new commands, which violates the AGENTS.md guidelines that state the extension should be updated when CLI commands change."
+    },
+    {
+      "timestamp": "2026-03-30T02:52:06.116Z",
+      "action": "code review requested for Step 2 (CLI Commands)"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:30.036Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Step 2 implementation is complete and correct. Both `runTaskArchive` and `runTaskUnarchive` functions are properly implemented in `task.ts`, registered in `bin.ts`, and exposed via the pi extension in `extension.ts`. The implementations follow established patterns for CLI commands and integrate correctly with the store methods from Step 1."
+    },
+    {
+      "timestamp": "2026-03-30T02:52:31.545Z",
+      "action": "Step 2 (Dashboard API Routes) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:31.548Z",
+      "action": "Step 3 (Dashboard UI Components) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:32.980Z",
+      "action": "plan review requested for Step 3 (Dashboard API Routes)"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:44.836Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is sound and follows the established patterns in the codebase. The `archiveTask` and `unarchiveTask` methods are already implemented in the store (verified at `packages/core/src/store.ts:700-760`), and the routes file has clear patterns for similar POST endpoints like `/tasks/:id/pause`, `/tasks/:id/unpause`, and `/tasks/:id/move`."
+    },
+    {
+      "timestamp": "2026-03-30T02:52:54.821Z",
+      "action": "code review requested for Step 3 (Dashboard API Routes)"
+    },
+    {
+      "timestamp": "2026-03-30T02:53:22.344Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Dashboard API Routes implementation correctly adds the POST `/api/tasks/:id/archive` and POST `/api/tasks/:id/unarchive` endpoints. The routes properly delegate to the `store.archiveTask()` and `store.unarchiveTask()` methods, return the updated task, and handle errors with appropriate HTTP status codes (400 for invalid column state, 500 for unexpected errors). The implementation follows the existing patterns in the codebase for task operation routes."
+    },
+    {
+      "timestamp": "2026-03-30T02:53:24.652Z",
+      "action": "Step 3 (Dashboard UI Components) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:53:24.657Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:53:26.377Z",
+      "action": "plan review requested for Step 4 (Dashboard UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T02:53:47.530Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The step plan has a significant gap: the `COLUMNS` array in `types.ts` already includes \"archived\" (6 columns total), but `Board.test.tsx` expects exactly 5 columns and will fail. The step plan doesn't mention updating this test. Additionally, the plan lacks specifics about how the archived column should behave differently from other columns (no drag-drop, different actions), and there's a mismatch between the file scope (Column.tsx not listed as modified) and the actual work needed."
+    },
+    {
+      "timestamp": "2026-03-30T02:56:43.274Z",
+      "action": "code review requested for Step 4 (Dashboard UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T02:57:07.790Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The UI components are structurally complete but **not functionally wired up**. The `Board`, `Column`, and `TaskCard` components correctly implement the archive/unarchive props pattern, and the API client has the functions, but the `useTasks` hook and `App.tsx` are missing the critical glue that makes the feature actually work. The archive/unarchive buttons will render but will do nothing when clicked because the handler props are undefined."
+    },
+    {
+      "timestamp": "2026-03-30T02:57:23.001Z",
+      "action": "code review requested for Step 4 (Dashboard UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T02:57:55.231Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The implementation is solid overall with proper API integration, component updates, and archive/unarchive button affordances. However, there's a **critical TypeScript/runtime error** in `ListView.tsx` where the `COLUMN_COLOR_MAP` is missing the \"archived\" entry, which will cause the app to crash when rendering archived tasks in list view. Additionally, the archived column allows drag-drop operations that should be blocked."
+    },
+    {
+      "timestamp": "2026-03-30T02:58:09.670Z",
+      "action": "code review requested for Step 4 (Dashboard UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T02:58:54.937Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The implementation adds the archive/unarchive API functions, Board/Column/TaskCard integration, and collapse behavior for the archived column. However, **critical CSS styles are missing** for the archive buttons and the column dot color, and the board grid template needs to be updated for 6 columns instead of 5. The tests also lack coverage for the new archive functionality."
+    },
+    {
+      "timestamp": "2026-03-30T02:59:12.159Z",
+      "action": "code review requested for Step 4 (Dashboard UI Components)"
+    },
+    {
+      "timestamp": "2026-03-30T02:59:56.466Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation of the Dashboard UI Components for the archive feature is complete and well-structured. All required UI elements have been implemented: the archived column renders correctly with collapse/expand functionality, archive buttons appear on done column tasks, unarchive buttons appear on archived tasks, and the API integration is properly wired through the component hierarchy."
+    },
+    {
+      "timestamp": "2026-03-30T02:59:57.728Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:59:57.731Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:59:59.984Z",
+      "action": "plan review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T03:00:23.220Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The Step 5 plan has a critical gap: the store tests are already implemented (visible in store.test.ts lines 1372-1793), but the plan misses **API route tests** for the archive/unarchive endpoints. The mock store in `packages/dashboard/src/routes.test.ts` is missing `archiveTask` and `unarchiveTask` methods, which will cause the route tests to fail if they try to call these endpoints. Additionally, the frontend API client tests in `api.test.ts` should include tests for `archiveTask` and `unarchiv"
+    },
+    {
+      "timestamp": "2026-03-30T03:02:09.905Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:02:11.580Z",
+      "action": "plan review requested for Step 6 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-30T03:02:36.067Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The Step 6 plan appropriately covers the documentation requirements for the archive feature. The implementation is already complete across all prior steps (core types, store methods, CLI commands, API routes, dashboard UI, and tests). The only adjustment needed is correcting the changeset bump type from `patch` to `minor` per AGENTS.md guidelines, since this adds new CLI commands."
+    },
+    {
+      "timestamp": "2026-03-30T03:02:44.555Z",
+      "action": "code review requested for Step 6 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-30T03:03:20.559Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "The Documentation & Delivery step is complete with all required artifacts in place. The changeset file is properly created with accurate documentation of the new archive feature. CLI help text is updated to show the new commands. AGENTS.md correctly requires no changes as it doesn't contain column-related documentation. Test coverage is comprehensive across all packages."
+    },
+    {
+      "timestamp": "2026-03-30T03:03:21.710Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T03:03:52.181Z",
+  "createdAt": "2026-03-30T01:38:01.162Z",
+  "updatedAt": "2026-03-30T03:03:52.181Z",
+  "size": "M",
+  "reviewLevel": 2
+}

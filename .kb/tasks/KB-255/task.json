@@ -1,0 +1,95 @@
+{
+  "id": "KB-255",
+  "title": "Task descriptions are being truncated stop doing that",
+  "description": "Task descriptions are being truncated stop doing that",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove Description Truncation in TaskCard",
+      "status": "done"
+    },
+    {
+      "name": "Remove Description Truncation in ListView",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T04:35:22.767Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T04:35:42.738Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T04:35:54.884Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is clear, actionable, and correctly identifies the truncation problem in both TaskCard and ListView components. The line numbers in \"Context to Read First\" are slightly off from the actual truncation locations, but the Steps section correctly identifies the exact code to modify. Testing requirements are explicit and appropriate for a simple UI fix."
+    },
+    {
+      "timestamp": "2026-03-31T04:35:59.239Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/faint-trout"
+    },
+    {
+      "timestamp": "2026-03-31T04:35:59.240Z",
+      "action": "Step 0 (Remove Description Truncation in TaskCard) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T04:36:00.691Z",
+      "action": "Step 0 (Remove Description Truncation in TaskCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T04:36:04.793Z",
+      "action": "Step 0 (Remove Description Truncation in TaskCard) → done"
+    },
+    {
+      "timestamp": "2026-03-31T04:36:04.794Z",
+      "action": "Step 1 (Remove Description Truncation in ListView) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T04:36:08.110Z",
+      "action": "Step 1 (Remove Description Truncation in ListView) → done"
+    },
+    {
+      "timestamp": "2026-03-31T04:36:08.114Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T04:36:09.812Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T04:36:09.813Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T04:40:15.476Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T04:40:19.298Z",
+      "action": "Removed 60-character truncation from task descriptions in dashboard",
+      "outcome": "TaskCard and ListView now display full descriptions when no title exists. All 209 relevant tests pass. Build succeeds."
+    },
+    {
+      "timestamp": "2026-03-31T04:40:19.300Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T04:40:29.919Z",
+  "createdAt": "2026-03-31T04:35:22.767Z",
+  "updatedAt": "2026-03-31T04:40:29.919Z",
+  "size": "S",
+  "reviewLevel": 0
+}

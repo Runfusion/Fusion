@@ -1,0 +1,91 @@
+{
+  "id": "KB-046",
+  "description": "the new task button on list view doesn't show a new task entry on the list view (it shows up on board view)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Inline Creation Card to List View",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T02:39:31.407Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T02:40:48.731Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:10.620Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a real bug in the codebase where `ListView.tsx` receives `isCreating`, `onCancelCreate`, and `onCreateTask` props (from App.tsx lines 178-189) but fails to destructure or use them, while `Column.tsx` (lines 98-104) correctly implements the `InlineCreateCard` rendering. The fix is straightforward—mirror the Column implementation in ListView's triage section. The spec appropriately scopes this as a small bug fix with proper test coverage requirements."
+    },
+    {
+      "timestamp": "2026-03-30T02:42:47.571Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bold-orbit"
+    },
+    {
+      "timestamp": "2026-03-30T02:42:47.600Z",
+      "action": "Step 0 (Add Inline Creation Card to List View) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:39.923Z",
+      "action": "Step 0 (Add Inline Creation Card to List View) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:45.068Z",
+      "action": "Step 0 (Add Inline Creation Card to List View) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:45.068Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:46.413Z",
+      "action": "plan review requested for Step 1 (Add Inline Creation Card to List View)"
+    },
+    {
+      "timestamp": "2026-03-30T02:44:00.086Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the bug and outlines the appropriate fix. The `ListView` component already receives the necessary props (`isCreating`, `onCancelCreate`, `onCreateTask`) from `App.tsx` but doesn't use them. The reference implementation in `Column.tsx` (lines 98-104) demonstrates the correct pattern. The fix is straightforward and low-risk."
+    },
+    {
+      "timestamp": "2026-03-30T02:44:55.514Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:44:55.518Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:46:14.018Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:46:28.841Z",
+      "action": "Fixed the + New Task button in List View",
+      "outcome": "InlineCreateCard now renders in the Triage section when isCreating is true. Added 8 new tests for the inline creation functionality. All 730 tests pass. Frontend build succeeds."
+    },
+    {
+      "timestamp": "2026-03-30T02:46:28.842Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:48:50.915Z",
+  "createdAt": "2026-03-30T02:39:31.407Z",
+  "updatedAt": "2026-03-30T02:48:50.915Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,131 @@
+{
+  "id": "KB-649",
+  "description": "Add command step and add ai prompt step in scheduled task editor don't work",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 5,
+  "summary": "Fixed the \"Add Command Step\" and \"Add AI Prompt Step\" buttons in the scheduled task editor by adding proper client-side validation for multi-step schedules. \n\nChanges made:\n1. ScheduleStepsEditor.tsx - Added `onEditingChange` callback to expose editing state to parent form, enabling validation to detect unsaved step edits\n2. ScheduleForm.tsx - Enhanced validation to check: (a) all steps have required content (command for command steps, prompt for AI steps), (b) no steps are currently being edited with unsaved changes. Added specific error messages like \"Step 1: Command is required\"\n3. Added 6 new integration tests for multi-step flow including: switching to Multi-Step mode, adding command and AI steps, validation preventing submission with incomplete steps, validation preventing submission while editing, successful creation of multi-step schedules, and editing existing multi-step schedules\n\nAll 47 tests for modified components pass (ScheduleStepsEditor: 21, ScheduleForm: 26).",
+  "createdAt": "2026-04-01T02:33:34.725Z",
+  "updatedAt": "2026-04-01T02:53:40.720Z",
+  "columnMovedAt": "2026-04-01T02:53:40.720Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Diagnose and Fix Step Addition Flow",
+      "status": "done"
+    },
+    {
+      "name": "Fix Form Validation for Multi-Step Schedules",
+      "status": "done"
+    },
+    {
+      "name": "Add Integration Tests for Multi-Step Flow",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:33:34.725Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:43:00.109Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:43:19.636Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and describes a focused bug fix for multi-step scheduled task creation. The mission clearly identifies the root cause: newly created steps have empty required fields (command/prompt) that fail server-side validation in `validateAutomationSteps`. The steps provide a logical progression from diagnosis → validation fixes → integration tests → verification. All referenced files exist and are accurately described."
+    },
+    {
+      "timestamp": "2026-04-01T02:48:06.099Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fleet-plume"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:06.102Z",
+      "action": "Step 0 (Diagnose and Fix Step Addition Flow) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:08.456Z",
+      "action": "Step 0 (Diagnose and Fix Step Addition Flow) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:20.562Z",
+      "action": "Step 0 (Diagnose and Fix Step Addition Flow) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:20.563Z",
+      "action": "Step 1 (Fix Form Validation for Multi-Step Schedules) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:20.564Z",
+      "action": "plan review requested for Step 1 (Diagnose and Fix Step Addition Flow)"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:39.573Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the key areas to verify in the `ScheduleStepsEditor` component. After examining the code, I can confirm that `handleAddStep` (lines 149-152) properly creates steps via `createEmptyStep`, appends them to the array, and sets `editingStepId` to open the editor immediately. The `createEmptyStep` function (lines 13-21) generates valid step objects with all required fields present (even if empty strings). The `StepEditor` component correctly renders for newly a"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:46.609Z",
+      "action": "Step 1 Analysis: Verified that ScheduleStepsEditor correctly opens step editor when adding steps. The issue is that canceling a new step leaves an empty step in the list, and ScheduleForm lacks validation to catch incomplete steps before submission.",
+      "outcome": "Will implement: 1) Expose editing state from ScheduleStepsEditor to ScheduleForm for validation, 2) Add step content validation to ScheduleForm"
+    },
+    {
+      "timestamp": "2026-04-01T02:49:55.976Z",
+      "action": "Step 1 (Fix Form Validation for Multi-Step Schedules) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:49:55.976Z",
+      "action": "Step 1 complete: ScheduleStepsEditor now exposes editing state via onEditingChange callback and properly notifies parent of state changes. Added tests for step editor state.",
+      "outcome": "ScheduleStepsEditor tests all passing (21/21)"
+    },
+    {
+      "timestamp": "2026-04-01T02:50:02.597Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:50:02.599Z",
+      "action": "plan review requested for Step 3 (Add Integration Tests for Multi-Step Flow)"
+    },
+    {
+      "timestamp": "2026-04-01T02:50:17.181Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and covers the essential integration test scenarios for the multi-step scheduled task flow. The checkboxes align with the fixes made in Steps 1 and 2, and the test coverage targets are appropriate for ensuring the bug fix is complete."
+    },
+    {
+      "timestamp": "2026-04-01T02:51:03.633Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:05.190Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:11.974Z",
+      "action": "Step 5 (Documentation & Delivery): No documentation updates needed per task spec (bug fix). Creating changeset file for the fix.",
+      "outcome": "All 47 tests for modified components pass. Changes are isolated to ScheduleStepsEditor and ScheduleForm components."
+    },
+    {
+      "timestamp": "2026-04-01T02:53:25.726Z",
+      "action": "Step 2 (Add Integration Tests for Multi-Step Flow) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:25.727Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:25.729Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

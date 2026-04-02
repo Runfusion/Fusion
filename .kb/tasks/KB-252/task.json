@@ -1,0 +1,108 @@
+{
+  "id": "KB-252",
+  "title": "Don t expand the add a task input until it",
+  "description": "Don’t expand the add a task input until it’s focused on both card and list view",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Current Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Implement Collapse-on-Blur Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T03:05:31.640Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T03:06:23.596Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T03:06:34.404Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. It correctly identifies the current behavior in QuickEntryBox.tsx and provides a clear, actionable plan for modifying the expand/collapse behavior. The scope is appropriately focused, testing requirements are explicit, and the implementation steps are concrete and verifiable."
+    },
+    {
+      "timestamp": "2026-03-31T03:07:28.532Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/keen-robin"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:28.601Z",
+      "action": "Step 0 (Analyze Current Behavior) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:30.086Z",
+      "action": "Step 0 (Analyze Current Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:34.180Z",
+      "action": "Step 0 (Analyze Current Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:35.350Z",
+      "action": "Step 1 (Implement Collapse-on-Blur Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:35.352Z",
+      "action": "plan review requested for Step 1 (Analyze Current Behavior)"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:47.775Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan accurately identifies the key implementation points for this behavior change. I've verified all four checkboxes in Step 1 map correctly to the actual codebase:\n\n1. **Line 156** (`showExpandedControls` logic) ✅ — Confirmed at `packages/dashboard/app/components/QuickEntryBox.tsx:156`\n2. **Current condition** (`isExpanded || description.trim().length > 0`) ✅ — Exact match\n3. **CSS classes** (`quick-entry-input--expanded` with min-height: 80px) ✅ — Confirmed at `packages/dashboard/app/style"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:49.827Z",
+      "action": "Step 2 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:17:53.110Z",
+      "action": "Step 2 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:17:53.112Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:17:54.419Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:17:56.017Z",
+      "action": "Completed KB-252: Don't expand the add a task input until it's focused",
+      "outcome": "QuickEntryBox now remains collapsed until focused, and collapses on blur even with text content. All 33 QuickEntryBox tests pass. Build passes."
+    },
+    {
+      "timestamp": "2026-03-31T03:17:56.018Z",
+      "action": "Step 1 (Implement Collapse-on-Blur Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:17:56.019Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T03:18:10.562Z",
+  "createdAt": "2026-03-31T03:05:31.640Z",
+  "updatedAt": "2026-03-31T03:18:10.562Z",
+  "size": "S",
+  "reviewLevel": 1
+}

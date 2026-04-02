@@ -1,0 +1,210 @@
+{
+  "id": "KB-094",
+  "description": "improve the import from github dialog - make it look better",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Redesign modal layout and visual hierarchy",
+      "status": "done"
+    },
+    {
+      "name": "Update and extend UI tests for the new modal contract",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "in-progress"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:51:54.356Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:53:40.416Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:54:33.365Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a solid, implementation-ready specification: mission, scope, constraints, and validation gates are clear and aligned with the existing codebase. The referenced files and behaviors are real and correctly targeted (e.g., `GitHubImportModal.tsx`, the dedicated `/* === GitHub Import Modal === */` CSS section in `styles.css`, and existing tests in `GitHubImportModal.test.tsx` / `App.test.tsx`). Testing expectations are appropriately strict with both targeted and full-suite runs."
+    },
+    {
+      "timestamp": "2026-03-30T04:54:57.779Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:56:01.757Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a solid, implementation-ready spec for a UI-polish task with clear guardrails to preserve behavior. I verified the referenced files, functions, and patterns all exist and match the intended scope (e.g., `handleRemoteChange`/`handleLoad`/`handleImport` in `packages/dashboard/app/components/GitHubImportModal.tsx:89,113,141`, imported-issue detection regex at `:32`, and existing GitHub modal CSS block at `packages/dashboard/app/styles.css:2202+`). Testing and documentation expectations are "
+    },
+    {
+      "timestamp": "2026-03-30T13:27:06.568Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sharp-ridge"
+    },
+    {
+      "timestamp": "2026-03-30T13:27:06.569Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T13:27:19.655Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T13:27:27.636Z",
+      "action": "Completed preflight context loading and verified task scope files exist.",
+      "outcome": "Ready to redesign the GitHub import modal without changing import logic."
+    },
+    {
+      "timestamp": "2026-03-30T13:27:48.462Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T13:27:48.465Z",
+      "action": "Step 1 (Redesign modal layout and visual hierarchy) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T13:27:48.467Z",
+      "action": "plan review requested for Step 1 (Redesign modal layout and visual hierarchy)"
+    },
+    {
+      "timestamp": "2026-03-30T13:29:45.030Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "This step is scoped appropriately for the task’s mission. It targets the right implementation surface — the current modal body is still a mostly flat structure in `packages/dashboard/app/components/GitHubImportModal.tsx:181-307`, and the dedicated modal styling lives in `packages/dashboard/app/styles.css:2438-2557` — while explicitly preserving the core state/interaction logic in `handleRemoteChange`, `handleLoad`, and `handleImport` (`GitHubImportModal.tsx:113-160`).\n\nThe plan also correctly de"
+    },
+    {
+      "timestamp": "2026-03-30T13:34:00.182Z",
+      "action": "Implemented the GitHub import modal redesign and attempted targeted dashboard tests.",
+      "outcome": "Tests could not start because the worktree has no installed dependencies (vitest/node_modules missing), so the workspace needs pnpm install before verification can continue."
+    },
+    {
+      "timestamp": "2026-03-30T13:37:35.327Z",
+      "action": "Step 1 (Redesign modal layout and visual hierarchy) → done"
+    },
+    {
+      "timestamp": "2026-03-30T13:37:35.329Z",
+      "action": "Step 2 (Update and extend UI tests for the new modal contract) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T13:37:35.331Z",
+      "action": "plan review requested for Step 2 (Update and extend UI tests for the new modal contract)"
+    },
+    {
+      "timestamp": "2026-03-30T13:40:41.093Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The step is close, but it does not explicitly cover two major parts of the new modal contract that were introduced in `GitHubImportModal.tsx`: the preview panel behavior and the dedicated results-state containers. As written, a worker could satisfy the “at least two assertions” checkbox with superficial structure checks and still miss the main UI-state changes this task is meant to protect."
+    },
+    {
+      "timestamp": "2026-03-30T13:45:38.664Z",
+      "action": "Prepared the redesigned GitHub import modal with refreshed layout/state styling and aligned the existing modal tests to the new structure.",
+      "outcome": "Step 1 is ready to commit with passing targeted dashboard tests."
+    },
+    {
+      "timestamp": "2026-03-30T13:47:00.539Z",
+      "action": "Extended GitHub import modal coverage with resilient selectors and dedicated assertions for idle, preview, and empty results states.",
+      "outcome": "Step 2 is ready to commit with targeted dashboard tests passing."
+    },
+    {
+      "timestamp": "2026-03-30T13:47:19.415Z",
+      "action": "Step 2 (Update and extend UI tests for the new modal contract) → done"
+    },
+    {
+      "timestamp": "2026-03-30T13:47:19.419Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T13:47:19.421Z",
+      "action": "plan review requested for Step 3 (Testing and verification)"
+    },
+    {
+      "timestamp": "2026-03-30T13:49:43.655Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The automated gates in this step are solid for catching behavioral regressions: the targeted dashboard tests, full `pnpm test`, and workspace build all align with the repo scripts and should protect the existing import flow. However, this task’s primary success criteria are visual polish and responsive state clarity, and the current verification plan has no explicit browser/manual check for the CSS-driven layout and state styling changes."
+    },
+    {
+      "timestamp": "2026-03-30T13:49:54.667Z",
+      "action": "Expanded Step 3 verification plan to include manual visual checks for the redesigned modal across state variants and narrow viewport behavior.",
+      "outcome": "Will run automated suites plus a browser-based responsive verification pass."
+    },
+    {
+      "timestamp": "2026-03-30T13:52:16.511Z",
+      "action": "Full workspace tests exposed a broader workspace issue in @kb/engine: several engine suites cannot resolve @kb/core from package exports during pnpm test.",
+      "outcome": "Investigating whether a clean workspace build restores the expected dist entry before deciding if this is an existing out-of-scope failure."
+    },
+    {
+      "timestamp": "2026-03-30T13:53:34.412Z",
+      "action": "After building the workspace, full tests now fail only in existing CLI build-exe suites because Bun cannot load the native node-pty binary packaged in the test artifact.",
+      "outcome": "This looks like an environment/setup issue from ignored node-pty build scripts, so I am attempting a dependency rebuild before treating it as out-of-scope."
+    },
+    {
+      "timestamp": "2026-03-30T13:54:46.430Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T13:55:00.797Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T13:55:02.738Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T13:57:03.091Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The scripted checks are valid and useful: the targeted dashboard test command maps cleanly to `vitest run` in `packages/dashboard/package.json:22`, and the workspace-wide quality gates in `package.json:13` plus `pnpm build` are appropriate. However, this step does not actually verify the core visual/responsive outcomes of KB-094, so it can pass while still missing the task’s stated UI polish requirements."
+    },
+    {
+      "timestamp": "2026-03-30T13:57:27.983Z",
+      "action": "Reviewed existing KB-094 progress and current branch history before resuming Step 3.",
+      "outcome": "Confirmed Steps 1 and 2 are already committed and the worktree is clean, so verification can continue from the existing implementation."
+    },
+    {
+      "timestamp": "2026-03-30T14:02:49.720Z",
+      "action": "Performed live browser verification of the GitHub import modal against the running dashboard.",
+      "outcome": "Confirmed the redesigned modal reads clearly on desktop and at a 480px viewport, and manually checked loaded-results, selected-preview, and empty-state flows in the real UI."
+    },
+    {
+      "timestamp": "2026-03-30T14:05:56.010Z",
+      "action": "Full workspace verification exposed an unrelated CLI packaging failure outside KB-094 scope.",
+      "outcome": "Created follow-up task KB-151 after pnpm test failed in packages/cli build-exe tests because the Bun-built kb binary cannot load pty.node at runtime."
+    },
+    {
+      "timestamp": "2026-03-30T14:08:54.392Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:09:02.152Z",
+      "action": "Updated KB-094 documentation and release metadata.",
+      "outcome": "README now matches the polished import modal flow, and a patch changeset was added because the dashboard UI ships with the published kb package."
+    },
+    {
+      "timestamp": "2026-03-30T14:09:26.137Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:09:53.947Z",
+      "action": "KB-094 is functionally complete in scope, but final verification remains blocked by unrelated workspace failures.",
+      "outcome": "Kept Step 3 open and did not call task_done() because pnpm test still fails in packages/cli build-exe coverage; follow-up KB-151 tracks that blocker."
+    },
+    {
+      "timestamp": "2026-03-30T14:10:48.836Z",
+      "action": "Agent finished without calling task_done — moved to in-review for inspection"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T14:27:33.442Z",
+  "createdAt": "2026-03-30T04:51:54.356Z",
+  "updatedAt": "2026-03-30T14:27:33.442Z",
+  "size": "M",
+  "reviewLevel": 1
+}

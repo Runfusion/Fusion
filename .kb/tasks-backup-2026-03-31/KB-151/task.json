@@ -1,0 +1,177 @@
+{
+  "id": "KB-151",
+  "description": "Fix @dustinbyrne/kb packaged binary tests failing in packages/cli/src/__tests__/build-exe*.test.ts due the Bun-built executable exiting with 'Failed to load native module: pty.node' when run with --help or dashboard.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Make node-pty import lazy in terminal-service.ts",
+      "status": "done"
+    },
+    {
+      "name": "Ensure dashboard server handles lazy terminal initialization",
+      "status": "done"
+    },
+    {
+      "name": "Verify build-exe tests pass",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T14:05:50.477Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T14:30:16.998Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:30:31.522Z",
+      "action": "Spec review: RETHINK",
+      "outcome": "KB-151 is marked as a duplicate of KB-140, with its PROMPT.md containing only the text \"DUPLICATE: KB-140\". This is not a valid task specification. KB-140 already exists with a comprehensive, approved specification addressing the same issue (CLI build-executable tests failing due to `node-pty` native asset packaging). KB-140 is currently in the \"todo\" column and was approved after multiple spec review iterations."
+    },
+    {
+      "timestamp": "2026-03-30T14:30:31.522Z",
+      "action": "RETHINK: spec rewound — session checkpoint af96c4e9",
+      "outcome": "KB-151 is marked as a duplicate of KB-140, with its PROMPT.md containing only the text \"DUPLICATE: KB-140\". This is not a valid task specification. KB-140 already exists with a comprehensive, approved specification addressing the same issue (CLI build-executable tests failing due to `node-pty` native asset packaging). KB-140 is currently in the \"todo\" column and was approved after multiple spec review iterations."
+    },
+    {
+      "timestamp": "2026-03-30T14:31:00.896Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:31.665Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately diagnoses the root cause (static `node-pty` import at line 6 of `terminal-service.ts` being evaluated at module load time) and prescribes the correct surgical fix (dynamic import deferred until `createSession()`). All referenced files exist and match the described structure. Steps have concrete verification criteria with appropriate test commands."
+    },
+    {
+      "timestamp": "2026-03-30T15:30:08.723Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/glad-spark"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:08.724Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:19.604Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:46.399Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:46.399Z",
+      "action": "Step 0: Preflight complete. Reproduced the failure - binary crashes with 'Failed to load native module: pty.node' when running --help, task list, or dashboard commands.",
+      "outcome": "Confirmed issue exists and is caused by static node-pty import in terminal-service.ts being loaded at module initialization time"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:47.377Z",
+      "action": "Step 1 (Make node-pty import lazy in terminal-service.ts) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:47.378Z",
+      "action": "plan review requested for Step 1 (Make node-pty import lazy in terminal-service.ts)"
+    },
+    {
+      "timestamp": "2026-03-30T15:31:05.046Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause (static import of `node-pty` at module load time) and proposes the standard solution (dynamic import with caching). The checkboxes cover the essential implementation points. Step 2 appropriately covers server-side validation that the lazy loading works as expected. The approach will allow CLI commands to execute without triggering native module loading while preserving full terminal functionality when the dashboard is actually used."
+    },
+    {
+      "timestamp": "2026-03-30T15:33:21.556Z",
+      "action": "code review requested for Step 1 (Make node-pty import lazy in terminal-service.ts)"
+    },
+    {
+      "timestamp": "2026-03-30T15:33:50.172Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly converts the static `node-pty` import to a lazy dynamic import. The `getPtyModule()` async function with module-level caching is well-implemented, and the type definitions are preserved using `typeof import(\"node-pty\")`. The `createSession()` method now awaits the lazy load before using PTY APIs, ensuring node-pty is only loaded when terminal sessions are actually created."
+    },
+    {
+      "timestamp": "2026-03-30T15:33:53.048Z",
+      "action": "Step 2 (Ensure dashboard server handles lazy terminal initialization) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:33:53.048Z",
+      "action": "plan review requested for Step 2 (Ensure dashboard server handles lazy terminal initialization)"
+    },
+    {
+      "timestamp": "2026-03-30T15:34:13.340Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The Step 2 plan is appropriate and the current codebase already largely satisfies its requirements. The `terminal-service.ts` has been properly converted to lazy loading (Step 1), and the `server.ts` initialization is already safe — `getTerminalService()` only creates a pure JavaScript `TerminalService` instance without loading node-pty. The native module is only loaded when `createSession()` is called via the REST API endpoint."
+    },
+    {
+      "timestamp": "2026-03-30T15:34:33.884Z",
+      "action": "Step 2 (Ensure dashboard server handles lazy terminal initialization) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:34:35.268Z",
+      "action": "Step 3 (Verify build-exe tests pass) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:34:35.269Z",
+      "action": "plan review requested for Step 3 (Verify build-exe tests pass)"
+    },
+    {
+      "timestamp": "2026-03-30T15:34:54.597Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan's checkboxes will achieve the stated outcomes. The lazy loading implementation in `terminal-service.ts` (already in place) correctly delays `node-pty` import until `createSession()` is called, which should allow `--help`, `task list`, and dashboard startup to work without triggering the native module loader. The verification steps cover both manual testing and automated test execution comprehensively."
+    },
+    {
+      "timestamp": "2026-03-30T15:35:08.811Z",
+      "action": "Step 3 (Verify build-exe tests pass) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:35:09.895Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:35:09.896Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T15:35:30.278Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step's checkboxes will achieve the stated outcomes. The plan correctly identifies running the full test suite across all packages as the quality gate, which will catch any regressions from the lazy loading changes. The terminal service tests use vitest's `vi.mock()` which intercepts both static and dynamic imports, so the existing test infrastructure should work without modification."
+    },
+    {
+      "timestamp": "2026-03-30T15:36:37.776Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:36:40.160Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:36:43.957Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:37:08.514Z",
+      "action": "Step 1 (Make node-pty import lazy in terminal-service.ts) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:37:08.514Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:37:39.725Z",
+  "createdAt": "2026-03-30T14:05:50.477Z",
+  "updatedAt": "2026-03-30T15:37:39.725Z",
+  "size": "M",
+  "reviewLevel": 2
+}

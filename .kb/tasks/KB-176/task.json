@@ -1,0 +1,159 @@
+{
+  "id": "KB-176",
+  "description": "For a task, I want to see a summary of what was changed/fixed when a card is done - add a new summary section in the Definition tab at the top - and instruct the model at the end to do a summary of the work completed and what was verified and changed.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Summary Field to Task Type and Store",
+      "status": "done"
+    },
+    {
+      "name": "Add Summary Section to Definition Tab",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styling for Summary Section",
+      "status": "done"
+    },
+    {
+      "name": "Update Executor System Prompt and task_done Tool",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:52:02.224Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T17:56:06.694Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:56:21.426Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and complete. It correctly identifies all necessary file locations and provides clear, verifiable outcomes for each step. The mission is focused, the review level is appropriately set, and testing requirements are explicit. Minor documentation gaps exist around the `api.ts` updates."
+    },
+    {
+      "timestamp": "2026-03-31T01:54:49.321Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/keen-otter"
+    },
+    {
+      "timestamp": "2026-03-31T01:54:49.322Z",
+      "action": "Step 0 (Add Summary Field to Task Type and Store) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:54:50.697Z",
+      "action": "Step 0 (Add Summary Field to Task Type and Store) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:54:57.218Z",
+      "action": "Step 0 (Preflight) completed: Read and understood the codebase structure",
+      "outcome": "Task type in types.ts has many optional fields. updateTask in store.ts already handles various update parameters. TaskDetailModal.tsx has the Definition tab rendering with ReactMarkdown. executor.ts has task_done tool and EXECUTOR_SYSTEM_PROMPT. CSS styling patterns are well established in styles.css."
+    },
+    {
+      "timestamp": "2026-03-31T01:54:57.219Z",
+      "action": "Step 0 (Add Summary Field to Task Type and Store) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:55:00.200Z",
+      "action": "Step 1 (Add Summary Section to Definition Tab) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:55:00.200Z",
+      "action": "plan review requested for Step 1 (Add Summary Field to Task Type and Store)"
+    },
+    {
+      "timestamp": "2026-03-31T01:55:09.827Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and follows established patterns in the codebase. The Task interface already has similar optional string fields (`title?: string`, `status?: string`, `error?: string`), and the `updateTask` method has a consistent pattern for handling nullable fields (`field?: string | null` with null→undefined conversion logic)."
+    },
+    {
+      "timestamp": "2026-03-31T01:55:44.726Z",
+      "action": "Step 1 (Add Summary Section to Definition Tab) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:55:44.727Z",
+      "action": "Step 2 (Add CSS Styling for Summary Section) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:55:44.727Z",
+      "action": "plan review requested for Step 2 (Add Summary Section to Definition Tab)"
+    },
+    {
+      "timestamp": "2026-03-31T01:56:03.454Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and will achieve its stated outcomes. The approach correctly identifies where to add the summary section in `TaskDetailModal.tsx`, uses appropriate conditional rendering logic, and follows existing patterns for markdown rendering and styling. The `summary` field has already been added to the Task type in Step 1 (visible at `packages/core/src/types.ts:189`), and the store's `updateTask` method already handles the summary parameter."
+    },
+    {
+      "timestamp": "2026-03-31T01:59:59.503Z",
+      "action": "Step 2 (Add CSS Styling for Summary Section) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:59:59.504Z",
+      "action": "Step 3 (Update Executor System Prompt and task_done Tool) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:59:59.505Z",
+      "action": "plan review requested for Step 3 (Add CSS Styling for Summary Section)"
+    },
+    {
+      "timestamp": "2026-03-31T02:00:13.277Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is straightforward and will achieve the stated outcomes. The JSX for the summary section is already in place in `TaskDetailModal.tsx` (lines 731-741) with the dual className `detail-section detail-summary`, so the CSS addition will apply immediately. The styling approach leverages existing patterns and tokens."
+    },
+    {
+      "timestamp": "2026-03-31T02:00:29.467Z",
+      "action": "Step 3 (Update Executor System Prompt and task_done Tool) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:00:29.468Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:00:29.469Z",
+      "action": "plan review requested for Step 4 (Update Executor System Prompt and task_done Tool)"
+    },
+    {
+      "timestamp": "2026-03-31T02:00:45.084Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is well-structured and will achieve the stated outcomes. The infrastructure for the `summary` field is already in place in the Task type (line 217 in `types.ts`) and the store's `updateTask` method (lines 673, 749-753 in `store.ts`), which simplifies the implementation. The step's checkboxes cover all necessary changes: updating the system prompt, modifying the tool's parameter schema, persisting the summary, and providing user feedback."
+    },
+    {
+      "timestamp": "2026-03-31T02:02:05.909Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:02:05.911Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:03:48.917Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:04:05.110Z",
+      "action": "Task KB-176 completed successfully",
+      "outcome": "All 6 steps completed:\n- Step 1: Added summary field to Task type in types.ts and updateTask in store.ts\n- Step 2: Added Summary section to Definition tab in TaskDetailModal.tsx\n- Step 3: Added CSS styling for .detail-summary in styles.css\n- Step 4: Updated executor system prompt and task_done tool to accept summary parameter\n- Step 5: Added comprehensive tests for task_done summary functionality\n- Step 6: Created changeset for the feature\n\nBuild passes, 1756/1758 tests pass (2 pre-existing failures unrelated to changes)"
+    },
+    {
+      "timestamp": "2026-03-31T02:04:06.122Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T02:04:10.094Z",
+  "createdAt": "2026-03-30T17:52:02.224Z",
+  "updatedAt": "2026-03-31T02:04:10.094Z",
+  "size": "M",
+  "reviewLevel": 1
+}

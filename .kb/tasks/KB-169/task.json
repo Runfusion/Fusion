@@ -1,0 +1,162 @@
+{
+  "id": "KB-169",
+  "description": "Make provider icons the real providers in the usage quoa dropdown in the dashboard",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Provider Icon Mapping in UsageIndicator",
+      "status": "done"
+    },
+    {
+      "name": "Verify ProviderIcon Component Handles All Keys",
+      "status": "done"
+    },
+    {
+      "name": "Add/Update Tests for Provider Icon Mapping",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:38:32.711Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:20.025Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:35.235Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies the relevant files and mapping logic. The task correctly targets the `getProviderIconKey` function in `UsageIndicator.tsx` and the icon configurations in `ProviderIcon.tsx`. The file references are correct and the test requirements are appropriate for a small UI verification task. Minor suggestion to clarify the problem statement since the code appears to already implement the described behavior."
+    },
+    {
+      "timestamp": "2026-03-30T22:40:51.986Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-quail"
+    },
+    {
+      "timestamp": "2026-03-30T22:40:51.987Z",
+      "action": "Step 0 (Fix Provider Icon Mapping in UsageIndicator) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T22:40:53.647Z",
+      "action": "Step 0 (Fix Provider Icon Mapping in UsageIndicator) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:43:31.029Z",
+      "action": "Step 0 (Fix Provider Icon Mapping in UsageIndicator) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:43:31.030Z",
+      "action": "Step 0 (Preflight) complete: Read all context files and verified existing tests pass. The current implementation already correctly maps provider names to icon keys.",
+      "outcome": "All 32 UsageIndicator tests and 23 ProviderIcon tests pass. The mapping logic in getProviderIconKey correctly handles 'Claude' → 'anthropic', 'Codex' → 'openai', 'Gemini' → 'google'."
+    },
+    {
+      "timestamp": "2026-03-30T22:43:32.597Z",
+      "action": "plan review requested for Step 1 (Fix Provider Icon Mapping in UsageIndicator)"
+    },
+    {
+      "timestamp": "2026-03-30T22:43:58.010Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is appropriate. The current code already has the correct implementation of `getProviderIconKey` with `.toLowerCase()` and `.includes()` matching, and the `ProviderCard` correctly passes the mapped key to `ProviderIcon`. The tests already exist for the three backend provider names. Step 1 is primarily a **verification step** to confirm the mapping works correctly with the actual backend provider names."
+    },
+    {
+      "timestamp": "2026-03-30T22:44:02.317Z",
+      "action": "Step 1 (Verify ProviderIcon Component Handles All Keys) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:44:10.380Z",
+      "action": "Step 1 (Verify ProviderIcon Component Handles All Keys) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:44:10.381Z",
+      "action": "Step 1 complete: Verified `getProviderIconKey` correctly maps all backend provider names to icon keys using case-insensitive matching with `.toLowerCase()` and `.includes()`.",
+      "outcome": "Implementation verified:\n- 'Claude' → 'anthropic' (matches 'claude' in normalized string)\n- 'Codex' → 'openai' (matches 'codex' in normalized string) \n- 'Gemini' → 'google' (matches 'gemini' in normalized string)\n- ProviderCard correctly passes mapped key to ProviderIcon component\n- All 32 UsageIndicator tests pass"
+    },
+    {
+      "timestamp": "2026-03-30T22:44:11.623Z",
+      "action": "plan review requested for Step 2 (Verify ProviderIcon Component Handles All Keys)"
+    },
+    {
+      "timestamp": "2026-03-30T22:44:22.701Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The step's stated checkboxes are already satisfied by the current codebase. `ProviderIcon.tsx` already has all required icon configurations and the fallback mechanism. The step incorrectly assumes work is needed where none exists, and critically misses that there are **no dedicated `ProviderIcon` tests** to run (the step checkbox \"Run `ProviderIcon` component tests\" cannot be completed)."
+    },
+    {
+      "timestamp": "2026-03-30T22:44:29.451Z",
+      "action": "Step 2 (Add/Update Tests for Provider Icon Mapping) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:44:32.132Z",
+      "action": "Step 2 (Add/Update Tests for Provider Icon Mapping) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:44:32.133Z",
+      "action": "Step 2 complete: Verified ProviderIcon component has all required configurations and dedicated tests exist.",
+      "outcome": "ProviderIcon.tsx has all required icon configurations:\n- anthropic → AnthropicIcon (warm tan #d4a27f)\n- openai → OpenAIIcon (green #10a37f)\n- google → GeminiIcon (blue #4285f4)\n- gemini → GeminiIcon (blue #4285f4)\n- ollama → OllamaIcon (white)\n\nFallback to Cpu icon works for unknown providers.\n\nProviderIcon.test.tsx exists with 23 tests covering all provider keys, colors, sizes, and fallback behavior. All tests pass."
+    },
+    {
+      "timestamp": "2026-03-30T22:44:33.157Z",
+      "action": "plan review requested for Step 3 (Add/Update Tests for Provider Icon Mapping)"
+    },
+    {
+      "timestamp": "2026-03-30T22:44:47.050Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan correctly identifies the test coverage needed for provider icon mapping. The existing test file already has tests for the three provider mappings (Claude→anthropic, Codex→openai, Gemini→google) at lines 258-307, but lacks explicit verification that the emoji `icon` field from the API is not rendered. The plan's approach to add/update tests to verify SVG rendering, aria-label attributes, and emoji exclusion is appropriate for the task."
+    },
+    {
+      "timestamp": "2026-03-30T22:44:50.400Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:44:56.407Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:44:56.407Z",
+      "action": "Step 3 complete: All provider icon mapping tests exist and pass.",
+      "outcome": "Existing tests cover all requirements:\n- 'renders SVG provider icons instead of emoji' - verifies emoji field from API is not rendered\n- 'maps Claude provider to anthropic icon' - verifies data-provider='anthropic' and Anthropic SVG\n- 'maps Codex provider to openai icon' - verifies data-provider='openai' and OpenAI SVG\n- 'maps Gemini provider to google icon' - verifies data-provider='google' and Gemini SVG\n\nAll 32 UsageIndicator tests pass."
+    },
+    {
+      "timestamp": "2026-03-30T22:44:57.715Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T22:45:06.798Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is appropriate and will achieve its stated outcomes. The step correctly focuses on running the quality gate (full test suite + build) after the implementation work in prior steps. The codebase already has the correct provider icon mapping logic in `getProviderIconKey` (lines 137-156 of UsageIndicator.tsx) and comprehensive tests for the three backend provider names (\"Claude\", \"Codex\", \"Gemini\") in the existing test file (lines 385-425 of UsageIndicator.test.tsx)."
+    },
+    {
+      "timestamp": "2026-03-30T22:45:08.716Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:47:25.590Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:47:25.593Z",
+      "action": "Step 4 complete: Full test suite and build verification done.",
+      "outcome": "- All 55 UsageIndicator and ProviderIcon tests pass\n- Build succeeds for all packages (@kb/core, @kb/dashboard, @dustinbyrne/kb)\n- Pre-existing test failures in unrelated modules (useMultiAgentLogs, Header, TaskCard) do not affect this task\n- Provider icon mapping implementation is verified working correctly"
+    },
+    {
+      "timestamp": "2026-03-30T22:47:35.918Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T22:47:44.207Z",
+  "createdAt": "2026-03-30T17:38:32.711Z",
+  "updatedAt": "2026-03-30T22:47:44.207Z",
+  "size": "S",
+  "reviewLevel": 1
+}

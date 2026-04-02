@@ -1,0 +1,338 @@
+{
+  "id": "KB-071",
+  "description": "change the name of the dashboard to \"Fusion\" and make the logo a simple four dots or something geometric, like the factory logo",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Header Component Branding",
+      "status": "done"
+    },
+    {
+      "name": "Create New Four-Dot Logo",
+      "status": "done"
+    },
+    {
+      "name": "Update Page Title",
+      "status": "done"
+    },
+    {
+      "name": "Fix Header Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:30:08.853Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:30:33.937Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:30:46.039Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is clear and well-structured for a straightforward branding change. However, there is one blocking issue: an incorrect file path in Step 3 that would cause the worker to fail. Additionally, the tests reference props that don't exist in the Header component (`onToggleTheme`, `themeMode`, `inProgressCount`), which will cause test failures unrelated to the branding changes."
+    },
+    {
+      "timestamp": "2026-03-30T04:30:49.988Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:30:59.255Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:31:02.227Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-specified, straightforward branding task. The specification accurately identifies all source files, correctly describes the current state of the codebase, and provides clear, verifiable outcomes for each step. The review level of 0 is appropriate for this low-risk visual change."
+    },
+    {
+      "timestamp": "2026-03-30T04:31:16.329Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted and accurate. All file references exist and match the described content. The broken tests correctly reference non-existent props (`onToggleTheme`, `themeMode`, `inProgressCount`). Steps have concrete, verifiable outcomes with appropriate testing requirements. The review level 1 (Plan Only) is appropriate for this low-risk branding change."
+    },
+    {
+      "timestamp": "2026-03-30T04:52:01.155Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/green-quail"
+    },
+    {
+      "timestamp": "2026-03-30T04:52:01.156Z",
+      "action": "Step 0 (Update Header Component Branding) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T04:52:06.688Z",
+      "action": "Step 0 (Update Header Component Branding) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:52:19.871Z",
+      "action": "plan review requested for Step 0 (Update Header Component Branding)"
+    },
+    {
+      "timestamp": "2026-03-30T04:52:41.372Z",
+      "action": "plan review Step 0: APPROVE",
+      "outcome": "The planned Step 0 changes in `packages/dashboard/app/components/Header.tsx` are aligned with the step’s intended outcome: updating visible header branding text and logo alt text. The targeted edits (`kb` → `Fusion`, `board` → `tasks`, and `\"kb logo\"` → `\"Fusion logo\"`) are sufficient for this step and are low risk. This step is scoped correctly as a pure UI/content update with no logic or API impact."
+    },
+    {
+      "timestamp": "2026-03-30T04:52:51.500Z",
+      "action": "Updated Header branding text and logo alt text from kb/board to Fusion/tasks.",
+      "outcome": "Header component now reflects new Fusion branding."
+    },
+    {
+      "timestamp": "2026-03-30T04:52:55.414Z",
+      "action": "Step 0 (Update Header Component Branding) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:52:59.757Z",
+      "action": "Step 1 (Create New Four-Dot Logo) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:53:03.128Z",
+      "action": "plan review requested for Step 1 (Create New Four-Dot Logo)"
+    },
+    {
+      "timestamp": "2026-03-30T04:53:25.705Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The planned checkbox items for the logo step are specific and sufficient to achieve the stated outcome: replacing the current multi-bar mark with a clean four-dot geometric logo. The specification is concrete enough to produce a deterministic SVG (color, coordinates, radius, viewBox, and xmlns). Given the current file content in `packages/dashboard/app/public/logo.svg` (multi-color bars/circles, lines 1–9), this step directly addresses the required branding change."
+    },
+    {
+      "timestamp": "2026-03-30T04:53:33.525Z",
+      "action": "Replaced logo.svg with new geometric four-dot mark using the specified 2x2 circle grid and Fusion accent color."
+    },
+    {
+      "timestamp": "2026-03-30T04:53:37.215Z",
+      "action": "Step 1 (Create New Four-Dot Logo) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:53:38.482Z",
+      "action": "Step 2 (Update Page Title) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:53:41.625Z",
+      "action": "Step 0 (Update Header Component Branding) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:53:41.628Z",
+      "action": "Starting KB-071 preflight: reading prompt context files and validating current repo state before changes."
+    },
+    {
+      "timestamp": "2026-03-30T04:53:42.162Z",
+      "action": "plan review requested for Step 2 (Update Page Title)"
+    },
+    {
+      "timestamp": "2026-03-30T04:53:50.701Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step is straightforward and correctly specified. The task requires changing the page title from \"kb | board\" to \"Fusion\" in `packages/dashboard/app/index.html`. The file exists and contains the expected title on line 6. The change is minimal, has no dependencies, and zero risk of functional impact."
+    },
+    {
+      "timestamp": "2026-03-30T04:53:56.470Z",
+      "action": "Step 2 (Update Page Title) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:53:58.752Z",
+      "action": "Step 3 (Fix Header Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:54:00.436Z",
+      "action": "plan review requested for Step 3 (Fix Header Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T04:54:09.808Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 correctly identifies the necessary changes. The test file currently references non-existent props (`onToggleTheme`, `themeMode`, `inProgressCount`) that are not in the Header component's interface, and the logo alt text needs updating to match the already-modified Header component."
+    },
+    {
+      "timestamp": "2026-03-30T04:54:11.326Z",
+      "action": "plan review requested for Step 0 (Update Header Component Branding)"
+    },
+    {
+      "timestamp": "2026-03-30T04:54:23.742Z",
+      "action": "plan review Step 0: REVISE",
+      "outcome": "The plan has a fundamental mismatch with the current codebase state. The Header.tsx, logo.svg, and index.html files **already contain the new branding** (\"Fusion\", four-dot logo, updated title), but the tests still reference the old branding and non-existent props. The worker needs to focus on **test updates** rather than re-implementing changes that are already in place. Additionally, Step 4 in the PROMPT.md describes test cleanup that will break existing functionality if followed literally."
+    },
+    {
+      "timestamp": "2026-03-30T04:54:36.759Z",
+      "action": "Preflight complete. Verified scope files; branding updates in Header.tsx, logo.svg, and index.html are already present in current branch baseline. Proceeding to validate and clean up tests per task requirements."
+    },
+    {
+      "timestamp": "2026-03-30T04:54:38.923Z",
+      "action": "Step 0 (Update Header Component Branding) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:54:42.074Z",
+      "action": "Step 1 (Create New Four-Dot Logo) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:54:45.906Z",
+      "action": "plan review requested for Step 1 (Create New Four-Dot Logo)"
+    },
+    {
+      "timestamp": "2026-03-30T04:54:56.872Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for creating the four-dot logo is clear, specific, and achievable. The SVG design specification is precise with exact coordinates, radius, and color values. Notably, the logo.svg file already contains the correct four-dot design, suggesting this step may already be implemented. The main remaining work is Step 4 (test cleanup), which has accurate file references and specific line ranges for removing broken tests."
+    },
+    {
+      "timestamp": "2026-03-30T04:54:59.171Z",
+      "action": "Step 2 validation: logo.svg already matches the required 128x128 four-dot geometric design with #58a6ff fill and proper xmlns/viewBox."
+    },
+    {
+      "timestamp": "2026-03-30T04:55:00.979Z",
+      "action": "Step 1 (Create New Four-Dot Logo) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:55:04.744Z",
+      "action": "Step 2 (Update Page Title) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:55:05.593Z",
+      "action": "Attempted to run Header tests but workspace dependencies were not installed (`vitest: command not found`).",
+      "outcome": "Need to run `pnpm install` before executing test/build gates."
+    },
+    {
+      "timestamp": "2026-03-30T04:55:06.617Z",
+      "action": "plan review requested for Step 2 (Update Page Title)"
+    },
+    {
+      "timestamp": "2026-03-30T04:55:14.329Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The page title update step has **already been completed** — `packages/dashboard/app/index.html` line 6 currently shows `<title>Fusion</title>`. The change is minimal, correct, and follows the specification exactly. No further work is required for this step."
+    },
+    {
+      "timestamp": "2026-03-30T04:55:16.441Z",
+      "action": "Step 3 validation: index.html title is already set to \"Fusion\" at the correct path (packages/dashboard/app/index.html)."
+    },
+    {
+      "timestamp": "2026-03-30T04:55:20.849Z",
+      "action": "Step 2 (Update Page Title) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:55:25.898Z",
+      "action": "Step 3 (Fix Header Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:55:29.312Z",
+      "action": "plan review requested for Step 3 (Fix Header Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T04:55:41.431Z",
+      "action": "Refactored Header test suite to align with actual HeaderProps, removed invalid theme/inProgressCount cases, and updated branding assertions to Fusion.",
+      "outcome": "Targeted Header test file now passes (28/28)."
+    },
+    {
+      "timestamp": "2026-03-30T04:55:46.351Z",
+      "action": "Step 3 (Fix Header Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:55:48.210Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:55:50.180Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T04:55:50.234Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan describes work that either has already been completed or references non-existent code. The Header.test.tsx file already contains \"Fusion logo\" (not \"kb logo\"), and there are no broken tests for `onToggleTheme`, `themeMode`, or `inProgressCount` to remove. The line numbers referenced (~122-179, ~182-end) exceed the file's actual length of 115 lines."
+    },
+    {
+      "timestamp": "2026-03-30T04:56:18.190Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step's approach will achieve the stated outcomes. The test file has already been cleaned up (no broken tests referencing non-existent props remain), and the logo alt text has been updated to \"Fusion logo\". The only remaining work is to run the tests to verify they pass. Note that the line number references in the PROMPT.md (~122-179, ~182-end) don't match the actual file length (~71 lines), but this doesn't block progress since the broken tests don't exist."
+    },
+    {
+      "timestamp": "2026-03-30T04:56:41.290Z",
+      "action": "Step 4 verification complete: Header test suite passes when run directly with Vitest for app/components/__tests__/Header.test.tsx. No further Header test edits were needed because required cleanup is already present in baseline."
+    },
+    {
+      "timestamp": "2026-03-30T04:56:45.429Z",
+      "action": "Step 3 (Fix Header Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:56:48.919Z",
+      "action": "Executed required verification commands.",
+      "outcome": "`pnpm build` passes. `pnpm test` fails due pre-existing unrelated suite issues across engine/dashboard; created follow-up task KB-097 to address baseline failures outside KB-071 scope."
+    },
+    {
+      "timestamp": "2026-03-30T04:56:49.485Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:56:51.146Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T04:56:51.332Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:56:53.269Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:57:04.946Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:57:07.241Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:57:12.595Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The code changes for Steps 1-4 have already been completed successfully in this worktree. The Header component displays \"Fusion\" branding, the logo.svg contains the geometric four-dot design, index.html has the \"Fusion\" title, and Header.test.tsx has been updated with \"Fusion logo\" alt text assertions. The remaining Step 5 (Testing & Verification) is purely verification work."
+    },
+    {
+      "timestamp": "2026-03-30T04:58:15.468Z",
+      "action": "Testing/verification run complete: pnpm build passes; targeted Header tests pass. Full pnpm test currently fails due pre-existing unrelated dashboard suite issues (refine routes, useTerminal hook tests, typecheck env warning behavior) plus a legacy Header test outside declared KB-071 file scope. Filed follow-up tasks KB-099 and KB-100."
+    },
+    {
+      "timestamp": "2026-03-30T04:58:18.207Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:58:22.711Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:59:35.741Z",
+      "action": "Documentation/delivery check complete: required changeset (.changeset/rename-dashboard-to-fusion.md) already exists in the baseline KB-071 commit along with all branding file updates."
+    },
+    {
+      "timestamp": "2026-03-30T04:59:40.907Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:59:43.758Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:03.404Z",
+      "action": "Execution failed: Invalid transition: 'done' → 'in-review'. Valid targets: none"
+    },
+    {
+      "timestamp": "2026-03-30T05:01:03.916Z",
+      "action": "Retry requested from dashboard"
+    },
+    {
+      "timestamp": "2026-03-30T05:01:09.669Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T05:01:09.669Z",
+  "createdAt": "2026-03-30T04:30:08.853Z",
+  "updatedAt": "2026-03-30T05:01:09.669Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "status": "failed"
+}

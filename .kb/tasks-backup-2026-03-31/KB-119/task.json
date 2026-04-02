@@ -1,0 +1,154 @@
+{
+  "id": "KB-119",
+  "description": "Fix the styling of the new task dialog",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Model Selector Layout",
+      "status": "done"
+    },
+    {
+      "name": "Fix Dependency Dropdown and Chips Layout",
+      "status": "done"
+    },
+    {
+      "name": "Improve Form Spacing and Visual Hierarchy",
+      "status": "done"
+    },
+    {
+      "name": "Fix Attachment Previews Layout",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:09:32.776Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T06:12:58.561Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T06:13:16.817Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written specification for a focused CSS/layout fix. The mission is clear, steps are concrete with verifiable outcomes, file references are accurate, and testing requirements are appropriately rigorous. The review level (1 - Plan Only) is correctly assigned given the contained scope, low blast radius, and easily reversible nature of the work."
+    },
+    {
+      "timestamp": "2026-03-30T15:06:08.579Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pearl-cedar"
+    },
+    {
+      "timestamp": "2026-03-30T15:06:08.580Z",
+      "action": "Step 0 (Fix Model Selector Layout) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:06:11.162Z",
+      "action": "Step 0 (Fix Model Selector Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:06:20.096Z",
+      "action": "Step 0 (Fix Model Selector Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:06:20.097Z",
+      "action": "Step 0 (Preflight) complete. Analyzed NewTaskModal.tsx, TaskDetailModal.tsx, styles.css, and tests. Identified key styling issues: model selector rows need better alignment with consistent label widths, dependency dropdown needs z-index verification and max-height, form groups need better visual separation, attachment previews need flex wrapping verification, and planning mode checkbox needs alignment check.",
+      "outcome": "Ready to proceed with Step 1 - Model Selector Layout fixes"
+    },
+    {
+      "timestamp": "2026-03-30T15:06:21.548Z",
+      "action": "plan review requested for Step 1 (Fix Model Selector Layout)"
+    },
+    {
+      "timestamp": "2026-03-30T15:06:35.781Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-scoped and addresses the specific layout issues identified in the task. The current CSS shows `.model-select-row` has basic flex alignment (line 7449-7454 in styles.css) with `align-items: center` already present, but the 70px `min-width` on `.model-select-label` (line 7457) may not provide consistent alignment between \"Executor\" and \"Validator\" labels since they're different lengths. The step correctly identifies the need for consistent label width and proper flex be"
+    },
+    {
+      "timestamp": "2026-03-30T15:06:37.901Z",
+      "action": "Step 1 (Fix Dependency Dropdown and Chips Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:06:46.944Z",
+      "action": "Step 1 (Fix Dependency Dropdown and Chips Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:06:50.163Z",
+      "action": "plan review requested for Step 2 (Fix Dependency Dropdown and Chips Layout)"
+    },
+    {
+      "timestamp": "2026-03-30T15:07:09.215Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the key styling issues with the dependency dropdown and chip layout in NewTaskModal. The step is appropriately scoped to CSS-only changes without behavioral modifications. However, some CSS properties mentioned for \"fixing\" already exist in the codebase (like `max-height` and `overflow-y`), so the step may involve refinement rather than addition."
+    },
+    {
+      "timestamp": "2026-03-30T15:07:12.375Z",
+      "action": "Step 2 (Improve Form Spacing and Visual Hierarchy) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:07:22.949Z",
+      "action": "Step 2 (Improve Form Spacing and Visual Hierarchy) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:07:24.233Z",
+      "action": "plan review requested for Step 3 (Improve Form Spacing and Visual Hierarchy)"
+    },
+    {
+      "timestamp": "2026-03-30T15:07:44.398Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan addresses real layout issues in the NewTaskModal. The form-group spacing is currently inconsistent with double horizontal padding (modal-body padding + form-group padding), and visual separation between sections could be improved. The checkboxes and helper text styling need attention. The plan correctly focuses on CSS-only changes and includes appropriate test verification."
+    },
+    {
+      "timestamp": "2026-03-30T15:07:45.713Z",
+      "action": "Step 3 (Fix Attachment Previews Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:07:52.437Z",
+      "action": "Step 3 (Fix Attachment Previews Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:07:53.596Z",
+      "action": "plan review requested for Step 4 (Fix Attachment Previews Layout)"
+    },
+    {
+      "timestamp": "2026-03-30T15:08:05.294Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step's checkboxes appropriately address the attachment preview layout issues in the NewTaskModal. The current implementation uses `.inline-create-previews` and `.inline-create-preview` classes that are shared with the InlineCreateCard component. The plan correctly identifies the key improvements needed: flex wrapping, consistent 48x48px sizing, proper remove button positioning, overflow handling, and max-height with scroll."
+    },
+    {
+      "timestamp": "2026-03-30T15:08:06.831Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:08:20.018Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:08:21.381Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:09:57.672Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:10:03.974Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:10:08.086Z",
+  "createdAt": "2026-03-30T06:09:32.776Z",
+  "updatedAt": "2026-03-30T15:10:08.086Z",
+  "size": "S",
+  "reviewLevel": 1
+}

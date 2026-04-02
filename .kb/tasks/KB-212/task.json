@@ -1,0 +1,132 @@
+{
+  "id": "KB-212",
+  "description": "the model label in agent card should show actual model used when set to default",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fetch Default Model Settings in App.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Update TaskDetailModal Props and Propagate to AgentLogViewer",
+      "status": "done"
+    },
+    {
+      "name": "Update AgentLogViewer to Display Actual Default Model",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T21:21:42.121Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T21:22:29.135Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T21:22:46.004Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and technically sound. It correctly identifies the necessary changes across the component hierarchy (App.tsx → TaskDetailModal → AgentLogViewer) and the test file. The mission is clear, steps have verifiable outcomes, and the file scope is accurate. Minor terminology clarifications would help but don't block implementation."
+    },
+    {
+      "timestamp": "2026-03-31T01:00:27.740Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/plush-heron"
+    },
+    {
+      "timestamp": "2026-03-31T01:00:27.740Z",
+      "action": "Step 0 (Fetch Default Model Settings in App.tsx) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:00:34.117Z",
+      "action": "Step 0 (Fetch Default Model Settings in App.tsx) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:03:46.429Z",
+      "action": "Step 0 (Fetch Default Model Settings in App.tsx) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:03:46.430Z",
+      "action": "Preflight complete: 25 AgentLogViewer tests passing, 2 pre-existing unrelated failures in other components. No blockers."
+    },
+    {
+      "timestamp": "2026-03-31T01:03:47.650Z",
+      "action": "plan review requested for Step 1 (Fetch Default Model Settings in App.tsx)"
+    },
+    {
+      "timestamp": "2026-03-31T01:03:56.228Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes to fetch and propagate default model settings from the root component. The approach leverages the existing `fetchSettings()` API call and extends the current prop-drilling pattern already used in the codebase. No structural changes or API modifications are needed."
+    },
+    {
+      "timestamp": "2026-03-31T01:03:58.391Z",
+      "action": "Step 1 (Update TaskDetailModal Props and Propagate to AgentLogViewer) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:04:37.335Z",
+      "action": "Step 1 (Update TaskDetailModal Props and Propagate to AgentLogViewer) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:04:37.336Z",
+      "action": "plan review requested for Step 2 (Update TaskDetailModal Props and Propagate to AgentLogViewer)"
+    },
+    {
+      "timestamp": "2026-03-31T01:04:50.000Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan has a **critical gap**: The step says to pass `defaultProvider` and `defaultModelId` to `AgentLogViewer`, but `AgentLogViewer` expects `ModelInfo` objects (with `provider` and `modelId` properties), not raw strings. The plan doesn't specify how to transform these strings into the expected shape, which will cause type errors.\n\nAdditionally, the plan suggests passing these as `defaultExecutorModel` and `defaultValidatorModel` props, but `AgentLogViewer` currently doesn't accept these prop"
+    },
+    {
+      "timestamp": "2026-03-31T01:04:51.237Z",
+      "action": "Step 2 (Update AgentLogViewer to Display Actual Default Model) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:06.102Z",
+      "action": "Step 2 (Update AgentLogViewer to Display Actual Default Model) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:06.104Z",
+      "action": "plan review requested for Step 3 (Update AgentLogViewer to Display Actual Default Model)"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:20.595Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan will achieve the stated outcomes, but there's a misleading checkbox that could cause confusion. The props `defaultExecutorModel` and `defaultValidatorModel` are already defined in `AgentLogViewer.tsx` (lines 12-13), so the first checkbox \"Add props\" is technically already complete. The actual work needed is modifying the rendering logic to use these props, which is covered in the remaining checkboxes."
+    },
+    {
+      "timestamp": "2026-03-31T01:05:21.695Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:35.224Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:05:35.226Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:10:23.864Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:10:38.613Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:10:46.064Z",
+  "createdAt": "2026-03-30T21:21:42.121Z",
+  "updatedAt": "2026-03-31T01:10:46.064Z",
+  "size": "S",
+  "reviewLevel": 1
+}

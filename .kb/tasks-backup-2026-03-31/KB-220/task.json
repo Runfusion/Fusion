@@ -1,0 +1,174 @@
+{
+  "id": "KB-220",
+  "title": "in the import from github dialog the filter and",
+  "description": "in the import from github dialog, the filter and sync should be in the same box with the remote dropdown - not take up so mcuh space - the issue list and preview should be more prominent and the preview should show once an issue is clicked, almost like a two pane mailbox view (maybe on mobile you see just hte list and clicking an issue brings up the preview with a back button)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Compact Header Toolbar",
+      "status": "done"
+    },
+    {
+      "name": "Two-Pane Mailbox Layout (Desktop)",
+      "status": "done"
+    },
+    {
+      "name": "Mobile Responsive View with Back Button",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Polish & Documentation",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:11:41.223Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:18:51.197Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:19:03.891Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured with clear mission objectives, concrete verifiable outcomes per step, and accurate file references. The task appropriately scopes a UI restructuring effort without touching API or business logic. Testing requirements are specific with real assertions."
+    },
+    {
+      "timestamp": "2026-03-31T01:19:30.417Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/coral-ember"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:30.418Z",
+      "action": "Step 0 (Compact Header Toolbar) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:34.041Z",
+      "action": "Step 0 (Compact Header Toolbar) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:35.927Z",
+      "action": "Step 0 (Compact Header Toolbar) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:37.387Z",
+      "action": "plan review requested for Step 1 (Compact Header Toolbar)"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:51.556Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan's overall direction is sound, but it has several gaps that will cause implementation problems or test failures. The compact toolbar design doesn't account for edge cases like \"no remotes\" state, accessibility requirements for the labels input, and the existing test assertions that check for section headings."
+    },
+    {
+      "timestamp": "2026-03-31T01:19:53.762Z",
+      "action": "Step 1 (Two-Pane Mailbox Layout (Desktop)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:28:40.798Z",
+      "action": "code review requested for Step 1 (Compact Header Toolbar)"
+    },
+    {
+      "timestamp": "2026-03-31T01:29:04.759Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The compact toolbar implementation is structurally sound with proper three-zone layout, correct ARIA attributes, and comprehensive test coverage. However, a critical CSS utility class is missing that will cause visual regression by displaying hidden accessibility labels."
+    },
+    {
+      "timestamp": "2026-03-31T01:29:11.231Z",
+      "action": "code review requested for Step 1 (Compact Header Toolbar)"
+    },
+    {
+      "timestamp": "2026-03-31T01:29:29.689Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The compact header toolbar implementation is solid and meets all Step 1 requirements. The layout correctly combines remote selector, filter input, and load button into a single compact row with proper accessibility support. Test coverage is comprehensive with new tests specifically validating the toolbar structure."
+    },
+    {
+      "timestamp": "2026-03-31T01:29:30.868Z",
+      "action": "Step 1 (Two-Pane Mailbox Layout (Desktop)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:29:32.187Z",
+      "action": "plan review requested for Step 2 (Two-Pane Mailbox Layout)"
+    },
+    {
+      "timestamp": "2026-03-31T01:29:52.371Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "Step 2 appears to **already be fully implemented** in the codebase. The compact toolbar (Step 1) and two-pane mailbox layout (Step 2) are both present and functional in the current files. The worker should verify the existing implementation and proceed directly to **Step 3 (Mobile Responsive View)**, which is the actual remaining work."
+    },
+    {
+      "timestamp": "2026-03-31T01:29:56.215Z",
+      "action": "Step 2 (Mobile Responsive View with Back Button) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:29:59.971Z",
+      "action": "code review requested for Step 2 (Two-Pane Mailbox Layout)"
+    },
+    {
+      "timestamp": "2026-03-31T01:30:22.550Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly achieves all Step 2 outcomes. The two-pane layout is properly structured with the left pane sized at `clamp(280px, 40%, 400px)`, the right pane filling remaining space with `flex: 1`, and a vertical divider between them. The modal width is increased to `min(900px, calc(100vw - 32px))` as specified. Tests are updated to verify the new layout structure and preview functionality."
+    },
+    {
+      "timestamp": "2026-03-31T01:30:23.767Z",
+      "action": "Step 2 (Mobile Responsive View with Back Button) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:30:24.897Z",
+      "action": "plan review requested for Step 3 (Mobile Responsive View with Back Button)"
+    },
+    {
+      "timestamp": "2026-03-31T01:30:47.176Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan captures the essential requirements for implementing a mobile-responsive \"list → preview → back\" navigation pattern. The approach is sound and follows standard mobile UX patterns. However, several implementation details need clarification to prevent inconsistent behavior during implementation."
+    },
+    {
+      "timestamp": "2026-03-31T01:30:48.752Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:32:53.665Z",
+      "action": "code review requested for Step 3 (Mobile Responsive View with Back Button)"
+    },
+    {
+      "timestamp": "2026-03-31T01:33:08.278Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly adds mobile responsive behavior to the GitHub Import modal. The state management cleanly separates mobile viewport detection from view mode tracking (`'list' | 'preview'`). CSS handles the conditional pane visibility through the `mobile` and `active` class combination, and the back button appears only in mobile preview mode as required."
+    },
+    {
+      "timestamp": "2026-03-31T01:33:09.332Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:33:10.441Z",
+      "action": "Step 4 (Polish & Documentation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:36:03.378Z",
+      "action": "Step 4 (Polish & Documentation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:36:05.369Z",
+      "action": "plan review requested for Step 5 (Polish & Documentation)"
+    },
+    {
+      "timestamp": "2026-03-31T01:36:17.758Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "Step 5 is a well-scoped polish phase that correctly identifies final UI refinements needed after the structural changes in Steps 1-4. The checkboxes cover visual consistency (scrollbar, focus rings, hover states), accessibility (touch targets), and verification steps. The AGENTS.md note appropriately recognizes that no documentation updates are needed for this UI-only refactor."
+    },
+    {
+      "timestamp": "2026-03-31T01:36:32.468Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:36:45.454Z",
+  "createdAt": "2026-03-31T00:11:41.223Z",
+  "updatedAt": "2026-03-31T01:36:45.454Z",
+  "size": "M",
+  "reviewLevel": 2
+}

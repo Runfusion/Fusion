@@ -1,0 +1,92 @@
+{
+  "id": "KB-338",
+  "description": "Fix pre-existing flaky test in store.test.ts: \"produces valid config.json with unique sequential IDs after 5 parallel createTask calls\". The test expects nextId to be 6 after creating 5 tasks in parallel, but sometimes it's 5 due to a race condition in ID allocation.",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 2,
+  "currentStep": 3,
+  "summary": "Fixed the race condition in ID allocation during parallel createTask calls. The fix wraps the entire allocateId() operation (DB transaction + config.json sync) inside withConfigLock() to serialize concurrent ID allocations. The previously flaky test \"produces valid config.json with unique sequential IDs after 5 parallel createTask calls\" now passes consistently across 10 consecutive runs. All 463 tests in the @kb/core package pass.",
+  "createdAt": "2026-03-31T20:21:13.331Z",
+  "updatedAt": "2026-03-31T23:32:06.412Z",
+  "columnMovedAt": "2026-03-31T23:32:06.412Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze and Fix the Race Condition",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:21:13.331Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:26:37.120Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:26:49.276Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is technically accurate and complete. The race condition is correctly identified: `allocateId()` (line 536) atomically increments `nextId` via SQLite transaction, but the subsequent `config.json` sync (lines 548-553) occurs outside the `configLock`, allowing parallel calls to interleave and write stale values. The proposed fix using `withConfigLock()` (line 321) is the correct pattern. The test reference (lines 235-259 in `store.test.ts`) is accurate and the verification requir"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:06.193Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pearl-marsh"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:06.194Z",
+      "action": "Step 0 (Analyze and Fix the Race Condition) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:38.189Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:39.468Z",
+      "action": "plan review requested for Step 1 (Analyze and Fix the Race Condition)"
+    },
+    {
+      "timestamp": "2026-03-31T23:25:23.557Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the race condition and proposes an appropriate fix. The issue is that while SQLite transactions are atomic, the current implementation allows multiple parallel calls to complete their DB transactions before any of them update `config.json`. When they subsequently queue for the lock and write to `config.json`, each reads the correct `nextId` from SQLite, but the final write wins—and since all read after their own transaction completed, they all read the same final va"
+    },
+    {
+      "timestamp": "2026-03-31T23:30:23.328Z",
+      "action": "code review requested for Step 1 (Analyze and Fix the Race Condition)"
+    },
+    {
+      "timestamp": "2026-03-31T23:30:46.817Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The fix correctly addresses the race condition by wrapping the entire `allocateId()` operation in `withConfigLock()`, serializing concurrent ID allocations. The implementation follows the established pattern used elsewhere in the codebase (e.g., `updateSettings`, `createWorkflowStep`). The SQLite transaction ensures atomic ID allocation within the database, while the config lock ensures the subsequent `config.json` sync operations don't interleave between parallel calls."
+    },
+    {
+      "timestamp": "2026-03-31T23:30:49.470Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:30:49.472Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:31:19.284Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:31:27.866Z",
+      "action": "Step 0 (Analyze and Fix the Race Condition) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:31:27.867Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

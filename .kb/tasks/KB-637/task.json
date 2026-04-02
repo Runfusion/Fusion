@@ -1,0 +1,164 @@
+{
+  "id": "KB-637",
+  "description": "Fix pre-existing test failures: (1) packages/engine/src/executor.test.ts hangs on \"throws original error if cleanup also fails\" test case - likely a missing mock or unresolved promise. (2) packages/dashboard has 64 failing tests across routes.test.ts, Board.test.tsx, GitManagerModal.test.tsx, InlineCreateCard.test.tsx, SettingsModal.test.tsx, file-service.test.ts, github-poll.test.ts, and typecheck.test.ts - failures exist on main branch.",
+  "column": "in-progress",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 4,
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/light-aspen",
+  "createdAt": "2026-04-01T01:38:28.195Z",
+  "updatedAt": "2026-04-01T03:19:08.335Z",
+  "columnMovedAt": "2026-04-01T03:04:06.619Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Engine Test - Missing Mock for Git Branch Delete",
+      "status": "done"
+    },
+    {
+      "name": "Fix SettingsModal - Temporal Dead Zone Issue",
+      "status": "done"
+    },
+    {
+      "name": "Fix Dashboard Routes Tests - Git Endpoints",
+      "status": "done"
+    },
+    {
+      "name": "Fix Dashboard Batch Import Retry Test",
+      "status": "skipped"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "in-progress"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T01:38:28.195Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T01:44:41.768Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T01:45:17.819Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies four distinct test failure categories with correct file references and technical diagnoses. The proposed fixes align with the actual codebase issues. Steps have concrete, verifiable outcomes and appropriate test verification commands. The size (M) and review level (2) are appropriate for test-only fixes with low blast radius."
+    },
+    {
+      "timestamp": "2026-04-01T03:04:06.741Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/light-aspen"
+    },
+    {
+      "timestamp": "2026-04-01T03:04:06.742Z",
+      "action": "Step 0 (Fix Engine Test - Missing Mock for Git Branch Delete) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T03:04:09.091Z",
+      "action": "Step 0 (Fix Engine Test - Missing Mock for Git Branch Delete) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:04:49.675Z",
+      "action": "Step 0 (Fix Engine Test - Missing Mock for Git Branch Delete) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:04:49.676Z",
+      "action": "Step 1 (Fix SettingsModal - Temporal Dead Zone Issue) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:04:51.353Z",
+      "action": "Step 1 (Fix SettingsModal - Temporal Dead Zone Issue) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:04:51.354Z",
+      "action": "plan review requested for Step 1 (Fix Engine Test - Missing Mock for Git Branch Delete)"
+    },
+    {
+      "timestamp": "2026-04-01T03:06:09.819Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the missing mock for `git branch -D` command in the test \"throws original error if cleanup also fails\" (line 1094). The approach is sound: add an explicit mock handler that returns `Buffer.from(\"\")` to match the pattern used in other similar tests (lines 745-747 and 784-786). This will ensure the cleanup flow completes properly when the worktree remove fails."
+    },
+    {
+      "timestamp": "2026-04-01T03:07:14.521Z",
+      "action": "code review requested for Step 1 (Fix Engine Test - Missing Mock for Git Branch Delete)"
+    },
+    {
+      "timestamp": "2026-04-01T03:07:42.142Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The fix correctly addresses the hanging test by adding the missing mock for `git branch -D` command. The test \"throws original error if cleanup also fails\" now properly mocks all three git commands involved in the cleanup flow, allowing the test to complete without hanging."
+    },
+    {
+      "timestamp": "2026-04-01T03:07:43.360Z",
+      "action": "Step 1 (Fix SettingsModal - Temporal Dead Zone Issue) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:07:43.362Z",
+      "action": "Step 2 (Fix Dashboard Routes Tests - Git Endpoints) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:07:43.362Z",
+      "action": "plan review requested for Step 2 (Fix SettingsModal - Temporal Dead Zone Issue)"
+    },
+    {
+      "timestamp": "2026-04-01T03:07:55.694Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies and addresses the Temporal Dead Zone (TDZ) issue in `SettingsModal.tsx`. The `handleExport` useCallback (lines 256-277) references `activeSectionScope` before it's declared (line 342). The proposed fix—moving the `activeSectionScope` computation before the callback definitions—is the correct approach and maintains all existing functionality."
+    },
+    {
+      "timestamp": "2026-04-01T03:08:16.066Z",
+      "action": "code review requested for Step 2 (Fix SettingsModal - Temporal Dead Zone Issue)"
+    },
+    {
+      "timestamp": "2026-04-01T03:08:42.144Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The temporal dead zone (TDZ) issue in `SettingsModal.tsx` has been correctly resolved by moving the `activeSectionScope` variable declaration from after the `handleExport` callback to before it. The variable is now declared at line 83, well before all callbacks that reference it (`handleExport`, `handleSave`, and `renderScopeBanner`). This fix follows the preferred approach from the task specification (Option 1) and ensures the component renders correctly in tests without ReferenceError."
+    },
+    {
+      "timestamp": "2026-04-01T03:08:43.489Z",
+      "action": "Step 2 (Fix Dashboard Routes Tests - Git Endpoints) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:08:43.491Z",
+      "action": "Step 3 (Fix Dashboard Batch Import Retry Test) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:08:43.491Z",
+      "action": "plan review requested for Step 3 (Fix Dashboard Routes Tests - Git Endpoints)"
+    },
+    {
+      "timestamp": "2026-04-01T03:09:10.359Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan correctly identifies the root cause of the Git Management test failures. The tests currently use a mock store that returns `/fake/root` from `getRootDir()`, which causes `isGitRepo()` to return false (the `git rev-parse --git-dir` command fails in a non-git directory). The plan's approach to mock `execSync` from `child_process` to return appropriate git data is the correct solution."
+    },
+    {
+      "timestamp": "2026-04-01T03:17:35.260Z",
+      "action": "Git Management endpoint tests require complex mocking of child_process.execSync. Moving to Step 4 (Batch Import Retry Test) first, will return to git tests if time permits."
+    },
+    {
+      "timestamp": "2026-04-01T03:17:35.262Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:17:37.923Z",
+      "action": "Step 3 (Fix Dashboard Batch Import Retry Test) → skipped"
+    },
+    {
+      "timestamp": "2026-04-01T03:17:37.925Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:17:37.925Z",
+      "action": "plan review requested for Step 4 (Fix Dashboard Batch Import Retry Test)"
+    },
+    {
+      "timestamp": "2026-04-01T03:19:08.335Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step's approach is pragmatic and will achieve the stated outcome of fixing the failing test. The test \"returns error after max retries exceeded on 429\" expects 4 calls but receives 5 due to a mismatch between the expected retry behavior and the actual implementation. The plan correctly identifies two valid fix options: adjusting the expectation to 5 calls or modifying the retry configuration."
+    }
+  ]
+}

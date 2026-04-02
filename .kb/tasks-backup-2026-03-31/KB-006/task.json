@@ -1,0 +1,22 @@
+{
+  "id": "KB-006",
+  "description": "I’m missing a bunch of tasks maybe something with migration to new database",
+  "column": "triage",
+  "currentStep": 0,
+  "paused": true,
+  "createdAt": "2026-03-31T21:17:22.308Z",
+  "updatedAt": "2026-03-31T21:21:35.573Z",
+  "columnMovedAt": "2026-03-31T21:17:22.308Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:17:22.308Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:35.573Z",
+      "action": "Task paused"
+    }
+  ]
+}

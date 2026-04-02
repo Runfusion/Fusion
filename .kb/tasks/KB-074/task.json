@@ -1,0 +1,289 @@
+{
+  "id": "KB-074",
+  "description": "Add a quick entry box for tasks - you don't need to hit new task, just type into box and hit enter. Also get rid of the save button. The new task button should bring up a new task creation dialog that lets you specify settings like models, planning, etc",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Create QuickEntryBox Component",
+      "status": "done"
+    },
+    {
+      "name": "Create NewTaskModal Component",
+      "status": "done"
+    },
+    {
+      "name": "Update Column Component",
+      "status": "done"
+    },
+    {
+      "name": "Update Board Component",
+      "status": "done"
+    },
+    {
+      "name": "Update App Component",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:32:19.366Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:33:11.814Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:33:13.874Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:33:34.671Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured with clear mission clarity and concrete implementation steps. The approach correctly identifies the need to separate quick capture from deliberate task creation. Most file references are accurate, and the testing requirements appropriately demand real assertions. Minor path corrections and clarification on the planning mode toggle are needed."
+    },
+    {
+      "timestamp": "2026-03-30T04:33:42.398Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a medium-complexity UX improvement. The mission is clear, steps have verifiable outcomes, and the spec correctly identifies dependencies on in-progress work (KB-032, KB-040, KB-060) with appropriate placeholder strategies. File scope is accurate, and testing requirements mandate real automated tests."
+    },
+    {
+      "timestamp": "2026-03-30T05:27:03.115Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/keen-delta"
+    },
+    {
+      "timestamp": "2026-03-30T05:27:03.118Z",
+      "action": "Step 0 (Create QuickEntryBox Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T05:27:05.456Z",
+      "action": "Step 0 (Create QuickEntryBox Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:27:19.739Z",
+      "action": "Step 0 (Create QuickEntryBox Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:27:19.741Z",
+      "action": "Step 1 (Create NewTaskModal Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:27:19.743Z",
+      "action": "plan review requested for Step 1 (Create QuickEntryBox Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:27:41.226Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-defined and achieves the stated outcomes. The QuickEntryBox component specification is appropriately minimal, the props interface is clean, and the test coverage requirements are comprehensive. The approach correctly identifies that this replaces the complex InlineCreateCard flow with a simple, always-visible input."
+    },
+    {
+      "timestamp": "2026-03-30T05:29:18.442Z",
+      "action": "code review requested for Step 1 (Create QuickEntryBox Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:29:18.443Z",
+      "action": "Step 1 (Create NewTaskModal Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:29:18.456Z",
+      "action": "Step 2 (Update Column Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:29:18.466Z",
+      "action": "plan review requested for Step 2 (Create NewTaskModal Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:29:35.483Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The QuickEntryBox component is well-implemented, following the specification closely with clean React patterns and comprehensive test coverage. The implementation correctly handles the \"quick capture\" flow with Enter-to-create, loading states, error handling, and keyboard interactions. All 11 test cases pass the critical behavior requirements."
+    },
+    {
+      "timestamp": "2026-03-30T05:29:41.955Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows established patterns from `TaskDetailModal.tsx` and `InlineCreateCard.tsx`. The step correctly identifies the need for a two-phase creation (create then update for model settings) and specifies appropriate reuse of existing dependency selection and attachment patterns."
+    },
+    {
+      "timestamp": "2026-03-30T05:30:59.418Z",
+      "action": "code review requested for Step 2 (Create NewTaskModal Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:30:59.420Z",
+      "action": "Step 2 (Update Column Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:30:59.445Z",
+      "action": "Step 3 (Update Board Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:30:59.460Z",
+      "action": "plan review requested for Step 3 (Update Column Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:31:23.749Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan has the right high-level direction but contains a critical gap: it doesn't specify the new props interface needed for QuickEntryBox integration. The Column component needs to receive a handler for quick creation from its parent, but the step's checkboxes only mention removing props without defining what replaces them. Additionally, the plan should proactively address the test file update since removing InlineCreateCard will break the existing mock."
+    },
+    {
+      "timestamp": "2026-03-30T05:31:38.457Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The NewTaskModal component is well-structured and follows the specified requirements for form fields, model selection, dependencies, attachments, and planning mode. However, there's a **critical React hooks bug** in the embedded ModelCombobox that will cause stale closures and incorrect keyboard navigation behavior. Additionally, the placeholder `task_log` function should be removed as it serves no purpose and indicates incomplete cleanup."
+    },
+    {
+      "timestamp": "2026-03-30T05:31:56.214Z",
+      "action": "code review requested for Step 2 (Create NewTaskModal Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:32:21.370Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The `NewTaskModal` component is well-implemented following established patterns from `TaskDetailModal` and `ModelSelectorTab`. It includes all required form fields (title, description, dependencies, executor/validator model selection, planning mode toggle, and attachments), proper dirty state tracking with confirmation dialogs, keyboard navigation support, and comprehensive test coverage. The embedded `ModelCombobox` successfully replicates the interaction patterns from the existing `ModelSelect"
+    },
+    {
+      "timestamp": "2026-03-30T05:33:07.777Z",
+      "action": "code review requested for Step 3 (Update Column Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:33:07.780Z",
+      "action": "Step 3 (Update Board Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:33:07.810Z",
+      "action": "Step 4 (Update App Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:33:07.824Z",
+      "action": "plan review requested for Step 4 (Update Board Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:33:21.417Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Column component has been correctly refactored to support the new two-tier creation flow. The `InlineCreateCard` has been fully replaced with `QuickEntryBox` for the Triage column, the \"+ New Task\" button now uses the modal-opening `onNewTask` callback, and all obsolete props (`isCreating`, `onCancelCreate`, `onCreateTask`) have been removed. Tests adequately verify the QuickEntryBox rendering behavior."
+    },
+    {
+      "timestamp": "2026-03-30T05:33:38.780Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The Step 4 plan has a critical gap: it removes the old inline creation props (`isCreating`, `onCancelCreate`, `onCreateTask`) from Board but fails to include adding `onQuickCreate`, which Column now requires after Step 3. Without this prop, the QuickEntryBox will render but be non-functional. Additionally, the plan doesn't mention updating the Board tests which will break."
+    },
+    {
+      "timestamp": "2026-03-30T05:34:00.815Z",
+      "action": "code review requested for Step 4 (Update Board Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:34:00.818Z",
+      "action": "Step 4 (Update App Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:34:00.841Z",
+      "action": "Step 5 (Add CSS Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:34:00.854Z",
+      "action": "plan review requested for Step 5 (Update App Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:34:21.035Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 correctly identifies all necessary changes to `App.tsx` to integrate the new two-tier task creation flow. The checklist accurately covers: adding `newTaskModalOpen` state, creating `handleNewTaskOpen`, `handleQuickCreate`, and `handleModalCreate` callbacks, rendering `NewTaskModal`, and removing the deprecated `isCreating` state and handlers. The step also correctly notes the need to update `ListView` props similarly."
+    },
+    {
+      "timestamp": "2026-03-30T05:34:35.650Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The Board component has been correctly refactored to remove the old inline creation flow props (`isCreating`, `onCancelCreate`, `onCreateTask`) and integrate with the new quick entry + modal pattern. The `onNewTask` prop is properly retained and wired through to the Triage column header button. The Column component integration correctly passes `onQuickCreate` and `onNewTask` only to the Triage column via conditional spreading."
+    },
+    {
+      "timestamp": "2026-03-30T05:35:03.760Z",
+      "action": "code review requested for Step 5 (Update App Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:35:03.762Z",
+      "action": "Step 5 (Add CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:35:03.794Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:36:05.157Z",
+      "action": "code review Step 5: REVISE",
+      "outcome": "The App component implementation is functionally correct with proper state management, callback handlers, and component integration. The `newTaskModalOpen` state is properly managed, `handleNewTaskOpen`, `handleQuickCreate`, and `handleModalCreate` callbacks are correctly implemented, and the old `isCreating`/`onCancelCreate` props have been removed. The NewTaskModal and QuickEntryBox are properly rendered and wired up.\n\nHowever, **Step 5 is missing required CSS styles** that are explicitly list"
+    },
+    {
+      "timestamp": "2026-03-30T05:36:18.397Z",
+      "action": "code review requested for Step 5 (Update App Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:36:51.915Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The App.tsx component has been correctly updated to integrate the NewTaskModal and wire up the quick entry creation flow. The implementation follows the task requirements closely, with proper state management using `newTaskModalOpen`, appropriate callback handlers (`handleNewTaskOpen`, `handleQuickCreate`, `handleModalCreate`), and correct prop passing to child components (Board and ListView). The old `isCreating`/`onCancelCreate` state and handlers have been properly removed."
+    },
+    {
+      "timestamp": "2026-03-30T05:36:53.419Z",
+      "action": "plan review requested for Step 6 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T05:36:53.447Z",
+      "action": "Step 5 (Add CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:36:53.466Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:37:20.020Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The test plan for Step 6 is well-structured and covers the essential validation scenarios for both new components. The existing test files (`QuickEntryBox.test.tsx` and `NewTaskModal.test.tsx`) demonstrate comprehensive coverage including user interactions, error states, loading states, and edge cases. The test patterns follow the established codebase conventions using vitest and React Testing Library.\n\n**Note:** I identified that `ListView.tsx` still contains the old `InlineCreateCard` pattern,"
+    },
+    {
+      "timestamp": "2026-03-30T05:37:53.076Z",
+      "action": "code review requested for Step 6 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T05:37:53.079Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:37:53.120Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:38:41.848Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "The testing and verification implementation for KB-074 is comprehensive and well-executed. Both new components (`QuickEntryBox` and `NewTaskModal`) have thorough test coverage that validates all specified behaviors. The tests follow project patterns using vitest and React Testing Library with proper mocking. All required test scenarios from the task specification are covered."
+    },
+    {
+      "timestamp": "2026-03-30T05:38:52.969Z",
+      "action": "Completed KB-074 - Add Quick Entry Box and New Task Dialog",
+      "outcome": "Successfully implemented the two-tier task creation experience with QuickEntryBox for rapid entry and NewTaskModal for full-featured creation. All 61 related tests pass. Build succeeds. Changeset created for minor version bump."
+    },
+    {
+      "timestamp": "2026-03-30T05:38:52.971Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:38:52.974Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T06:10:17.086Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T06:10:17.086Z",
+  "createdAt": "2026-03-30T04:32:19.366Z",
+  "updatedAt": "2026-03-30T06:10:17.086Z",
+  "size": "M",
+  "reviewLevel": 2
+}

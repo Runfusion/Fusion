@@ -1,0 +1,119 @@
+{
+  "id": "KB-306",
+  "description": "The agent view should be next to the board and list toggle. It should be another toggle in that group",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Extend View Type and Header Toggle",
+      "status": "done"
+    },
+    {
+      "name": "Create AgentView Component",
+      "status": "done"
+    },
+    {
+      "name": "Integrate Agent View into App",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T17:22:15.856Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T17:26:22.395Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T17:26:35.089Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, actionable specification for a small UI addition. The mission is clear, steps are concrete and verifiable, file scope is accurate, and testing requirements specify real automated tests. The spec correctly identifies existing patterns to follow and maintains consistency with the established codebase architecture."
+    },
+    {
+      "timestamp": "2026-03-31T18:00:57.179Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gilt-flame"
+    },
+    {
+      "timestamp": "2026-03-31T18:00:57.180Z",
+      "action": "Step 0 (Extend View Type and Header Toggle) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T18:00:59.682Z",
+      "action": "Step 0 (Extend View Type and Header Toggle) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:02:58.270Z",
+      "action": "Step 0 (Extend View Type and Header Toggle) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:02:59.345Z",
+      "action": "Step 1 (Create AgentView Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:03:00.393Z",
+      "action": "plan review requested for Step 1 (Extend View Type and Header Toggle)"
+    },
+    {
+      "timestamp": "2026-03-31T18:03:15.762Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and will achieve its stated outcomes. The approach correctly extends the existing view toggle pattern from two views (board/list) to three views (board/list/agent). The checkboxes cover all necessary changes: type extension, prop updates, and toggle button addition with proper accessibility."
+    },
+    {
+      "timestamp": "2026-03-31T18:03:25.896Z",
+      "action": "Step 1 (Create AgentView Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:03:26.750Z",
+      "action": "Step 2 (Integrate Agent View into App) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:03:52.943Z",
+      "action": "Step 2 (Integrate Agent View into App) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:03:54.347Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:04:06.746Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:04:08.660Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:10:20.180Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:10:23.584Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:11:29.770Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:11:31.775Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:11:39.297Z",
+  "createdAt": "2026-03-31T17:22:15.856Z",
+  "updatedAt": "2026-03-31T18:11:39.297Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Added an \"agent\" view toggle button next to the existing board and list toggles in the dashboard header. This creates a consistent third view option allowing users to view active agents as a main dashboard view rather than just via a modal. The implementation includes: (1) Extended Header component with agent toggle using Bot icon, (2) Created new AgentView component adapted from AgentListModal content, (3) Integrated AgentView into App.tsx with localStorage persistence for \"agent\" view selection, (4) Added comprehensive tests for both Header agent toggle and AgentView component, (5) Created changeset file. Also added supporting agent types and API endpoints to the core and dashboard packages to enable the feature."
+}

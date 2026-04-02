@@ -1,0 +1,124 @@
+{
+  "id": "KB-197",
+  "description": "done tasks should show the sizing indoicator on cards in the right of the card, same for todo - its right for in progress but wrong for todo and done",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Current Layout Issue",
+      "status": "done"
+    },
+    {
+      "name": "Implement Layout Fix",
+      "status": "done"
+    },
+    {
+      "name": "Add Regression Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:54:03.298Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T19:10:55.474Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:05.771Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification correctly identifies the layout conflict where `.card-size-badge` (line 597) and `.card-edit-btn` (line 1834) both use `margin-left: auto` in the same flex container, causing inconsistent positioning across columns. The fix approach—creating a dedicated `.card-header-actions` wrapper—is clean and appropriate. All referenced files exist and the CSS analysis is accurate."
+    },
+    {
+      "timestamp": "2026-03-30T20:16:06.015Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/keen-crane"
+    },
+    {
+      "timestamp": "2026-03-30T20:16:06.016Z",
+      "action": "Step 0 (Analyze Current Layout Issue) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T20:16:08.788Z",
+      "action": "Step 0 (Analyze Current Layout Issue) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:16:18.209Z",
+      "action": "Step 0 (Analyze Current Layout Issue) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:16:18.211Z",
+      "action": "Analyzed current layout issue",
+      "outcome": "Found the CSS conflict: .card-size-badge has `margin-left: auto` and .card-edit-btn also has `margin-left: auto`. When both appear in the same flex container, they compete for the available space, causing inconsistent positioning. The archive/unarchive buttons only have `margin-left: 8px`. The fix requires wrapping size badge + action buttons in a dedicated actions container with `margin-left: auto`, removing the auto margin from individual elements."
+    },
+    {
+      "timestamp": "2026-03-30T20:16:20.121Z",
+      "action": "Step 1 (Implement Layout Fix) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:16:20.123Z",
+      "action": "plan review requested for Step 1 (Analyze Current Layout Issue)"
+    },
+    {
+      "timestamp": "2026-03-30T20:16:40.339Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause: both `.card-size-badge` (line ~604) and `.card-edit-btn` (line 1833) use `margin-left: auto`, causing flexbox distribution conflicts. When both elements appear (e.g., sized task in \"todo\" column), they compete for the available space, producing inconsistent positioning. The \"in-progress\" column appears consistent primarily because it lacks action buttons that trigger competing auto margins."
+    },
+    {
+      "timestamp": "2026-03-30T20:17:00.508Z",
+      "action": "Step 1 (Implement Layout Fix) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:17:02.921Z",
+      "action": "Step 2 (Add Regression Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:17:02.923Z",
+      "action": "plan review requested for Step 2 (Add Regression Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T20:17:19.127Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step's checkboxes cover the essential test scenarios for the layout fix. The test plan correctly identifies the need to verify: (1) size badge renders when size is set, (2) DOM ordering relative to status badge and action buttons, and (3) correct CSS classes for all size values. The plan aligns with the existing test patterns in TaskCard.test.tsx."
+    },
+    {
+      "timestamp": "2026-03-30T20:17:36.893Z",
+      "action": "Step 2 (Add Regression Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:17:38.319Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:19:53.763Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:19:56.129Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:19:59.501Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:20:00.686Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T20:20:04.448Z",
+  "createdAt": "2026-03-30T18:54:03.298Z",
+  "updatedAt": "2026-03-30T20:20:04.448Z",
+  "size": "S",
+  "reviewLevel": 1
+}

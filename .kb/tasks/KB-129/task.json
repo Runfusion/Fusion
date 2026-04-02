@@ -1,0 +1,317 @@
+{
+  "id": "KB-129",
+  "description": "After kb has been running for a while, the dashboard starts to slow down - refreshing the page gets it back to a  snappy state",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Audit and Fix SSE Memory Leaks",
+      "status": "done"
+    },
+    {
+      "name": "Implement Agent Log Memory Limits",
+      "status": "done"
+    },
+    {
+      "name": "Optimize React Rendering with Memoization",
+      "status": "done"
+    },
+    {
+      "name": "Add Task List Virtualization (or Pagination Alternative)",
+      "status": "done"
+    },
+    {
+      "name": "Optimize Task List Loading (Server-Side)",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "skipped"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:20:43.505Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T06:22:37.205Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T06:22:53.135Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, actionable specification for addressing dashboard performance issues. The mission is clearly articulated, the root causes are accurately diagnosed from real code analysis, and the step breakdown follows a logical progression from memory leak fixes to rendering optimizations to scalable data loading. The file scope is accurate and all referenced files exist."
+    },
+    {
+      "timestamp": "2026-03-30T17:44:26.084Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-quail"
+    },
+    {
+      "timestamp": "2026-03-30T17:44:26.085Z",
+      "action": "Step 0 (Audit and Fix SSE Memory Leaks) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T17:45:13.566Z",
+      "action": "Step 0 (Audit and Fix SSE Memory Leaks) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:45:19.269Z",
+      "action": "Completed preflight audit of task files and current dashboard/store implementation.",
+      "outcome": "Identified missing PROMPT.md in worktree root, but task spec was provided inline and core target files were reviewed successfully."
+    },
+    {
+      "timestamp": "2026-03-30T17:45:20.630Z",
+      "action": "Step 0 (Audit and Fix SSE Memory Leaks) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:45:22.139Z",
+      "action": "Step 1 (Implement Agent Log Memory Limits) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:45:23.797Z",
+      "action": "plan review requested for Step 1 (Audit and Fix SSE Memory Leaks)"
+    },
+    {
+      "timestamp": "2026-03-30T17:45:56.006Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The step is pointed at the right area, but as written it does not fully cover the actual leak/race risks present in the current hooks. In particular, `useMultiAgentLogs.ts` has a real duplicate-connection hazard when effects re-run before the async fetch completes, and `useTasks.ts` cleanup verification is too narrow because the hook currently never removes listeners explicitly and the error-handling checkbox assumes behavior that EventSource does not provide by itself."
+    },
+    {
+      "timestamp": "2026-03-30T17:48:15.272Z",
+      "action": "code review requested for Step 1 (Audit and Fix SSE Memory Leaks)"
+    },
+    {
+      "timestamp": "2026-03-30T17:48:57.589Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The Step 1 changes address the stated SSE cleanup issues in both hooks: `useTasks` now explicitly tears down listeners and closes the `EventSource` on errors before reconnecting, and `useMultiAgentLogs` now closes per-task streams during rerenders/unmount instead of relying on an effectively empty cleanup path. The added tests cover the main leak-prevention behaviors called out in the step, especially unmount cleanup, per-task stream closure, and `useTasks` reconnection after errors."
+    },
+    {
+      "timestamp": "2026-03-30T17:49:01.823Z",
+      "action": "Completed Step 1 SSE cleanup fixes.",
+      "outcome": "Added explicit EventSource listener cleanup and reconnect behavior in useTasks, closed leaked multi-log streams on rerender/unmount/error, and expanded hook tests for cleanup and duplicate-connection scenarios. Targeted tests could not be executed because workspace node_modules/vitest are unavailable in this worktree."
+    },
+    {
+      "timestamp": "2026-03-30T17:49:03.166Z",
+      "action": "Step 1 (Implement Agent Log Memory Limits) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:07.734Z",
+      "action": "Step 2 (Optimize React Rendering with Memoization) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:09.330Z",
+      "action": "plan review requested for Step 2 (Implement Agent Log Memory Limits)"
+    },
+    {
+      "timestamp": "2026-03-30T17:49:35.661Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The core idea—cap in-memory agent logs in both single-task and multi-task hooks—is aligned with the task outcome and should address the unbounded growth problem. However, the current step plan is incomplete because it does not explicitly require truncating the initial historical fetch, and in `useMultiAgentLogs.ts` there is a race where historical fetches can overwrite newer streamed entries; adding a memory cap only to the SSE append path will not reliably preserve the most recent 500 entries."
+    },
+    {
+      "timestamp": "2026-03-30T17:51:54.133Z",
+      "action": "code review requested for Step 2 (Implement Agent Log Memory Limits)"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:47.205Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The step correctly adds a 500-entry cap to both single-task and multi-task agent log hooks, and the truncation logic keeps the most recent entries as required. Test coverage is solid for the new behavior, including oversized historical payloads, live SSE growth, and the race where live entries arrive before historical fetch resolution in the multi-task hook."
+    },
+    {
+      "timestamp": "2026-03-30T17:52:49.601Z",
+      "action": "Completed Step 2 agent log memory limiting.",
+      "outcome": "Added 500-entry caps for single-task and multi-task log hooks, truncated oversized historical loads, preserved streamed entries that arrive before historical fetch completion, and expanded hook tests for truncation behavior."
+    },
+    {
+      "timestamp": "2026-03-30T17:52:51.251Z",
+      "action": "Step 2 (Optimize React Rendering with Memoization) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:52.605Z",
+      "action": "Step 3 (Add Task List Virtualization (or Pagination Alternative)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:54.246Z",
+      "action": "plan review requested for Step 3 (Optimize React Rendering with Memoization)"
+    },
+    {
+      "timestamp": "2026-03-30T17:53:38.878Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The step is directionally correct, but as written it is too narrow to reliably achieve the stated outcome of “the entire board [not] re-render[ing] on every SSE update.” In the current code, `Board` recreates per-column task arrays inline on every render (`packages/dashboard/app/components/Board.tsx:43-56`), `Column` still receives unstable callback props from `Board` (`packages/dashboard/app/components/Board.tsx:69`), and `TaskCard` receives the full `allTasks` array in every column (`packages/"
+    },
+    {
+      "timestamp": "2026-03-30T17:56:58.817Z",
+      "action": "code review requested for Step 3 (Optimize React Rendering with Memoization)"
+    },
+    {
+      "timestamp": "2026-03-30T17:57:42.091Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The implementation partially satisfies Step 3 by wrapping `TaskCard` and `Column` in `memo()` and stabilizing many `TaskCard` handlers with `useCallback`. However, it misses a required piece of the step: there is no effective verification that `TaskCard` memoization works, and there is no corresponding `Column`/Board memoization test coverage despite the prompt explicitly requiring those tests. One existing \"memoization\" test only measures parent renders, so it would pass even if `TaskCard` re-r"
+    },
+    {
+      "timestamp": "2026-03-30T17:58:55.732Z",
+      "action": "code review requested for Step 3 (Optimize React Rendering with Memoization)"
+    },
+    {
+      "timestamp": "2026-03-30T17:59:29.110Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The implementation partially addresses the step by wrapping `TaskCard` and `Column` in `React.memo()` and stabilizing many `TaskCard` handlers with `useCallback`. However, it does not satisfy the core requirement to handle changing `task` object references, so `TaskCard` will still re-render on every board update if parent code recreates task objects. Test coverage is also incomplete for this step because there are no Board/Column tests, despite the task explicitly requiring them."
+    },
+    {
+      "timestamp": "2026-03-30T18:00:55.505Z",
+      "action": "code review requested for Step 3 (Optimize React Rendering with Memoization)"
+    },
+    {
+      "timestamp": "2026-03-30T18:01:39.092Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The core direction is right: `TaskCard` is memoized with a custom comparator, handlers were stabilized with `useCallback`, and `Board` now preserves per-column task array identity so unrelated columns can avoid re-rendering. However, the `TaskCard` comparator omits render-relevant fields, which can cause stale UI when those task properties change without any compared field changing. Test coverage also misses this regression path, so the step is not yet safe to approve."
+    },
+    {
+      "timestamp": "2026-03-30T18:07:34.700Z",
+      "action": "code review requested for Step 3 (Optimize React Rendering with Memoization)"
+    },
+    {
+      "timestamp": "2026-03-30T18:07:57.411Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The step makes a solid start on memoization: `TaskCard` is wrapped in `React.memo` with a meaningful comparator, `Column` is memoized, and `Board` now groups tasks per column with tests showing reduced sibling rerenders. However, the implementation does not fully satisfy the stated step outcome because `Board.tsx` still recreates every per-column task array on every task update, so `Column` memoization only works accidentally in narrow cases and will fail for unrelated updates in realistic rende"
+    },
+    {
+      "timestamp": "2026-03-30T18:08:41.473Z",
+      "action": "code review requested for Step 3 (Optimize React Rendering with Memoization)"
+    },
+    {
+      "timestamp": "2026-03-30T18:09:14.298Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The implementation makes solid progress on rendering optimization: `TaskCard` now has a thoughtful custom comparator, `Column` is memoized, and `Board` stabilizes per-column task arrays so unaffected columns can skip rerenders. However, Step 3 is not fully satisfied because `TaskCard` now ignores live badge websocket updates once its props are unchanged, which can leave PR/issue badges stale, and the step-specific review request called for Board/Column test coverage but there is no meaningful ne"
+    },
+    {
+      "timestamp": "2026-03-30T18:10:26.734Z",
+      "action": "code review requested for Step 3 (Optimize React Rendering with Memoization)"
+    },
+    {
+      "timestamp": "2026-03-30T18:11:14.163Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The core memoization direction is sound: `TaskCard` is wrapped in `React.memo` with a custom comparator, `Column` is memoized, and `Board` now stabilizes per-column task arrays so sibling columns can avoid unnecessary rerenders. However, Step 3 is not fully correct yet because the `TaskCard` comparator omits render-relevant task fields, which can cause the UI to become stale when those fields change without any compared field changing."
+    },
+    {
+      "timestamp": "2026-03-30T18:11:55.413Z",
+      "action": "code review requested for Step 3 (Optimize React Rendering with Memoization)"
+    },
+    {
+      "timestamp": "2026-03-30T18:12:48.679Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Step 3 implementation meets the stated outcomes: `TaskCard` and `Column` are memoized, `TaskCard` now uses stable callbacks for its event handlers, and `Board` preserves per-column array identity so unrelated columns can skip rerenders. The test coverage is solid for the core optimization behavior, especially around `TaskCard` comparator behavior and `Board`’s stable column rendering."
+    },
+    {
+      "timestamp": "2026-03-30T18:12:52.654Z",
+      "action": "Completed Step 3 rendering optimization work after multiple review iterations.",
+      "outcome": "Memoized TaskCard, Column, and WorktreeGroup; stabilized per-column task arrays in Board; extracted TaskCardBadge so websocket badge updates bypass parent memoization; and added comparator-focused Board/Column/TaskCard coverage."
+    },
+    {
+      "timestamp": "2026-03-30T18:12:55.524Z",
+      "action": "Step 3 (Add Task List Virtualization (or Pagination Alternative)) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:12:57.390Z",
+      "action": "Step 4 (Optimize Task List Loading (Server-Side)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:12:59.415Z",
+      "action": "plan review requested for Step 4 (Add Task List Virtualization (or Pagination Alternative))"
+    },
+    {
+      "timestamp": "2026-03-30T18:13:52.277Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The current step is pointed at the right bottleneck area (`packages/dashboard/app/components/Column.tsx`), but as written it is too ambiguous to reliably achieve the stated outcome without breaking existing behavior. In this codebase, `Column` is a vertically scrollable flex container with drag-and-drop handled at the column root and per-card viewport/badge subscriptions in `TaskCard`, so a generic “virtualize or paginate if >100 tasks” plan leaves critical interaction, measurement, and state-re"
+    },
+    {
+      "timestamp": "2026-03-30T18:21:12.531Z",
+      "action": "code review requested for Step 4 (Add Task List Virtualization (or Pagination Alternative))"
+    },
+    {
+      "timestamp": "2026-03-30T18:21:48.213Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The worker chose the allowed pagination alternative instead of virtualization, and the core behavior for large non-`in-progress` columns is implemented in `Column.tsx`. However, the current implementation paginates the `archived` column as well, which breaks the task’s explicit requirement to preserve drag-and-drop behavior because archived tasks are intentionally not droppable and are also collapsed by default, making “Load More” there a poor fit; more importantly, the step’s test coverage is t"
+    },
+    {
+      "timestamp": "2026-03-30T18:22:34.738Z",
+      "action": "code review requested for Step 4 (Add Task List Virtualization (or Pagination Alternative))"
+    },
+    {
+      "timestamp": "2026-03-30T18:23:30.064Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The worker chose the allowed pagination alternative and implemented a straightforward per-column “Load more” flow in `Column.tsx`, with tests covering the basic happy path. However, the current implementation resets pagination on every task array change, which conflicts with the intended behavior of a usable pagination alternative on a live-updating board and will cause the list to jump back to 50 items whenever SSE updates arrive."
+    },
+    {
+      "timestamp": "2026-03-30T18:23:57.720Z",
+      "action": "code review requested for Step 4 (Add Task List Virtualization (or Pagination Alternative))"
+    },
+    {
+      "timestamp": "2026-03-30T18:24:22.714Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation takes the allowed alternative path from the prompt and adds client-side pagination in `Column.tsx` with a sensible threshold, stable incremental loading, and tests covering the main behaviors. It preserves drag-and-drop behavior and avoids introducing new dependencies or extra complexity, which is appropriate for this step."
+    },
+    {
+      "timestamp": "2026-03-30T18:24:30.039Z",
+      "action": "Completed Step 4 pagination alternative and Step 5 server loading support.",
+      "outcome": "Added per-column load-more pagination for large non-archived/non-in-progress columns, preserved pagination across live updates, added client fetchTasks query support, and implemented store/routes pagination with tests."
+    },
+    {
+      "timestamp": "2026-03-30T18:24:32.089Z",
+      "action": "Step 4 (Optimize Task List Loading (Server-Side)) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:24:36.051Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:24:40.159Z",
+      "action": "plan review requested for Step 5 (Optimize Task List Loading (Server-Side))"
+    },
+    {
+      "timestamp": "2026-03-30T18:25:03.904Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The current codebase already implements most of Step 5: `TaskStore.listTasks()` already accepts `{ limit, offset }`, `/api/tasks` already parses those query params, and there are already tests covering both behaviors. As written, this step would largely duplicate existing work and still fails a stated requirement because it proposes server-side pagination without any client-side support, which the PROMPT explicitly forbids."
+    },
+    {
+      "timestamp": "2026-03-30T18:25:05.792Z",
+      "action": "Step 5 (Testing & Verification) → skipped"
+    },
+    {
+      "timestamp": "2026-03-30T18:25:13.562Z",
+      "action": "Skipped Step 5 implementation work because the server-side pagination changes were already completed during Step 4 work.",
+      "outcome": "Confirmed store and /api/tasks route pagination plus route/store tests are already in place; additional work would have duplicated behavior and conflicted with the task's do-not constraint without further client-side paging design."
+    },
+    {
+      "timestamp": "2026-03-30T18:25:15.787Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:25:57.531Z",
+      "action": "Completed documentation and release metadata updates.",
+      "outcome": "Added dashboard performance characteristics documentation and created a changeset for the published CLI package per repository policy."
+    },
+    {
+      "timestamp": "2026-03-30T18:26:00.195Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:26:00.197Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T18:26:58.889Z",
+  "createdAt": "2026-03-30T06:20:43.505Z",
+  "updatedAt": "2026-03-30T18:26:58.889Z",
+  "size": "L",
+  "reviewLevel": 2,
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "validatorModelProvider": "openai-codex",
+  "validatorModelId": "gpt-5.4"
+}

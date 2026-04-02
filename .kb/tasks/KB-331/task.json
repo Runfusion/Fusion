@@ -1,0 +1,222 @@
+{
+  "id": "KB-331",
+  "description": "Add a button to respecify a task or automatically specify after moving it back to trisge",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 7,
+  "summary": "Successfully renamed the published npm package from @dustinbyrne/kb to @gsxdsm/fusion. Updated package metadata in packages/cli/package.json, root workspace scripts in package.json, documentation in README.md, RELEASING.md, STANDALONE.md, and CHANGELOG.md. Bulk updated 163 changeset files (152 with @dustinbyrne/kb + 11 with @kb/dashboard internal references). Created changeset file for the rename. Build passes with zero remaining @dustinbyrne/kb references in the active codebase.",
+  "createdAt": "2026-03-31T20:15:00.322Z",
+  "updatedAt": "2026-03-31T23:31:23.984Z",
+  "columnMovedAt": "2026-03-31T23:31:23.984Z",
+  "dependencies": [
+    "KB-330"
+  ],
+  "steps": [
+    {
+      "name": "Update Package Metadata",
+      "status": "done"
+    },
+    {
+      "name": "Update Root Workspace Scripts",
+      "status": "done"
+    },
+    {
+      "name": "Update Documentation",
+      "status": "done"
+    },
+    {
+      "name": "Update All Changeset Files",
+      "status": "done"
+    },
+    {
+      "name": "Update Test Files (If Needed)",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:15:00.322Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:19:58.904Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:20:20.312Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for renaming the published npm package. The spec correctly identifies all files requiring updates, provides concrete verification steps, and appropriately scopes the work. The blast radius assessment is accurate—this affects 117+ changeset files, package metadata, and documentation. The dependency on KB-330 is correctly noted for internal package namespace changes."
+    },
+    {
+      "timestamp": "2026-03-31T23:06:18.030Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/clear-dune"
+    },
+    {
+      "timestamp": "2026-03-31T23:06:18.032Z",
+      "action": "Step 0 (Update Package Metadata) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T23:06:19.944Z",
+      "action": "Step 0 (Update Package Metadata) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:06:27.244Z",
+      "action": "Step 0 (Update Package Metadata) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:06:28.360Z",
+      "action": "Step 1 (Update Root Workspace Scripts) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:06:28.361Z",
+      "action": "plan review requested for Step 1 (Update Package Metadata)"
+    },
+    {
+      "timestamp": "2026-03-31T23:06:52.189Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the core metadata changes needed in `packages/cli/package.json` (name field and repository URL). The checkboxes cover the essential package identity changes. However, there are minor scope gaps: the `pi.image` URL in package.json and user-facing example strings in source code (`task.ts`, `extension.ts`) are not addressed. The split of README.md updates across steps is awkward but not blocking."
+    },
+    {
+      "timestamp": "2026-03-31T23:07:00.034Z",
+      "action": "code review requested for Step 1 (Update Package Metadata)"
+    },
+    {
+      "timestamp": "2026-03-31T23:07:27.678Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The package name has been correctly updated in `packages/cli/package.json` and the README heading/installation commands are updated. However, one required change is missing: the repository link in the README.md at line 89 still references the old GitHub URL, which is explicitly required by the step outcomes."
+    },
+    {
+      "timestamp": "2026-03-31T23:07:32.174Z",
+      "action": "code review requested for Step 1 (Update Package Metadata)"
+    },
+    {
+      "timestamp": "2026-03-31T23:08:02.277Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "Step 1 has been correctly implemented. The package name has been updated from `@dustinbyrne/kb` to `@gsxdsm/fusion` in both `packages/cli/package.json` and `packages/cli/README.md`. The repository URL was intentionally not changed per the task instruction (\"if keeping same repo, skip this sub-item\")."
+    },
+    {
+      "timestamp": "2026-03-31T23:08:03.416Z",
+      "action": "Step 1 (Update Root Workspace Scripts) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:08:03.416Z",
+      "action": "Step 2 (Update Documentation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:08:03.417Z",
+      "action": "plan review requested for Step 2 (Update Root Workspace Scripts)"
+    },
+    {
+      "timestamp": "2026-03-31T23:08:12.197Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the two script lines in `package.json` that require updating. The approach is straightforward and will achieve the stated outcomes. No edge cases or risks identified within this step's scope."
+    },
+    {
+      "timestamp": "2026-03-31T23:08:15.532Z",
+      "action": "code review requested for Step 2 (Update Root Workspace Scripts)"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:05.935Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:15.422Z",
+      "action": "Step 2 (Update Documentation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:16.339Z",
+      "action": "plan review requested for Step 2 (Update Documentation)"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:39.014Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The step's stated outcome is to \"Update user-facing documentation with the new package name\" but the current plan has critical gaps. The README.md already shows the new package name (`@gsxdsm/fusion`) at line 24, which suggests either partial prior work or stale documentation in the PROMPT.md. More importantly, the plan misses several documentation files that contain the old package name `@dustinbyrne/kb`."
+    },
+    {
+      "timestamp": "2026-03-31T23:24:57.984Z",
+      "action": "code review requested for Step 2 (Update Documentation)"
+    },
+    {
+      "timestamp": "2026-03-31T23:25:20.633Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The documentation and workspace script updates for the package rename are complete and correct. All references to `@dustinbyrne/kb` in the targeted files have been replaced with `@gsxdsm/fusion` as required by the task specification."
+    },
+    {
+      "timestamp": "2026-03-31T23:25:21.552Z",
+      "action": "Step 2 (Update Documentation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:25:22.637Z",
+      "action": "Step 3 (Update All Changeset Files) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:25:25.176Z",
+      "action": "plan review requested for Step 3 (Update All Changeset Files)"
+    },
+    {
+      "timestamp": "2026-03-31T23:25:59.377Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan for Step 3 is **outdated and incomplete**. The work described in the checkboxes (updating `@dustinbyrne/kb` frontmatter references) has **already been completed** — all 146 changeset files now use `@gsxdsm/fusion`. However, the plan fails to account for **11 changeset files** that still reference the old internal package name `@kb/dashboard` in their frontmatter, which should be updated to `@fusion/dashboard`."
+    },
+    {
+      "timestamp": "2026-03-31T23:26:12.418Z",
+      "action": "code review requested for Step 3 (Update All Changeset Files)"
+    },
+    {
+      "timestamp": "2026-03-31T23:26:52.130Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The worker has successfully completed the bulk of the rename work. All changeset files (156+) have been updated to use `@gsxdsm/fusion` in their frontmatter, the README.md installation instructions are updated, RELEASING.md script examples use the new filter name, and both root and CLI package.json files are correctly updated. The changes follow the required pattern and the verification command shows zero remaining old package references in frontmatter."
+    },
+    {
+      "timestamp": "2026-03-31T23:26:53.033Z",
+      "action": "Step 3 (Update All Changeset Files) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:26:54.155Z",
+      "action": "Step 4 (Update Test Files (If Needed)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:27:02.060Z",
+      "action": "Step 4: Checked test files - no updates needed",
+      "outcome": "package-config.test.ts and extension.test.ts have no hardcoded @dustinbyrne/kb references; they dynamically load package.json"
+    },
+    {
+      "timestamp": "2026-03-31T23:27:02.061Z",
+      "action": "Step 4 (Update Test Files (If Needed)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:27:02.998Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:30:42.238Z",
+      "action": "Step 5: Build and verification complete",
+      "outcome": "Build passes, zero @dustinbyrne/kb references remain. 3 pre-existing test failures in runTaskDelete (unrelated to package rename - cancellation prompt logic issues)."
+    },
+    {
+      "timestamp": "2026-03-31T23:30:42.239Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:30:43.495Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:30:49.312Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:30:57.649Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+{
+  "id": "KB-078",
+  "description": "the task list and the progress bar on a card aren't in sync on the dashboard",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Progress Calculation in TaskCard",
+      "status": "done"
+    },
+    {
+      "name": "Add Test Coverage for Skipped Steps",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:34:32.871Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:35:38.631Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:35:43.921Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:35:51.040Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is clear, accurate, and actionable. The issue is correctly identified in the source code: the progress bar calculation on line 280 of TaskCard.tsx only counts `status === \"done\"` steps, while the step list styling on line 304-306 also only applies the `completed` class to `done` steps. The fix requires updating both the counting logic and the styling condition to include `\"skipped\"` status."
+    },
+    {
+      "timestamp": "2026-03-30T04:35:53.581Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and actionable. All file references are correct, the bug description matches the actual code, and the fix approach is straightforward. Testing requirements demand real assertions, not just typechecks."
+    },
+    {
+      "timestamp": "2026-03-30T04:36:08.026Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-moss"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:08.087Z",
+      "action": "Step 0 (Fix Progress Calculation in TaskCard) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:10.082Z",
+      "action": "Step 0 (Fix Progress Calculation in TaskCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:10.714Z",
+      "action": "Step 0 (Fix Progress Calculation in TaskCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:13.365Z",
+      "action": "Step 0 (Fix Progress Calculation in TaskCard) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:13.366Z",
+      "action": "Step 1 (Add Test Coverage for Skipped Steps) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:15.085Z",
+      "action": "Step 0 (Fix Progress Calculation in TaskCard) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:15.086Z",
+      "action": "Preflight complete. Identified issue at TaskCard.tsx:341 - progress calculation only counts 'done' steps, missing 'skipped'. StepStatus type confirms 'skipped' is a valid completed state.",
+      "outcome": "Ready to implement fix"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:15.152Z",
+      "action": "Step 1 (Add Test Coverage for Skipped Steps) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:15.153Z",
+      "action": "plan review requested for Step 1 (Fix Progress Calculation in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:15.758Z",
+      "action": "plan review requested for Step 1 (Fix Progress Calculation in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:25.347Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the issue at `packages/dashboard/app/components/TaskCard.tsx` lines 393-396, where the `completedSteps` calculation only filters for `\"done\"` status and excludes `\"skipped\"`. The fix is straightforward—updating the filter condition to include both statuses—and aligns with the existing `StepStatus` type definition and CSS styling that already supports skipped steps."
+    },
+    {
+      "timestamp": "2026-03-30T04:36:25.967Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the bug location and specifies the exact fix needed. The current code at line 344 in `TaskCard.tsx` only counts steps with `status === \"done\"`, but should also include `\"skipped\"` status. The proposed change is minimal, targeted, and aligns with the `StepStatus` type definition which includes `\"skipped\"` as a terminal/completed state."
+    },
+    {
+      "timestamp": "2026-03-30T04:37:12.637Z",
+      "action": "Step 1 (Add Test Coverage for Skipped Steps) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:16.943Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:16.946Z",
+      "action": "plan review requested for Step 2 (Add Test Coverage for Skipped Steps)"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:17.523Z",
+      "action": "Step 1 (Add Test Coverage for Skipped Steps) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:17.525Z",
+      "action": "Step 1 complete. Fixed progress calculation to include skipped steps. All 90 TaskCard tests pass.",
+      "outcome": "TaskCard.tsx updated: completedSteps now counts both 'done' and 'skipped' statuses"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:20.077Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:20.080Z",
+      "action": "plan review requested for Step 2 (Add Test Coverage for Skipped Steps)"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:29.692Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is clear and achievable. The checkboxes correctly identify the two test cases needed: (1) verifying the progress bar counts skipped steps as completed, and (2) verifying the step list applies the correct CSS class for skipped status. The existing test file at `packages/dashboard/app/components/__tests__/TaskCard.test.tsx` provides good patterns to follow, with the `makeTask` helper and collapsible steps tests around lines 620-720 serving as reference."
+    },
+    {
+      "timestamp": "2026-03-30T04:37:33.823Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows the existing test patterns in the codebase. The step's checkboxes map clearly to verifiable outcomes: testing that skipped steps count toward progress bar completion and that they render with the correct CSS class. The approach aligns with the existing testing conventions in `TaskCard.test.tsx`."
+    },
+    {
+      "timestamp": "2026-03-30T04:37:57.461Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:57.463Z",
+      "action": "Step 2 complete. Added 3 new tests for skipped steps in progress bar.",
+      "outcome": "Tests added: 1) progress counts skipped as completed, 2) skipped CSS class rendering, 3) 100% progress when all skipped"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:59.084Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:38:02.100Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:38:03.559Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:38:36.135Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:38:44.382Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:38:48.734Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:38:51.702Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:38:54.981Z",
+      "action": "Execution failed: Invalid transition: 'in-review' → 'in-review'. Valid targets: done, in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:24:48.555Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T05:24:48.555Z",
+  "createdAt": "2026-03-30T04:34:32.871Z",
+  "updatedAt": "2026-03-30T05:24:48.555Z",
+  "size": "S",
+  "reviewLevel": 1
+}

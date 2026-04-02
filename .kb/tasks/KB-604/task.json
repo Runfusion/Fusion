@@ -1,0 +1,95 @@
+{
+  "id": "KB-604",
+  "description": "Include task title or first 200 characters of description of the task in the ntfy notifications",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 4,
+  "summary": "Enhanced ntfy push notifications to include meaningful task context. Added `formatTaskIdentifier()` helper function that returns the task title when available, or falls back to \"{id}: {first 200 chars of description}\" when no title is set. Updated all three notification handlers (in-review, failed, merged) to use the new helper. Added comprehensive tests for the new behavior including truncation at 200 characters. Updated AGENTS.md documentation and created a changeset for the patch release.",
+  "createdAt": "2026-03-31T21:45:48.227Z",
+  "updatedAt": "2026-04-01T00:08:10.842Z",
+  "columnMovedAt": "2026-04-01T00:08:10.842Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Notification Message Format",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:45:48.227Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:47:14.051Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:47:33.921Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification has a **factual inaccuracy** about the current implementation state and contains **vague documentation requirements**. While the desired outcome (falling back to description when no title exists) is valid, the spec incorrectly claims notifications \"display only the task ID\" when the current code already uses `task.title ?? task.id`. Additionally, Step 4's documentation requirement lacks specificity."
+    },
+    {
+      "timestamp": "2026-03-31T21:47:47.148Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:48:04.380Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a small, focused enhancement. The mission is clear, steps have concrete verifiable outcomes, and testing requirements are appropriately rigorous. File scope is accurate and correctly limited to two implementation files plus documentation."
+    },
+    {
+      "timestamp": "2026-04-01T00:03:24.371Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/green-mesa"
+    },
+    {
+      "timestamp": "2026-04-01T00:03:24.372Z",
+      "action": "Step 0 (Update Notification Message Format) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T00:03:32.488Z",
+      "action": "Step 0 (Update Notification Message Format) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:03:32.489Z",
+      "action": "Step 1 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:04:06.040Z",
+      "action": "Step 1 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:04:06.041Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:04:28.426Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:04:28.427Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:07:45.136Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:07:58.166Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

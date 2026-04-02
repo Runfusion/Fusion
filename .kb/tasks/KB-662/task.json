@@ -1,0 +1,17 @@
+{
+  "id": "KB-662",
+  "description": "Build a dashboard UI for the Mission hierarchy system. The API routes already exist (`mission-routes.ts`), but the frontend has no UI to create/view/edit Missions, Milestones, Slices, and Features.\n\nRequired features:\n- Missions list and creation UI (in header or sidebar)\n- Mission detail view with full hierarchy display (Milestones → Slices → Features)\n- CRUD operations for all hierarchy levels\n- Link features to tasks\n- Auto-advance slice activation controls\n- Mission interview state for AI-assisted planning\n\nThe MissionStore provides:\n- Mission (title, description, status, autoAdvance)\n- Milestone (title, description, dependencies, orderIndex)\n- Slice (title, description, status)\n- Feature (title, description, acceptanceCriteria, taskId)\n\nAPI endpoints already exist at `/api/missions/*`",
+  "column": "triage",
+  "dependencies": [],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-04-02T02:30:47.130Z",
+      "action": "Task created"
+    }
+  ],
+  "columnMovedAt": "2026-04-02T02:30:47.130Z",
+  "createdAt": "2026-04-02T02:30:47.130Z",
+  "updatedAt": "2026-04-02T02:30:47.130Z"
+}

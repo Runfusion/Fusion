@@ -1,0 +1,352 @@
+{
+  "id": "KB-072",
+  "description": "Make themes able to change more than colors - the entire layout like fonts, corner radious, buttons styles,e verything should be customizable by a theme - I want a theme that looks like factoryai",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Expand Core Types for Design Themes",
+      "status": "done"
+    },
+    {
+      "name": "Update Theme Hook for Design Theme Support",
+      "status": "done"
+    },
+    {
+      "name": "Implement Comprehensive Design Token Architecture",
+      "status": "done"
+    },
+    {
+      "name": "Create Factory Design Theme",
+      "status": "done"
+    },
+    {
+      "name": "Update Theme Selector Component",
+      "status": "done"
+    },
+    {
+      "name": "Update Theme Initialization Script",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 9,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:30:43.118Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:31:45.712Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:03.827Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:06.485Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for expanding the theme system from color-only to a comprehensive design system with layout customization. The mission is clear, steps are concrete with verifiable outcomes, file scope is accurate, and testing requirements are appropriate. The factoryai theme design reference is detailed enough to enable implementation."
+    },
+    {
+      "timestamp": "2026-03-30T04:32:22.545Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a substantial architectural expansion of the theming system. The spec clearly distinguishes between \"color themes\" (existing) and \"design themes\" (new comprehensive token system). The Factory theme serves as an excellent proof-of-concept demonstrating the new capabilities. The file references are accurate, steps have verifiable outcomes, and testing requirements are comprehensive."
+    },
+    {
+      "timestamp": "2026-03-30T06:26:30.316Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-fern"
+    },
+    {
+      "timestamp": "2026-03-30T06:26:30.317Z",
+      "action": "Step 0 (Expand Core Types for Design Themes) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T06:26:39.082Z",
+      "action": "Step 0 (Expand Core Types for Design Themes) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:26:57.358Z",
+      "action": "Preflight completed and context files reviewed.",
+      "outcome": "Confirmed the repo already contains ayu and one-dark themes beyond the prompt examples, so Factory will be added without removing existing themes and related tests will be updated to 11 total themes."
+    },
+    {
+      "timestamp": "2026-03-30T06:27:01.763Z",
+      "action": "plan review requested for Step 0 (Expand Core Types for Design Themes)"
+    },
+    {
+      "timestamp": "2026-03-30T06:27:11.968Z",
+      "action": "plan review Step 0: APPROVE",
+      "outcome": "The plan for Step 0 is technically sound and straightforward. Adding `\"factory\"` to the `COLOR_THEMES` array in `packages/core/src/types.ts` will correctly extend the theme system, and since `ColorTheme` is derived via `typeof COLOR_THEMES[number]`, the type will automatically include the new theme. The build verification step ensures type safety."
+    },
+    {
+      "timestamp": "2026-03-30T06:27:43.021Z",
+      "action": "Step 1 verification revealed the worktree had no installed dependencies.",
+      "outcome": "Package builds/tests cannot run until workspace dependencies are installed, so I will install them locally in the worktree before continuing verification."
+    },
+    {
+      "timestamp": "2026-03-30T06:28:00.538Z",
+      "action": "code review requested for Step 0 (Expand Core Types for Design Themes)"
+    },
+    {
+      "timestamp": "2026-03-30T06:28:17.628Z",
+      "action": "code review Step 0: APPROVE",
+      "outcome": "The core types have been correctly expanded to include the \"factory\" theme. The `COLOR_THEMES` array in `packages/core/src/types.ts` now includes \"factory\", and the `ColorTheme` type correctly derives from it via `typeof`. The compiled types in `dist/types.d.ts` confirm the build succeeded and the type system properly includes the new theme."
+    },
+    {
+      "timestamp": "2026-03-30T06:28:19.172Z",
+      "action": "Step 0 (Expand Core Types for Design Themes) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:28:22.525Z",
+      "action": "Step 1 (Update Theme Hook for Design Theme Support) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:28:24.370Z",
+      "action": "plan review requested for Step 1 (Update Theme Hook for Design Theme Support)"
+    },
+    {
+      "timestamp": "2026-03-30T06:28:42.299Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The step is **fundamentally misaligned with the actual codebase state**. The `COLOR_THEMES` array in `packages/core/src/types.ts` already includes `\"factory\"` (I verified it's present at lines 12-22). The step describes adding something that already exists, while completely missing the actual required work: updating the validation arrays in `useTheme.ts` and `ThemeSelector.tsx` that don't yet include `\"factory\"`."
+    },
+    {
+      "timestamp": "2026-03-30T06:30:07.103Z",
+      "action": "code review requested for Step 1 (Update Theme Hook for Design Theme Support)"
+    },
+    {
+      "timestamp": "2026-03-30T06:33:36.545Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The hook implementation is sound: `packages/dashboard/app/hooks/useTheme.ts` now derives its valid theme list from the shared core `COLOR_THEMES` constant, so `\"factory\"` is automatically recognized everywhere the hook validates or serializes theme values. That keeps the storage keys unchanged and avoids duplicating theme lists in the hook."
+    },
+    {
+      "timestamp": "2026-03-30T06:33:38.048Z",
+      "action": "Step 1 (Update Theme Hook for Design Theme Support) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:33:52.095Z",
+      "action": "Step 2 (Implement Comprehensive Design Token Architecture) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:33:55.810Z",
+      "action": "plan review requested for Step 2 (Implement Comprehensive Design Token Architecture)"
+    },
+    {
+      "timestamp": "2026-03-30T06:36:46.732Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The direction is correct, but the current step checklist does not fully wire the new token architecture into the existing stylesheet. As written, several core components would keep using legacy variables or hardcoded values, so the new design-theme tokens would not actually control layout, radius, shadows, and padding comprehensively."
+    },
+    {
+      "timestamp": "2026-03-30T06:42:37.846Z",
+      "action": "code review requested for Step 2 (Implement Comprehensive Design Token Architecture)"
+    },
+    {
+      "timestamp": "2026-03-30T06:45:12.105Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The design-token foundation in `styles.css` is a solid start: core typography, spacing, radius, shadow, and transition variables were added and several key components now consume them. However, the implementation is not yet complete enough to satisfy the task outcomes because the dashboard theme registry is out of sync with core (`factory` is accepted by types/hooks but not selectable or displayed), the pre-hydration init script still skips theme validation, and several interactive visual states"
+    },
+    {
+      "timestamp": "2026-03-30T06:47:05.878Z",
+      "action": "code review requested for Step 2 (Implement Comprehensive Design Token Architecture)"
+    },
+    {
+      "timestamp": "2026-03-30T06:50:01.677Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The design-token scaffolding is largely in place: the new root token layer exists, many core components now consume tokenized radius/padding/shadow/transition values, and the hook/type plumbing recognizes the expanded theme set. However, the implementation currently exposes a selectable `factory` theme without any corresponding CSS theme definition, and one of the updated selector tests is now stale enough that it should fail."
+    },
+    {
+      "timestamp": "2026-03-30T06:52:56.010Z",
+      "action": "Code review for the design-token step required pulling forward Factory theme CSS and related selector/init-script test coverage.",
+      "outcome": "Implemented the Factory theme early, added swatch/selector support, and updated focused tests so the theme system changes can be reviewed as a coherent unit."
+    },
+    {
+      "timestamp": "2026-03-30T06:53:01.636Z",
+      "action": "code review requested for Step 2 (Implement Comprehensive Design Token Architecture)"
+    },
+    {
+      "timestamp": "2026-03-30T06:55:48.130Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation successfully introduces a real design-token layer, wires the new Factory theme through the hook, selector, and preload script, and updates tests for the added theme options. The primary dashboard surfaces called out in the task—buttons, columns, cards, modals, fonts, shadows, and transitions—are now token-driven, and the Factory theme overrides those tokens cleanly without breaking existing storage keys or theme selection behavior."
+    },
+    {
+      "timestamp": "2026-03-30T06:55:50.170Z",
+      "action": "Step 2 (Implement Comprehensive Design Token Architecture) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:56:02.876Z",
+      "action": "Step 3 (Create Factory Design Theme) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:56:09.864Z",
+      "action": "plan review requested for Step 3 (Create Factory Design Theme)"
+    },
+    {
+      "timestamp": "2026-03-30T06:58:59.010Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The CSS direction is sound, but the step as written is incomplete for the current dashboard token architecture. More importantly, the plan is based on an older 9-theme state, while the codebase already has Factory plus two newer themes, so following it literally risks partial theming and regressive test changes."
+    },
+    {
+      "timestamp": "2026-03-30T06:59:04.408Z",
+      "action": "code review requested for Step 3 (Create Factory Design Theme)"
+    },
+    {
+      "timestamp": "2026-03-30T07:03:42.447Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Factory theme implementation is consistent with the task goals: it adds the new theme across core types, hook validation, the selector UI, initialization logic, and CSS overrides, while keeping the existing storage keys and compatibility model intact. The new design-token layer and Factory-specific overrides look coherent, and the updated tests cover the new theme’s presence and selection flow."
+    },
+    {
+      "timestamp": "2026-03-30T07:03:44.831Z",
+      "action": "Step 3 (Create Factory Design Theme) → done"
+    },
+    {
+      "timestamp": "2026-03-30T07:03:49.617Z",
+      "action": "Step 4 (Update Theme Selector Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T07:03:54.118Z",
+      "action": "plan review requested for Step 4 (Update Theme Selector Component)"
+    },
+    {
+      "timestamp": "2026-03-30T07:04:51.421Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The intended outcome for this step is already implemented in the current codebase: `ThemeSelector` already exposes a Factory option, and it is already positioned immediately after Solarized. Because of that, the checkbox as written is stale; if followed literally, it risks adding a duplicate Factory entry and breaking the selector UI rather than advancing the task."
+    },
+    {
+      "timestamp": "2026-03-30T07:04:59.265Z",
+      "action": "code review requested for Step 4 (Update Theme Selector Component)"
+    },
+    {
+      "timestamp": "2026-03-30T07:05:51.865Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The Theme Selector now includes the Factory option in the UI and the tests were updated to cover both selection and preview behavior. The implementation is consistent with the existing component structure, and the Factory entry is positioned correctly after Solarized in the selector list."
+    },
+    {
+      "timestamp": "2026-03-30T07:06:04.795Z",
+      "action": "Theme selector step required only verification.",
+      "outcome": "Factory was already added in the earlier review-driven commit, is ordered after Solarized, and its selector-specific review passed without further code changes."
+    },
+    {
+      "timestamp": "2026-03-30T07:06:07.051Z",
+      "action": "Step 4 (Update Theme Selector Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T07:06:09.481Z",
+      "action": "Step 5 (Update Theme Initialization Script) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T07:06:13.114Z",
+      "action": "plan review requested for Step 5 (Update Theme Initialization Script)"
+    },
+    {
+      "timestamp": "2026-03-30T07:07:19.304Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "This step is not safe as written. The dashboard already recognizes `\"factory\"` in the pre-hydration script, and the proposed snippet would actually regress existing themes by removing currently supported entries from the validation allowlist."
+    },
+    {
+      "timestamp": "2026-03-30T07:07:24.592Z",
+      "action": "code review requested for Step 5 (Update Theme Initialization Script)"
+    },
+    {
+      "timestamp": "2026-03-30T07:08:08.543Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The `index.html` theme bootstrapping script now recognizes `\"factory\"` as a valid persisted color theme, so the dashboard can apply it before React hydrates and avoid a flash back to `\"default\"`. The implementation is consistent with the current theme set used elsewhere (`@kb/core` and `useTheme.ts`) and preserves the existing fallback behavior for invalid stored values."
+    },
+    {
+      "timestamp": "2026-03-30T07:08:11.903Z",
+      "action": "Theme init script step also resolved via earlier review-driven work.",
+      "outcome": "The inline script now validates the full current theme set, including Factory, Ayu, and One Dark, without regressing existing persisted selections."
+    },
+    {
+      "timestamp": "2026-03-30T07:08:13.684Z",
+      "action": "Step 5 (Update Theme Initialization Script) → done"
+    },
+    {
+      "timestamp": "2026-03-30T07:08:20.949Z",
+      "action": "Step 6 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T07:08:23.063Z",
+      "action": "plan review requested for Step 6 (Update Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T07:12:21.698Z",
+      "action": "plan review Step 6: REVISE",
+      "outcome": "This test-update plan is out of sync with the current codebase. The repo already supports 11 themes, and the existing tests already include Factory-specific assertions, so changing counts from 8 to 9 and “adding” Factory checks will not match reality or meaningfully increase coverage for the new design-token system."
+    },
+    {
+      "timestamp": "2026-03-30T07:14:55.855Z",
+      "action": "code review requested for Step 6 (Update Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T07:17:05.859Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "The test updates correctly cover the new Factory theme and keep the theme-related tests aligned with the current supported theme set. In particular, `ThemeSelector.test.tsx` now verifies the expanded selector options, and `useTheme.test.ts` adds Factory-specific attribute coverage plus a useful guard that keeps `getThemeInitScript()` and `app/index.html` in sync."
+    },
+    {
+      "timestamp": "2026-03-30T07:17:08.322Z",
+      "action": "Step 6 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T07:17:20.823Z",
+      "action": "Step 7 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T07:17:22.683Z",
+      "action": "plan review requested for Step 7 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T07:20:38.029Z",
+      "action": "plan review Step 7: REVISE",
+      "outcome": "The step has the right overall shape—run automated checks, then do a targeted UI smoke test—but it does not fully verify the task’s key outcome in the current repo. One checkbox points at a non-existent test surface in `@kb/core`, and the plan still relies on manual inspection for the new design-token behavior that this task is specifically introducing."
+    },
+    {
+      "timestamp": "2026-03-30T07:22:52.556Z",
+      "action": "Full verification completed for the scoped theme-system work.",
+      "outcome": "packages/core tests passed and the workspace build succeeded, but the full dashboard test suite still has 14 pre-existing unrelated failures in Header/useTerminal/typecheck tests outside this task's file scope."
+    },
+    {
+      "timestamp": "2026-03-30T07:23:11.254Z",
+      "action": "code review requested for Step 7 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T07:24:51.225Z",
+      "action": "code review Step 7: APPROVE",
+      "outcome": "The test updates are aligned with the theme-system expansion and cover the main regression risks introduced by Factory: selector rendering, hook persistence/application behavior, stylesheet token overrides, and keeping the inline `index.html` theme validation in sync with supported themes. I don’t see any blocking correctness issues in the Step 7 changes, and the use of shared `COLOR_THEMES` constants in the hook tests helps reduce drift as themes evolve."
+    },
+    {
+      "timestamp": "2026-03-30T07:24:57.521Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T07:25:04.374Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T07:25:31.139Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T07:26:16.338Z",
+      "action": "Agent finished without calling task_done — moved to in-review for inspection"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T07:46:15.118Z",
+  "createdAt": "2026-03-30T04:30:43.118Z",
+  "updatedAt": "2026-03-30T07:46:15.118Z",
+  "size": "L",
+  "reviewLevel": 3,
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4"
+}

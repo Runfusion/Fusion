@@ -1,0 +1,103 @@
+{
+  "id": "KB-161",
+  "description": "Fix PlanningModeModal auto-start test failure in packages/dashboard/app/components/PlanningModeModal.test.tsx. The test \"calls startPlanning automatically when initialPlan is provided\" is failing because mockStartPlanning is not being called with the expected plan text.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze the Current Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Implement the Fix",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T15:30:55.922Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T15:32:51.547Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T15:33:05.172Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, well-scoped, and technically correct. It correctly identifies the React StrictMode double-render issue with `useState` and prescribes the appropriate `useRef` fix. All referenced files exist and contain the patterns described. Steps have concrete, verifiable outcomes and testing requirements are properly stringent."
+    },
+    {
+      "timestamp": "2026-03-30T15:50:39.914Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/clear-stone"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:39.915Z",
+      "action": "Step 0 (Analyze the Current Implementation) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:48.307Z",
+      "action": "Step 0 (Analyze the Current Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:51.216Z",
+      "action": "Step 0 (Analyze the Current Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:51.218Z",
+      "action": "Completed preflight analysis. Issue identified: useState for hasAutoStarted causes StrictMode double-render issue - state persists across renders preventing auto-start on second render. Fix requires changing to useRef."
+    },
+    {
+      "timestamp": "2026-03-30T15:50:52.526Z",
+      "action": "Step 1 (Implement the Fix) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:52.528Z",
+      "action": "plan review requested for Step 1 (Analyze the Current Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T15:50:59.656Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan accurately describes the root cause of the failing test. The analysis correctly identifies that React 19's StrictMode double-render causes `hasAutoStarted` state to persist across renders, preventing the auto-start logic from triggering on the second render. The proposed fix using `useRef` instead of `useState` is the correct solution."
+    },
+    {
+      "timestamp": "2026-03-30T15:51:12.010Z",
+      "action": "Step 1 (Implement the Fix) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:51:12.012Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:51:12.014Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:06.227Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:53:06.228Z",
+      "action": "Fixed PlanningModeModal auto-start test failure",
+      "outcome": "Changed hasAutoStarted from useState to useRef to handle React 19 StrictMode double-render issue. All 12 tests in PlanningModeModal.test.tsx now pass, including 'calls startPlanning automatically when initialPlan is provided' and 'sets initial plan text in textarea when initialPlan prop is provided'."
+    },
+    {
+      "timestamp": "2026-03-30T15:53:06.958Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:53:14.957Z",
+  "createdAt": "2026-03-30T15:30:55.922Z",
+  "updatedAt": "2026-03-30T15:53:14.957Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,194 @@
+{
+  "id": "KB-033",
+  "description": "Add a way to edit cards in triage or to-do on the dashboard",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add updateTask to useTasks hook",
+      "status": "done"
+    },
+    {
+      "name": "Implement inline edit mode in TaskCard",
+      "status": "done"
+    },
+    {
+      "name": "Wire up callbacks through component hierarchy",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS styling for inline edit mode",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:37:44.102Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:46:32.761Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:46:47.363Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately references the existing codebase. The mission is clear, file scope is correct, and the steps follow a logical progression. The spec correctly identifies that `updateTask` is missing from `useTasks.ts` (it exists in `api.ts` but isn't exposed through the hook) and appropriately references `InlineCreateCard.tsx` as a pattern to follow."
+    },
+    {
+      "timestamp": "2026-03-30T02:27:22.376Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/azure-thorn"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:22.378Z",
+      "action": "Step 0 (Add updateTask to useTasks hook) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:26.206Z",
+      "action": "Step 0 (Add updateTask to useTasks hook) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:39.658Z",
+      "action": "Step 0 (Add updateTask to useTasks hook) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:39.659Z",
+      "action": "Completed preflight reading. Key findings:\n- API has updateTask() function already\n- useTasks hook needs updateTask added\n- InlineCreateCard patterns: auto-resize textarea, blur-to-cancel/enter-to-save, escape cancels\n- TaskCard has drag/drop, click for detail - need to add edit mode\n- WorktreeGroup also renders TaskCards - needs to pass onUpdateTask\n- Column only passes allTasks to TaskCard, not callbacks for updates",
+      "outcome": "Ready to implement Step 1"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:41.106Z",
+      "action": "Step 1 (Implement inline edit mode in TaskCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:41.108Z",
+      "action": "plan review requested for Step 1 (Add updateTask to useTasks hook)"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:54.929Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies that `updateTask` is missing from the `useTasks` hook and needs to be added. The API function already exists in `api.ts` (lines 47-50), and the SSE `task:updated` event handler already handles state updates (lines 66-87 in useTasks.ts). The step's checkboxes will achieve the stated outcomes."
+    },
+    {
+      "timestamp": "2026-03-30T02:28:57.923Z",
+      "action": "code review requested for Step 1 (Add updateTask to useTasks hook)"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:31.158Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds the `updateTask` function to the `useTasks` hook with proper optimistic updates and rollback on error. The test coverage is comprehensive with 5 test cases covering all key scenarios. The implementation follows React patterns established in the codebase and maintains type safety."
+    },
+    {
+      "timestamp": "2026-03-30T02:29:32.604Z",
+      "action": "Step 2 (Wire up callbacks through component hierarchy) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:32.607Z",
+      "action": "plan review requested for Step 2 (Implement inline edit mode in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:59.248Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan's approach for implementing inline editing UI state and interaction patterns is generally sound and correctly references `InlineCreateCard.tsx` as the implementation model. However, there are **critical gaps** in the sequencing between Step 2 and Step 3 that would lead to untestable code and broken functionality. The plan attempts to implement save behavior in Step 2 before the `onUpdateTask` callback is wired through the component hierarchy in Step 3."
+    },
+    {
+      "timestamp": "2026-03-30T02:32:11.032Z",
+      "action": "code review requested for Step 2 (Implement inline edit mode in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T02:32:53.746Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The TaskCard inline editing implementation is solid and follows the specified patterns from InlineCreateCard. The component correctly implements edit mode state management, keyboard interactions (Enter to save, Shift+Enter for newline, Escape to cancel), blur handling with change detection, and loading states. The comprehensive test suite covers all major functionality including edit mode entry, cancellation, saving, and error handling."
+    },
+    {
+      "timestamp": "2026-03-30T02:32:55.040Z",
+      "action": "Step 3 (Add CSS styling for inline edit mode) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:32:55.041Z",
+      "action": "plan review requested for Step 3 (Wire up callbacks through component hierarchy)"
+    },
+    {
+      "timestamp": "2026-03-30T02:33:09.878Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan has significant gaps that will prevent the inline editing feature from functioning. Step 3 only mentions Board → Column → TaskCard propagation, but misses two critical pieces: (1) App.tsx must extract `updateTask` from `useTasks()` and pass it to Board, and (2) WorktreeGroup.tsx also renders TaskCards in the \"in-progress\" column and needs the callback wired through. Without these, `onUpdateTask` will be undefined and editing will be silently disabled per the `canEdit` check at TaskCard."
+    },
+    {
+      "timestamp": "2026-03-30T02:33:52.974Z",
+      "action": "code review requested for Step 3 (Wire up callbacks through component hierarchy)"
+    },
+    {
+      "timestamp": "2026-03-30T02:34:11.519Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The callback wiring is correctly implemented throughout the component hierarchy. The `onUpdateTask` prop flows properly from `App.tsx` → `Board.tsx` → `Column.tsx` → `TaskCard.tsx`, with `WorktreeGroup.tsx` also correctly passing the callback through for in-progress column tasks. All TypeScript interfaces are consistent, and comprehensive test coverage validates the wiring works end-to-end."
+    },
+    {
+      "timestamp": "2026-03-30T02:34:12.970Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:34:12.970Z",
+      "action": "plan review requested for Step 4 (Add CSS styling for inline edit mode)"
+    },
+    {
+      "timestamp": "2026-03-30T02:34:26.660Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 appropriately captures the CSS requirements for inline editing. The TaskCard.tsx component already has the editing UI implemented with proper class names (`card-editing`, `card-edit-title-input`, `card-edit-desc-textarea`, `card-edit-btn`, `card-edit-loading`), but these styles are not yet defined in styles.css. The checkboxes align well with the existing patterns from `.inline-create-card`."
+    },
+    {
+      "timestamp": "2026-03-30T02:34:43.646Z",
+      "action": "code review requested for Step 4 (Add CSS styling for inline edit mode)"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:03.271Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The CSS styling for inline edit mode is well-implemented, following the established patterns from `InlineCreateCard`. All required CSS classes are present and properly integrated with the TaskCard component. The styling includes visual indicators for edit mode (column-themed borders), seamless input styling matching the card design, hover-visible edit buttons, and loading states."
+    },
+    {
+      "timestamp": "2026-03-30T02:35:04.345Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:39.501Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:39.503Z",
+      "action": "Step 1 (Implement inline edit mode in TaskCard) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:39.504Z",
+      "action": "Step 2 (Wire up callbacks through component hierarchy) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:39.505Z",
+      "action": "Step 3 (Add CSS styling for inline edit mode) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:39.506Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:39.507Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:39.508Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:35:53.465Z",
+  "createdAt": "2026-03-30T01:37:44.102Z",
+  "updatedAt": "2026-03-30T02:35:53.465Z",
+  "size": "M",
+  "reviewLevel": 2
+}

@@ -1,0 +1,117 @@
+{
+  "id": "KB-607",
+  "description": "For tasks that are missing a task directory and prompt, send them back to triage so they get re-generated",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 4,
+  "summary": "Added filesystem validation to detect tasks missing their task directory or PROMPT.md file. When such tasks are found in the \"todo\" column, they are automatically moved back to \"triage\" with a log entry so the AI can regenerate the specification. The implementation includes: (1) a new `validateTaskFilesystem` method in the Scheduler class that checks for directory and PROMPT.md existence, (2) integration into the scheduling loop that validates tasks after dependency checks but before scheduling, and (3) comprehensive unit tests covering missing directory, missing PROMPT.md, empty PROMPT.md, valid filesystem, and tasks with unmet dependencies. All 22 scheduler tests pass.",
+  "createdAt": "2026-03-31T21:48:17.157Z",
+  "updatedAt": "2026-03-31T22:09:33.817Z",
+  "columnMovedAt": "2026-03-31T22:09:33.817Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add validation method to Scheduler",
+      "status": "done"
+    },
+    {
+      "name": "Integrate validation into scheduling loop",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:48:17.157Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:52:59.178Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:53:17.640Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, focused specification for handling filesystem-database inconsistency edge cases. The mission is clear, steps have verifiable concrete outcomes, file scope is accurate, and testing requirements are appropriate. The spec correctly references existing methods (`taskDir()`, `moveTask()`, `logEntry()`) and patterns (VALID_TRANSITIONS, scheduling loop structure)."
+    },
+    {
+      "timestamp": "2026-03-31T21:54:32.059Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fresh-trout"
+    },
+    {
+      "timestamp": "2026-03-31T21:54:32.060Z",
+      "action": "Step 0 (Add validation method to Scheduler) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T21:55:31.167Z",
+      "action": "Step 0 (Add validation method to Scheduler) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:55:34.744Z",
+      "action": "Step 0 (Add validation method to Scheduler) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:55:34.745Z",
+      "action": "Step 1 (Integrate validation into scheduling loop) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:55:34.746Z",
+      "action": "plan review requested for Step 1 (Add validation method to Scheduler)"
+    },
+    {
+      "timestamp": "2026-03-31T21:55:52.782Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and will achieve its stated outcomes. The validation method is appropriately scoped as a private async method returning a clear `{ valid: boolean; reason?: string }` interface. The approach correctly delegates filesystem checks through the existing `TaskStore` abstraction, which maintains testability and follows the established pattern used by other methods like `parseFileScopeFromPrompt()`."
+    },
+    {
+      "timestamp": "2026-03-31T21:56:05.972Z",
+      "action": "Step 1 (Integrate validation into scheduling loop) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:56:05.973Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:56:05.974Z",
+      "action": "plan review requested for Step 2 (Integrate validation into scheduling loop)"
+    },
+    {
+      "timestamp": "2026-03-31T21:56:29.971Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan's approach has a **race condition issue**: filtering tasks once at the start of `schedule()` means tasks moved during iteration remain in the `ordered` array. Additionally, emitting `onBlocked` for validation failures is semantically incorrect since the callback expects dependency IDs, not filesystem validation errors. Finally, the plan suggests checking filesystem state before dependency checks, which is inefficient."
+    },
+    {
+      "timestamp": "2026-03-31T21:56:42.894Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:56:42.895Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:56:42.896Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T21:56:56.828Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The test plan for Step 3 is well-structured and covers the essential validation scenarios. The implementation in `scheduler.ts` already has the `validateTaskFilesystem` method and integration logic in place, so the tests will validate the actual behavior."
+    },
+    {
+      "timestamp": "2026-03-31T22:02:34.970Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:02:45.052Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

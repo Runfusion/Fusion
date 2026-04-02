@@ -1,0 +1,124 @@
+{
+  "id": "KB-113",
+  "description": "Fix the layout of the edit view in the spec editor on a card\n\n(Duplicated from KB-083)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add CSS for Spec Tab Layout",
+      "status": "done"
+    },
+    {
+      "name": "Update TaskDetailModal Spec Tab",
+      "status": "done"
+    },
+    {
+      "name": "Verify SpecEditor CSS is Correct",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:03:44.325Z",
+      "action": "Duplicated from KB-083"
+    },
+    {
+      "timestamp": "2026-03-30T06:04:45.803Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T06:05:09.834Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and addresses a focused UI layout issue. The mission is clear, steps have concrete outcomes, and the file scope is accurate. Testing requirements are comprehensive with both automated and manual verification steps. The CSS approach described will resolve the flex container nesting issue preventing the textarea from filling available height."
+    },
+    {
+      "timestamp": "2026-03-30T14:40:36.587Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rosy-grove"
+    },
+    {
+      "timestamp": "2026-03-30T14:40:36.588Z",
+      "action": "Step 0 (Add CSS for Spec Tab Layout) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:40:38.624Z",
+      "action": "Step 0 (Add CSS for Spec Tab Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:40:46.792Z",
+      "action": "Step 0 (Add CSS for Spec Tab Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:40:49.680Z",
+      "action": "plan review requested for Step 1 (Add CSS for Spec Tab Layout)"
+    },
+    {
+      "timestamp": "2026-03-30T14:41:03.374Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause: the `.detail-section` wrapper in TaskDetailModal.tsx lacks flex constraints, preventing the SpecEditor from filling available vertical space. The proposed `.detail-section--spec` class with `display: flex; flex-direction: column; flex: 1; min-height: 0` is the correct CSS solution for flexbox filling behavior."
+    },
+    {
+      "timestamp": "2026-03-30T14:41:04.273Z",
+      "action": "Step 1 (Update TaskDetailModal Spec Tab) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:41:21.686Z",
+      "action": "Step 1 (Update TaskDetailModal Spec Tab) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:41:23.670Z",
+      "action": "Step 2 (Verify SpecEditor CSS is Correct) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:41:23.671Z",
+      "action": "plan review requested for Step 2 (Update TaskDetailModal Spec Tab)"
+    },
+    {
+      "timestamp": "2026-03-30T14:41:32.244Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is straightforward and will achieve its stated outcomes. The worker needs to add the `detail-section--spec` class to the spec tab wrapper in TaskDetailModal.tsx. I note that the CSS for `.detail-section--spec` already exists in styles.css (lines 1325-1341), so Step 1 appears to already be complete in the current codebase."
+    },
+    {
+      "timestamp": "2026-03-30T14:41:38.006Z",
+      "action": "Step 2 (Verify SpecEditor CSS is Correct) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:41:39.194Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:41:45.467Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:41:45.469Z",
+      "action": "Step 3 verification complete - SpecEditor CSS is already correct",
+      "outcome": "All required flex styles are present, no changes needed"
+    },
+    {
+      "timestamp": "2026-03-30T14:41:47.480Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:43:20.443Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:43:30.921Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T14:43:42.078Z",
+  "createdAt": "2026-03-30T06:03:44.325Z",
+  "updatedAt": "2026-03-30T14:43:42.078Z",
+  "size": "S",
+  "reviewLevel": 1
+}

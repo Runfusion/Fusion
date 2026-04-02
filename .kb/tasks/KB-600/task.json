@@ -1,0 +1,99 @@
+{
+  "id": "KB-600",
+  "description": "Fix TypeScript errors in packages/engine/src/executor.test.ts - mockedGenerateWorktreeName and mockedFindWorktreeUser are not defined. These errors were introduced in KB-340 worktree recovery work and are blocking the engine package build.",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 4,
+  "summary": "Fixed TypeScript variable shadowing error in executor.test.ts by removing the duplicate `mockedGenerateWorktreeName` declaration at line 384. The variable was already declared at the top level (line 44), and the inner declaration inside the \"TaskExecutor worktree naming\" describe block was causing a shadowing error. Build and typecheck pass successfully.",
+  "createdAt": "2026-03-31T21:32:02.404Z",
+  "updatedAt": "2026-04-01T01:42:28.660Z",
+  "columnMovedAt": "2026-04-01T01:42:28.660Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze the Issue",
+      "status": "done"
+    },
+    {
+      "name": "Fix the Shadowing Issue",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:32:02.404Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:33:10.898Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:33:24.917Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a real TypeScript variable shadowing issue in `executor.test.ts`. The duplicate `mockedGenerateWorktreeName` declaration at line 384 shadows the top-level declaration at line 44. The steps are concrete and verifiable, file scope is correct, and the sizing (S) with review level 0 is appropriate for this straightforward test fix."
+    },
+    {
+      "timestamp": "2026-04-01T01:37:36.265Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/lunar-frost"
+    },
+    {
+      "timestamp": "2026-04-01T01:37:36.267Z",
+      "action": "Step 0 (Analyze the Issue) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T01:37:50.064Z",
+      "action": "Step 0 (Analyze the Issue) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:37:53.621Z",
+      "action": "Step 0 (Analyze the Issue) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:37:53.622Z",
+      "action": "Step 1 (Fix the Shadowing Issue) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:37:56.730Z",
+      "action": "Step 1 (Fix the Shadowing Issue) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:37:56.735Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:37:56.738Z",
+      "action": "Removed duplicate mockedGenerateWorktreeName declaration at line 384",
+      "outcome": "TypeScript shadowing error should be resolved"
+    },
+    {
+      "timestamp": "2026-04-01T01:41:25.882Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:41:25.883Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:41:25.884Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:41:25.884Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:41:25.885Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

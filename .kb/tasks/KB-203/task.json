@@ -1,0 +1,125 @@
+{
+  "id": "KB-203",
+  "description": "Add CLI git operations for task workflows: `kb git status`, `kb git push`, `kb git pull`, `kb git fetch`.\n\n## Background\nThe dashboard provides git operations via /api/git/* endpoints. Adding these to CLI enables convenient git workflows when working with kb tasks.\n\n## Acceptance Criteria\n- [ ] Add `kb git` subcommand group to `packages/cli/src/bin.ts`\n- [ ] Create new `packages/cli/src/commands/git.ts` file\n- [ ] Implement commands:\n  - `kb git status` - show current branch, commit, dirty state, ahead/behind\n  - `kb git push` - push current branch\n  - `kb git pull` - pull current branch\n  - `kb git fetch [remote]` - fetch from remote (default: origin)\n- [ ] Display formatted output for status (branch, commit short hash, dirty indicator, ahead/behind counts)\n- [ ] Handle errors gracefully: not a git repo, auth failures, merge conflicts\n- [ ] Add confirmation for destructive operations where appropriate\n- [ ] Update CLI help text with git command section\n\n## Technical Notes\n- Dashboard git functions in `packages/dashboard/src/routes.ts` can be used as reference\n- Use `execSync` for git commands (consistent with dashboard implementation)\n- Status output format should match dashboard's `getGitStatus()` structure\n- Push/pull/fetch should use current working directory (project root)\n\n## Parent Task\nThis subtask was identified as part of KB-182 dashboard vs CLI gap analysis.",
+  "column": "done",
+  "dependencies": [
+    "KB-182"
+  ],
+  "steps": [
+    {
+      "name": "Create Git Command Module",
+      "status": "done"
+    },
+    {
+      "name": "Add CLI Routing and Help Text",
+      "status": "done"
+    },
+    {
+      "name": "Implement Status Command",
+      "status": "done"
+    },
+    {
+      "name": "Implement Push/Pull/Fetch Commands",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T19:12:16.037Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T19:16:36.416Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:16:51.952Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, actionable specification for adding CLI git operations. The mission is clear, steps have concrete verifiable outcomes, and the spec correctly references existing patterns from the dashboard's git implementation and CLI command structure. The file scope is accurate, testing requirements are appropriate, and security considerations (confirmation prompts, input validation) are addressed."
+    },
+    {
+      "timestamp": "2026-03-31T00:40:40.401Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/cool-mesa"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:40.402Z",
+      "action": "Step 0 (Create Git Command Module) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:42.519Z",
+      "action": "Step 0 (Create Git Command Module) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:47.049Z",
+      "action": "Step 0 (Create Git Command Module) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:47.050Z",
+      "action": "Step 1 (Add CLI Routing and Help Text) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:48.204Z",
+      "action": "plan review requested for Step 1 (Create Git Command Module)"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:03.637Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the core functions to port from the dashboard implementation and aligns with existing CLI patterns. The approach uses `execSync` consistently with the dashboard, follows established module structure, and includes appropriate testing requirements. Minor wording clarification suggested but not blocking."
+    },
+    {
+      "timestamp": "2026-03-31T00:41:29.917Z",
+      "action": "Step 1 (Add CLI Routing and Help Text) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:29.919Z",
+      "action": "Step 2 (Implement Status Command) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:33.919Z",
+      "action": "plan review requested for Step 2 (Add CLI Routing and Help Text)"
+    },
+    {
+      "timestamp": "2026-03-31T00:42:00.605Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies all necessary changes to `packages/cli/src/bin.ts` to integrate the git commands. The approach follows established CLI patterns for dynamic imports, nested switch statements for subcommands, and help text formatting. The step will achieve its stated outcome of routing git commands through the CLI."
+    },
+    {
+      "timestamp": "2026-03-31T00:44:07.014Z",
+      "action": "Step 2 (Implement Status Command) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:44:07.015Z",
+      "action": "Step 3 (Implement Push/Pull/Fetch Commands) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:44:07.015Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:44:07.016Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:46:40.526Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:46:44.019Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:46:57.549Z",
+  "createdAt": "2026-03-30T19:12:16.037Z",
+  "updatedAt": "2026-03-31T00:46:57.549Z",
+  "size": "M",
+  "reviewLevel": 2
+}

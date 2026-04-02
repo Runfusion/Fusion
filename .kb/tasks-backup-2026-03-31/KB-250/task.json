@@ -1,0 +1,105 @@
+{
+  "id": "KB-250",
+  "title": "In list view reduce the space between the id and",
+  "description": "In list view reduce the space between the id and title and make it all fit on mobile width wise without horizontal scrolling if possible when some columns are hidden",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Reduce ID/Title Spacing",
+      "status": "done"
+    },
+    {
+      "name": "Fix Mobile Horizontal Scrolling",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T03:04:10.400Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T03:04:34.925Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T03:04:45.349Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and well-structured. All file references exist and contain the described CSS patterns. The mission is clear, steps have concrete verifiable outcomes, and the file scope is correctly limited to pure CSS changes. Review Level 0 (None) is appropriate for this low-risk visual adjustment task."
+    },
+    {
+      "timestamp": "2026-03-31T03:04:58.510Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-frost"
+    },
+    {
+      "timestamp": "2026-03-31T03:04:58.510Z",
+      "action": "Step 0 (Reduce ID/Title Spacing) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:08.448Z",
+      "action": "Step 0 (Reduce ID/Title Spacing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:09.313Z",
+      "action": "Step 0 (Reduce ID/Title Spacing) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:11.393Z",
+      "action": "Step 1 (Fix Mobile Horizontal Scrolling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:24.154Z",
+      "action": "Step 1 (Fix Mobile Horizontal Scrolling) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:24.156Z",
+      "action": "Step 1 complete: Reduced spacing between ID and title columns by adding reduced right padding (8px instead of 16px) to .list-cell-id and matching header cell padding",
+      "outcome": "ID column now has reduced right padding (8px) while maintaining left padding (16px). Header cell matches with same padding reduction."
+    },
+    {
+      "timestamp": "2026-03-31T03:05:25.151Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:31.021Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:31.023Z",
+      "action": "Step 2 complete: Changed mobile media query min-width from 800px to auto",
+      "outcome": "Table now adapts to available width when columns are hidden on mobile (<768px), eliminating horizontal scrolling"
+    },
+    {
+      "timestamp": "2026-03-31T03:05:33.646Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:09.952Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:09.954Z",
+      "action": "Step 3 complete: Tests and build verified",
+      "outcome": "Dashboard build passes. 2 pre-existing test failures unrelated to ListView CSS changes (mobile planning input and board rendering). All 1779 tests run."
+    },
+    {
+      "timestamp": "2026-03-31T03:07:15.289Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T03:07:24.990Z",
+  "createdAt": "2026-03-31T03:04:10.400Z",
+  "updatedAt": "2026-03-31T03:07:24.990Z",
+  "size": "S",
+  "reviewLevel": 0
+}

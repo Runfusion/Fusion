@@ -1,0 +1,33 @@
+{
+  "id": "KB-643",
+  "title": "Refinement: KB-292",
+  "description": "Need a way to run these scripts from the dashboard\n\nRefines: KB-292",
+  "column": "todo",
+  "status": "queued",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-618",
+  "createdAt": "2026-04-01T01:54:15.047Z",
+  "updatedAt": "2026-04-01T03:17:36.845Z",
+  "columnMovedAt": "2026-04-01T01:58:47.407Z",
+  "dependencies": [
+    "KB-292"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T01:54:15.047Z",
+      "action": "Created as refinement of KB-292"
+    },
+    {
+      "timestamp": "2026-04-01T01:58:16.870Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T01:58:44.707Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification that correctly identifies existing patterns and follows project conventions. All referenced files exist at the specified paths, and the proposed API/UI patterns align with established dashboard conventions (WorkflowStepManager, TerminalModal). The testing requirements demand real automated tests with proper assertions. Minor clarifications would help but are not blocking."
+    }
+  ]
+}

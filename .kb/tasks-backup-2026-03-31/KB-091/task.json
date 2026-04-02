@@ -1,0 +1,114 @@
+{
+  "id": "KB-091",
+  "title": "Reverse Agent Log Order on Dashboard Card Details",
+  "description": "Verify that the agent log display on dashboard card details shows the latest entries at the top (reverse chronological order). The Agent Log tab in the Task Detail Modal should display streaming agent logs with newest entries first. This improves UX by showing the most recent activity immediately without scrolling.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Verify Reverse Chronological Order",
+      "status": "done"
+    },
+    {
+      "name": "Add Auto-Scroll to Latest Entries",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T18:46:24.117Z",
+      "action": "Task recovered from orphaned directory"
+    },
+    {
+      "timestamp": "2026-03-31T18:46:24.117Z",
+      "action": "Recovery reason: PROMPT.md found agent.log found"
+    },
+    {
+      "timestamp": "2026-03-31T18:49:05.938Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T18:49:21.578Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is clear, well-structured, and correctly identifies the existing reverse chronological order implementation. The task appropriately adds auto-scroll behavior to enhance UX during log streaming. Minor corrections needed regarding changeset requirements and scroll threshold specificity."
+    },
+    {
+      "timestamp": "2026-03-31T18:49:29.697Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-creek"
+    },
+    {
+      "timestamp": "2026-03-31T18:49:29.697Z",
+      "action": "Step 0 (Verify Reverse Chronological Order) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T18:49:35.679Z",
+      "action": "Step 0 (Verify Reverse Chronological Order) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:49:35.682Z",
+      "action": "Step 1 (Add Auto-Scroll to Latest Entries) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:50:11.597Z",
+      "action": "Step 1 (Verify Reverse Chronological Order) - Confirmed",
+      "outcome": "AgentLogViewer correctly implements reverse order with `[...entries].reverse()` on line 36. JSDoc comment already accurate. All 16 tests pass including tests for reverse order display."
+    },
+    {
+      "timestamp": "2026-03-31T18:50:11.598Z",
+      "action": "Step 0 (Verify Reverse Chronological Order) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:50:13.468Z",
+      "action": "Step 1 (Add Auto-Scroll to Latest Entries) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:50:37.475Z",
+      "action": "Step 1 (Add Auto-Scroll to Latest Entries) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:50:37.477Z",
+      "action": "Step 2 (Add Auto-Scroll to Latest Entries) - Complete",
+      "outcome": "Added auto-scroll behavior to AgentLogViewer. Uses useRef for container reference, useEffect to scroll to top when new entries arrive, and only auto-scrolls when user is already near the top (within 50px). Added 2 tests for auto-scroll behavior - all 18 tests pass."
+    },
+    {
+      "timestamp": "2026-03-31T18:50:40.816Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:50:58.188Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:50:58.191Z",
+      "action": "Step 3 (Testing & Verification) - Complete",
+      "outcome": "All AgentLogViewer tests pass (18/18). Build passes successfully. Pre-existing Header.test.tsx failures are unrelated to this task."
+    },
+    {
+      "timestamp": "2026-03-31T18:50:59.675Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:51:03.884Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:51:08.854Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:52:05.884Z",
+  "createdAt": "2026-03-30T00:00:00.000Z",
+  "updatedAt": "2026-03-31T18:52:05.884Z",
+  "size": "S",
+  "reviewLevel": 0,
+  "summary": "Successfully implemented and verified reverse chronological order agent log display with auto-scroll behavior. The AgentLogViewer component now:\n\n1. **Reverse order confirmed** - Entries display newest-first using `[...entries].reverse()` as verified by existing tests\n2. **Auto-scroll added** - Uses `useRef` and `useEffect` to scroll to top when new entries stream in, but only when user is already near the top (within 50px) to avoid interrupting scrollback\n3. **Tests added** - 2 new tests verify auto-scroll behavior (18 total tests passing)\n4. **Documentation updated** - JSDoc now documents the auto-scroll behavior\n\nAll 18 AgentLogViewer tests pass and the build succeeds."
+}

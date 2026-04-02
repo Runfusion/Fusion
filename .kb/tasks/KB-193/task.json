@@ -1,0 +1,88 @@
+{
+  "id": "KB-193",
+  "description": "for cards in progress, expand the steps disclosure (and keep it colapsed for other columns)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:15:35.111Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:20:22.937Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:20:33.707Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is complete, accurate, and actionable. The referenced files exist with the expected code patterns. The change is well-scoped, the testing requirements are comprehensive, and the step outcomes are concrete and verifiable. The \"Do NOT\" section properly constrains the scope."
+    },
+    {
+      "timestamp": "2026-03-30T19:42:45.486Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/light-raven"
+    },
+    {
+      "timestamp": "2026-03-30T19:42:45.487Z",
+      "action": "Step 0 (Implementation) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:42:54.261Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:04.629Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:05.559Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:13.206Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:19.176Z",
+      "action": "Step 1: Implementation complete",
+      "outcome": "Modified TaskCard.tsx to initialize showSteps based on task.column === 'in-progress'. Committed as aa9b0f4."
+    },
+    {
+      "timestamp": "2026-03-30T19:49:19.178Z",
+      "action": "Step 2: Testing complete",
+      "outcome": "Updated existing tests to use non-in-progress columns, added 7 new tests for auto-expand behavior. 126 tests passing. Pre-existing memoization test failure confirmed unrelated. Committed as 152bfff."
+    },
+    {
+      "timestamp": "2026-03-30T19:49:19.180Z",
+      "action": "Step 3: Documentation check",
+      "outcome": "No documentation updates required - self-documenting UI behavior change. README does not have specific card step toggle section to update."
+    },
+    {
+      "timestamp": "2026-03-30T19:49:20.010Z",
+      "action": "Step 0 (Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:20.012Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:49:31.438Z",
+  "createdAt": "2026-03-30T18:15:35.111Z",
+  "updatedAt": "2026-03-30T19:49:31.438Z",
+  "size": "S",
+  "reviewLevel": 0
+}

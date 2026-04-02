@@ -1,0 +1,74 @@
+{
+  "id": "KB-221",
+  "title": "change the binary from kb to fn for fusion",
+  "description": "change the binary from \"kb\" to \"fn\" for fusion.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Binary Name in package.json",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:13:24.085Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:18:34.131Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:18:43.567Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate for a simple binary rename task. The mission is clear, file references are verified correct, and steps have concrete verifiable outcomes. The review level of 0 (None) is appropriate given the single-line configuration change with zero blast radius."
+    },
+    {
+      "timestamp": "2026-03-31T01:13:15.425Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rusty-grove"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:15.425Z",
+      "action": "Step 0 (Update Binary Name in package.json) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:18.501Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:23.018Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:24.054Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:14:25.263Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:14:31.721Z",
+      "action": "Step 0 (Update Binary Name in package.json) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:14:31.722Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:16:04.929Z",
+  "createdAt": "2026-03-31T00:13:24.085Z",
+  "updatedAt": "2026-03-31T01:16:04.929Z",
+  "size": "S",
+  "reviewLevel": 0
+}

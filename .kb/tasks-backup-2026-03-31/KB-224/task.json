@@ -1,0 +1,130 @@
+{
+  "id": "KB-224",
+  "title": "combine the definition and spec tabs on a card",
+  "description": "combine the \"definition\" and \"spec\" tabs on a card detial into one - just add an \"edit\" button to the definition tab that brings in the view that is in spec when you hit edit. We don't need this as two separate tabs, but make sure the functionality is there. Also make sure the \"refine with ai\" part works",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove Spec Tab and Update Tab State",
+      "status": "done"
+    },
+    {
+      "name": "Integrate Edit Mode into Definition Tab",
+      "status": "done"
+    },
+    {
+      "name": "Update Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:17:06.002Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:19:57.404Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:20:10.587Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes the current state of the codebase and provides a clear, actionable plan for consolidating the Definition and Spec tabs. The file references are correct, the steps have verifiable outcomes, and testing requirements are appropriate. The approach of integrating SpecEditor's functionality into the Definition tab while preserving the existing component is sound."
+    },
+    {
+      "timestamp": "2026-03-31T01:25:33.467Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fresh-eagle"
+    },
+    {
+      "timestamp": "2026-03-31T01:25:33.468Z",
+      "action": "Step 0 (Remove Spec Tab and Update Tab State) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:25:35.645Z",
+      "action": "Step 0 (Remove Spec Tab and Update Tab State) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:25:50.433Z",
+      "action": "Step 0 (Remove Spec Tab and Update Tab State) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:25:50.433Z",
+      "action": "Step 1 (Integrate Edit Mode into Definition Tab) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:25:50.433Z",
+      "action": "plan review requested for Step 1 (Remove Spec Tab and Update Tab State)"
+    },
+    {
+      "timestamp": "2026-03-31T01:26:01.574Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is straightforward and correctly identifies the minimal changes needed to remove the Spec tab from TaskDetailModal. The four checkboxes cover all necessary code modifications: removing the tab button, updating the state type, removing the conditional rendering block, and checking for remaining references. The approach is safe and reversible."
+    },
+    {
+      "timestamp": "2026-03-31T01:26:21.911Z",
+      "action": "Step 1 (Integrate Edit Mode into Definition Tab) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:26:21.912Z",
+      "action": "Step 2 (Update Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:26:21.912Z",
+      "action": "plan review requested for Step 2 (Integrate Edit Mode into Definition Tab)"
+    },
+    {
+      "timestamp": "2026-03-31T01:26:37.148Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and will achieve the stated outcomes. The approach correctly reuses existing handlers (`handleSaveSpec`, `handleRequestSpecRevision`) and leverages the SpecEditor component's UI patterns while integrating them into the Definition tab. The checkboxes cover all required functionality including edit mode state, keyboard shortcuts, and the AI revision section."
+    },
+    {
+      "timestamp": "2026-03-31T01:27:16.486Z",
+      "action": "Step 2 (Update Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:27:16.486Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:27:16.487Z",
+      "action": "plan review requested for Step 3 (Update Styles)"
+    },
+    {
+      "timestamp": "2026-03-31T01:27:50.627Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The Step 3 plan provides sufficient guidance for the worker to complete the styling updates. The integration code in TaskDetailModal.tsx already uses CSS classes (`spec-editor-edit-mode`, `spec-editor-actions-row`) that require styling to match the standalone SpecEditor appearance. The vague \"add any needed CSS classes\" checkbox is adequate since the specific gaps will be obvious during implementation, and the build/test steps in Step 4 will catch any visual regressions."
+    },
+    {
+      "timestamp": "2026-03-31T01:37:17.330Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:17.331Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:37:23.003Z",
+      "action": "Combined Definition and Spec tabs into a single unified experience",
+      "outcome": "Successfully removed the redundant Spec tab and integrated its editing functionality into the Definition tab. Users can now click an \"Edit\" button in the Definition tab to access the full spec editing interface including the \"Ask AI to Revise\" functionality. All 110 TaskDetailModal tests pass."
+    },
+    {
+      "timestamp": "2026-03-31T01:37:23.004Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:37:46.063Z",
+  "createdAt": "2026-03-31T00:17:06.002Z",
+  "updatedAt": "2026-03-31T01:37:46.063Z",
+  "size": "S",
+  "reviewLevel": 1
+}

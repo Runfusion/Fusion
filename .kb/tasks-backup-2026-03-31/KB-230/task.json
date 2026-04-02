@@ -1,0 +1,131 @@
+{
+  "id": "KB-230",
+  "title": "Use the real provider icons in the quota dropdown",
+  "description": "Use the real provider icons in the quota dropdown and modal dropdowns",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add ProviderIcon import and trigger icon",
+      "status": "done"
+    },
+    {
+      "name": "Add provider icons to dropdown groups",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:22:57.475Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:23:40.228Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:23:49.421Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately describes a focused UI enhancement. All referenced files exist, line numbers match the actual code (the optgroup div is indeed at line 209), and the implementation pattern from `CustomModelDropdown` is correctly quoted. The mission is clear, steps have verifiable outcomes, and the scope is appropriately constrained."
+    },
+    {
+      "timestamp": "2026-03-31T00:35:34.943Z",
+      "action": "Steering comment added",
+      "outcome": "by user"
+    },
+    {
+      "timestamp": "2026-03-31T01:41:18.599Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-sage"
+    },
+    {
+      "timestamp": "2026-03-31T01:41:18.599Z",
+      "action": "Step 0 (Add ProviderIcon import and trigger icon) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:41:23.078Z",
+      "action": "Step 0 (Add ProviderIcon import and trigger icon) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:41:26.974Z",
+      "action": "Preflight complete: Clean worktree on kb/kb-230 branch. Baseline commit: cd8a1e9"
+    },
+    {
+      "timestamp": "2026-03-31T01:42:00.078Z",
+      "action": "Step 0 (Add ProviderIcon import and trigger icon) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:42:00.078Z",
+      "action": "Step 1 (Add provider icons to dropdown groups) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:42:00.079Z",
+      "action": "Found official provider icons from SimpleIcons and Iconify: Anthropic, OpenAI, Google Gemini, and Ollama logos are all available.",
+      "outcome": "Proceeding with Step 1 - updating ProviderIcon with real icons and then NewTaskModal"
+    },
+    {
+      "timestamp": "2026-03-31T01:42:02.613Z",
+      "action": "plan review requested for Step 1 (Add ProviderIcon import and trigger icon)"
+    },
+    {
+      "timestamp": "2026-03-31T01:42:12.739Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes to add provider icons to the `ModelCombobox` trigger button in `NewTaskModal.tsx`. The approach follows the established pattern from `CustomModelDropdown.tsx` and is appropriately scoped for a single step."
+    },
+    {
+      "timestamp": "2026-03-31T01:43:04.620Z",
+      "action": "code review requested for Step 1 (Add ProviderIcon import and trigger icon)"
+    },
+    {
+      "timestamp": "2026-03-31T01:43:31.558Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds ProviderIcon to the ModelCombobox trigger button following the exact pattern from CustomModelDropdown. The code is clean, consistent with existing patterns, and the CSS styling was already in place. Note: The worker has also implemented Step 2 (optgroup icons) in this same commit, which also follows the reference pattern correctly."
+    },
+    {
+      "timestamp": "2026-03-31T01:43:32.882Z",
+      "action": "Step 1 (Add provider icons to dropdown groups) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:43:32.883Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:43:32.884Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:45:31.230Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:45:31.233Z",
+      "action": "Step 3 (Testing) and Step 4 (Documentation) complete. Build passes successfully. Test failures are pre-existing issues unrelated to icon changes.",
+      "outcome": "NewTaskModal now displays real provider icons from SimpleIcons/Iconify in trigger button and dropdown optgroup headers, matching CustomModelDropdown behavior."
+    },
+    {
+      "timestamp": "2026-03-31T01:45:32.038Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:45:43.827Z",
+  "createdAt": "2026-03-31T00:22:57.475Z",
+  "updatedAt": "2026-03-31T01:45:43.827Z",
+  "size": "S",
+  "reviewLevel": 2,
+  "steeringComments": [
+    {
+      "id": "1774917334943-pet45p",
+      "text": "use the actual provider icons - not just fake ones - get the icons from a source on the web, I want them to be exact",
+      "createdAt": "2026-03-31T00:35:34.943Z",
+      "author": "user"
+    }
+  ]
+}

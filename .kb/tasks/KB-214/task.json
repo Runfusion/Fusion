@@ -1,0 +1,123 @@
+{
+  "id": "KB-214",
+  "title": "scheduled task dialog shows this toast when it is",
+  "description": "scheduled task dialog shows this toast when it is displayed - Unexpected token '<', \"<!doctype \"... is not valid JSON",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix API Error Handling",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:02:45.261Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:06:27.764Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:06:44.652Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-scoped, actionable bug fix specification. The mission clearly identifies the root cause (blind JSON parsing in `api()` function), provides concrete implementation guidance, and requires proper test coverage. The review level 2 and size S are appropriately calibrated for this isolated API layer fix."
+    },
+    {
+      "timestamp": "2026-03-31T01:49:03.726Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/coral-trout"
+    },
+    {
+      "timestamp": "2026-03-31T01:49:03.727Z",
+      "action": "Step 0 (Fix API Error Handling) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:49:08.471Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:49:08.472Z",
+      "action": "plan review requested for Step 1 (Fix API Error Handling)"
+    },
+    {
+      "timestamp": "2026-03-31T01:49:24.002Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the bug in `packages/dashboard/app/api.ts:19` where `res.json()` is called unconditionally, causing cryptic JSON parse errors when the server returns HTML. The approach to check content-type before parsing and provide meaningful error messages is sound and follows HTTP best practices. The implementation guidance is specific and actionable."
+    },
+    {
+      "timestamp": "2026-03-31T01:49:31.242Z",
+      "action": "code review requested for Step 1 (Fix API Error Handling)"
+    },
+    {
+      "timestamp": "2026-03-31T01:50:12.422Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The `api()` function implementation correctly addresses the core issue: it now checks content-type before JSON parsing and provides meaningful error messages for non-JSON responses. However, **the existing test file has a broken mock helper** that doesn't provide the `headers.get()` or `text()` methods required by the new implementation. This will cause all existing tests to fail. Additionally, the new error handling logic contains an unnecessary complex catch block that could be simplified."
+    },
+    {
+      "timestamp": "2026-03-31T01:50:24.034Z",
+      "action": "code review requested for Step 1 (Fix API Error Handling)"
+    },
+    {
+      "timestamp": "2026-03-31T01:50:39.388Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The `api()` function has been correctly refactored to check response content-type before JSON parsing, preventing cryptic parse errors when the server returns HTML. The implementation handles both error and success non-JSON responses gracefully with meaningful error messages and preserves existing JSON response handling."
+    },
+    {
+      "timestamp": "2026-03-31T01:50:40.596Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:50:40.598Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:50:40.599Z",
+      "action": "plan review requested for Step 2 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T01:50:57.365Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan's approach will achieve the stated outcomes. The existing test infrastructure (vitest + jsdom) is already configured, and `api.test.ts` exists with a proven `mockFetchResponse` helper that supports content-type mocking. However, the plan needs minor clarification since the test file already exists and the `api()` function is not currently exported."
+    },
+    {
+      "timestamp": "2026-03-31T01:54:02.998Z",
+      "action": "code review requested for Step 2 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T01:54:19.585Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation includes comprehensive tests for the improved API error handling. The `api.test.ts` file covers all required test scenarios: happy path JSON parsing, non-JSON error responses with meaningful messages, JSON error field extraction, and edge cases like truncation and invalid JSON. The test file follows the existing project patterns and integrates cleanly with the established vitest setup."
+    },
+    {
+      "timestamp": "2026-03-31T01:54:20.533Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:54:30.511Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:54:30.512Z",
+      "action": "Step 0 (Fix API Error Handling) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:54:30.513Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:54:44.338Z",
+  "createdAt": "2026-03-31T00:02:45.261Z",
+  "updatedAt": "2026-03-31T01:54:44.338Z",
+  "size": "S",
+  "reviewLevel": 2
+}

@@ -1,0 +1,149 @@
+{
+  "id": "KB-268",
+  "title": "Add workflow step templates pre-defined common workflow steps",
+  "description": "Add workflow step templates — pre-defined common workflow steps (Documentation Review, QA Check, Security Audit) that can be added with one click instead of creating from scratch",
+  "column": "done",
+  "dependencies": [
+    "KB-218"
+  ],
+  "steps": [
+    {
+      "name": "Define Workflow Step Templates",
+      "status": "done"
+    },
+    {
+      "name": "Add Templates API Endpoint",
+      "status": "done"
+    },
+    {
+      "name": "Add Frontend API Functions",
+      "status": "done"
+    },
+    {
+      "name": "Add Templates UI to Workflow Step Manager",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T10:54:05.817Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T10:55:13.601Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T10:55:33.330Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification for adding Workflow Step Templates is well-structured, follows existing patterns, and builds correctly on the completed KB-218 infrastructure. The mission is clear, steps have verifiable outcomes, and the file scope accurately reflects where changes are needed. The review level (1 - Plan Only) and size (S) are appropriate for this additive feature."
+    },
+    {
+      "timestamp": "2026-03-31T13:03:58.767Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rosy-badger"
+    },
+    {
+      "timestamp": "2026-03-31T13:03:58.768Z",
+      "action": "Step 0 (Define Workflow Step Templates) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T13:04:09.620Z",
+      "action": "Step 0 (Define Workflow Step Templates) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:04:26.824Z",
+      "action": "Step 0 (Define Workflow Step Templates) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:04:26.827Z",
+      "action": "Step 1 (Add Templates API Endpoint) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:04:26.828Z",
+      "action": "Completed Step 0 - Preflight. Workflow step infrastructure from KB-218 is confirmed present. Starting Step 1 - Define Workflow Step Templates.",
+      "outcome": "Added WorkflowStepTemplate interface and WORKFLOW_STEP_TEMPLATES array with 5 built-in templates to packages/core/src/types.ts. Exported new types from index.ts."
+    },
+    {
+      "timestamp": "2026-03-31T13:04:29.714Z",
+      "action": "plan review requested for Step 2 (Add Templates API Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-31T13:04:47.207Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and achievable. The step correctly identifies the need for two new API endpoints (GET to list templates, POST to create from template) and appropriate test coverage. The planned implementation follows existing patterns established by the workflow step routes (lines 4516-4700 in routes.ts) and will integrate cleanly with the already-defined `WORKFLOW_STEP_TEMPLATES` constant (lines 100-220 in types.ts)."
+    },
+    {
+      "timestamp": "2026-03-31T13:05:27.468Z",
+      "action": "Step 1 (Add Templates API Endpoint) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:05:27.470Z",
+      "action": "Step 2 (Add Frontend API Functions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:05:27.471Z",
+      "action": "plan review requested for Step 3 (Add Frontend API Functions)"
+    },
+    {
+      "timestamp": "2026-03-31T13:05:35.900Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is straightforward and correctly follows the existing API patterns in the codebase. The `WorkflowStepTemplate` interface is already defined and exported from `@kb/core`, and the current `api.ts` has a clear section for workflow steps where these functions should be added."
+    },
+    {
+      "timestamp": "2026-03-31T13:05:43.405Z",
+      "action": "Step 2 (Add Frontend API Functions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:05:43.407Z",
+      "action": "Step 3 (Add Templates UI to Workflow Step Manager) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:05:43.410Z",
+      "action": "plan review requested for Step 4 (Add Templates UI to Workflow Step Manager)"
+    },
+    {
+      "timestamp": "2026-03-31T13:06:05.564Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 correctly identifies the key work needed: adding a templates section/tab to the WorkflowStepManager component, fetching templates on mount, displaying them as cards with icons/category badges, and handling creation with loading states and toasts. The approach follows the established patterns in the codebase and will integrate well with the already-implemented API layer."
+    },
+    {
+      "timestamp": "2026-03-31T13:06:42.155Z",
+      "action": "Step 3 (Add Templates UI to Workflow Step Manager) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:06:42.157Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:09:52.362Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:09:52.364Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:10:02.991Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:10:08.794Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T13:10:19.772Z",
+  "createdAt": "2026-03-31T10:54:05.817Z",
+  "updatedAt": "2026-03-31T13:10:19.772Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully implemented workflow step templates (KB-268). Added WorkflowStepTemplate interface and WORKFLOW_STEP_TEMPLATES array with 5 built-in templates (Documentation Review, QA Check, Security Audit, Performance Review, Accessibility Check) to packages/core/src/types.ts. Added GET /api/workflow-step-templates and POST /api/workflow-step-templates/:id/create API endpoints to packages/dashboard/src/routes.ts with full test coverage. Added frontend API functions fetchWorkflowStepTemplates() and createWorkflowStepFromTemplate() to packages/dashboard/app/api.ts. Enhanced WorkflowStepManager component with a Templates tab showing template cards with icons, category badges, and one-click Add functionality. Updated AGENTS.md documentation and created changeset file for the minor version bump."
+}

@@ -1,0 +1,32 @@
+{
+  "id": "KB-335",
+  "description": "After KB-330 completes, execute KB-333: rename environment variables from KB_* to FUSION_*",
+  "column": "todo",
+  "dependencies": [
+    "KB-330"
+  ],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:20:34.274Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:23:58.364Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:24:25.242Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is an exceptionally well-written specification for renaming environment variables from `KB_*` to `FUSION_*`. The spec demonstrates thorough codebase analysis with accurate file references, precise line-level mapping of all 11 environment variables, and comprehensive coverage across source files, tests, documentation, and changesets. The step breakdown is logical and the completion criteria are verifiable."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:24:28.936Z",
+  "createdAt": "2026-03-31T20:20:34.274Z",
+  "updatedAt": "2026-03-31T21:01:04.963Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued",
+  "blockedBy": "KB-313"
+}

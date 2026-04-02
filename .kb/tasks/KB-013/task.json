@@ -1,0 +1,138 @@
+{
+  "id": "KB-013",
+  "description": "add a view on the task detail card in the dashboard that shows a progress bar with the current step progress and hovering over it shows the detail of the step, maybe a segment bar",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Design Step Progress Component",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styling",
+      "status": "done"
+    },
+    {
+      "name": "Write Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T00:39:14.902Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T00:40:28.857Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T00:40:48.827Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a UI feature. The mission is clear, implementation details are precise, and all referenced files and patterns exist as documented. The step outcomes are concrete and verifiable, and the testing requirements demand real automated tests with specific assertions. The size (M) and review level (2) are appropriate for this scope of work."
+    },
+    {
+      "timestamp": "2026-03-30T00:53:10.649Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/brave-falcon"
+    },
+    {
+      "timestamp": "2026-03-30T00:53:10.650Z",
+      "action": "Step 0 (Design Step Progress Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T00:53:16.212Z",
+      "action": "Step 0 (Design Step Progress Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:53:17.455Z",
+      "action": "Step 0 (Design Step Progress Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:53:17.459Z",
+      "action": "Step 1 (Add CSS Styling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:53:20.277Z",
+      "action": "plan review requested for Step 1 (Design Step Progress Component)"
+    },
+    {
+      "timestamp": "2026-03-30T00:53:36.529Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and achievable. The approach correctly identifies the insertion point between Dependencies and Activity sections, uses the existing TaskStep type definitions, follows the established tooltip pattern from `.card-dep-badge`, and aligns with the card progress bar reference. The segmented progress bar design with color-coded statuses is appropriate for the dashboard's visual language."
+    },
+    {
+      "timestamp": "2026-03-30T00:53:53.873Z",
+      "action": "code review requested for Step 1 (Design Step Progress Component)"
+    },
+    {
+      "timestamp": "2026-03-30T00:54:15.689Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The step progress component implementation is **completely missing** from TaskDetailModal.tsx. While the component file was read, none of the required step progress UI elements specified in Step 1 have been added. The file still shows the original structure with Dependencies and Activity sections, but no step progress section between them."
+    },
+    {
+      "timestamp": "2026-03-30T00:54:20.482Z",
+      "action": "code review requested for Step 1 (Design Step Progress Component)"
+    },
+    {
+      "timestamp": "2026-03-30T00:54:41.090Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The step progress component is well-implemented in TaskDetailModal.tsx with correct placement between Dependencies and Activity sections. The CSS follows the existing tooltip pattern from `.card-dep-badge`, and the color mappings match the specification. The component properly handles all four status values and the empty steps edge case."
+    },
+    {
+      "timestamp": "2026-03-30T00:54:43.285Z",
+      "action": "Step 1 (Add CSS Styling) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:54:43.286Z",
+      "action": "Step 2 (Write Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:54:43.287Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:54:45.391Z",
+      "action": "plan review requested for Step 3 (Write Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T00:55:02.323Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The test plan for Step 3 is comprehensive and follows existing project patterns. The plan covers all functional requirements from the task specification: rendering behavior, empty states, segment counts, status colors, completion labeling, tooltip attributes, and tab-gated visibility. The eight test cases align well with the already-implemented component structure in `TaskDetailModal.tsx` (lines 336-354) and the existing CSS in `styles.css` (lines 626-684)."
+    },
+    {
+      "timestamp": "2026-03-30T00:55:55.906Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:55:55.907Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:56:47.183Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:56:48.959Z",
+      "action": "Step 5 (Documentation & Delivery) - No documentation updates needed as the UI feature is self-documenting",
+      "outcome": "Task KB-013 completed successfully"
+    },
+    {
+      "timestamp": "2026-03-30T00:56:48.960Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T00:57:27.586Z",
+  "createdAt": "2026-03-30T00:39:14.902Z",
+  "updatedAt": "2026-03-30T00:57:27.586Z",
+  "size": "M",
+  "reviewLevel": 2
+}

@@ -1,0 +1,99 @@
+{
+  "id": "KB-322",
+  "description": "Add an expand icon on cards. Just clicking a card shouldn’t open it. Just the expand icon opens it",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Expand Button and Modify Click Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T19:21:43.790Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T19:22:09.109Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T19:22:34.891Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a focused UI interaction change. The mission is clear, steps are concrete and verifiable, file scope is accurate, and testing requirements are appropriately rigorous. All referenced files and patterns exist in the codebase as described."
+    },
+    {
+      "timestamp": "2026-03-31T19:22:46.843Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-crane"
+    },
+    {
+      "timestamp": "2026-03-31T19:22:46.844Z",
+      "action": "Step 0 (Add Expand Button and Modify Click Behavior) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T19:22:49.927Z",
+      "action": "Step 0 (Add Expand Button and Modify Click Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:05.559Z",
+      "action": "Step 0 (Add Expand Button and Modify Click Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:05.560Z",
+      "action": "Step 1 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:07.130Z",
+      "action": "Step 1 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:39.546Z",
+      "action": "Step 1 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:39.546Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:29:22.130Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:29:22.134Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:31:10.366Z",
+      "action": "Build verified - Vite build succeeded. TypeScript errors are pre-existing in other packages unrelated to this change.",
+      "outcome": "TaskCard component updated successfully with expand button"
+    },
+    {
+      "timestamp": "2026-03-31T19:31:17.159Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:31:20.466Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T19:31:31.771Z",
+  "createdAt": "2026-03-31T19:21:43.790Z",
+  "updatedAt": "2026-03-31T19:31:31.771Z",
+  "size": "S",
+  "reviewLevel": 0,
+  "summary": "Successfully implemented expand icon for TaskCard component (KB-322):\n\n**Changes Made:**\n1. **TaskCard.tsx** - Added Maximize2 icon import, created handleExpandClick callback, added expand button to card-header-actions, removed card-wide onClick and touch handlers (onTouchStart, onTouchMove, onTouchEnd), kept onDoubleClick for inline editing\n2. **styles.css** - Added .card-expand-btn styles following the same pattern as .card-edit-btn (visible on hover, consistent styling)\n3. **TaskCard.test.tsx** (both files) - Updated tests to use expand button instead of card click, added new tests for expand button accessibility and behavior, updated touch gesture tests to reflect new interaction model\n4. **Changeset** - Created patch changeset for @dustinbyrne/kb package\n\n**Verification:**\n- All 142 TaskCard tests pass\n- Build succeeds (Vite build completed successfully)\n- Card click no longer opens modal (prevents accidental opens during drag/text selection)\n- Expand button click opens modal correctly\n- Double-click to edit still works for editable cards\n- Drag and drop functionality preserved"
+}

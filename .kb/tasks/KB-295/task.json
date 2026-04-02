@@ -1,0 +1,183 @@
+{
+  "id": "KB-295",
+  "description": "Add a way to star a model as a favorite so it appears top of model lists",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Core Types and Defaults",
+      "status": "done"
+    },
+    {
+      "name": "Add Backend API Endpoints",
+      "status": "done"
+    },
+    {
+      "name": "Add Frontend API Functions",
+      "status": "done"
+    },
+    {
+      "name": "Update CustomModelDropdown Component",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styling",
+      "status": "done"
+    },
+    {
+      "name": "Integrate in ModelSelectorTab",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:30:14.154Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T16:38:03.245Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:38:23.289Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a UI enhancement feature. The mission is clear, steps have concrete verifiable outcomes, file scope is accurate, and testing requirements are explicit. All referenced files exist and the patterns described align with the existing codebase. The review level of 1 (Plan Only) is appropriate for this limited blast-radius feature."
+    },
+    {
+      "timestamp": "2026-03-31T16:52:26.807Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pale-grove"
+    },
+    {
+      "timestamp": "2026-03-31T16:52:26.807Z",
+      "action": "Step 0 (Update Core Types and Defaults) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T16:52:28.167Z",
+      "action": "Step 0 (Update Core Types and Defaults) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:52:36.275Z",
+      "action": "Step 0 (Update Core Types and Defaults) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:52:38.005Z",
+      "action": "Step 1 (Add Backend API Endpoints) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:52:38.006Z",
+      "action": "plan review requested for Step 1 (Update Core Types and Defaults)"
+    },
+    {
+      "timestamp": "2026-03-31T16:52:45.971Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the three locations in `packages/core/src/types.ts` that need modification. The approach follows the established pattern for global settings (optional field in interface, undefined in defaults, key in GLOBAL_SETTINGS_KEYS). The `favoriteModels` array format `\"provider/modelId\"` is sensible and consistent with how models are identified elsewhere in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T16:53:17.754Z",
+      "action": "Step 1 (Add Backend API Endpoints) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:53:18.942Z",
+      "action": "Step 2 (Add Frontend API Functions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:53:18.943Z",
+      "action": "plan review requested for Step 2 (Add Backend API Endpoints)"
+    },
+    {
+      "timestamp": "2026-03-31T16:53:44.070Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and will achieve its stated outcomes. The three endpoints (`GET`, `POST`, `DELETE /api/models/favorites`) follow REST conventions, the validation requirements are clear, and the response formats are consistent with the rest of the API. I note that Step 1 appears to already be complete in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T16:54:00.061Z",
+      "action": "Step 2 (Add Frontend API Functions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:54:01.340Z",
+      "action": "Step 3 (Update CustomModelDropdown Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:54:01.341Z",
+      "action": "plan review requested for Step 3 (Add Frontend API Functions)"
+    },
+    {
+      "timestamp": "2026-03-31T16:54:25.385Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan structure is sound but contains a **return type mismatch** between the frontend API functions and the backend endpoint responses. The backend returns `{ favorites: string[] }` objects, but the plan specifies `Promise<string[]>` directly without unwrapping. This needs correction in both implementation guidance and test expectations."
+    },
+    {
+      "timestamp": "2026-03-31T16:54:45.989Z",
+      "action": "Step 3 (Update CustomModelDropdown Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:54:47.274Z",
+      "action": "Step 4 (Add CSS Styling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:54:47.275Z",
+      "action": "plan review requested for Step 4 (Update CustomModelDropdown Component)"
+    },
+    {
+      "timestamp": "2026-03-31T16:55:03.773Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is solid and will achieve the stated outcomes. The new props (`favoriteModels`, `onToggleFavorite`, `showFavorites`) are well-designed, the sorting strategy (favorites first alphabetically, then provider groups) makes UX sense, and the test ID attributes will enable proper test coverage. The keyboard navigation consideration is correctly flagged as requiring attention."
+    },
+    {
+      "timestamp": "2026-03-31T16:55:33.441Z",
+      "action": "Step 4 (Add CSS Styling) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:55:34.685Z",
+      "action": "Step 5 (Integrate in ModelSelectorTab) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:55:34.687Z",
+      "action": "plan review requested for Step 5 (Add CSS Styling)"
+    },
+    {
+      "timestamp": "2026-03-31T16:55:54.388Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The plan structure is sound, but it contains **incorrect CSS variable names** that don't exist in the codebase and will cause styling to fail silently. The plan uses `--kb-*` prefixed variables (`--kb-accent`, `--kb-text-muted`, `--kb-border`) when the actual codebase uses unprefixed variables (`--text-muted`, `--triage`, `--border`). Additionally, there are layout and accessibility gaps in the proposed CSS."
+    },
+    {
+      "timestamp": "2026-03-31T16:56:04.583Z",
+      "action": "Step 5 (Integrate in ModelSelectorTab) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:56:07.042Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:56:27.756Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:56:29.217Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:04:29.992Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:05:14.722Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T17:06:21.101Z",
+  "createdAt": "2026-03-31T16:30:14.154Z",
+  "updatedAt": "2026-03-31T17:06:21.101Z",
+  "size": "M",
+  "reviewLevel": 1,
+  "summary": "Successfully implemented the Favorite Models feature (KB-295). Added `favoriteModels` field to GlobalSettings in the core types, created three new API endpoints (GET/POST/DELETE /api/models/favorites), implemented frontend API functions with proper error handling, updated CustomModelDropdown with star buttons and favorites section, added CSS styling for the favorite buttons, integrated favorites support in ModelSelectorTab with toast notifications, and added comprehensive tests. All 332 core tests and 267 dashboard routes tests pass. Updated AGENTS.md documentation and created a minor changeset for the new feature."
+}

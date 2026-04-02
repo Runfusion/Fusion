@@ -1,0 +1,262 @@
+{
+  "id": "KB-277",
+  "title": "The git panel should have a way to manage remotes",
+  "description": "The git panel should have a way to manage remotes",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Backend API Endpoints",
+      "status": "done"
+    },
+    {
+      "name": "Frontend API Functions",
+      "status": "done"
+    },
+    {
+      "name": "Enhanced RemotesPanel UI",
+      "status": "done"
+    },
+    {
+      "name": "Styling",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T14:06:24.524Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T14:07:56.578Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:17.491Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and comprehensive. After reviewing the referenced source files, I can confirm all paths exist, line numbers are reasonably accurate, and the proposed approach follows established patterns in the codebase. The spec correctly identifies the `isValidBranchName` validation pattern and follows the existing GitManagerModal component structure."
+    },
+    {
+      "timestamp": "2026-03-31T14:08:33.686Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fast-petal"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:33.686Z",
+      "action": "Step 0 (Backend API Endpoints) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:36.305Z",
+      "action": "Step 0 (Backend API Endpoints) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:44.059Z",
+      "action": "Step 0 (Backend API Endpoints) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:44.061Z",
+      "action": "Step 1 (Frontend API Functions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:44.063Z",
+      "action": "Step 0 Preflight complete. Understood existing git remote patterns, GitManagerModal component structure, API patterns, and test setup.",
+      "outcome": "Ready to implement backend API endpoints for remote management"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:45.164Z",
+      "action": "plan review requested for Step 1 (Backend API Endpoints)"
+    },
+    {
+      "timestamp": "2026-03-31T14:09:06.616Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows existing patterns in the codebase. The endpoint design aligns with REST conventions used elsewhere in `/packages/dashboard/src/routes.ts`, and the helper function approach matches the existing git operation implementations. The validation strategy using `isValidBranchName` is appropriate, though the plan should clarify minor nuances."
+    },
+    {
+      "timestamp": "2026-03-31T14:11:29.881Z",
+      "action": "code review requested for Step 1 (Backend API Endpoints)"
+    },
+    {
+      "timestamp": "2026-03-31T14:12:11.029Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The backend implementation for git remote management endpoints is functionally complete with all 5 required endpoints and helper functions implemented. However, there are **two critical issues** that must be fixed before proceeding:\n\n1. **Missing tests** — The task explicitly requires tests, but no tests were added for any of the new git remote endpoints.\n2. **Shell injection vulnerability** — The `isValidGitUrl()` function validates URL format but does not prevent shell metacharacters, allowing"
+    },
+    {
+      "timestamp": "2026-03-31T14:14:09.636Z",
+      "action": "code review requested for Step 1 (Backend API Endpoints)"
+    },
+    {
+      "timestamp": "2026-03-31T14:14:43.719Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The backend API endpoints for git remote management are correctly implemented following established patterns in the codebase. All 5 required endpoints are present with proper input validation, shell injection protection, and comprehensive error handling. The test coverage is thorough for security scenarios and error cases."
+    },
+    {
+      "timestamp": "2026-03-31T14:14:45.615Z",
+      "action": "Step 1 (Frontend API Functions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:14:45.617Z",
+      "action": "Step 2 (Enhanced RemotesPanel UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:14:45.618Z",
+      "action": "Step 1 completed. Backend API endpoints for git remote management added with security validation and tests.",
+      "outcome": "5 new endpoints added: GET /git/remotes/detailed, POST /git/remotes, DELETE /git/remotes/:name, PATCH /git/remotes/:name, PUT /git/remotes/:name/url"
+    },
+    {
+      "timestamp": "2026-03-31T14:14:48.075Z",
+      "action": "plan review requested for Step 2 (Frontend API Functions)"
+    },
+    {
+      "timestamp": "2026-03-31T14:15:06.960Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and aligns correctly with the existing backend implementation from Step 1. The API endpoints (`GET /git/remotes/detailed`, `POST /git/remotes`, `DELETE /git/remotes/:name`, `PATCH /git/remotes/:name`, `PUT /git/remotes/:name/url`) are already implemented in `routes.ts` (lines 1768-1909) with proper error handling and HTTP status codes. The proposed frontend API functions follow established patterns in `api.ts` and match the backend response shapes."
+    },
+    {
+      "timestamp": "2026-03-31T14:16:11.282Z",
+      "action": "code review requested for Step 2 (Frontend API Functions)"
+    },
+    {
+      "timestamp": "2026-03-31T14:16:40.153Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Step 2 implementation correctly adds all five required frontend API functions for git remote management, exports the `GitRemoteDetailed` interface, and includes comprehensive unit tests with 18 test cases covering success paths, validation errors, and HTTP error scenarios. The code follows established patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T14:16:41.927Z",
+      "action": "Step 2 (Enhanced RemotesPanel UI) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:16:41.929Z",
+      "action": "Step 3 (Styling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:16:41.930Z",
+      "action": "Step 2 completed. Frontend API functions added: fetchGitRemotesDetailed, addGitRemote, removeGitRemote, renameGitRemote, updateGitRemoteUrl",
+      "outcome": "All API functions and tests added to api.ts and api.test.ts"
+    },
+    {
+      "timestamp": "2026-03-31T14:16:43.795Z",
+      "action": "plan review requested for Step 3 (Enhanced RemotesPanel UI)"
+    },
+    {
+      "timestamp": "2026-03-31T14:17:18.804Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and follows established patterns in the codebase. The backend APIs (Step 1) and frontend API functions (Step 2) are already fully implemented in `routes.ts` and `api.ts` respectively, with proper validation, error handling, and TypeScript interfaces. The UI enhancement plan correctly references the `BranchesPanel` and `StashesPanel` patterns for forms, lists, and actions."
+    },
+    {
+      "timestamp": "2026-03-31T14:18:31.873Z",
+      "action": "code review requested for Step 3 (Enhanced RemotesPanel UI)"
+    },
+    {
+      "timestamp": "2026-03-31T14:19:09.199Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The RemotesPanel component implementation includes all required functionality (list, add, remove, rename, update URL) with proper state management, loading states, and error handling. However, there is a **duplicate type import** that will cause a TypeScript compilation error and must be fixed."
+    },
+    {
+      "timestamp": "2026-03-31T14:19:24.160Z",
+      "action": "code review requested for Step 3 (Enhanced RemotesPanel UI)"
+    },
+    {
+      "timestamp": "2026-03-31T14:20:01.691Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The RemotesPanel component has been successfully enhanced with full remote management capabilities. The implementation correctly adds all required state variables, handlers, and UI elements for viewing, adding, removing, renaming, and updating git remotes. The code follows existing patterns from other panels (BranchesPanel, StashPanel) for consistency."
+    },
+    {
+      "timestamp": "2026-03-31T14:20:03.888Z",
+      "action": "Step 3 (Styling) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:20:03.888Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:20:03.889Z",
+      "action": "Step 3 completed. Enhanced RemotesPanel with full remote management UI including list, add, remove, rename, and update URL operations.",
+      "outcome": "350 insertions, 55 deletions in GitManagerModal.tsx with full remote management capabilities"
+    },
+    {
+      "timestamp": "2026-03-31T14:20:06.695Z",
+      "action": "plan review requested for Step 4 (Styling)"
+    },
+    {
+      "timestamp": "2026-03-31T14:20:31.045Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step outlines the required CSS classes for the new remote management UI. The plan follows existing naming conventions (`.gm-*`) and references appropriate patterns from other panels. While the checkboxes capture the main structural classes needed, there are several CSS classes actually used in the Step 3 UI implementation that are missing from the plan and will need to be added during implementation."
+    },
+    {
+      "timestamp": "2026-03-31T14:21:01.574Z",
+      "action": "code review requested for Step 4 (Styling)"
+    },
+    {
+      "timestamp": "2026-03-31T14:21:21.518Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The styling implementation for the enhanced RemotesPanel is comprehensive and well-structured. All required CSS classes from the step checklist have been added, following existing naming conventions (`.gm-*`) and color variable patterns. The responsive mobile behavior is properly implemented with appropriate media query overrides."
+    },
+    {
+      "timestamp": "2026-03-31T14:21:23.588Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:21:23.589Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:21:23.589Z",
+      "action": "Step 4 completed. CSS styles added for remote management UI including responsive behavior.",
+      "outcome": "174 insertions in styles.css for new remote management UI components"
+    },
+    {
+      "timestamp": "2026-03-31T14:21:26.914Z",
+      "action": "plan review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T14:21:45.944Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The step plan is comprehensive and well-structured. The test coverage requirements align with the implemented RemotesPanel functionality, covering all CRUD operations (list, add, remove, rename, update URL), loading states, and error handling. The existing test file patterns and API test coverage provide a solid foundation for the worker to build upon."
+    },
+    {
+      "timestamp": "2026-03-31T14:22:46.475Z",
+      "action": "code review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T14:23:23.979Z",
+      "action": "code review Step 5: REVISE",
+      "outcome": "The API-level tests in `api.test.ts` are comprehensive and well-implemented. However, the GitManagerModal component tests are **missing 5 out of 8 required test cases** from the step requirements. While the UI implementation exists with all necessary handlers (`handleAddRemote`, `handleRemoveRemote`, `handleRenameRemote`, `handleUpdateUrl`), the corresponding user interaction tests in `GitManagerModal.test.tsx` were not added."
+    },
+    {
+      "timestamp": "2026-03-31T14:23:46.451Z",
+      "action": "code review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T14:24:11.866Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The Step 5 implementation provides comprehensive test coverage for the new remote management functionality. Both the UI component tests in `GitManagerModal.test.tsx` and the API tests in `api.test.ts` are well-structured, follow existing patterns, and cover all the required scenarios outlined in the step checklist. The tests properly mock dependencies, handle async operations, and verify error states."
+    },
+    {
+      "timestamp": "2026-03-31T14:24:14.051Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:24:14.053Z",
+      "action": "Step 5 completed. Comprehensive tests added for remote management UI including add, remove, rename, update URL, and loading states.",
+      "outcome": "187 insertions in GitManagerModal.test.tsx with full UI test coverage"
+    },
+    {
+      "timestamp": "2026-03-31T14:24:22.323Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T14:24:27.147Z",
+  "createdAt": "2026-03-31T14:06:24.524Z",
+  "updatedAt": "2026-03-31T14:24:27.147Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Successfully implemented git remote management for the Git Manager panel (KB-277). Added 5 new backend API endpoints (GET /git/remotes/detailed, POST /git/remotes, DELETE /git/remotes/:name, PATCH /git/remotes/:name, PUT /git/remotes/:name/url), frontend API functions with comprehensive tests, enhanced RemotesPanel UI with add/remove/rename/update capabilities, and responsive CSS styling. All security validations including shell injection prevention implemented and tested. Changeset created for minor version bump."
+}

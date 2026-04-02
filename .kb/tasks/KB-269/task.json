@@ -1,0 +1,211 @@
+{
+  "id": "KB-269",
+  "title": "Add workflow step results viewer in dashboard show",
+  "description": "Add workflow step results viewer in dashboard — show workflow step execution results (pass/fail, output) in the task detail modal so users can see what each quality gate found",
+  "column": "done",
+  "dependencies": [
+    "KB-218"
+  ],
+  "steps": [
+    {
+      "name": "Define Types and API Contract",
+      "status": "done"
+    },
+    {
+      "name": "Create WorkflowResultsTab Component",
+      "status": "done"
+    },
+    {
+      "name": "Integrate into TaskDetailModal",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T10:54:09.669Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T10:55:00.312Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T10:55:24.771Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for adding a workflow step results viewer to the task detail modal. The spec correctly identifies existing dashboard patterns (tabs, AgentLogViewer component structure) and provides concrete implementation steps. The work is appropriately sized as Medium and the file scope is accurate. Minor issues exist around CSS file path and dependency verification that should be addressed."
+    },
+    {
+      "timestamp": "2026-03-31T13:10:28.772Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/jade-falcon"
+    },
+    {
+      "timestamp": "2026-03-31T13:10:28.772Z",
+      "action": "Step 0 (Define Types and API Contract) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T13:10:30.580Z",
+      "action": "Step 0 (Define Types and API Contract) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:10:54.535Z",
+      "action": "Step 0 (Define Types and API Contract) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:10:54.538Z",
+      "action": "Step 0 (Preflight) complete. KB-218 provides WorkflowStep types and enabledWorkflowSteps on Task. Missing: WorkflowStepResult type, workflowStepResults field, and results API endpoint.",
+      "outcome": "Ready to proceed with Step 1"
+    },
+    {
+      "timestamp": "2026-03-31T13:10:57.363Z",
+      "action": "Step 1 (Create WorkflowResultsTab Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:10:57.364Z",
+      "action": "plan review requested for Step 1 (Define Types and API Contract)"
+    },
+    {
+      "timestamp": "2026-03-31T13:11:16.459Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan accurately identifies what KB-218 has already provided (WorkflowStep type, enabledWorkflowSteps field) versus what needs to be added in this step. The checkboxes cover all necessary artifacts: the `WorkflowStepResult` interface, the `workflowStepResults` field on Task, the API function in `api.ts`, and the backend endpoint in `routes.ts`. The approach follows existing patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T13:13:26.140Z",
+      "action": "code review requested for Step 1 (Define Types and API Contract)"
+    },
+    {
+      "timestamp": "2026-03-31T13:14:22.235Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The types are correctly defined in `types.ts`, the API function is added, and the backend endpoint is implemented. However, there's a critical blocking issue: `WorkflowStepResult` is imported in `api.ts` but is **not exported** from the core package's `index.ts`, which will cause a TypeScript compilation error."
+    },
+    {
+      "timestamp": "2026-03-31T13:14:46.358Z",
+      "action": "code review requested for Step 1 (Define Types and API Contract)"
+    },
+    {
+      "timestamp": "2026-03-31T13:15:09.274Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The Step 1 implementation correctly establishes the data structures and API contract for workflow step results. The types (`WorkflowStepResult`, `workflowStepResults`, `enabledWorkflowSteps`) were already present from KB-218 and are properly reused. The `fetchWorkflowResults()` API function follows existing patterns with proper URL encoding and typing. The backend endpoint at `GET /api/tasks/:id/workflow-results` correctly returns results with appropriate error handling (404 for missing tasks, 5"
+    },
+    {
+      "timestamp": "2026-03-31T13:15:12.149Z",
+      "action": "Step 1 (Create WorkflowResultsTab Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:15:12.150Z",
+      "action": "Step 1 complete: WorkflowStepResult type, workflowStepResults field on Task, fetchWorkflowResults API, and GET endpoint implemented with tests",
+      "outcome": "Types and API contract established"
+    },
+    {
+      "timestamp": "2026-03-31T13:15:12.151Z",
+      "action": "Step 2 (Integrate into TaskDetailModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:15:15.691Z",
+      "action": "plan review requested for Step 2 (Create WorkflowResultsTab Component)"
+    },
+    {
+      "timestamp": "2026-03-31T13:15:58.782Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows existing dashboard patterns. The types (`WorkflowStepResult`, `workflowStepResults`, `enabledWorkflowSteps`) and API endpoint (`fetchWorkflowResults`) are already implemented from KB-218, so this step can focus purely on the UI component. The component structure aligns with existing tab patterns like `SteeringTab` and `AgentLogViewer`."
+    },
+    {
+      "timestamp": "2026-03-31T13:17:01.710Z",
+      "action": "code review requested for Step 2 (Create WorkflowResultsTab Component)"
+    },
+    {
+      "timestamp": "2026-03-31T13:17:39.059Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The component implementation has solid structure and good test coverage, but has two critical blocking issues: 1) The `WorkflowStepResult` type is not exported from `@kb/core`, which will cause import failures, and 2) All CSS classes used by the component are missing from the stylesheet, which will cause the UI to render unstyled."
+    },
+    {
+      "timestamp": "2026-03-31T13:17:53.327Z",
+      "action": "code review requested for Step 2 (Create WorkflowResultsTab Component)"
+    },
+    {
+      "timestamp": "2026-03-31T13:18:23.137Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The WorkflowResultsTab component is well-implemented with clean TypeScript, comprehensive tests, and proper CSS styling that follows existing dashboard patterns. The component correctly displays workflow step results with status badges, execution timestamps, output content, and handles all loading/empty states as specified."
+    },
+    {
+      "timestamp": "2026-03-31T13:18:24.796Z",
+      "action": "Step 2 (Integrate into TaskDetailModal) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:18:24.798Z",
+      "action": "Step 2 complete: WorkflowResultsTab component created with tests and CSS",
+      "outcome": "Component ready for integration"
+    },
+    {
+      "timestamp": "2026-03-31T13:18:24.799Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:18:27.773Z",
+      "action": "plan review requested for Step 3 (Integrate into TaskDetailModal)"
+    },
+    {
+      "timestamp": "2026-03-31T13:18:51.945Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan correctly identifies the main integration points (adding the tab to the union type, conditionally rendering the tab button, and adding the tab content). However, it has a critical gap regarding tab state management when switching between tasks, which could leave the UI in a broken state. Additionally, the conditional rendering logic needs refinement to handle edge cases properly."
+    },
+    {
+      "timestamp": "2026-03-31T13:19:37.277Z",
+      "action": "code review requested for Step 3 (Integrate into TaskDetailModal)"
+    },
+    {
+      "timestamp": "2026-03-31T13:20:07.657Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The implementation has a critical structural bug where the Workflow tab button is nested inside the Model tab button, creating invalid React/HTML structure. Additionally, the conditional rendering uses truthy checks that can render numeric values (0) instead of proper boolean expressions. While the tests pass, the component will fail at runtime or produce incorrect DOM structure."
+    },
+    {
+      "timestamp": "2026-03-31T13:20:40.461Z",
+      "action": "code review requested for Step 3 (Integrate into TaskDetailModal)"
+    },
+    {
+      "timestamp": "2026-03-31T13:21:24.505Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Step 3 implementation is complete and follows all dashboard patterns correctly. The Workflow tab is properly integrated into TaskDetailModal with conditional visibility, appropriate state management when switching tasks, and comprehensive test coverage."
+    },
+    {
+      "timestamp": "2026-03-31T13:21:26.218Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:21:26.221Z",
+      "action": "Step 3 complete: Workflow tab integrated into TaskDetailModal with proper structure and tests",
+      "outcome": "Tab integration complete"
+    },
+    {
+      "timestamp": "2026-03-31T13:21:26.222Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:31:52.220Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:31:52.222Z",
+      "action": "Step 4 complete: Tests passing, typecheck clean, build successful",
+      "outcome": "All verification passed"
+    },
+    {
+      "timestamp": "2026-03-31T13:32:13.439Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T13:32:20.152Z",
+  "createdAt": "2026-03-31T10:54:09.669Z",
+  "updatedAt": "2026-03-31T13:32:20.152Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Successfully implemented KB-269: Added workflow step results viewer to the dashboard task detail modal.\n\n**Changes made:**\n1. Added `WorkflowStepResult` interface and `workflowStepResults` field to Task type\n2. Added `fetchWorkflowResults` API function and `GET /api/tasks/:id/workflow-results` endpoint\n3. Created `WorkflowResultsTab` component with status badges, timestamps, and output display\n4. Integrated Workflow tab into `TaskDetailModal` with conditional visibility and tab state management\n5. Added comprehensive tests for all components and API endpoints\n6. Updated AGENTS.md with documentation for the Workflow Results Viewer\n\n**Features:**\n- Workflow tab appears only for tasks with workflow steps enabled or with results\n- Status badges show Passed (green), Failed (red), Skipped (gray), Running (blue)\n- Output from each workflow step agent is displayed in a scrollable container\n- Execution timestamps and duration are shown for completed steps\n- Tab state resets appropriately when switching between tasks"
+}

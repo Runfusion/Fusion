@@ -1,0 +1,115 @@
+{
+  "id": "KB-238",
+  "title": "On the usage drop down get rid of the Using",
+  "description": "On the usage drop down, get rid of the \"Using\" text in front of the pace",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Update Pace Message Generation",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:10:29.067Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:10:57.325Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:04.101Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. The referenced files exist and contain the exact code patterns described. Steps have concrete, verifiable outcomes with specific line references. Testing requirements correctly demand real test updates and full test suite passage. Sizing (S) and review level (0) are appropriate for this simple text-change task."
+    },
+    {
+      "timestamp": "2026-03-31T02:11:07.221Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/plush-spark"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:07.222Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:09.310Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:13.117Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:13.118Z",
+      "action": "Step 1 (Update Pace Message Generation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:15.164Z",
+      "action": "Step 1 (Update Pace Message Generation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:15.166Z",
+      "action": "Step 2 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:15.167Z",
+      "action": "Step 1 complete: Removed 'Using ' prefix from pace messages in packages/dashboard/src/usage.ts"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:32.736Z",
+      "action": "Step 2 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:32.738Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:16:27.546Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:16:27.549Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:16:31.463Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:16:31.465Z",
+      "action": "Task KB-238 complete: Removed 'Using' prefix from pace messages",
+      "outcome": "Pace messages now display as 'X% over pace' and 'X% under pace' instead of 'Using X% over pace' and 'Using X% under pace'. All usage-related tests pass. Build successful. Changeset created for patch release."
+    },
+    {
+      "timestamp": "2026-03-31T02:16:31.467Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:16:31.468Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T02:16:54.190Z",
+  "createdAt": "2026-03-31T02:10:29.067Z",
+  "updatedAt": "2026-03-31T02:16:54.190Z",
+  "size": "S",
+  "reviewLevel": 0
+}

@@ -1,0 +1,35 @@
+{
+  "id": "KB-337",
+  "description": "After KB-330, KB-331, KB-332, KB-333, and KB-334 complete, execute KB-335: update documentation and remaining references",
+  "column": "todo",
+  "dependencies": [
+    "KB-330",
+    "KB-331",
+    "KB-332",
+    "KB-333",
+    "KB-334"
+  ],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:20:34.275Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:25:30.949Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:25:57.283Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a documentation cleanup task following a major rebrand from \"kb\" to \"Fusion\". The spec accurately identifies all files requiring updates, provides concrete verification commands, and correctly scopes the work to include executing the KB-335 environment variable rename as a prerequisite. All file references have been verified against the actual codebase."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:26:00.575Z",
+  "createdAt": "2026-03-31T20:20:34.275Z",
+  "updatedAt": "2026-03-31T21:13:50.045Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued"
+}

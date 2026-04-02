@@ -1,0 +1,141 @@
+{
+  "id": "KB-083",
+  "description": "Fix the layout of the edit view in the spec editor on a card",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add CSS Styles for SpecEditor Layout",
+      "status": "done"
+    },
+    {
+      "name": "Update SpecEditor Component",
+      "status": "done"
+    },
+    {
+      "name": "Add Layout Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:38:07.847Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:39:37.718Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:39:50.883Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:39:58.233Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, accurate, and appropriately scoped. The identified issue is real: SpecEditor.tsx uses 13 distinct `spec-editor-*` CSS classes (`.spec-editor`, `.spec-editor-toolbar`, `.spec-editor-textarea`, etc.) but grep confirms zero matching styles exist in styles.css. The reference to KB-077's file-editor pattern is valid—similar flex-based fill patterns exist at lines 4655-4668. The testing requirement demands real automated tests, and the spec correctly notes existin"
+    },
+    {
+      "timestamp": "2026-03-30T04:40:05.257Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-defined, focused UI bug fix specification. The mission is clear, steps have concrete verifiable outcomes, file scope is accurate, and testing requirements demand real automated assertions. The spec correctly identifies the root cause (fixed `rows={20}` without flex-based layout) and provides a sensible CSS-based solution."
+    },
+    {
+      "timestamp": "2026-03-30T05:51:33.108Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/faint-grove"
+    },
+    {
+      "timestamp": "2026-03-30T05:51:33.109Z",
+      "action": "Step 0 (Add CSS Styles for SpecEditor Layout) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T05:51:34.913Z",
+      "action": "Step 0 (Add CSS Styles for SpecEditor Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:51:42.825Z",
+      "action": "Step 0 (Add CSS Styles for SpecEditor Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:51:42.826Z",
+      "action": "Step 1 (Update SpecEditor Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:51:42.828Z",
+      "action": "plan review requested for Step 1 (Add CSS Styles for SpecEditor Layout)"
+    },
+    {
+      "timestamp": "2026-03-30T05:51:58.753Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and will achieve the stated outcomes. The approach correctly identifies the need for a flex-based layout to replace the fixed `rows={20}` attribute, with proper handling of the toolbar, scrolling content area, and revision section positioning."
+    },
+    {
+      "timestamp": "2026-03-30T05:52:27.228Z",
+      "action": "Step 1 (Update SpecEditor Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:52:27.232Z",
+      "action": "Step 2 (Add Layout Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:52:27.235Z",
+      "action": "plan review requested for Step 2 (Update SpecEditor Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:52:41.411Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan's checkboxes appropriately address the core issues with the SpecEditor layout. The component currently uses a hardcoded `rows={20}` attribute that doesn't adapt to the constrained modal viewport. The planned changes—removing the fixed rows, ensuring proper flex container structure, and verifying CSS class completeness—will achieve the stated outcome of a properly filling textarea."
+    },
+    {
+      "timestamp": "2026-03-30T05:52:46.676Z",
+      "action": "Step 2 (Add Layout Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:52:46.679Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:52:46.681Z",
+      "action": "plan review requested for Step 3 (Add Layout Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T05:52:58.482Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and appropriate for the task. The proposed tests target the key layout behaviors introduced in Steps 1 and 2: flex layout for the content area, width filling of the textarea, and toolbar visibility. The test commands align with the existing test infrastructure (vitest + testing-library/react)."
+    },
+    {
+      "timestamp": "2026-03-30T05:53:51.281Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:53:51.284Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:54:00.540Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:54:04.495Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T06:04:50.576Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T06:04:50.576Z",
+  "createdAt": "2026-03-30T04:38:07.847Z",
+  "updatedAt": "2026-03-30T06:04:50.576Z",
+  "size": "S",
+  "reviewLevel": 1
+}

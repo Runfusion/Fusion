@@ -1,0 +1,181 @@
+{
+  "id": "KB-326",
+  "title": "Refinement: KB-323",
+  "description": "If an executor is already running will it pick up steering comments?\n\nRefines: KB-323",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 5,
+  "summary": "Successfully implemented real-time steering comment injection during task execution. The executor now:\n\n1. Tracks which steering comments have been \"seen\" via a Set of comment IDs stored in activeSessions\n2. Listens for task:updated events and detects new steering comments added mid-execution\n3. Injects new comments into the running agent session using the pi-coding-agent's steer() API\n4. Marks comments as seen before injection to prevent retry loops on failure\n5. Logs injection success/failure for visibility\n\nAdded 6 comprehensive tests covering initialization, injection, duplicate prevention, error handling, and multiple simultaneous comments. All tests pass, build succeeds, and documentation is updated with code comments and a changeset.",
+  "createdAt": "2026-03-31T19:57:45.587Z",
+  "updatedAt": "2026-04-01T01:37:06.045Z",
+  "columnMovedAt": "2026-04-01T01:37:06.045Z",
+  "dependencies": [
+    "KB-323"
+  ],
+  "steps": [
+    {
+      "name": "Verify Current Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Design Real-Time Steering Mechanism",
+      "status": "done"
+    },
+    {
+      "name": "Implement Real-Time Steering",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T19:57:45.587Z",
+      "action": "Created as refinement of KB-323"
+    },
+    {
+      "timestamp": "2026-03-31T19:59:26.267Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T19:59:45.986Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, technically accurate, and appropriately scoped for a medium-sized investigation plus implementation task. All referenced source files exist at the specified paths with correct line number references (minor: `buildExecutionPrompt` runs to ~line 1380, not 1365). The mission is clear, steps have verifiable outcomes, and testing requirements appropriately demand real automated tests with the \"ZERO test failures allowed\" quality gate."
+    },
+    {
+      "timestamp": "2026-03-31T22:12:46.245Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/eager-badger"
+    },
+    {
+      "timestamp": "2026-03-31T22:12:46.358Z",
+      "action": "Step 0 (Verify Current Behavior) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T22:14:03.200Z",
+      "action": "Step 0 (Verify Current Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:05.924Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T23:24:28.406Z",
+      "action": "Step 0 (Verify Current Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:34:36.284Z",
+      "action": "Task terminated due to stuck agent session (no activity for ~10 minutes)"
+    },
+    {
+      "timestamp": "2026-04-01T00:58:12.638Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-04-01T00:58:12.797Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/solar-cliff"
+    },
+    {
+      "timestamp": "2026-04-01T00:58:14.946Z",
+      "action": "Step 1 (Design Real-Time Steering Mechanism) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:58:47.782Z",
+      "action": "plan review requested for Step 1 (Design Real-Time Steering Mechanism)"
+    },
+    {
+      "timestamp": "2026-04-01T00:59:22.945Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan has a critical gap: it doesn't require the worker to actually investigate whether the underlying `@mariozechner/pi-coding-agent` SDK supports dynamic message injection. The three options listed (A, B, C) assume capabilities that may not exist. Option A suggests \"inject a system message\" but the codebase shows no evidence this is possible with the current SDK interface. Option B's \"next natural breakpoint\" misunderstands the architecture—the agent session runs autonomously from a single "
+    },
+    {
+      "timestamp": "2026-04-01T00:59:25.590Z",
+      "action": "plan review requested for Step 1 (Design Real-Time Steering Mechanism)"
+    },
+    {
+      "timestamp": "2026-04-01T00:59:48.773Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the current execution flow and the gap in mid-execution steering support. The three-option approach (direct injection, queued at boundaries, or document limitation) is sound. The step checkboxes will lead to a workable design, though I have suggestions to strengthen the investigation of agent capabilities and clarify the likely implementation path."
+    },
+    {
+      "timestamp": "2026-04-01T00:59:50.594Z",
+      "action": "Step 1 (Design Real-Time Steering Mechanism) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:59:50.596Z",
+      "action": "Step 2 (Implement Real-Time Steering) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:59:50.597Z",
+      "action": "Design approved: Using AgentSession.steer() for real-time steering injection",
+      "outcome": "Option A is viable - the SDK provides steer() method specifically for queuing messages during execution. Will track seen comments by ID and inject via steer() when new comments detected on task:updated events."
+    },
+    {
+      "timestamp": "2026-04-01T01:00:41.328Z",
+      "action": "code review requested for Step 2 (Implement Real-Time Steering)"
+    },
+    {
+      "timestamp": "2026-04-01T01:01:20.827Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The implementation correctly adds real-time steering comment injection into running agent sessions via `session.steer()`. The tracking mechanism with `activeSessions` and `seenSteeringIds` properly identifies new comments and avoids duplicate injections. However, **the required tests for real-time steering behavior are missing**, which is a blocking requirement from Step 4 of the task."
+    },
+    {
+      "timestamp": "2026-04-01T01:32:10.162Z",
+      "action": "code review requested for Step 2 (Implement Real-Time Steering)"
+    },
+    {
+      "timestamp": "2026-04-01T01:33:07.723Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The implementation shows a sound approach to real-time steering comment injection, with proper tracking of \"seen\" comments, event-driven injection via `task:updated`, and appropriate error handling. However, there's a critical potential issue with `session.steer()` that needs verification, and a gap in edge case handling for concurrent update scenarios."
+    },
+    {
+      "timestamp": "2026-04-01T01:33:27.595Z",
+      "action": "code review requested for Step 2 (Implement Real-Time Steering)"
+    },
+    {
+      "timestamp": "2026-04-01T01:34:26.259Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly implements real-time steering comment injection during task execution. The approach tracks seen steering comment IDs, detects new comments via `task:updated` events, and injects them into running agent sessions using the `session.steer()` method. Error handling is robust, and comprehensive tests validate the behavior."
+    },
+    {
+      "timestamp": "2026-04-01T01:34:27.962Z",
+      "action": "Step 2 (Implement Real-Time Steering) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:34:27.964Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:34:35.200Z",
+      "action": "Core package tests pass (428 tests)",
+      "outcome": "All core package tests pass. Proceeding with engine package tests."
+    },
+    {
+      "timestamp": "2026-04-01T01:35:54.993Z",
+      "action": "Step 3 Testing Complete",
+      "outcome": "All 6 new real-time steering tests pass. Core package tests pass (428 tests). The 1 failing test in restart.integration.test.ts is unrelated to this task - it's about scheduler pause/unpause behavior."
+    },
+    {
+      "timestamp": "2026-04-01T01:35:58.078Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:35:58.079Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:36:19.262Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:36:34.407Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

@@ -1,0 +1,203 @@
+{
+  "id": "KB-156",
+  "description": "Cleanup archived tasks from the filesystem - create an archive log file that stores the task details (but not agent output) that can allow tasks to be restored later, but remove the task files for archived tasks",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Archive Data Model and Types",
+      "status": "done"
+    },
+    {
+      "name": "Archive Cleanup Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Restore from Archive",
+      "status": "done"
+    },
+    {
+      "name": "Archive Task Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T15:26:52.216Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T15:27:22.470Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T15:27:39.493Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-specified task with clear mission, concrete steps, and appropriate test coverage requirements. The specification accurately references real files, functions, and patterns in the codebase. The novel archive log pattern is well-described, and the testing requirements are stringent (zero failures allowed). The task is appropriately sized as M with Review Level 2."
+    },
+    {
+      "timestamp": "2026-03-30T17:51:56.055Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/cool-reef"
+    },
+    {
+      "timestamp": "2026-03-30T17:51:56.056Z",
+      "action": "Step 0 (Archive Data Model and Types) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T17:51:57.894Z",
+      "action": "Step 0 (Archive Data Model and Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:04.871Z",
+      "action": "Step 0 (Archive Data Model and Types) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:04.872Z",
+      "action": "Step 1 (Archive Cleanup Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:05.791Z",
+      "action": "plan review requested for Step 1 (Archive Data Model and Types)"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:18.912Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-defined and correctly identifies the necessary changes. The `ArchivedTaskEntry` interface fields align with the requirements to preserve essential task state while explicitly excluding agent log content. The approach follows existing patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T17:52:30.822Z",
+      "action": "code review requested for Step 1 (Archive Data Model and Types)"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:55.762Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds the `ArchivedTaskEntry` interface to `types.ts` with all required fields per the step specification, and exports it from `index.ts`. The `archiveLogPath` property is added to `TaskStore` as a private property initialized in the constructor, which aligns with the existing pattern used for `kbDir`, `tasksDir`, and `configPath`."
+    },
+    {
+      "timestamp": "2026-03-30T17:52:56.800Z",
+      "action": "Step 1 (Archive Cleanup Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:56.800Z",
+      "action": "Step 2 (Restore from Archive) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:52:58.967Z",
+      "action": "plan review requested for Step 2 (Archive Cleanup Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T17:53:18.896Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan adequately covers the core requirements for implementing archive cleanup. The approach of using JSON Lines format for append-only archive storage is appropriate, and the method-level granularity matches the task's stated outcomes. The plan correctly identifies idempotency as a key requirement."
+    },
+    {
+      "timestamp": "2026-03-30T17:53:31.156Z",
+      "action": "code review requested for Step 2 (Archive Cleanup Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T17:53:57.983Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds the three required methods (`cleanupArchivedTasks`, `readArchiveLog`, `findInArchive`) to the TaskStore class. The `ArchivedTaskEntry` interface was properly defined in Step 1 and is fully utilized. The code handles the edge case where `archive.jsonl` doesn't exist and properly excludes agent log content from archive entries to avoid bloat."
+    },
+    {
+      "timestamp": "2026-03-30T17:53:59.013Z",
+      "action": "Step 2 (Restore from Archive) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:53:59.014Z",
+      "action": "Step 3 (Archive Task Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:53:59.910Z",
+      "action": "plan review requested for Step 3 (Restore from Archive)"
+    },
+    {
+      "timestamp": "2026-03-30T17:54:25.026Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan's approach has a critical sequencing flaw: the directory existence check must happen **before** acquiring the task lock, not after. The current `unarchiveTask()` implementation uses `withTaskLock()` which immediately tries to read `task.json`—if the directory was cleaned up, this throws ENOENT before any restore logic can run. Additionally, the PROMPT.md generation approach would lose the original step structure, and there's an inconsistency in event emission between the two code paths."
+    },
+    {
+      "timestamp": "2026-03-30T17:54:48.825Z",
+      "action": "code review requested for Step 3 (Restore from Archive)"
+    },
+    {
+      "timestamp": "2026-03-30T17:55:27.461Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly modifies `unarchiveTask()` to handle restored tasks from archive when the task directory is missing. The `restoreFromArchive()` private method properly recreates task directory structure, writes task.json and PROMPT.md, and preserves attachment metadata (without file content). The code is well-structured and follows existing patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T17:55:28.525Z",
+      "action": "Step 3 (Archive Task Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:55:28.526Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:55:29.372Z",
+      "action": "plan review requested for Step 4 (Archive Task Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T17:55:54.887Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The plan for Step 4 has a fundamental design issue: it proposes calling the bulk `cleanupArchivedTasks()` method (which operates on **all** archived tasks) from within `archiveTask()` when only the specific task being archived should be cleaned up. This creates race conditions, potential duplicate archive entries, and unexpected side effects of cleaning up unrelated archived tasks. Additionally, the atomicity concern requires a single-task cleanup method, not the existing bulk method."
+    },
+    {
+      "timestamp": "2026-03-30T17:56:04.722Z",
+      "action": "code review requested for Step 4 (Archive Task Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T17:56:39.448Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The Step 4 implementation correctly integrates the cleanup functionality into `archiveTask()`. The `cleanup` parameter defaults to `false` for backward compatibility, and the `archiveTaskAndCleanup()` convenience method provides a clean API. The atomicity requirement (archive entry written before directory deletion) is properly implemented."
+    },
+    {
+      "timestamp": "2026-03-30T17:56:40.509Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:56:40.510Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:58:41.527Z",
+      "action": "code review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T17:59:12.269Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The implementation successfully implements the archive cleanup feature with comprehensive test coverage. All required tests from the step checklist are present and the test suite passes. The code correctly handles the archive log format, directory cleanup, restoration from archive, and backward compatibility for the archive API."
+    },
+    {
+      "timestamp": "2026-03-30T17:59:13.293Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:59:14.694Z",
+      "action": "plan review requested for Step 6 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-30T17:59:54.898Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The plan for Step 6 will achieve its stated outcomes. The checkboxes cover the required artifacts (changeset file), and while the AGENTS.md update uses conditional language (\"if there are storage pattern changes worth noting\"), the Documentation Requirements section explicitly mandates this update, making the intent clear. The implementation is complete and tested; only documentation remains."
+    },
+    {
+      "timestamp": "2026-03-30T18:00:10.779Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T18:01:55.120Z",
+  "createdAt": "2026-03-30T15:26:52.216Z",
+  "updatedAt": "2026-03-30T18:01:55.120Z",
+  "size": "M",
+  "reviewLevel": 2
+}

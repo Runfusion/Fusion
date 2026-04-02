@@ -1,0 +1,227 @@
+{
+  "id": "KB-028",
+  "description": "Add a pop out terminal view on the web dashboard that has tabs and is mobile friendly",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Create useMultiAgentLogs Hook",
+      "status": "done"
+    },
+    {
+      "name": "Create TerminalModal Component",
+      "status": "done"
+    },
+    {
+      "name": "Add Terminal Styles",
+      "status": "done"
+    },
+    {
+      "name": "Integrate Terminal into App.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Add Terminal Button to Header",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:34:05.214Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:34:46.393Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:35:07.658Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is well-structured with clear steps and concrete outcomes. However, it requires a fix before implementation can begin: the documentation section references a non-existent README file that must be created or the requirement revised. The technical references are accurate and the testing requirements are appropriately rigorous."
+    },
+    {
+      "timestamp": "2026-03-30T01:35:33.257Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:35:49.053Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive, well-structured, and accurately references existing files and patterns from the dashboard codebase. The approach correctly reuses `AgentLogViewer`, follows established modal patterns from `TaskDetailModal`, and leverages existing CSS variables and mobile responsive conventions. Testing requirements are thorough with specific assertions required. The task is appropriately sized as Medium with Review Level 2."
+    },
+    {
+      "timestamp": "2026-03-30T01:55:49.355Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/eager-pine"
+    },
+    {
+      "timestamp": "2026-03-30T01:55:49.356Z",
+      "action": "Step 0 (Create useMultiAgentLogs Hook) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T01:56:40.794Z",
+      "action": "Step 0 (Create useMultiAgentLogs Hook) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:56:41.822Z",
+      "action": "Step 1 (Create TerminalModal Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:56:43.756Z",
+      "action": "Starting Step 1: Create useMultiAgentLogs hook",
+      "outcome": "Will implement hook for managing multiple concurrent SSE connections"
+    },
+    {
+      "timestamp": "2026-03-30T01:56:43.757Z",
+      "action": "plan review requested for Step 1 (Create useMultiAgentLogs Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T01:56:57.364Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan is well-structured and follows the established patterns from the existing `useAgentLogs` hook. The API design (array of task IDs → map of results) is clean, and the test requirements comprehensively cover the critical path including memory leak prevention. The step correctly identifies connection lifecycle management as the primary complexity."
+    },
+    {
+      "timestamp": "2026-03-30T02:00:13.944Z",
+      "action": "Step 1 (Create TerminalModal Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:00:13.945Z",
+      "action": "Step 2 (Add Terminal Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:00:13.945Z",
+      "action": "Step 1 complete. Moving to Step 2: Create TerminalModal Component",
+      "outcome": "useMultiAgentLogs hook created with full test coverage"
+    },
+    {
+      "timestamp": "2026-03-30T02:00:13.946Z",
+      "action": "plan review requested for Step 2 (Create TerminalModal Component)"
+    },
+    {
+      "timestamp": "2026-03-30T02:00:25.411Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the key integration points and follows established patterns from `TaskDetailModal` and `AgentLogViewer`. The checkboxes cover all required functionality: modal structure, tab navigation, log viewer reuse, and proper interaction patterns (Escape, overlay click, close button)."
+    },
+    {
+      "timestamp": "2026-03-30T02:01:59.203Z",
+      "action": "Step 2 (Add Terminal Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:01:59.204Z",
+      "action": "Step 3 (Integrate Terminal into App.tsx) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:01:59.206Z",
+      "action": "Step 2 complete. Moving to Step 3: Add Terminal Styles",
+      "outcome": "TerminalModal component created with full test coverage"
+    },
+    {
+      "timestamp": "2026-03-30T02:01:59.207Z",
+      "action": "plan review requested for Step 3 (Add Terminal Styles)"
+    },
+    {
+      "timestamp": "2026-03-30T02:02:11.724Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is solid and follows existing codebase patterns well. It correctly identifies the CSS classes needed, leverages existing CSS variables, extends the modal pattern appropriately, and includes proper mobile responsive considerations with safe area insets and 44px touch targets."
+    },
+    {
+      "timestamp": "2026-03-30T02:02:42.886Z",
+      "action": "Step 3 (Integrate Terminal into App.tsx) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:02:42.888Z",
+      "action": "Step 4 (Add Terminal Button to Header) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:02:42.890Z",
+      "action": "Step 3 complete. Moving to Step 4: Integrate Terminal into App.tsx",
+      "outcome": "Terminal styles added with mobile responsive rules"
+    },
+    {
+      "timestamp": "2026-03-30T02:02:42.892Z",
+      "action": "plan review requested for Step 4 (Integrate Terminal into App.tsx)"
+    },
+    {
+      "timestamp": "2026-03-30T02:02:55.876Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 correctly identifies the minimal state and integration points needed in App.tsx. The approach follows established patterns in the codebase for modal state management and properly defers keyboard shortcut handling (appropriately avoiding conflicts with browser dev tools). The TerminalModal component has a clean props interface that matches the integration requirements."
+    },
+    {
+      "timestamp": "2026-03-30T02:03:20.516Z",
+      "action": "Step 4 (Add Terminal Button to Header) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:03:20.518Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:03:20.521Z",
+      "action": "Step 4 complete. Moving to Step 5: Add Terminal Button to Header",
+      "outcome": "Terminal integrated into App.tsx with state management"
+    },
+    {
+      "timestamp": "2026-03-30T02:03:20.523Z",
+      "action": "plan review requested for Step 5 (Add Terminal Button to Header)"
+    },
+    {
+      "timestamp": "2026-03-30T02:03:40.843Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 is sound and correctly identifies all necessary changes to `Header.tsx`. The step's checkboxes align with the task requirements: adding the terminal icon button with proper accessibility, badge count display, disabled state handling, and the required callback prop. The surrounding infrastructure (App.tsx state, TerminalModal component, useMultiAgentLogs hook, and CSS styles) is already in place and properly integrated, so this step can proceed independently."
+    },
+    {
+      "timestamp": "2026-03-30T02:04:14.741Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:04:14.742Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:04:14.744Z",
+      "action": "Step 5 complete. Moving to Step 6: Testing & Verification",
+      "outcome": "Terminal button added to Header with badge and disabled state"
+    },
+    {
+      "timestamp": "2026-03-30T02:04:40.414Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:04:40.417Z",
+      "action": "Step 6 complete. Moving to Step 7: Documentation & Delivery",
+      "outcome": "All tests passing (576), build successful"
+    },
+    {
+      "timestamp": "2026-03-30T02:05:00.825Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T02:18:38.273Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T02:19:09.503Z",
+      "action": "Verified task completion status",
+      "outcome": "All steps 0-7 already completed. Changeset exists, all 576 tests pass, build succeeds, new files have no type errors. Pre-existing type errors in Column.test.tsx, ListView.test.tsx, and TaskCard.test.tsx are unrelated to this task."
+    },
+    {
+      "timestamp": "2026-03-30T02:19:10.530Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T02:26:08.843Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:27:21.176Z",
+  "createdAt": "2026-03-30T01:34:05.214Z",
+  "updatedAt": "2026-03-30T02:27:21.176Z",
+  "size": "M",
+  "reviewLevel": 2
+}

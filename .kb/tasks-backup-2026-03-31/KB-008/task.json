@@ -1,0 +1,22 @@
+{
+  "id": "KB-008",
+  "description": "The dashboard isn’t showing the status of tasks properly",
+  "column": "triage",
+  "currentStep": 0,
+  "paused": true,
+  "createdAt": "2026-03-31T21:19:28.716Z",
+  "updatedAt": "2026-03-31T21:21:37.394Z",
+  "columnMovedAt": "2026-03-31T21:19:28.716Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:19:28.716Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:37.394Z",
+      "action": "Task paused"
+    }
+  ]
+}

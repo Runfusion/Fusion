@@ -1,0 +1,169 @@
+{
+  "id": "KB-248",
+  "title": "Rather than a checkbox for break into subtasks",
+  "description": "Rather than a checkbox for \"break into subtasks\" have a button for \"Subtask\" and then another button for \"Plan\" - clicking the plan takes you to the Plan editor with the text you input added, clciking Subtask brings the subtask dialog up with the entered text",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update InlineCreateCard Component",
+      "status": "done"
+    },
+    {
+      "name": "Update QuickEntryBox Component",
+      "status": "done"
+    },
+    {
+      "name": "Wire Up Buttons in App.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:24:34.378Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:29:41.583Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:29:57.429Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately describes the current codebase. The mission is clear, file references are correct, and steps have concrete verifiable outcomes. The testing requirements are comprehensive with real assertions required. Minor clarifications needed around prop drilling through Board/Column components and QuickEntryBox blur behavior."
+    },
+    {
+      "timestamp": "2026-03-31T02:44:13.252Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rosy-tiger"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:13.253Z",
+      "action": "Step 0 (Update InlineCreateCard Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:22.127Z",
+      "action": "Step 1 (Update QuickEntryBox Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:23.514Z",
+      "action": "plan review requested for Step 1 (Update InlineCreateCard Component)"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:55.124Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the changes needed to replace the checkbox with buttons. However, there's a critical discovery: **InlineCreateCard is dead code** - it's exported but never actually used in the production app. QuickEntryBox is the component rendered in the triage column. The worker should be aware that Step 1 changes won't be user-visible until Step 2 (QuickEntryBox) is complete. The technical approach is sound, but there's a risk of confusion during manual verification."
+    },
+    {
+      "timestamp": "2026-03-31T02:45:28.258Z",
+      "action": "Step 1 (Update QuickEntryBox Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:45:29.468Z",
+      "action": "code review requested for Step 1 (Update InlineCreateCard Component)"
+    },
+    {
+      "timestamp": "2026-03-31T02:45:52.940Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The component implementation correctly replaces the checkbox with the new \"Plan\" and \"Subtask\" buttons, adds the required props and handlers, and clears state appropriately. However, **the test file is incomplete** — the old checkbox tests remain (which will fail), the new button tests are missing, and the icon mocks need updating."
+    },
+    {
+      "timestamp": "2026-03-31T02:46:06.856Z",
+      "action": "code review requested for Step 1 (Update InlineCreateCard Component)"
+    },
+    {
+      "timestamp": "2026-03-31T02:46:34.212Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly replaces the \"Break into subtasks\" checkbox with two explicit buttons (\"Plan\" and \"Subtask\") in the InlineCreateCard component. The code follows existing patterns, properly implements the new props interface, includes comprehensive test coverage, and maintains backward compatibility with the rest of the application."
+    },
+    {
+      "timestamp": "2026-03-31T02:46:35.621Z",
+      "action": "Step 2 (Wire Up Buttons in App.tsx) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:46:36.969Z",
+      "action": "plan review requested for Step 2 (Update QuickEntryBox Component)"
+    },
+    {
+      "timestamp": "2026-03-31T02:46:52.431Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is technically sound and follows the established pattern from Step 1 (InlineCreateCard). The checkboxes correctly identify all necessary changes: removing checkbox state, adding new props, implementing handlers, and updating collapse logic. The approach maintains consistency between components and preserves existing keyboard shortcuts."
+    },
+    {
+      "timestamp": "2026-03-31T02:47:48.574Z",
+      "action": "Step 2 (Wire Up Buttons in App.tsx) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:47:49.609Z",
+      "action": "code review requested for Step 2 (Update QuickEntryBox Component)"
+    },
+    {
+      "timestamp": "2026-03-31T02:48:32.545Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The QuickEntryBox component has been correctly updated to replace the \"Break into subtasks\" checkbox with the \"Plan\" and \"Subtask\" action buttons. The implementation is consistent with InlineCreateCard (Step 1) and includes proper prop definitions, handler implementations, and comprehensive test coverage."
+    },
+    {
+      "timestamp": "2026-03-31T02:48:33.625Z",
+      "action": "Step 3 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:48:34.699Z",
+      "action": "plan review requested for Step 3 (Wire Up Buttons in App.tsx)"
+    },
+    {
+      "timestamp": "2026-03-31T02:49:00.990Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 correctly identifies the necessary changes to wire up the `onPlanningMode` and `onSubtaskBreakdown` callbacks from App.tsx down to the child components. The plan accurately describes the handler signature, placeholder implementation, and the prop drilling required through Board → Column → QuickEntryBox and ListView → QuickEntryBox. The approach aligns with existing patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T02:49:36.511Z",
+      "action": "Step 3 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:49:37.526Z",
+      "action": "code review requested for Step 3 (Wire Up Buttons in App.tsx)"
+    },
+    {
+      "timestamp": "2026-03-31T02:50:03.241Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly wires up the `onPlanningMode` and `onSubtaskBreakdown` callbacks through the component hierarchy from App.tsx down to InlineCreateCard and QuickEntryBox. The `handleSubtaskBreakdown` placeholder is implemented exactly as specified in the task requirements, and all props are properly typed with JSDoc documentation."
+    },
+    {
+      "timestamp": "2026-03-31T02:50:04.634Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:53:20.117Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:53:34.736Z",
+      "action": "Step 0 (Update InlineCreateCard Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:53:34.737Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:53:34.738Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T02:53:50.396Z",
+  "createdAt": "2026-03-31T02:24:34.378Z",
+  "updatedAt": "2026-03-31T02:53:50.396Z",
+  "size": "M",
+  "reviewLevel": 2
+}

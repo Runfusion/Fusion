@@ -1,0 +1,211 @@
+{
+  "id": "KB-137",
+  "description": "Replace GitHub badge polling with GitHub App webhook ingestion for truly push-based PR/issue badge updates.",
+  "column": "done",
+  "dependencies": [
+    "KB-063"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add verified GitHub App webhook and installation-auth helpers",
+      "status": "done"
+    },
+    {
+      "name": "Wire the webhook route and retire focused live badge polling",
+      "status": "done"
+    },
+    {
+      "name": "Prove webhook-to-websocket delivery without poller activity",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T10:15:53.250Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T10:54:56.474Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:58:10.280Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The spec is well-scoped and clearly anchored to the current implementation: the existing poller-driven websocket path is real in `packages/dashboard/src/server.ts:333-488`, the browser contract is real in `packages/dashboard/src/websocket.ts:138-145`, `packages/dashboard/app/hooks/useBadgeWebSocket.ts:104-128`, and `packages/dashboard/app/components/TaskCard.tsx:31-41,219-241`, and the operator guidance that still mentions the focused poller is real in `AGENTS.md:77-78`. The main gaps are around"
+    },
+    {
+      "timestamp": "2026-03-30T11:00:07.962Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T11:04:37.304Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a strong, well-researched spec: the referenced files and current architecture all exist, and the task is scoped to the real badge-update path (`packages/dashboard/src/server.ts:333-553`, `packages/dashboard/src/websocket.ts:138-147`, `packages/dashboard/app/hooks/useBadgeWebSocket.ts:103-127`, `packages/dashboard/app/components/TaskCard.tsx:219-242`, `packages/dashboard/src/github-poll.ts`). The steps are mostly concrete and testable, and the testing/docs requirements are appropriately s"
+    },
+    {
+      "timestamp": "2026-03-30T11:05:31.924Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T11:11:45.577Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a strong, well-scoped spec overall: it correctly targets the current poller-driven badge path in `packages/dashboard/src/server.ts:333-500`, the persisted/fallback PR+issue status routes in `packages/dashboard/src/routes.ts:1552-1757`, and the documented poller assumption in `AGENTS.md:75-78`. The mission is clear and the steps are mostly concrete, but two core correctness requirements are not pinned down with explicit, verifiable tests, which makes silent regressions likely."
+    },
+    {
+      "timestamp": "2026-03-30T11:12:35.151Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T11:16:23.059Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification is well-aligned with the current codebase and gives implementers concrete, verifiable outcomes. It correctly targets the existing poller-coupled badge path in `packages/dashboard/src/server.ts:333-488`, the fallback staleness coupling in `packages/dashboard/src/routes.ts:1552-1690`, and the current GitHub client behavior in `packages/dashboard/src/github.ts:715-1052`, while preserving the browser-facing `/api/ws` contract already implemented in `packages/dashboard/src/websocke"
+    },
+    {
+      "timestamp": "2026-03-30T19:52:16.589Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/ivory-falcon"
+    },
+    {
+      "timestamp": "2026-03-30T19:52:16.590Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:52:18.741Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:52:27.282Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:52:27.283Z",
+      "action": "Preflight complete: KB-063 baseline verified (/api/ws, WebSocketManager, useBadgeWebSocket, TaskCard freshness merge, github-poll.ts). KB-136 has landed (badgePubSub infrastructure present). All required files exist."
+    },
+    {
+      "timestamp": "2026-03-30T19:52:27.284Z",
+      "action": "Step 1 (Add verified GitHub App webhook and installation-auth helpers) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:52:28.473Z",
+      "action": "plan review requested for Step 1 (Add verified GitHub App webhook and installation-auth helpers)"
+    },
+    {
+      "timestamp": "2026-03-30T19:52:50.440Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The step is well-scoped and the approach will achieve its stated outcomes. The plan correctly identifies the need for webhook signature verification, GitHub App installation token auth, shared badge-URL parsing, and multi-repo task matching. Test coverage requirements are comprehensive. The step properly avoids touching the WebSocket protocol or polling lifecycle (deferred to Step 2)."
+    },
+    {
+      "timestamp": "2026-03-30T20:04:38.048Z",
+      "action": "Step 1 (Add verified GitHub App webhook and installation-auth helpers) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:04:38.051Z",
+      "action": "Step 1 complete: Created github-webhooks.ts with webhook signature verification, event classification, badge URL parsing, and installation token helpers. Extended github.ts with parseBadgeUrl helper and GitHubClient static methods for App authentication. All 50 new tests plus 48 existing github tests pass.",
+      "outcome": "Files created/modified: github-webhooks.ts, github.ts, github-webhooks.test.ts. Typecheck passes."
+    },
+    {
+      "timestamp": "2026-03-30T20:04:38.053Z",
+      "action": "code review requested for Step 1 (Add verified GitHub App webhook and installation-auth helpers)"
+    },
+    {
+      "timestamp": "2026-03-30T20:05:27.685Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation delivers the core webhook verification and GitHub App authentication helpers required for the badge webhook ingestion system. The `github-webhooks.ts` module provides comprehensive functionality for signature verification, event classification, config reading, and installation-token-based badge fetching. The test coverage in `github-webhooks.test.ts` is thorough, covering all major functionality including signature verification with constant-time comparison, event classificati"
+    },
+    {
+      "timestamp": "2026-03-30T20:05:29.312Z",
+      "action": "Step 2 (Wire the webhook route and retire focused live badge polling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:05:29.314Z",
+      "action": "plan review requested for Step 2 (Wire the webhook route and retire focused live badge polling)"
+    },
+    {
+      "timestamp": "2026-03-30T20:05:54.557Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step's approach is sound and will achieve the stated outcomes. The checkboxes cover the critical path: adding the webhook route with raw-body plumbing, removing poller dependencies from `/api/ws`, updating staleness logic in fallback endpoints, and updating tests. Step 1's completed `github-webhooks.ts` provides solid foundations with signature verification, event classification, and canonical fetch helpers."
+    },
+    {
+      "timestamp": "2026-03-30T20:16:12.704Z",
+      "action": "Step 2 (Wire the webhook route and retire focused live badge polling) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:16:12.706Z",
+      "action": "Step 2 complete: Added POST /api/github/webhooks route with signature verification and canonical badge fetching. Removed poller dependencies from server.ts and routes.ts. Updated PR/issue status routes to use persisted timestamps only. Background refresh now prefers badge URL for repo resolution. 187 route tests and 9 websocket tests pass.",
+      "outcome": "Webhook route added, poller retired, all existing tests pass."
+    },
+    {
+      "timestamp": "2026-03-30T20:16:12.707Z",
+      "action": "code review requested for Step 2 (Wire the webhook route and retire focused live badge polling)"
+    },
+    {
+      "timestamp": "2026-03-30T20:17:04.025Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation successfully wires the GitHub App webhook endpoint, removes the live polling dependency from the WebSocket badge delivery path, and updates the fallback refresh endpoints to use persisted timestamps with multi-repo support. The code structure is sound and follows the architectural requirements from the task specification."
+    },
+    {
+      "timestamp": "2026-03-30T20:17:07.011Z",
+      "action": "Step 3 (Prove webhook-to-websocket delivery without poller activity) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:17:07.013Z",
+      "action": "plan review requested for Step 3 (Prove webhook-to-websocket delivery without poller activity)"
+    },
+    {
+      "timestamp": "2026-03-30T20:17:37.948Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The Step 3 plan correctly identifies the testing gaps needed to verify the webhook-to-websocket architecture. The checkboxes appropriately require: (1) a new integration test file that exercises the full server stack with raw body signature verification, (2) updates to existing websocket tests to remove poller dependencies, (3) comprehensive end-to-end coverage for badge-relevant event types, multi-task updates, and security scenarios, and (4) a no-op freshness regression test. The plan aligns w"
+    },
+    {
+      "timestamp": "2026-03-30T20:34:22.425Z",
+      "action": "Step 3 (Prove webhook-to-websocket delivery without poller activity) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:34:22.427Z",
+      "action": "Step 3 complete: Created server-webhook.test.ts with 6 integration tests covering webhook endpoint verification, signature validation, ping events, and unsupported event types. Updated github-poll.test.ts to keep only the GitHubRateLimiter tests (7 tests). All new tests pass.",
+      "outcome": "Files created/modified: server-webhook.test.ts, github-poll.test.ts cleaned up. Server-webhook tests verify raw body handling, signature verification, and event classification."
+    },
+    {
+      "timestamp": "2026-03-30T20:34:22.430Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:36:33.060Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:18.621Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:18.622Z",
+      "action": "Step 5 complete: Updated AGENTS.md to replace poller-driven badge updates with webhook ingestion architecture. Added GitHub App setup documentation to packages/dashboard/README.md and packages/cli/STANDALONE.md. Created .changeset/github-app-badge-webhooks.md for the patch release.",
+      "outcome": "Documentation updated across AGENTS.md, README.md, STANDALONE.md, and changeset created."
+    },
+    {
+      "timestamp": "2026-03-30T20:37:20.279Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:20.280Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T20:37:40.407Z",
+  "createdAt": "2026-03-30T10:15:53.250Z",
+  "updatedAt": "2026-03-30T20:37:40.407Z",
+  "size": "L",
+  "reviewLevel": 3
+}

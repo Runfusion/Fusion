@@ -1,0 +1,176 @@
+{
+  "id": "KB-139",
+  "description": "Investigate and fix pre-existing dashboard test suite failures unrelated to KB-096, including refine route tests, terminal hook tests, and typecheck failures that currently block a clean `cd packages/dashboard && pnpm test` run.",
+  "column": "done",
+  "dependencies": [
+    "KB-096"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Restore active terminal/refine/typecheck regression coverage",
+      "status": "done"
+    },
+    {
+      "name": "Fix the remaining non-KB-096 dashboard typecheck failures",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T11:19:07.963Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T11:21:52.294Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T11:32:04.959Z",
+      "action": "Spec review: REVISE",
+      "outcome": "`.fusion/tasks/KB-139/PROMPT.md:1` is not a usable implementation spec as written; it only says `DUPLICATE: KB-099` and contains none of the required mission, scoped steps, testing, or documentation guidance. That could be acceptable as an administrative duplicate marker, but the referenced KB-099 spec is now stale against the current repository, so using it as the canonical spec would misdirect execution."
+    },
+    {
+      "timestamp": "2026-03-30T11:42:36.753Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T11:46:14.599Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This spec is grounded in the real codebase: the skipped suites it calls out exist (`packages/dashboard/app/hooks/__tests__/useTerminal.test.tsx:165`, `packages/dashboard/src/__tests__/typecheck.test.ts:5`), the current `useTerminal(sessionId)` WebSocket contract exists (`packages/dashboard/app/hooks/useTerminal.ts:60`), the refine route is already implemented and covered (`packages/dashboard/src/routes.ts:664`, `packages/dashboard/src/routes.test.ts:340`), and the `@kb/core` source/dist `ColorTh"
+    },
+    {
+      "timestamp": "2026-03-30T11:47:33.671Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T11:51:01.269Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is strong overall: it names real files, accurately describes the current drift between active and skipped dashboard verification, and requires real automated validation (`pnpm test`, `pnpm typecheck`, workspace test/build) instead of typecheck-only or manual checks. The main problem is step ordering: Step 1 requires unskipping and running the real typecheck regression before Step 2 fixes the known non-KB-096 dashboard type errors, which makes the step boundary internally incons"
+    },
+    {
+      "timestamp": "2026-03-30T11:52:23.430Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T11:56:54.212Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a strong, implementation-ready specification. It is grounded in the current codebase: the skipped suites are real at `packages/dashboard/app/hooks/__tests__/useTerminal.test.tsx:165` and `packages/dashboard/src/__tests__/typecheck.test.ts:5`, the active refine regression coverage already exists at `packages/dashboard/src/routes.test.ts:340`, and the current refine route is already implemented at `packages/dashboard/src/routes.ts:664`. The mission, dependency on KB-096, file scope, and ve"
+    },
+    {
+      "timestamp": "2026-03-30T20:45:51.159Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/dusky-pine"
+    },
+    {
+      "timestamp": "2026-03-30T20:45:51.159Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T20:45:59.654Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:50:02.577Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:50:02.580Z",
+      "action": "Step 0 Preflight completed. Typecheck passes. One skipped test found: app/hooks/__tests__/useTerminal.test.tsx (legacy command-runner API). Current useTerminal.test.ts tests the WebSocket-based hook.",
+      "outcome": "Dependencies satisfied, ready for Step 1"
+    },
+    {
+      "timestamp": "2026-03-30T20:50:04.516Z",
+      "action": "plan review requested for Step 1 (Restore active terminal/refine/typecheck regression coverage)"
+    },
+    {
+      "timestamp": "2026-03-30T20:50:28.888Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the core issue: `packages/dashboard/app/hooks/__tests__/useTerminal.test.tsx` is a skipped legacy test for a removed command-runner API, while the active `useTerminal.test.ts` covers the current WebSocket-based hook. The approach of either rewriting or removing the legacy test while ensuring the active test covers critical behaviors (connection state, `sendInput`, `resize`, callbacks, close/reconnect handling) is sound. The refine-route verification and typecheck te"
+    },
+    {
+      "timestamp": "2026-03-30T20:50:33.842Z",
+      "action": "Step 1 (Restore active terminal/refine/typecheck regression coverage) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:57:00.288Z",
+      "action": "Step 1 (Restore active terminal/refine/typecheck regression coverage) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:57:00.291Z",
+      "action": "code review requested for Step 1 (Restore active terminal/refine/typecheck regression coverage)"
+    },
+    {
+      "timestamp": "2026-03-30T20:57:26.710Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly addresses Step 1 requirements. The legacy skipped test file (`useTerminal.test.tsx`) has been removed, the active `useTerminal.test.ts` now provides solid coverage of the WebSocket-based terminal hook, and the typecheck regression test has been completely rewritten to validate the real `pnpm typecheck` gate. The refine route tests in `routes.test.ts` are comprehensive and active."
+    },
+    {
+      "timestamp": "2026-03-30T20:57:29.870Z",
+      "action": "Step 2 (Fix the remaining non-KB-096 dashboard typecheck failures) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:57:29.872Z",
+      "action": "plan review requested for Step 2 (Fix the remaining non-KB-096 dashboard typecheck failures)"
+    },
+    {
+      "timestamp": "2026-03-30T20:58:12.685Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is comprehensive and correctly identifies the key areas that need attention. The checkboxes align with the actual typecheck failures present in the codebase. The step correctly keeps KB-096-owned work out of scope while addressing the dashboard-local typing issues. The verification strategy at the end is appropriate."
+    },
+    {
+      "timestamp": "2026-03-30T21:00:54.777Z",
+      "action": "Step 2 (Fix the remaining non-KB-096 dashboard typecheck failures) → done"
+    },
+    {
+      "timestamp": "2026-03-30T21:00:54.779Z",
+      "action": "code review requested for Step 2 (Fix the remaining non-KB-096 dashboard typecheck failures)"
+    },
+    {
+      "timestamp": "2026-03-30T21:01:49.360Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Step 2 implementation correctly addresses all the non-KB-096 typecheck failures identified in the task. The changes properly fix type resolution issues through a combination of source-level type exports from `@kb/core` and targeted type assertions in components. The test files now use complete type shapes consistent with `@kb/core` and the TypeScript configurations are properly set up for workspace dependency resolution."
+    },
+    {
+      "timestamp": "2026-03-30T21:01:50.555Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T21:07:05.664Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T21:07:05.665Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T21:07:36.741Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T21:07:36.741Z",
+      "action": "Completed Step 4. Updated README.md with correct theme count (12 instead of 8) and added contributor verification requirements section. Created 4 out-of-scope tasks for pre-existing test failures: KB-208, KB-209, KB-210, KB-211.",
+      "outcome": "Documentation updated, out-of-scope work tracked as new tasks"
+    },
+    {
+      "timestamp": "2026-03-30T21:07:37.747Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T21:10:10.760Z",
+  "createdAt": "2026-03-30T11:19:07.963Z",
+  "updatedAt": "2026-03-30T21:10:10.760Z",
+  "size": "L",
+  "reviewLevel": 2
+}

@@ -1,0 +1,88 @@
+{
+  "id": "KB-282",
+  "title": "Remove the limit of 1000 characters for description",
+  "description": "Remove the limit of 1000 characters for description",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove the Description Length Validation",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T14:48:36.732Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T14:49:47.936Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T14:50:05.713Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. The mission is clear, file references are correct (validation block is at routes.ts:4017-4020 as stated), and the scope is appropriately constrained. No tests currently validate this specific limit, so no test updates are needed. The \"Do NOT\" section correctly excludes the planning endpoint's 500 character limit."
+    },
+    {
+      "timestamp": "2026-03-31T14:52:47.431Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fleet-ember"
+    },
+    {
+      "timestamp": "2026-03-31T14:52:47.433Z",
+      "action": "Step 0 (Remove the Description Length Validation) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T14:52:49.139Z",
+      "action": "Step 0 (Remove the Description Length Validation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:52:56.250Z",
+      "action": "Step 0 (Remove the Description Length Validation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:52:56.250Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:52:57.366Z",
+      "action": "plan review requested for Step 1 (Remove the Description Length Validation)"
+    },
+    {
+      "timestamp": "2026-03-31T14:53:15.600Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan is straightforward and correct. The task involves removing a simple 3-line validation block in `packages/dashboard/src/routes.ts` (lines 3706-3709) that enforces a 1000 character limit on the description field for the subtask breakdown feature. No tests currently validate this limit, and the required field validation will remain intact as specified."
+    },
+    {
+      "timestamp": "2026-03-31T14:53:21.433Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:53:21.435Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T15:06:27.612Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T15:06:33.783Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T15:06:39.334Z",
+  "createdAt": "2026-03-31T14:48:36.732Z",
+  "updatedAt": "2026-03-31T15:06:39.334Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully removed the 1000 character limit enforcement on the `description` field for the subtask breakdown feature. Removed the validation block from the `/subtasks/start-streaming` endpoint in `packages/dashboard/src/routes.ts` while keeping the required field validation intact. All subtask-related tests pass (3/3). Build succeeds. Created changeset file documenting the user-facing improvement."
+}

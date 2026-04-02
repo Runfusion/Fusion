@@ -1,0 +1,242 @@
+{
+  "id": "KB-291",
+  "title": "Refinement: Agent Dashboard UI",
+  "description": "Improve the ui\n\nRefines: KB-285",
+  "column": "done",
+  "dependencies": [
+    "KB-285"
+  ],
+  "steps": [
+    {
+      "name": "Create useAgents Hook",
+      "status": "done"
+    },
+    {
+      "name": "Create useAgentDetail Hook",
+      "status": "done"
+    },
+    {
+      "name": "Create AgentCard Component",
+      "status": "done"
+    },
+    {
+      "name": "Create AgentStats Component",
+      "status": "done"
+    },
+    {
+      "name": "Create AgentDetailView Component",
+      "status": "done"
+    },
+    {
+      "name": "Refactor AgentListModal",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 9,
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:25:14.427Z",
+      "action": "Created as refinement of KB-285"
+    },
+    {
+      "timestamp": "2026-03-31T16:26:14.950Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:26:46.307Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for refining the Agent Dashboard UI. The spec correctly builds on the existing KB-285 implementation and follows established dashboard patterns. The steps are concrete and verifiable, with clear outcomes for each phase. The mission is clear and the file scope is appropriate for the stated size (M) and review level (Plan Only)."
+    },
+    {
+      "timestamp": "2026-03-31T16:28:26.600Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-grove"
+    },
+    {
+      "timestamp": "2026-03-31T16:28:26.601Z",
+      "action": "Step 0 (Create useAgents Hook) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T16:28:30.909Z",
+      "action": "Step 0 (Create useAgents Hook) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:29:52.974Z",
+      "action": "Merged KB-285 branch into KB-291 to get Agent types, AgentStore, AgentListModal, and API functions that this task depends on."
+    },
+    {
+      "timestamp": "2026-03-31T16:35:49.202Z",
+      "action": "Pre-existing test failures: 15 in core (store.test.ts), 21 in dashboard (various). Will track that my changes don't add new failures."
+    },
+    {
+      "timestamp": "2026-03-31T16:36:21.012Z",
+      "action": "Step 0 (Create useAgents Hook) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:36:23.937Z",
+      "action": "Step 0 (Create useAgents Hook) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:36:26.727Z",
+      "action": "plan review requested for Step 0 (Create useAgents Hook)"
+    },
+    {
+      "timestamp": "2026-03-31T16:36:54.102Z",
+      "action": "plan review Step 0: APPROVE",
+      "outcome": "The plan for implementing the `useAgents` hook is well-structured and follows established dashboard patterns from `useTasks.ts`. The approach correctly identifies the SSE event types (`agent:created`, `agent:updated`, `agent:deleted`), the API functions already available in `api.ts`, and the return shape needed. The test requirements align with the existing testing infrastructure using `MockEventSource`."
+    },
+    {
+      "timestamp": "2026-03-31T16:37:56.609Z",
+      "action": "Step 0 (Create useAgents Hook) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:38:00.193Z",
+      "action": "Step 1 (Create useAgentDetail Hook) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:38:03.320Z",
+      "action": "plan review requested for Step 1 (Create useAgentDetail Hook)"
+    },
+    {
+      "timestamp": "2026-03-31T16:38:31.123Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan has a **critical title mismatch** (says \"useAgentDetail\" in the review request but Step 1 is actually \"useAgents\") and several gaps in the specification that would lead to an incomplete implementation. The SSE connection pattern from `useTasks.ts` has important details (reconnection, cleanup, race condition handling) that aren't captured in the step checkboxes."
+    },
+    {
+      "timestamp": "2026-03-31T16:39:34.354Z",
+      "action": "Step 1 (Create useAgentDetail Hook) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:39:38.992Z",
+      "action": "Step 2 (Create AgentCard Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:39:41.904Z",
+      "action": "plan review requested for Step 2 (Create AgentCard Component)"
+    },
+    {
+      "timestamp": "2026-03-31T16:40:02.839Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step's checkboxes will achieve the stated outcomes. The plan correctly identifies the need to extract the inline agent card from `AgentListModal` into a reusable component following `TaskCard` patterns. The specified features (state-colored borders, hover actions, click handler, animations) align with the existing codebase patterns and the overall task mission."
+    },
+    {
+      "timestamp": "2026-03-31T16:41:05.445Z",
+      "action": "Step 2 (Create AgentCard Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:41:08.250Z",
+      "action": "Step 3 (Create AgentStats Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:41:11.149Z",
+      "action": "plan review requested for Step 3 (Create AgentStats Component)"
+    },
+    {
+      "timestamp": "2026-03-31T16:41:39.907Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for creating the `AgentStats` component is straightforward and achievable. It follows existing dashboard patterns and integrates well with the already-implemented `useAgents` hook and `AgentCard` component. The health status logic already exists in `AgentCard.tsx` (lines 47-57) and can be reused via the exported `getHealthStatus` function."
+    },
+    {
+      "timestamp": "2026-03-31T16:42:01.601Z",
+      "action": "Step 3 (Create AgentStats Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:42:04.489Z",
+      "action": "Step 4 (Create AgentDetailView Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:42:07.080Z",
+      "action": "plan review requested for Step 4 (Create AgentDetailView Component)"
+    },
+    {
+      "timestamp": "2026-03-31T16:42:39.409Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 correctly identifies the need for an AgentStats component that displays summary statistics with clickable filtering. The existing implementation at `packages/dashboard/app/components/AgentStats.tsx` is well-structured with proper TypeScript interfaces, memoization for performance, and follows the established patterns from other dashboard components. However, the plan has two gaps: missing test file specification and missing CSS class definitions in the artifacts list."
+    },
+    {
+      "timestamp": "2026-03-31T16:43:58.693Z",
+      "action": "Step 4 (Create AgentDetailView Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:44:01.969Z",
+      "action": "Step 5 (Refactor AgentListModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:44:05.996Z",
+      "action": "plan review requested for Step 5 (Refactor AgentListModal)"
+    },
+    {
+      "timestamp": "2026-03-31T16:44:31.377Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 is well-structured and achievable. The prerequisite hooks (`useAgents`, `useAgentDetail`) and components (`AgentCard`, `AgentStats`, `AgentDetailView`) from Steps 1-4 already exist with proper SSE integration, typed props, and clean APIs. The refactoring plan correctly identifies all necessary changes to transform the inline-styled, self-contained modal into a composition of dedicated components with real-time updates and filter persistence."
+    },
+    {
+      "timestamp": "2026-03-31T16:45:37.197Z",
+      "action": "Step 5 (Refactor AgentListModal) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:45:40.474Z",
+      "action": "Step 6 (Add CSS Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:45:43.550Z",
+      "action": "plan review requested for Step 6 (Add CSS Styles)"
+    },
+    {
+      "timestamp": "2026-03-31T16:46:05.899Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The step's plan to add agent-specific CSS classes is well-scoped and follows established patterns in the codebase. The AgentListModal component already references the expected CSS classes (`.agent-card`, `.agent-stats`, `.agent-controls`, etc.), so this step will provide the necessary styling to make those components render correctly."
+    },
+    {
+      "timestamp": "2026-03-31T16:47:30.551Z",
+      "action": "Step 6 (Add CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:47:33.452Z",
+      "action": "Step 7 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:49:53.305Z",
+      "action": "Full test suite verified: 53 new tests all passing (useAgents: 10, useAgentDetail: 11, AgentCard: 20, AgentDetailView: 12). No new test failures. Build passes. Pre-existing failures unchanged (15 core, 21 dashboard)."
+    },
+    {
+      "timestamp": "2026-03-31T16:49:58.577Z",
+      "action": "SSE agent events (agent:created, agent:updated, agent:deleted, agent:heartbeat) are consumed by frontend hooks but not yet emitted by the server-side SSE endpoint. The server's sse.ts only emits task:* events. This is noted as expected — the task spec says \"Do NOT implement server-side SSE endpoints\"."
+    },
+    {
+      "timestamp": "2026-03-31T16:50:06.205Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:50:09.520Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:50:44.380Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:51:12.587Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T16:52:26.359Z",
+  "createdAt": "2026-03-31T16:25:14.427Z",
+  "updatedAt": "2026-03-31T16:52:26.359Z",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "size": "M",
+  "reviewLevel": 1,
+  "summary": "Refined the Agent Dashboard UI with 5 new files and 2 modified files. Created `useAgents` hook with SSE live updates and client-side search filtering, `useAgentDetail` hook with heartbeat history caching, `AgentCard` component with state-colored borders and health indicators, `AgentStats` summary bar with clickable filters, and `AgentDetailView` with Overview/Heartbeats/Activity tabs. Refactored `AgentListModal` to use all new hooks/components, added search input, filter persistence in localStorage, loading skeletons, and improved empty states. Added 709 lines of agent-specific CSS with theme variables. All 53 new tests pass (10 + 11 + 20 + 12), build is green. Created KB-299 for the server-side SSE agent event emission that the frontend hooks now consume."
+}

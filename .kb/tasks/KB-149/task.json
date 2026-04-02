@@ -1,0 +1,127 @@
+{
+  "id": "KB-149",
+  "description": "Cards are too sensitive in mobile dashboard view. Touching and dragging to scroll launches the card modal",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Implement Touch Gesture Detection",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests for Touch Gesture Handling",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T14:02:14.031Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T14:29:36.713Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:29:47.750Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification correctly identifies the mobile touch sensitivity issue in TaskCard and provides a concrete implementation plan using touch gesture detection with clear thresholds. The approach is sound, verifiable, and appropriately sized as a focused UI fix."
+    },
+    {
+      "timestamp": "2026-03-30T18:36:13.991Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fleet-finch"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:13.992Z",
+      "action": "Step 0 (Implement Touch Gesture Detection) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:16.185Z",
+      "action": "Step 0 (Implement Touch Gesture Detection) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:21.300Z",
+      "action": "Step 0 (Implement Touch Gesture Detection) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:21.300Z",
+      "action": "Step 1 (Add Tests for Touch Gesture Handling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:21.301Z",
+      "action": "Step 0 complete. Understood the issue: current handleTouchEnd fires on every touch end, including after scrolling. Need to implement tap vs scroll detection using touch start/move/end tracking.",
+      "outcome": "Ready to implement touch gesture detection"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:22.495Z",
+      "action": "plan review requested for Step 1 (Implement Touch Gesture Detection)"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:35.025Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause of the mobile touch issue (`onTouchEnd` firing after scroll) and proposes a standard touch gesture detection approach using `touchStartPos`, `hasTouchMoved`, and timing-based tap detection. The implementation strategy using refs and the specified thresholds (10px, 300ms) aligns with mobile UX best practices. The plan appropriately preserves existing desktop `onClick` behavior and maintains the `isInteractiveTarget` check."
+    },
+    {
+      "timestamp": "2026-03-30T18:36:56.800Z",
+      "action": "Step 1 (Add Tests for Touch Gesture Handling) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:56.801Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:56.801Z",
+      "action": "Step 1 complete. Implemented touch gesture detection with handleTouchStart, handleTouchMove, and updated handleTouchEnd to distinguish taps from scrolls.",
+      "outcome": "Touch handlers now track position and time to detect intentional taps"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:57.584Z",
+      "action": "plan review requested for Step 2 (Add Tests for Touch Gesture Handling)"
+    },
+    {
+      "timestamp": "2026-03-30T18:37:08.292Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 correctly identifies the test scenarios needed to verify the touch gesture detection implementation that was already added in Step 1. The test cases cover the essential gesture distinctions (tap vs. drag vs. long press) and the interactive element check. The approach aligns with the existing test patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T18:37:38.869Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:37:38.870Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T18:37:38.870Z",
+      "action": "Step 2 complete. Added 5 new tests for touch gesture handling - all passing.",
+      "outcome": "Touch gesture tests verify: quick taps open modal, scrolling doesn't, long press doesn't, interactive elements work normally, minimal movement within threshold still works"
+    },
+    {
+      "timestamp": "2026-03-30T18:39:59.162Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T18:39:59.162Z",
+      "action": "Step 3 complete. All touch gesture tests passing, build succeeds with no new type errors introduced by my changes.",
+      "outcome": "TaskCard touch gesture detection implementation is working correctly"
+    },
+    {
+      "timestamp": "2026-03-30T18:40:03.382Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T18:40:14.167Z",
+  "createdAt": "2026-03-30T14:02:14.031Z",
+  "updatedAt": "2026-03-30T18:40:14.167Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,170 @@
+{
+  "id": "KB-177",
+  "description": "add task on the list view should be below the column toggles and above the list header - also include buttons for model selection and dependency selection",
+  "column": "done",
+  "dependencies": [
+    "KB-171"
+  ],
+  "steps": [
+    {
+      "name": "Restructure ListView Layout",
+      "status": "done"
+    },
+    {
+      "name": "Update ListView Props Interface",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS for New Quick Create Area",
+      "status": "done"
+    },
+    {
+      "name": "Update ListView Tests",
+      "status": "done"
+    },
+    {
+      "name": "Update Parent Component (App.tsx)",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:53:04.599Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T17:57:12.964Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:57:31.054Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and achievable. It correctly identifies the layout restructuring needed in ListView.tsx, accurately references the dependency on KB-171 for QuickEntryBox enhancements, and provides concrete steps with verifiable outcomes. The testing requirements appropriately demand real assertions, and the file scope is accurate."
+    },
+    {
+      "timestamp": "2026-03-31T01:12:57.814Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/solar-panda"
+    },
+    {
+      "timestamp": "2026-03-31T01:12:57.815Z",
+      "action": "Step 0 (Restructure ListView Layout) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:07.735Z",
+      "action": "Step 0 (Restructure ListView Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:07.737Z",
+      "action": "plan review requested for Step 1 (Restructure ListView Layout)"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:27.090Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and clearly describes the layout restructuring needed. The QuickEntryBox component already has the enhanced functionality (model/dependency buttons) from KB-171, and ListView already receives and passes the required props (`tasks` and `availableModels`). The step correctly identifies the need to move QuickEntryBox from `list-toolbar` to a new dedicated `list-create-area` between the toolbar and drop zones."
+    },
+    {
+      "timestamp": "2026-03-31T01:13:30.192Z",
+      "action": "Step 1 (Update ListView Props Interface) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:41.498Z",
+      "action": "code review requested for Step 1 (Restructure ListView Layout)"
+    },
+    {
+      "timestamp": "2026-03-31T01:14:11.208Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The ListView.tsx structural changes are correctly implemented: the `QuickEntryBox` has been moved from `list-toolbar` to a new `list-create-area` div positioned between the toolbar and drop zones, and the props (`tasks`, `availableModels`) are properly threaded through. However, **the CSS for `.list-create-area` is completely missing**, which violates Step 1's requirement for \"appropriate visual separation\" and makes Step 3 (Add CSS for New Quick Create Area) entirely unfulfilled. Tests also nee"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:01.594Z",
+      "action": "code review requested for Step 1 (Restructure ListView Layout)"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:25.653Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly restructures the ListView layout by moving the QuickEntryBox from the toolbar into a new dedicated creation area positioned between the toolbar and drop zones. The code properly threads through the new props (`tasks`, `availableModels`) required by the enhanced QuickEntryBox component, adds appropriate CSS styling with responsive support, and includes comprehensive tests for the new layout."
+    },
+    {
+      "timestamp": "2026-03-31T01:17:26.844Z",
+      "action": "Step 1 (Update ListView Props Interface) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:26.845Z",
+      "action": "plan review requested for Step 2 (Update ListView Props Interface)"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:42.125Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The Step 2 checkboxes are already satisfied by the current codebase state. The `ListViewProps` interface already includes both `tasks` and `availableModels` props, the `ModelInfo` type is already imported, and the QuickEntryBox already receives these props. No additional implementation work is required for this step."
+    },
+    {
+      "timestamp": "2026-03-31T01:17:46.081Z",
+      "action": "Step 2 (Add CSS for New Quick Create Area) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:46.083Z",
+      "action": "plan review requested for Step 3 (Add CSS for New Quick Create Area)"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:00.441Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is sound and achievable. The checkboxes accurately reflect the minimal styling work needed. Interestingly, the CSS appears to already be partially implemented in `styles.css` (lines 3229-3239 and mobile responsive at 3698-3700), which suggests either prior work or the current state already matches the intended outcome. The plan correctly identifies the key styling requirements: full width, visual separation via border/background, design token consistency, and mobile responsiv"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:05.553Z",
+      "action": "Step 3 (Update ListView Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:05.555Z",
+      "action": "plan review requested for Step 4 (Update ListView Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:27.524Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The Step 4 plan correctly identifies the test updates needed for the new QuickEntryBox layout and props. The tests already exist in the current codebase (suggesting prior implementation), covering location verification, model/dependency button presence, and Enter key submission. A minor gap exists regarding `availableModels` prop testing, but the component gracefully handles its absence by fetching models internally."
+    },
+    {
+      "timestamp": "2026-03-31T01:18:29.689Z",
+      "action": "Step 4 (Update Parent Component (App.tsx)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:29.691Z",
+      "action": "plan review requested for Step 5 (Update Parent Component (App.tsx))"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:43.242Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "Step 5's stated outcomes are already fully achieved in the current codebase. App.tsx already imports `ModelInfo`, maintains `availableModels` state via `fetchModels()`, and passes both `tasks` and `availableModels` to ListView. The worker can verify these are in place and mark this step complete without additional changes."
+    },
+    {
+      "timestamp": "2026-03-31T01:18:46.798Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:50.871Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:08.798Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:09.780Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:19:22.956Z",
+  "createdAt": "2026-03-30T17:53:04.599Z",
+  "updatedAt": "2026-03-31T01:19:22.956Z",
+  "size": "M",
+  "reviewLevel": 2
+}

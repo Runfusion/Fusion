@@ -1,0 +1,108 @@
+{
+  "id": "KB-188",
+  "description": "Move the usage icon in the header closer to search and terminal should be in the overflow on mobile",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Reorganize Header Button Layout",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:04:52.039Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:05:23.527Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:05:41.422Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, appropriately-scoped specification for a focused UI layout change. The mission is clear, steps have concrete verifiable outcomes, and file scope accurately reflects the codebase. The existing mobile overflow menu patterns in Header.tsx (lines 260-298) and styles.css (lines 2488-2510) will support this change without requiring style modifications."
+    },
+    {
+      "timestamp": "2026-03-30T19:22:14.484Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bright-ridge"
+    },
+    {
+      "timestamp": "2026-03-30T19:22:14.484Z",
+      "action": "Step 0 (Reorganize Header Button Layout) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:22:15.721Z",
+      "action": "Step 0 (Reorganize Header Button Layout) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:22:21.844Z",
+      "action": "Step 0 (Reorganize Header Button Layout) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:22:21.845Z",
+      "action": "Preflight complete - read Header.tsx, Header.test.tsx, and relevant CSS. Current layout: Usage button has `!isMobile` condition; Terminal always renders; Usage is in overflow menu on mobile. Need to: move usage inline on mobile, move terminal to overflow on mobile.",
+      "outcome": "Ready to implement Step 1"
+    },
+    {
+      "timestamp": "2026-03-30T19:22:23.726Z",
+      "action": "plan review requested for Step 1 (Reorganize Header Button Layout)"
+    },
+    {
+      "timestamp": "2026-03-30T19:22:32.990Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes to Header.tsx. The four specific checkboxes (unconditional usage rendering, conditional terminal rendering, adding terminal to overflow, removing usage from overflow) will achieve the stated mobile and desktop layouts. The approach is sound and follows the existing code patterns."
+    },
+    {
+      "timestamp": "2026-03-30T19:22:33.777Z",
+      "action": "Step 1 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:22:48.660Z",
+      "action": "Step 1 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:22:48.660Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:23:33.336Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:23:33.337Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:25:47.430Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:25:57.584Z",
+      "action": "Task KB-188 completed successfully",
+      "outcome": "All 4 steps complete. Header.tsx reorganized: usage button moved inline on mobile, terminal button moved to overflow menu on mobile. All 34 Header tests pass. Build succeeds. Changeset created."
+    },
+    {
+      "timestamp": "2026-03-30T19:25:57.585Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:26:35.096Z",
+  "createdAt": "2026-03-30T18:04:52.039Z",
+  "updatedAt": "2026-03-30T19:26:35.096Z",
+  "size": "S",
+  "reviewLevel": 1
+}

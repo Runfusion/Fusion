@@ -1,0 +1,30 @@
+{
+  "id": "KB-654",
+  "description": "On some devices the bottom of the board is off screen",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 0,
+  "blockedBy": "KB-625",
+  "createdAt": "2026-04-01T02:37:34.562Z",
+  "updatedAt": "2026-04-01T03:01:51.779Z",
+  "columnMovedAt": "2026-04-01T02:46:01.322Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:37:34.562Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:45:51.102Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:45:59.669Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. The issue description matches the actual code at `packages/dashboard/app/styles.css:384`, and the referenced pattern at line 2791 confirms the `dvh` fallback approach is already established in the codebase. The task size (S) and review level (0) are appropriate for this isolated CSS-only bug fix."
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "id": "KB-208",
+  "description": "Fix dashboard useTasks hook tests - 13 tests timing out due to SSE event handling issues. Tests related to task:updated, task:deleted, task:merged events and updateTask functionality are timing out at 5000ms. Location: packages/dashboard/app/hooks/__tests__/useTasks.test.ts",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Root Cause",
+      "status": "done"
+    },
+    {
+      "name": "Fix Test Setup and Cleanup",
+      "status": "done"
+    },
+    {
+      "name": "Fix Fake Timer Test",
+      "status": "done"
+    },
+    {
+      "name": "Fix Test Wait Patterns",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T21:07:34.463Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T21:09:31.500Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T21:09:47.866Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies a real test cleanup problem in `useTasks.test.ts`. The fake timer test \"closes the broken SSE connection and reconnects after an error\" (lines 199-223) can leak the 3-second `reconnectTimer` from the hook implementation (line 139 in useTasks.ts) to subsequent tests, causing timeouts. The MockEventSource.instances array is reset in beforeEach, but remaining EventSource instances are not properly closed in afterEach. The fix steps are concrete and verifiable"
+    },
+    {
+      "timestamp": "2026-03-30T23:00:37.165Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/grand-olive"
+    },
+    {
+      "timestamp": "2026-03-30T23:00:37.165Z",
+      "action": "Step 0 (Analyze Root Cause) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:01:59.736Z",
+      "action": "Step 0 (Analyze Root Cause) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:01:59.738Z",
+      "action": "Step 0 (Analyze Root Cause) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:01:59.740Z",
+      "action": "Step 1 (Fix Test Setup and Cleanup) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:02:00.894Z",
+      "action": "plan review requested for Step 1 (Fix Test Setup and Cleanup)"
+    },
+    {
+      "timestamp": "2026-03-30T23:02:15.507Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The planned approach correctly identifies the root causes of test isolation failures: incomplete EventSource mock cleanup and fake timer leakage between tests. The checkboxes address the critical gaps—adding reconnect timer cleanup, closing lingering EventSource instances, and the safety guard for real timers. The plan will achieve the stated outcomes with minor refinements."
+    },
+    {
+      "timestamp": "2026-03-30T23:02:36.232Z",
+      "action": "Step 1 (Fix Test Setup and Cleanup) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:02:36.234Z",
+      "action": "Step 2 (Fix Fake Timer Test) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:02:36.236Z",
+      "action": "Step 3 (Fix Test Wait Patterns) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:04:22.818Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:04:22.821Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:04:24.314Z",
+      "action": "Found pre-existing test failures in other files during verification",
+      "outcome": "useMultiAgentLogs.test.ts has 8 failing tests due to missing EventSource mock - not related to this task. Header.test.tsx and TaskCard.test.tsx have unrelated pre-existing failures. Created KB-209 to track the useMultiAgentLogs test fixes."
+    },
+    {
+      "timestamp": "2026-03-30T23:04:35.026Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:07:40.707Z",
+  "createdAt": "2026-03-30T21:07:34.463Z",
+  "updatedAt": "2026-03-30T23:07:40.707Z",
+  "size": "M",
+  "reviewLevel": 1
+}

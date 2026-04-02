@@ -1,0 +1,276 @@
+{
+  "id": "KB-294",
+  "title": "Refinement: Implement agent heartbeat system for runtime state tracking",
+  "description": "Ensure this works properly\n\nRefines: KB-283",
+  "column": "done",
+  "dependencies": [
+    "KB-283"
+  ],
+  "steps": [
+    {
+      "name": "AgentStore Tests",
+      "status": "done"
+    },
+    {
+      "name": "HeartbeatMonitor Tests",
+      "status": "done"
+    },
+    {
+      "name": "Full Test Suite Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:29:45.665Z",
+      "action": "Created as refinement of KB-283"
+    },
+    {
+      "timestamp": "2026-03-31T16:36:45.720Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:37:06.175Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, grounded in actual code patterns, and provides clear, verifiable outcomes for each step. It correctly identifies the test coverage gaps for AgentStore and HeartbeatMonitor classes, follows established patterns from existing tests, and appropriately scopes the work to test-only files with a zero-failure quality gate."
+    },
+    {
+      "timestamp": "2026-03-31T16:40:26.750Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pearl-creek"
+    },
+    {
+      "timestamp": "2026-03-31T16:40:26.751Z",
+      "action": "Step 0 (AgentStore Tests) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T16:40:30.572Z",
+      "action": "Step 0 (AgentStore Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:41:14.522Z",
+      "action": "KB-283 already has comprehensive AgentStore tests (909 lines) at packages/core/src/__tests__/agent-store.test.ts. No HeartbeatMonitor exists in KB-283. Need to assess what the PROMPT.md expects vs what KB-283 actually implemented."
+    },
+    {
+      "timestamp": "2026-03-31T16:43:18.359Z",
+      "action": "Step 0 (AgentStore Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:43:22.016Z",
+      "action": "Preflight complete. KB-283 merged into worktree. AgentStore has 72 passing tests with 98% coverage. HeartbeatMonitor does not exist in KB-283 implementation. PROMPT specifies testing methods (recordHeartbeat, assignTask, etc.) that were not implemented. Will adapt: Step 1 adds additional edge-case tests for actual implementation; Step 2 will be skipped since HeartbeatMonitor doesn't exist."
+    },
+    {
+      "timestamp": "2026-03-31T16:43:24.336Z",
+      "action": "Step 0 (AgentStore Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:43:31.141Z",
+      "action": "plan review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T16:44:57.963Z",
+      "action": "plan review Step 0: REVISE",
+      "outcome": "The proposed Step 1 plan does not match the current codebase state. `packages/core/src/agent-store.ts` only implements CRUD, status transitions, markdown updates, and memory operations; it does not contain any heartbeat, task-assignment, run-tracking, role-filtering, or `getAgentDetail()` APIs that the step intends to test. As written, several checkboxes are unimplementable and would force either out-of-scope source changes or a later rewrite of the plan."
+    },
+    {
+      "timestamp": "2026-03-31T16:46:18.601Z",
+      "action": "Found bug in AgentStore.getMemory(): limit=0 returns all entries instead of empty array because entries.slice(-0) === entries.slice(0). Fixing per PROMPT guidance: \"If bugs found during testing, fix them.\""
+    },
+    {
+      "timestamp": "2026-03-31T16:47:01.345Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T16:49:01.405Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The added test file exercises the currently implemented `AgentStore` CRUD, status, markdown, and memory behavior well, but it does not validate the Step 0 outcomes described in `PROMPT.md`. The task requires tests for heartbeat-related APIs, task assignment, richer detail retrieval, and specific event coverage, and those APIs are absent from both the implementation under test and the new test suite."
+    },
+    {
+      "timestamp": "2026-03-31T16:49:27.698Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T16:52:18.091Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new test file adds solid coverage for the current `AgentStore` implementation: CRUD flows, state transitions, memory persistence, event emission, legacy normalization, and lock/atomic-write behavior are all exercised well. However, it does not satisfy the task’s stated Step 1 outcomes, because it tests a different `AgentStore` API than the one described in `PROMPT.md` and omits the heartbeat-focused coverage that is the core purpose of KB-294."
+    },
+    {
+      "timestamp": "2026-03-31T16:53:59.561Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:04:11.643Z",
+      "action": "Task terminated due to stuck agent session (no activity for ~10 minutes)"
+    },
+    {
+      "timestamp": "2026-03-31T17:04:35.082Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The newly added `packages/core/src/agent-store.test.ts` contains valid tests, but Step 0 is not complete against the task’s stated outcomes because it only adds an auxiliary edge-case suite on top of an already-existing comprehensive AgentStore suite. More importantly, the task explicitly called for AgentStore coverage of heartbeat-related APIs, but the actual `AgentStore` implementation in this branch does not provide those APIs at all, so the delivered step does not satisfy the step requiremen"
+    },
+    {
+      "timestamp": "2026-03-31T17:04:44.610Z",
+      "action": "Reviewer keeps requesting tests for heartbeat APIs (recordHeartbeat, getHeartbeatHistory, etc.) that don't exist in the KB-283 implementation. The PROMPT.md was spec'd anticipating a different implementation. Cannot test non-existent APIs. Proceeding with 100% coverage of actual implementation (101 tests passing). Created out-of-scope task for the missing heartbeat API implementation."
+    },
+    {
+      "timestamp": "2026-03-31T17:07:23.449Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:07:59.876Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The added test file is thorough for the currently implemented `AgentStore`, but it does not validate the AgentStore API required by the task prompt for KB-294 Step 0. The prompt explicitly requires heartbeat/run coverage (`recordHeartbeat`, `getHeartbeatHistory`, `startHeartbeatRun`, etc.), `assignTask`, `getAgentDetail`, role filtering, and state-transition coverage via `updateAgentState`; none of those APIs are exercised, and several do not appear to exist in the current source at all. As writ"
+    },
+    {
+      "timestamp": "2026-03-31T17:08:10.248Z",
+      "action": "Implementing missing AgentStore heartbeat APIs (recordHeartbeat, getHeartbeatHistory, startHeartbeatRun, endHeartbeatRun, updateAgentState, assignTask, getAgentDetail) since reviewer requires them for step approval. These were specified in KB-294 PROMPT but not implemented in KB-283."
+    },
+    {
+      "timestamp": "2026-03-31T17:14:13.952Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:14:51.059Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new `AgentStore` test suite is broad and generally well-structured, and it covers much more of the API surface than the step strictly required. However, it misses two explicit Step 1 requirements from the task prompt: validating `getAgent()`/`listAgents()` null-or-filter behavior expected by the spec, and verifying the required createdAt descending ordering/filter-by-role behavior for `listAgents()`. As written, the step does not fully satisfy the task outcomes and would likely need follow-u"
+    },
+    {
+      "timestamp": "2026-03-31T17:18:55.522Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T17:18:57.407Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T17:19:37.695Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:20:27.355Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new `packages/core/src/agent-store.test.ts` is comprehensive and exercises most of the AgentStore surface well, but the step is not cleanly complete because there is still a second AgentStore test file in `packages/core/src/__tests__/agent-store.test.ts` that reflects an older, partial suite. That duplicate test file creates conflicting/fragmented coverage and does not satisfy the task’s stated artifact expectation of a single `packages/core/src/agent-store.test.ts` for this step."
+    },
+    {
+      "timestamp": "2026-03-31T17:20:47.539Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:21:32.791Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new `AgentStore` test file is thorough and exercises much more than the Step 0 requirements, including memory, markdown, config-history, and corruption/locking behavior. However, there is at least one assertion that conflicts with the actual `AgentStore` implementation, which makes the step fail as written, and there is a notable gap around one of the required lifecycle transitions from the task prompt."
+    },
+    {
+      "timestamp": "2026-03-31T17:22:40.072Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:23:15.623Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new `AgentStore` test file is thorough and covers most of the API surface, filesystem behavior, and event emission patterns expected by the task. However, it misses one required state-transition case from the task prompt (`active → idle`), and it includes several unused type imports that are likely to fail the project's TypeScript/test build under stricter settings."
+    },
+    {
+      "timestamp": "2026-03-31T17:24:24.862Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:25:19.249Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new `agent-store.test.ts` is thorough and covers far more than the Step 1 requirements, including heartbeats, memory, lifecycle methods, corruption handling, and lock serialization. However, it also asserts behavior that is not part of the documented AgentStore lifecycle contract and contradicts the project spec, which makes the step incorrect as implemented."
+    },
+    {
+      "timestamp": "2026-03-31T17:25:29.618Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:27:33.236Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new `AgentStore` test file is comprehensive and exercises far more than the minimum Step 0 requirements, including persistence, event emission, legacy normalization, and locking behavior. However, it also adds assertions for behaviors that are outside the step scope and not implemented by `AgentStore`, which will cause this step to fail rather than simply verifying the existing heartbeat work."
+    },
+    {
+      "timestamp": "2026-03-31T17:28:18.322Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:29:13.630Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new test file is thorough and covers much more than the Step 0 requirements, including heartbeats, runs, memory, config history, and event emission. However, it asserts behavior that contradicts the current `AgentStore` implementation for convenience state transitions, so the step as committed will fail rather than validate the existing codebase."
+    },
+    {
+      "timestamp": "2026-03-31T17:29:26.273Z",
+      "action": "code review requested for Step 0 (AgentStore Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:30:10.966Z",
+      "action": "code review Step 0: APPROVE",
+      "outcome": "This is a strong, comprehensive test suite that covers the required AgentStore behaviors and follows the existing filesystem-isolation patterns used elsewhere in the repo. The tests exercise CRUD, status transitions, task assignment, heartbeat persistence/history, heartbeat runs, events, and a number of useful edge cases without requiring source changes."
+    },
+    {
+      "timestamp": "2026-03-31T17:30:15.271Z",
+      "action": "Step 0 (AgentStore Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:30:25.275Z",
+      "action": "Step 1 (HeartbeatMonitor Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:30:28.419Z",
+      "action": "plan review requested for Step 1 (HeartbeatMonitor Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:31:28.214Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The proposed Step 1 does not align with the task step it names: the checkboxes and artifacts are for **AgentStore tests**, not HeartbeatMonitor tests. More importantly, the current codebase in this worktree does not contain `packages/engine/src/agent-heartbeat.ts` or any `HeartbeatMonitor` implementation at all, so a plan that assumes that file exists and can be tested will fail until the task prompt or implementation baseline is reconciled."
+    },
+    {
+      "timestamp": "2026-03-31T17:34:46.997Z",
+      "action": "code review requested for Step 1 (HeartbeatMonitor Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T17:37:24.928Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The new `HeartbeatMonitor` test suite is comprehensive and matches the Step 2 requirements well: it covers lifecycle methods, tracking, health checks, missed heartbeat detection, recovery, auto-termination, fake-timer usage, and several error-handling edge cases. I did not find any blocking correctness issues in the tests relative to the current `HeartbeatMonitor` implementation."
+    },
+    {
+      "timestamp": "2026-03-31T17:37:28.856Z",
+      "action": "Step 1 (HeartbeatMonitor Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:37:35.782Z",
+      "action": "Step 2 (Full Test Suite Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:43:51.471Z",
+      "action": "Full test suite verification: @kb/core (445 tests) and @kb/engine (640 tests) all passing. Dashboard has 20 pre-existing test failures unrelated to this task's changes. Build passes for all packages."
+    },
+    {
+      "timestamp": "2026-03-31T17:43:54.474Z",
+      "action": "Step 2 (Full Test Suite Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:43:59.339Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:44:10.966Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:44:27.160Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:39:27.509Z",
+  "createdAt": "2026-03-31T16:29:45.665Z",
+  "updatedAt": "2026-03-31T18:39:27.509Z",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "validatorModelProvider": "openai-codex",
+  "validatorModelId": "gpt-5.4",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Implemented and tested the agent heartbeat system for KB-294. Created comprehensive test suites:\n- `packages/core/src/agent-store.test.ts`: 113 tests covering AgentStore CRUD, status transitions (updateAgentState), task assignment (assignTask), heartbeat recording/history, heartbeat runs, events, config revisions, legacy normalization, and corrupted data handling. 100% statement/function/line coverage.\n- `packages/engine/src/agent-heartbeat.test.ts`: 36 tests covering HeartbeatMonitor tracking, missed heartbeat detection, auto-termination after 2x timeout grace period, recovery flow, and error handling. Uses fake timers throughout. 99%+ coverage.\n- Also implemented missing heartbeat APIs in AgentStore (updateAgentState, assignTask, getAgentDetail, recordHeartbeat, getHeartbeatHistory, heartbeat runs) and HeartbeatMonitor class following StuckTaskDetector patterns. Fixed getMemory(id, 0) bug where slice(-0) returned all entries instead of empty array."
+}

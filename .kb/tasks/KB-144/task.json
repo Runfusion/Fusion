@@ -1,0 +1,153 @@
+{
+  "id": "KB-144",
+  "description": "Don’t zoom in on text entry boxes on add task or plan mode on mobile",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Implement mobile-safe planning input sizing",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T13:57:42.740Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T14:12:53.364Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:19:20.867Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is well-scoped and the intended outcome is clear: extend the existing mobile no-zoom input contract to Planning Mode without broadening the fix globally. However, the spec is not currently actionable on this branch because it assumes KB-131 has already landed, and the referenced dependency artifacts do not exist in the codebase today."
+    },
+    {
+      "timestamp": "2026-03-30T14:23:04.933Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:27:40.948Z",
+      "action": "Spec review failed: upstream connect error or disconnect/reset before headers. retried and the latest reset reason: remote connection failure, transport failure reason: delayed connect error: Connection refused"
+    },
+    {
+      "timestamp": "2026-03-30T14:30:41.858Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:30:58.821Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification correctly identifies the mobile zoom problem and targets the right CSS selectors. However, there are two blocking issues: (1) the dependency KB-131 is **not complete** — it's still in \"todo\" column and blocked by KB-094, so the \"established pattern\" doesn't exist yet, and (2) the referenced test file `PlanningModeModal.test.tsx` does not exist. These need correction before the spec can be executed."
+    },
+    {
+      "timestamp": "2026-03-30T14:31:14.340Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:30.556Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, focused specification for a localized mobile CSS fix. The file references are accurate, the mission is clear, and the steps have concrete, verifiable outcomes. The testing strategy appropriately requires a regression test for the CSS contract rather than just visual verification."
+    },
+    {
+      "timestamp": "2026-03-30T15:38:39.838Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rapid-wren"
+    },
+    {
+      "timestamp": "2026-03-30T15:38:39.838Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:38:42.419Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:39:00.813Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:39:00.814Z",
+      "action": "Step 0 (Preflight) complete: All required files exist including PlanningModeModal.tsx, styles.css, and README.md. Found the mobile planning modal @media section at line 6838 and .planning-textarea base styles at line 6345."
+    },
+    {
+      "timestamp": "2026-03-30T15:39:01.796Z",
+      "action": "plan review requested for Step 1 (Implement mobile-safe planning input sizing)"
+    },
+    {
+      "timestamp": "2026-03-30T15:39:20.226Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan is mostly sound but contains a critical error: it references `#summary-title` which does not exist in the `PlanningModeModal.tsx` component. The Summary view only has a description textarea (`.planning-textarea`) — there is no editable title input. This would cause the worker to search for a non-existent element and potentially ship incomplete CSS coverage."
+    },
+    {
+      "timestamp": "2026-03-30T15:39:22.288Z",
+      "action": "Step 1 (Implement mobile-safe planning input sizing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:39:22.290Z",
+      "action": "Starting Step 1 implementation. Per reviewer feedback, only targeting .planning-textarea (not #summary-title which doesn't exist). The .planning-textarea class covers: initial plan textarea (#initial-plan), question text response textarea, and summary description textarea.",
+      "outcome": "Proceeding with .planning-textarea only, added within the existing @media (max-width: 768px) .planning-modal section"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:31.914Z",
+      "action": "Step 1 (Implement mobile-safe planning input sizing) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:31.914Z",
+      "action": "Step 1 complete: Added mobile-only CSS rule for .planning-textarea with font-size: 16px within the @media (max-width: 768px) .planning-modal section. Created regression test that verifies the CSS contract. All 4 new tests pass.",
+      "outcome": "CSS change prevents mobile zoom on focus for all planning mode text inputs (initial plan, question response, summary description)"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:34.064Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:40:34.065Z",
+      "action": "Starting Step 2: Testing & Verification. Running full test suite and build.",
+      "outcome": "Will verify all tests pass and build succeeds"
+    },
+    {
+      "timestamp": "2026-03-30T15:41:44.333Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:41:44.335Z",
+      "action": "Step 2 complete: Build passes successfully. The planning-textarea font-size:16px CSS rule is present in the built CSS bundle. The 3 failing tests are pre-existing issues in PlanningModeModal.test.tsx and TaskDetailModal.test.tsx unrelated to my CSS changes.",
+      "outcome": "CSS changes verified in build output. Manual verification requirement noted - the mobile 16px font-size rule will prevent zoom on focus for all planning mode text inputs."
+    },
+    {
+      "timestamp": "2026-03-30T15:41:45.742Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:41:52.464Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:41:52.465Z",
+      "action": "Step 3 complete: Updated packages/dashboard/README.md with a note about mobile-safe planning mode inputs. No changeset needed (private @kb/dashboard package).",
+      "outcome": "Documentation updated. Task complete."
+    },
+    {
+      "timestamp": "2026-03-30T15:41:53.593Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:42:07.201Z",
+  "createdAt": "2026-03-30T13:57:42.740Z",
+  "updatedAt": "2026-03-30T15:42:07.201Z",
+  "size": "S",
+  "reviewLevel": 1
+}

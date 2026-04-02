@@ -1,0 +1,100 @@
+{
+  "id": "KB-105",
+  "description": "when using worktree generated from task title, if there is no task title generate one from the task description",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Implement Title Generation in createTask",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T05:05:40.964Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T05:21:41.089Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:22:03.455Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-specified, focused task. The specification accurately describes the problem (tasks without titles display poorly in dashboard/CLI), correctly identifies the target code location (`TaskStore.createTask()` at lines 180-220), and proposes a sensible solution (extract 8-10 words from description, capped at ~50 chars). The file scope is minimal and accurate, testing requirements are comprehensive with specific test cases, and the sizing (S, Review Level 1) is appropriate."
+    },
+    {
+      "timestamp": "2026-03-30T14:00:01.588Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/clear-heron"
+    },
+    {
+      "timestamp": "2026-03-30T14:00:01.589Z",
+      "action": "Step 0 (Implement Title Generation in createTask) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:00:03.731Z",
+      "action": "Step 0 (Implement Title Generation in createTask) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:00:11.533Z",
+      "action": "Preflight complete: Understood the codebase structure",
+      "outcome": "Found createTask() at store.ts line 180-220. Current logic: title: input.title || undefined. Executor already has defensive fallback for worktreeNaming='task-title'. Need to generate title from description (first 8-10 words, ~50 chars max) when input.title is empty."
+    },
+    {
+      "timestamp": "2026-03-30T14:00:11.536Z",
+      "action": "Step 0 (Implement Title Generation in createTask) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:00:11.538Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:00:12.447Z",
+      "action": "plan review requested for Step 1 (Implement Title Generation in createTask)"
+    },
+    {
+      "timestamp": "2026-03-30T14:00:27.518Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan is solid and will achieve the stated outcomes. The approach of generating titles from the first 8-10 words of the description is straightforward, deterministic, and fits well with the existing codebase. The change is localized to `createTask()` and the existing PROMPT.md generation logic will automatically use the generated title."
+    },
+    {
+      "timestamp": "2026-03-30T14:01:54.863Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:01:54.865Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:01:54.867Z",
+      "action": "plan review requested for Step 2 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T14:02:15.299Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The Step 2 plan is well-structured and will achieve its stated outcomes. The test cases cover all critical scenarios: title generation when not provided, empty string handling, preservation of provided titles, truncation for long descriptions, and short description handling. The quality gates (full test suite + build) are appropriate."
+    },
+    {
+      "timestamp": "2026-03-30T14:06:42.919Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:07:01.221Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T14:10:49.054Z",
+  "createdAt": "2026-03-30T05:05:40.964Z",
+  "updatedAt": "2026-03-30T14:10:49.054Z",
+  "size": "S",
+  "reviewLevel": 1
+}

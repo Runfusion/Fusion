@@ -1,0 +1,178 @@
+{
+  "id": "KB-016",
+  "description": "Add ability to duplicate a task (sends back to triage from any state)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Store Implementation",
+      "status": "done"
+    },
+    {
+      "name": "CLI Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard API Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T00:53:21.321Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T00:57:22.139Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T00:57:34.605Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and comprehensive. The mission is clear, file scope is accurate, and steps have concrete, verifiable outcomes. The testing requirements demand real automated tests with assertions. All referenced files exist and follow the established patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T01:13:16.542Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pale-plume"
+    },
+    {
+      "timestamp": "2026-03-30T01:13:16.543Z",
+      "action": "Step 0 (Core Store Implementation) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T01:13:25.568Z",
+      "action": "Step 1 (CLI Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:13:29.372Z",
+      "action": "plan review requested for Step 1 (Core Store Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T01:13:47.205Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the `duplicateTask` method signature and outlines appropriate behavior for duplicating tasks from any column into triage. The approach aligns with existing TaskStore patterns like `createTask`, uses proper locking via `withConfigLock` and `withTaskLock`, and follows the event emission conventions. The test requirements cover the critical paths including source state verification, event emission, and field reset behavior."
+    },
+    {
+      "timestamp": "2026-03-30T01:14:22.638Z",
+      "action": "code review requested for Step 1 (Core Store Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T01:14:50.885Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The `duplicateTask` method is correctly implemented in `packages/core/src/store.ts` following all specified requirements from the task. It properly copies the title and description (with source reference), resets execution state, omits dependencies/attachments/steering comments, copies the PROMPT.md, adds a log entry, emits the `task:created` event, and updates the watcher cache. The implementation aligns with existing TaskStore patterns."
+    },
+    {
+      "timestamp": "2026-03-30T01:14:53.160Z",
+      "action": "Step 1 (CLI Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:14:54.716Z",
+      "action": "Step 2 (Dashboard API Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:14:55.711Z",
+      "action": "plan review requested for Step 2 (CLI Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T01:15:13.505Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and follows established patterns in the codebase. It correctly identifies the required changes to add a `kb task duplicate <id>` command, including argument parsing, error handling, and success message formatting that matches existing CLI conventions."
+    },
+    {
+      "timestamp": "2026-03-30T01:15:58.580Z",
+      "action": "code review requested for Step 2 (CLI Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T01:16:31.562Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The CLI implementation correctly adds the `runTaskDuplicate` function and wires it up in `bin.ts` with proper argument validation and help text. However, **the step requirement to \"Run targeted tests for changed files\" is not met** — no tests were added for the new `runTaskDuplicate` function in `task.test.ts`."
+    },
+    {
+      "timestamp": "2026-03-30T01:16:57.511Z",
+      "action": "code review requested for Step 2 (CLI Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T01:17:14.107Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The CLI implementation is complete and correct. The changes add the `kb task duplicate <id>` command with proper argument handling, error messages, and success output. Tests are included and passing. The implementation follows established patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T01:17:15.081Z",
+      "action": "Step 2 (Dashboard API Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:17:16.347Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:17:17.879Z",
+      "action": "plan review requested for Step 3 (Dashboard API Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T01:17:31.556Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes to add the duplicate task API endpoint. The route implementation follows established patterns in `routes.ts` (similar to `retry`, `pause`, `unpause` endpoints), and the API client addition in `api.ts` follows the existing function conventions. The 404 handling for non-existent tasks aligns with how other routes handle `ENOENT` errors from the store."
+    },
+    {
+      "timestamp": "2026-03-30T01:17:57.503Z",
+      "action": "code review requested for Step 3 (Dashboard API Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T01:18:19.195Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Dashboard API implementation for the duplicate task feature is complete and correctly follows established patterns. Both the backend route and frontend API client function are properly implemented with appropriate error handling."
+    },
+    {
+      "timestamp": "2026-03-30T01:18:20.349Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:18:21.807Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:18:22.933Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T01:18:45.939Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step correctly identifies the remaining test coverage gaps. The CLI tests for `runTaskDuplicate` are already implemented (lines 459–494 in `packages/cli/src/commands/task.test.ts`), while the store-level unit tests and API endpoint tests are appropriately listed as required work. The test requirements align with the implementation's behavior and cover the critical edge cases."
+    },
+    {
+      "timestamp": "2026-03-30T01:20:15.682Z",
+      "action": "code review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T01:20:42.280Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The test coverage for the duplicate task feature is comprehensive and thorough. All test files (`store.test.ts`, `task.test.ts`, and `routes.test.ts`) include well-structured tests that cover the requirements specified in the task PROMPT.md. The tests follow existing project patterns and include proper assertions for both success and error cases."
+    },
+    {
+      "timestamp": "2026-03-30T01:20:43.266Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:21:48.974Z",
+      "action": "Step 0 (Core Store Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:21:48.978Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T01:22:09.985Z",
+  "createdAt": "2026-03-30T00:53:21.321Z",
+  "updatedAt": "2026-03-30T01:22:09.985Z",
+  "size": "M",
+  "reviewLevel": 2
+}

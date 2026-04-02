@@ -1,0 +1,92 @@
+{
+  "id": "KB-613",
+  "description": "Tasks aren’t showing the right status until I refresh the dashboard",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 3,
+  "summary": "Fixed the race condition bug in the dashboard's `useTasks.ts` hook where status updates from the executor weren't appearing in real-time. The `handleUpdated` function now compares `updatedAt` timestamps first for general freshness, only applying `columnMovedAt` logic when columns actually differ. Added two test cases to verify status updates are applied when updatedAt is newer, even if columnMovedAt is older. All 22 tests in useTasks.test.ts pass, and the build completes successfully.",
+  "createdAt": "2026-03-31T21:53:32.929Z",
+  "updatedAt": "2026-04-01T00:37:36.869Z",
+  "columnMovedAt": "2026-04-01T00:37:36.869Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Timestamp Comparison Logic",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:53:32.929Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T22:53:29.900Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:53:48.153Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a real bug in the `handleUpdated` function (lines 55-75 in `useTasks.ts`) where the timestamp comparison logic only considers `columnMovedAt` for freshness, ignoring `updatedAt`. This can cause legitimate status updates to be incorrectly treated as stale when they follow a column move. The spec correctly identifies the affected files, provides a clear fix strategy, and requires proper test coverage."
+    },
+    {
+      "timestamp": "2026-04-01T00:34:11.183Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bold-fern"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:11.184Z",
+      "action": "Step 0 (Fix Timestamp Comparison Logic) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:16.168Z",
+      "action": "Step 0 (Fix Timestamp Comparison Logic) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:20.935Z",
+      "action": "Step 0 (Fix Timestamp Comparison Logic) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:20.936Z",
+      "action": "Step 0 complete. Understood the bug: handleUpdated uses columnMovedAt for freshness comparison, but status updates only change updatedAt, not columnMovedAt. When columnMovedAt differs, the update is rejected even if updatedAt is newer.",
+      "outcome": "Ready to implement fix - need to compare updatedAt first for general freshness, only use columnMovedAt for column-specific conflicts"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:21.963Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:21.964Z",
+      "action": "plan review requested for Step 1 (Fix Timestamp Comparison Logic)"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:34.766Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the bug in `handleUpdated` (lines 63-82). The current logic only compares `columnMovedAt` timestamps, which causes status updates (that don't change `columnMovedAt`) to be incorrectly rejected when they arrive after a column move. The proposed fix using `updatedAt` for general freshness, while preserving `columnMovedAt` only for column-specific conflicts, is the correct approach."
+    },
+    {
+      "timestamp": "2026-04-01T00:34:45.564Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:45.565Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:37:17.995Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:37:24.772Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

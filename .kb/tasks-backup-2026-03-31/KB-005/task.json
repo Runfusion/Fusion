@@ -1,0 +1,31 @@
+{
+  "id": "KB-005",
+  "description": "Migration and First-Run Experience: Auto-migration and backward compatibility",
+  "column": "triage",
+  "currentStep": 0,
+  "paused": true,
+  "createdAt": "2026-03-31T21:01:18.284Z",
+  "updatedAt": "2026-03-31T21:21:31.241Z",
+  "columnMovedAt": "2026-03-31T21:20:47.889Z",
+  "dependencies": [
+    "KB-001",
+    "KB-002",
+    "KB-003",
+    "KB-004"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:01:18.284Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:01:18.287Z",
+      "action": "Moved to triage for re-specification — new dependency added"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:31.241Z",
+      "action": "Task paused"
+    }
+  ]
+}

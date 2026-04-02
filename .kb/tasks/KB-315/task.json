@@ -1,0 +1,143 @@
+{
+  "id": "KB-315",
+  "description": "Add remaining engine module tests: worktree-pool.ts, cron-runner.ts, transient-error-detector.ts, usage-limit-detector.ts. These modules need comprehensive test coverage similar to the scheduler and stuck-task-detector tests already added in KB-301.",
+  "column": "done",
+  "dependencies": [
+    "KB-301"
+  ],
+  "steps": [
+    {
+      "name": "Audit Existing Test Coverage",
+      "status": "done"
+    },
+    {
+      "name": "Enhance worktree-pool.test.ts (if needed)",
+      "status": "done"
+    },
+    {
+      "name": "Enhance cron-runner.test.ts (if needed)",
+      "status": "done"
+    },
+    {
+      "name": "Enhance transient-error-detector.test.ts (if needed)",
+      "status": "done"
+    },
+    {
+      "name": "Enhance usage-limit-detector.test.ts (if needed)",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-31T18:29:39.493Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T18:30:39.461Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T18:30:53.269Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. All referenced files exist with correct paths, and the KB-301 reference patterns are appropriate quality benchmarks. The mission is clearly stated as a verification/enhancement task rather than greenfield test creation. The four existing test files (`worktree-pool.test.ts`, `cron-runner.test.ts`, `transient-error-detector.test.ts`, `usage-limit-detector.test.ts`) are already quite comprehensive and largely match the KB-301 patterns established i"
+    },
+    {
+      "timestamp": "2026-03-31T18:39:57.616Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gentle-lotus"
+    },
+    {
+      "timestamp": "2026-03-31T18:39:57.617Z",
+      "action": "Step 0 (Audit Existing Test Coverage) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T18:40:23.606Z",
+      "action": "Step 0 (Audit Existing Test Coverage) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:41:08.533Z",
+      "action": "Preflight complete. Found 3 of 4 test files pass. cron-runner.test.ts fails due to @kb/core package build issues (missing agent-store.js module). The test files themselves are comprehensive and match KB-301 standards.",
+      "outcome": "worktree-pool: 29 tests ✓, transient-error-detector: 29 tests ✓, usage-limit-detector: 46 tests ✓, cron-runner: build issue (not test issue)"
+    },
+    {
+      "timestamp": "2026-03-31T18:41:17.047Z",
+      "action": "Step 0 (Audit Existing Test Coverage) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:41:20.293Z",
+      "action": "Created task for core package build issue: missing agent-store.ts file that's referenced in index.ts exports",
+      "outcome": "Task created for out-of-scope build issue"
+    },
+    {
+      "timestamp": "2026-03-31T18:41:22.720Z",
+      "action": "Step 1 (Enhance worktree-pool.test.ts (if needed)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:42:00.766Z",
+      "action": "Step 1 (Enhance worktree-pool.test.ts (if needed)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:42:02.912Z",
+      "action": "Step 2 (Enhance cron-runner.test.ts (if needed)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:06.115Z",
+      "action": "Step 2 (Enhance cron-runner.test.ts (if needed)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:07.147Z",
+      "action": "Step 3 (Enhance transient-error-detector.test.ts (if needed)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:12.592Z",
+      "action": "Step 3 (Enhance transient-error-detector.test.ts (if needed)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:14.267Z",
+      "action": "Step 4 (Enhance usage-limit-detector.test.ts (if needed)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:19.915Z",
+      "action": "Step 4 (Enhance usage-limit-detector.test.ts (if needed)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:21.712Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:36.007Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:37.691Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:47.462Z",
+      "action": "Step 7 Documentation complete. No README updates needed (engine package has no README). All tests have descriptive names following KB-301 pattern.",
+      "outcome": "Task KB-318 created for core package build issue. Test names verified descriptive and clear."
+    },
+    {
+      "timestamp": "2026-03-31T18:43:48.619Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:43:51.429Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:45:06.473Z",
+  "createdAt": "2026-03-31T18:29:39.493Z",
+  "updatedAt": "2026-03-31T18:45:06.473Z",
+  "size": "M",
+  "reviewLevel": 1,
+  "summary": "Completed verification and enhancement of 4 engine module test files to KB-301 standards:\n\n1. **worktree-pool.test.ts**: Enhanced from 29 to 32 tests (+3) - Added tests for custom startPoint parameter, readdirSync error handling, and all-worktrees-active edge case.\n\n2. **cron-runner.test.ts**: Enhanced from 32 to 35 tests (+3) - Added DEFAULT_SETTINGS inline to fix build dependency, plus tests for stop() idempotency, tick error handling, and unknown step type handling.\n\n3. **transient-error-detector.test.ts**: Verified 29 tests - Comprehensive coverage of all patterns, edge cases, and classifyError priority handling. No changes needed.\n\n4. **usage-limit-detector.test.ts**: Verified 46 tests - Full coverage of all USAGE_LIMIT_PATTERNS, checkSessionError scenarios, and UsageLimitPauser behavior. No changes needed.\n\n**Total: 142 tests passing** (verified 3x for flakiness - all consistent). Created KB-318 for the pre-existing @kb/core build issue that was blocking some test imports."
+}

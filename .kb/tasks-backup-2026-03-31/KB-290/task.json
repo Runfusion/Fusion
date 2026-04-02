@@ -1,0 +1,87 @@
+{
+  "id": "KB-290",
+  "description": "Tasks that are being created by another task aren’t going to triage first they are going to todo. They need to go triage",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Executor's task_create Tool",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:20:22.022Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T16:24:11.789Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:24:33.088Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a straightforward bug fix with correct file references, line numbers, and code patterns. The mission is clear, the scope is appropriately limited, and the review level (1 - Plan Only) matches the simplicity of the change. Minor improvements could be made to Step 2's test requirements."
+    },
+    {
+      "timestamp": "2026-03-31T16:24:41.570Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fresh-wren"
+    },
+    {
+      "timestamp": "2026-03-31T16:24:41.571Z",
+      "action": "Step 0 (Fix Executor's task_create Tool) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T16:24:42.937Z",
+      "action": "Step 0 (Fix Executor's task_create Tool) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:24:48.992Z",
+      "action": "Step 0 (Fix Executor's task_create Tool) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:24:50.574Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:24:51.555Z",
+      "action": "plan review requested for Step 1 (Fix Executor's task_create Tool)"
+    },
+    {
+      "timestamp": "2026-03-31T16:25:05.432Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the issue and provides the precise fix. The executor's `createTaskCreateTool()` method (lines 669-684 in executor.ts) currently passes only `description` and `dependencies` to `store.createTask()`, while the triage.ts reference implementation (line ~791) explicitly passes `column: \"triage\"`. The fix is straightforward: add the explicit `column: \"triage\"` parameter. The plan properly references the existing pattern and includes test verification."
+    },
+    {
+      "timestamp": "2026-03-31T16:25:10.423Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:25:11.354Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:25:53.486Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:26:07.431Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T16:27:01.877Z",
+  "createdAt": "2026-03-31T16:20:22.022Z",
+  "updatedAt": "2026-03-31T16:27:01.877Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Fixed the executor agent's task_create tool to explicitly set `column: \"triage\"` when creating tasks. The change was made to `createTaskCreateTool()` in `packages/engine/src/executor.ts`, matching the pattern used in the triage agent. Build passes successfully. All 399 executor tests pass (some test files have pre-existing infrastructure issues unrelated to this change). Created changeset file for the patch-level bug fix."
+}

@@ -1,0 +1,78 @@
+{
+  "id": "KB-628",
+  "title": "Implement large-scale Missions: hierarchical planning above tasks",
+  "description": "Add a Missions system inspired by Factory.ai that introduces a four-level hierarchy above the existing task board: **Mission → Milestone → Slice → Feature (task)**. This enables large-scale project planning where a high-level goal is progressively decomposed through AI-assisted interviews into actionable kb tasks.\n\n## Core Concept\nA Mission represents a large initiative (e.g., \"Build user auth system\"). It is broken into ordered **Milestones** (phased delivery units), each containing **Slices** (independently shippable increments), which contain **Features** that map 1:1 to kb tasks.\n\n## Interview & Planning Process\n- **Mission-level interview**: A deep AI-driven Q&A (extending the existing PlanningModeModal pattern) that defines the mission scope, goals, constraints, and generates milestone outlines.\n- **Per-milestone interview**: Each milestone can be independently interviewed to drill into its slices and features. This supports incremental refinement — not all milestones need to be fully planned upfront.\n- **Re-interview**: Milestones can be re-interviewed mid-flight to adjust remaining slices/features based on learnings from completed work.\n\n## Task Creation: Slice-Gated\nFeatures exist as lightweight definitions inside the mission hierarchy until a slice is **activated**. Only then are actual kb tasks created in triage. This keeps the board focused on current work and avoids premature task creation. Auto-advance triggers the next slice when the current slice's tasks all reach done.\n\n## Storage: Normalized SQLite Tables\nNew tables with foreign key relationships:\n- `missions` — top-level mission metadata, status, interview state\n- `milestones` — ordered milestones within a mission, dependency info, interview state\n- `slices` — ordered slices within a milestone, activation status\n- `mission_features` — feature definitions within slices, linked to tasks table via taskId once activated\n- Plus `missionId` / `sliceId` columns on the existing `tasks` table for filtering\n\nAll tables follow the existing WAL-mode SQLite patterns with auto-migration support.\n\n## Dashboard UI (all 6 surfaces)\n1. **Mission list/overview page** — all missions with aggregate progress (milestones complete, features done)\n2. **Mission detail view** — expandable tree: mission → milestones → slices → features, with status per node\n3. **Timeline/roadmap visualization** — Gantt-style or swimlane showing milestones/slices over time with dependency lines\n4. **Board view filtering** — filter existing task board by mission, milestone, or slice\n5. **Header progress indicator** — compact badge/progress bar for active mission\n6. **Inline editing** — add/remove/reorder milestones, slices, features; drag-and-drop restructuring\n\n## Lifecycle & Automation\n- **Dependency ordering**: Milestones and slices have explicit ordering. Milestones can't start until predecessors complete. Slices within a milestone are sequential by default.\n- **Auto-advance**: When all tasks in a slice reach done, the next slice auto-activates (creates tasks in triage).\n- **Status rollup**: Mission/milestone/slice status (planning, active, blocked, complete) computed from aggregate child state.\n- **Re-interview**: Re-run milestone interview mid-flight to adapt remaining plan.\n- **CLI**: `kb mission create|list|show|activate` commands.\n- **Notifications**: Extend ntfy system for milestone/mission completion events.\n\n## Integration Points\n- Engine scheduler: awareness of slice activation and auto-advance\n- Triage agent: features created from missions may carry richer context from interview\n- Pi extension: new mission tools for chat-based mission management\n- Activity log: mission/milestone/slice lifecycle events",
+  "column": "done",
+  "size": "L",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "validatorModelProvider": "openai-codex",
+  "validatorModelId": "gpt-5.4",
+  "summary": "KB-628 was a parent task for the large-scale Missions feature. Per the user's steering comment to \"Break into subtasks\", created 5 subtasks with proper dependency ordering: KB-632 (Foundation: DB schema, types, MissionStore), KB-633 (REST API and Interview System, depends on KB-632), KB-634 (Dashboard UI, depends on KB-632 + KB-633), KB-635 (CLI/Engine integration, depends on KB-632), and KB-636 (Final Integration, depends on all four). Each subtask has a full PROMPT.md specification already written at .fusion/tasks/KB-628{a-e}/PROMPT.md.",
+  "createdAt": "2026-03-31T23:40:21.048Z",
+  "updatedAt": "2026-04-01T01:06:40.557Z",
+  "columnMovedAt": "2026-04-01T01:06:40.557Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:40:21.048Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:40:21.050Z",
+      "action": "Created via Planning Mode",
+      "outcome": "Initial plan: Implement large scale missions - see https://factory.ai/news/missions. This would break a task into several milestones and slices. Each slices would have features that map to tasks. There would be an "
+    },
+    {
+      "timestamp": "2026-03-31T23:41:12.342Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:41:35.231Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a complex hierarchical planning feature. The mission statement clearly defines the 4-level hierarchy (Mission → Milestone → Slice → Feature) with sensible status rollup semantics. File references are accurate—verified all referenced patterns exist including `PlanningModeModal.tsx` for AI interview patterns, `db.ts` schema patterns with JSON helpers, and `TaskStore` EventEmitter patterns. Steps have concrete, verifiable outcomes with appropriate artifac"
+    },
+    {
+      "timestamp": "2026-03-31T23:46:51.624Z",
+      "action": "Steering comment added",
+      "outcome": "by user"
+    },
+    {
+      "timestamp": "2026-04-01T00:01:34.359Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T00:02:01.581Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a comprehensive, well-structured specification for implementing a four-level hierarchical planning system (Mission → Milestone → Slice → Feature → Task). The work is intelligently broken down into 5 subtasks with clear dependencies and logical sequencing. The specifications follow existing project patterns for database schema, TypeScript types, store classes, REST API, CLI commands, and React components."
+    },
+    {
+      "timestamp": "2026-04-01T01:04:57.844Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-fern"
+    },
+    {
+      "timestamp": "2026-04-01T01:05:19.453Z",
+      "action": "KB-628 is a parent task that has been broken into 5 subtasks (KB-628a through KB-628e). The task PROMPT.md only contains the subtask breakdown — there are no implementation steps for KB-628 itself. The user's steering comment confirms they want subtasks created. I need to create the 5 subtask tasks with proper dependency ordering."
+    },
+    {
+      "timestamp": "2026-04-01T01:05:44.304Z",
+      "action": "Created 5 subtasks for KB-628 Missions feature with proper dependency chain: KB-632 (Foundation, no deps) → KB-633 (API, depends on KB-632) → KB-634 (UI, depends on KB-632 + KB-633) + KB-635 (CLI/Engine, depends on KB-632) → KB-636 (Final Integration, depends on all four)",
+      "outcome": "All subtasks created with full specifications already in .fusion/tasks/KB-628{a-e}/PROMPT.md. KB-628 parent task is complete — subtasks will be executed independently."
+    },
+    {
+      "timestamp": "2026-04-01T01:05:48.640Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "steeringComments": [
+    {
+      "id": "1775000811624-pj2f2z",
+      "text": "Break into subtasks",
+      "createdAt": "2026-03-31T23:46:51.624Z",
+      "author": "user"
+    }
+  ]
+}

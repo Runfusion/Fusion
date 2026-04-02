@@ -1,0 +1,236 @@
+{
+  "id": "KB-218",
+  "title": "Add a way to define workflow steps that can be",
+  "description": "Add a way to define \"workflow steps\" that can be defined once globally, and can be optionally enabled for tasks - these are steps like \"Documentation\" or \"QA Review\" that run a new agent with a custom prompt after the task implementation is done, but before it is moved to review. There should be a way to define and manage these workflow steps and then a checkbox on the new task dialog to select one or more. The dialog to define the workflow steps should allow a user to put in a rough description and then use AI to refine it into a detailed prompt that gets run",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Data Model and Store Methods",
+      "status": "done"
+    },
+    {
+      "name": "API Routes for Workflow Step Management and AI Refinement",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard UI for Managing Workflow Steps",
+      "status": "done"
+    },
+    {
+      "name": "New Task Dialog Integration",
+      "status": "done"
+    },
+    {
+      "name": "Engine Integration - Running Workflow Step Agents",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:09:45.754Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:17:56.255Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:18:18.021Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive and well-structured. It correctly identifies existing patterns in the codebase and provides concrete, verifiable outcomes for each step. The mission is clear, dependencies are accurate, and testing requirements demand real automated tests. The file scope references real files with accurate patterns from the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T10:27:24.835Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gentle-peach"
+    },
+    {
+      "timestamp": "2026-03-31T10:27:24.836Z",
+      "action": "Step 0 (Core Data Model and Store Methods) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T10:27:28.740Z",
+      "action": "Step 0 (Core Data Model and Store Methods) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:28:25.711Z",
+      "action": "Starting KB-218: Add Global Workflow Steps for Post-Implementation Review. Read all context files."
+    },
+    {
+      "timestamp": "2026-03-31T10:28:28.116Z",
+      "action": "Step 0 (Core Data Model and Store Methods) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:28:30.455Z",
+      "action": "Step 1 (API Routes for Workflow Step Management and AI Refinement) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:28:32.774Z",
+      "action": "plan review requested for Step 1 (Core Data Model and Store Methods)"
+    },
+    {
+      "timestamp": "2026-03-31T10:28:55.151Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows existing codebase patterns. The approach correctly identifies the types, interfaces, and TaskStore methods needed for workflow steps. There are a few minor gaps and clarifications needed, but nothing that would block implementation or cause rework."
+    },
+    {
+      "timestamp": "2026-03-31T10:31:47.387Z",
+      "action": "code review requested for Step 1 (Core Data Model and Store Methods)"
+    },
+    {
+      "timestamp": "2026-03-31T10:32:13.281Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation successfully adds the foundational types and TaskStore methods for workflow steps. All required interfaces are properly defined, store methods follow existing patterns (config locking, atomic writes, error handling), and comprehensive tests cover the specified scenarios. The ID generation pattern (\"WS-001\") matches the existing task ID convention, and storage in `config.json` alongside settings follows established patterns."
+    },
+    {
+      "timestamp": "2026-03-31T10:32:26.828Z",
+      "action": "Step 1 (API Routes for Workflow Step Management and AI Refinement) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:32:29.764Z",
+      "action": "Step 2 (Dashboard UI for Managing Workflow Steps) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:32:31.950Z",
+      "action": "plan review requested for Step 2 (API Routes for Workflow Step Management and AI Refinement)"
+    },
+    {
+      "timestamp": "2026-03-31T10:32:51.117Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows existing codebase patterns effectively. The store methods are already implemented in `packages/core/src/store.ts`, the types are defined in `packages/core/src/types.ts`, and the API route patterns from `routes.ts` provide clear templates for the workflow step endpoints. The AI refinement approach using the planning module's patterns is appropriate."
+    },
+    {
+      "timestamp": "2026-03-31T10:36:00.387Z",
+      "action": "code review requested for Step 2 (API Routes for Workflow Step Management and AI Refinement)"
+    },
+    {
+      "timestamp": "2026-03-31T10:36:36.885Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The API routes implementation for workflow steps is structurally sound and follows existing patterns. All five endpoints are implemented with proper validation and error handling. However, **the test suite is incomplete** — a critical test for the AI refinement endpoint (`POST /api/workflow-steps/:id/refine`) is missing despite being explicitly required in the PROMPT.md specifications."
+    },
+    {
+      "timestamp": "2026-03-31T10:37:23.444Z",
+      "action": "code review requested for Step 2 (API Routes for Workflow Step Management and AI Refinement)"
+    },
+    {
+      "timestamp": "2026-03-31T10:37:56.063Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds all required REST endpoints for workflow step management and AI prompt refinement. The code follows existing patterns in the codebase, includes proper error handling, input validation, and comprehensive test coverage. All endpoints specified in Step 2 are implemented: GET, POST, PATCH, DELETE for `/api/workflow-steps`, and POST for `/api/workflow-steps/:id/refine`."
+    },
+    {
+      "timestamp": "2026-03-31T10:37:58.209Z",
+      "action": "Step 2 (Dashboard UI for Managing Workflow Steps) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:38:01.757Z",
+      "action": "Step 3 (New Task Dialog Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:38:09.012Z",
+      "action": "plan review requested for Step 3 (Dashboard UI for Managing Workflow Steps)"
+    },
+    {
+      "timestamp": "2026-03-31T10:38:25.618Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and follows existing codebase patterns. The step correctly identifies the need for API functions, a management modal component, AI refinement UI, and integration into the Header. The plan appropriately mirrors the `SettingsModal` pattern with a sidebar-navigated modal for managing workflow steps."
+    },
+    {
+      "timestamp": "2026-03-31T10:42:26.061Z",
+      "action": "code review requested for Step 3 (Dashboard UI for Managing Workflow Steps)"
+    },
+    {
+      "timestamp": "2026-03-31T10:43:12.653Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation is complete and well-structured. All required components, API functions, and tests are in place. The code follows existing patterns in the codebase (similar to SettingsModal structure), uses proper TypeScript typing, and includes comprehensive test coverage. The Header integration and App.tsx wiring are correctly implemented."
+    },
+    {
+      "timestamp": "2026-03-31T10:43:15.001Z",
+      "action": "Step 3 (New Task Dialog Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:43:19.114Z",
+      "action": "Step 4 (Engine Integration - Running Workflow Step Agents) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:43:22.742Z",
+      "action": "plan review requested for Step 4 (New Task Dialog Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T10:43:41.813Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan will achieve the stated outcomes. The approach follows established patterns in the codebase for state management, API integration, and testing. The API layer already has `enabledWorkflowSteps` support in `createTask()` (packages/dashboard/app/api.ts:72-91), so this plan integrates cleanly with existing infrastructure. The placement of the workflow steps section (after Model Configuration, before Attachments) is logical."
+    },
+    {
+      "timestamp": "2026-03-31T10:45:36.868Z",
+      "action": "code review requested for Step 4 (New Task Dialog Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T10:46:06.846Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation successfully integrates workflow step selection into the New Task Dialog. The code follows existing patterns in the codebase, maintains proper TypeScript typing, and includes comprehensive tests. The workflow steps section is properly positioned between Model Configuration and Planning Mode, checkboxes toggle selection correctly, and selected steps are passed through the task creation flow to the API."
+    },
+    {
+      "timestamp": "2026-03-31T10:46:10.277Z",
+      "action": "Step 4 (Engine Integration - Running Workflow Step Agents) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:46:12.883Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:46:16.314Z",
+      "action": "plan review requested for Step 5 (Engine Integration - Running Workflow Step Agents)"
+    },
+    {
+      "timestamp": "2026-03-31T10:46:41.450Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan correctly identifies the integration point in the executor and outlines the key implementation requirements. The approach of intercepting task completion before the in-review transition is sound. The checklist covers the essential components: execution method, system prompt template, failure handling, and progress logging. Minor clarifications are needed around the exact sequencing relative to the task_done() tool call."
+    },
+    {
+      "timestamp": "2026-03-31T10:50:16.562Z",
+      "action": "code review requested for Step 5 (Engine Integration - Running Workflow Step Agents)"
+    },
+    {
+      "timestamp": "2026-03-31T10:50:42.749Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The implementation correctly integrates workflow step execution into the task executor. The `runWorkflowSteps` and `executeWorkflowStep` methods are well-structured, follow existing patterns in the codebase, and the tests cover the key scenarios. The workflow step agents run sequentially after main task completion and properly gate the transition to \"in-review\"."
+    },
+    {
+      "timestamp": "2026-03-31T10:50:46.224Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:50:49.473Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:52:33.907Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:52:44.597Z",
+      "action": "All 7 steps implemented and tests passing. Proceeding to documentation and changeset."
+    },
+    {
+      "timestamp": "2026-03-31T10:54:52.169Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T10:55:06.718Z",
+  "createdAt": "2026-03-31T00:09:45.754Z",
+  "updatedAt": "2026-03-31T10:55:06.718Z",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "size": "L",
+  "reviewLevel": 2,
+  "summary": "Implemented global workflow steps feature for post-implementation review across all packages. Added WorkflowStep/WorkflowStepInput types and TaskStore CRUD methods (create, list, get, update, delete with cascade cleanup). Created REST API endpoints (GET/POST/PATCH/DELETE /workflow-steps + POST /refine for AI prompt generation). Built WorkflowStepManager dashboard component with full CRUD UI, AI refinement button, and delete confirmation. Integrated workflow step checkboxes into NewTaskModal for per-task selection. Modified TaskExecutor to run workflow step agents sequentially (with readonly tools) after main execution completes, gating task promotion to in-review. Added 37 new tests across all packages (11 store, 13 routes, 10 UI component, 3 engine). Updated AGENTS.md and README.md with feature documentation."
+}

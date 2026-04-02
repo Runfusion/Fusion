@@ -1,0 +1,107 @@
+{
+  "id": "KB-275",
+  "title": "Planning mode should allow more text to be entered",
+  "description": "Planning mode should allow more text to be entered. Don’t limit it",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove Character Limit",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T14:05:20.151Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T14:05:56.570Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:04.801Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, focused specification for a straightforward UI improvement. The spec correctly identifies the exact code locations (`maxLength={500}` at line 184, `.slice(0, 500)` at line 178, and the character count display at lines 186-188), provides concrete verifiable outcomes for each step, and appropriately scopes the work as a small, low-risk change with no dependencies."
+    },
+    {
+      "timestamp": "2026-03-31T14:06:18.701Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sandy-panda"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:18.702Z",
+      "action": "Step 0 (Remove Character Limit) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:22.016Z",
+      "action": "Step 1 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:22.019Z",
+      "action": "Starting Step 1: Removing the 500-character limit from PlanningModeModal",
+      "outcome": "Found the relevant code: maxLength={500}, .slice(0, 500) in onChange, and character count display div"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:30.753Z",
+      "action": "Step 1 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:30.754Z",
+      "action": "Completed Step 1: Removed 500-character limit",
+      "outcome": "Removed maxLength, .slice(0, 500), and character count display from the textarea"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:32.341Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:49.534Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:49.535Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:06:49.535Z",
+      "action": "Completed Step 2: No test changes needed",
+      "outcome": "All 17 PlanningModeModal tests pass without modifications"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:29.939Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:29.941Z",
+      "action": "Completed Step 3: Build passes, PlanningModeModal tests pass",
+      "outcome": "Build successful, all 17 PlanningModeModal tests pass. Pre-existing test failures in unrelated files."
+    },
+    {
+      "timestamp": "2026-03-31T14:08:39.653Z",
+      "action": "Step 0 (Remove Character Limit) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:08:39.657Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T14:08:51.452Z",
+  "createdAt": "2026-03-31T14:05:20.151Z",
+  "updatedAt": "2026-03-31T14:08:51.452Z",
+  "size": "S",
+  "reviewLevel": 0,
+  "summary": "Removed the 500-character limit from the Planning Mode initial plan textarea in packages/dashboard/app/components/PlanningModeModal.tsx. Changes include: (1) removed `.slice(0, 500)` from the onChange handler, (2) removed `maxLength={500}` attribute, (3) removed the character count display div. All 17 PlanningModeModal tests pass, build succeeds, and changeset file created for the user-facing improvement."
+}

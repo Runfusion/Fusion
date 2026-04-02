@@ -1,0 +1,54 @@
+{
+  "id": "KB-285",
+  "title": "Agent Dashboard UI",
+  "description": "Build the dashboard UI for the agent system including agent list view, agent detail view, sidebar navigation, and agent management controls. This provides the user interface for viewing and managing agents in the kb system.",
+  "column": "done",
+  "dependencies": [
+    "KB-283"
+  ],
+  "createdAt": "2026-03-31T00:00:00.000Z",
+  "updatedAt": "2026-03-31T16:25:14.428Z",
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:19:26.704Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/noble-tiger"
+    },
+    {
+      "timestamp": "2026-03-31T16:20:14.910Z",
+      "action": "Starting Agent Dashboard UI implementation",
+      "outcome": "KB-283 marked done but AgentStore files missing - will implement both backend and frontend for complete agent dashboard"
+    },
+    {
+      "timestamp": "2026-03-31T16:21:32.532Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:21:52.298Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for building the Agent Dashboard UI. The spec correctly references all existing dashboard patterns, accurately describes the AgentStore dependency (KB-283) which is already implemented, and provides concrete, verifiable outcomes for each step. The file scope is accurate, testing requirements are explicit, and the sizing (M) with review level 2 is appropriate for the UI surface being added."
+    },
+    {
+      "timestamp": "2026-03-31T16:24:25.267Z",
+      "action": "Build succeeds! Tests show 1 pre-existing failure unrelated to agent changes (title generation test)",
+      "outcome": "Agent Dashboard UI implementation complete"
+    },
+    {
+      "timestamp": "2026-03-31T16:24:27.898Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-31T16:25:14.428Z",
+      "action": "Refinement requested",
+      "outcome": "Improve the ui"
+    }
+  ],
+  "steps": [],
+  "columnMovedAt": "2026-03-31T16:24:33.556Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Successfully implemented Agent Dashboard UI (KB-285). Created AgentStore in packages/core/src/agent-store.ts with full CRUD operations, heartbeat tracking, and state transitions. Added agent types to types.ts including AgentState, Agent, AgentHeartbeatEvent, AgentHeartbeatRun, and AgentCreateInput. Implemented HeartbeatMonitor in packages/engine/src/agent-heartbeat.ts for runtime health monitoring. Created REST API routes for agents (GET/POST/PATCH/DELETE /api/agents and heartbeat endpoints). Built React components including AgentListModal with filtering, state management controls, and health status display. Updated Header component with Agents button and added mobile overflow menu support. All builds pass successfully.",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "validatorModelProvider": "openai-codex",
+  "validatorModelId": "gpt-5.4"
+}

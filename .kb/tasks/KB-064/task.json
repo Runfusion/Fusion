@@ -1,0 +1,332 @@
+{
+  "id": "KB-064",
+  "description": "Batch issue status fetching for performance with many cards. Currently each card triggers individual API requests when stale. Implement batch fetching to reduce GitHub API calls when dashboard loads with many issue-linked tasks.",
+  "column": "done",
+  "dependencies": [
+    "KB-022"
+  ],
+  "steps": [
+    {
+      "name": "Add Batch Status Method to GitHubClient",
+      "status": "done"
+    },
+    {
+      "name": "Create Batch Status API Endpoint",
+      "status": "done"
+    },
+    {
+      "name": "Add Frontend API Client Function",
+      "status": "done"
+    },
+    {
+      "name": "Implement Board-Level Batch Fetching",
+      "status": "done"
+    },
+    {
+      "name": "Update TaskCard for Coordinated Fetching",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T03:11:14.273Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:22.047Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:48.414Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification that builds logically on KB-022's existing GitHub integration. The mission is clear, steps are concrete and verifiable, and the file scope accurately reflects the codebase. The testing requirements demand real automated tests with assertions. Minor suggestions for type naming consistency and explicit per-repo batching handling are noted but do not block progress."
+    },
+    {
+      "timestamp": "2026-03-30T13:02:36.435Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sharp-stone"
+    },
+    {
+      "timestamp": "2026-03-30T13:02:36.436Z",
+      "action": "Step 0 (Add Batch Status Method to GitHubClient) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T13:02:45.107Z",
+      "action": "Step 0 (Add Batch Status Method to GitHubClient) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T13:04:25.648Z",
+      "action": "Completed preflight inspection of GitHub badge/status code paths and identified existing GraphQL badge batching that must remain separate from the new REST batch status refresh flow.",
+      "outcome": "Implementation plan will add REST batch methods and a board-level batch refresh without removing the existing per-card endpoints or websocket poller batching."
+    },
+    {
+      "timestamp": "2026-03-30T13:04:29.632Z",
+      "action": "plan review requested for Step 0 (Add Batch Status Method to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-30T13:06:19.250Z",
+      "action": "plan review Step 0: RETHINK",
+      "outcome": "The goal is sound, but the proposed Step 0 implementation uses the wrong GitHub REST endpoints for arbitrary batch lookups and would not reliably return the requested issue/PR statuses. The codebase already has a GraphQL-based batch badge fetcher in `packages/dashboard/src/github.ts` and a polling service built around it, so adding separate REST batch methods would duplicate logic and still miss older issues/PRs."
+    },
+    {
+      "timestamp": "2026-03-30T13:06:19.256Z",
+      "action": "Step 0 (Add Batch Status Method to GitHubClient) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T13:06:19.258Z",
+      "action": "RETHINK: Step 0 plan rewound — session checkpoint 694ccfb8",
+      "outcome": "The goal is sound, but the proposed Step 0 implementation uses the wrong GitHub REST endpoints for arbitrary batch lookups and would not reliably return the requested issue/PR statuses. The codebase already has a GraphQL-based batch badge fetcher in `packages/dashboard/src/github.ts` and a polling service built around it, so adding separate REST batch methods would duplicate logic and still miss older issues/PRs."
+    },
+    {
+      "timestamp": "2026-03-30T13:06:56.373Z",
+      "action": "Adjusted Step 1 plan after review: keep GraphQL badge batching as the canonical exact-number fetch primitive and add batch issue/PR wrapper methods on GitHubClient that normalize maps, chunk requests, and retry only on rate-limit/transient failures.",
+      "outcome": "Avoids incorrect REST list filtering and prevents duplicate batching logic from diverging from the existing websocket poller path."
+    },
+    {
+      "timestamp": "2026-03-30T13:06:59.537Z",
+      "action": "plan review requested for Step 0 (Add Batch Status Method to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-30T13:09:22.503Z",
+      "action": "plan review Step 0: REVISE",
+      "outcome": "The intended outcome is sound, but the proposed implementation path will not reliably return the requested issue/PR statuses. The main problem is that the plan uses GitHub list endpoints as if they were arbitrary-number batch lookups; in practice, that only returns the first page of recent items and will miss older requested issues/PRs. There is also already an existing batch-by-number mechanism in `GitHubClient` that this step should reuse instead of introducing a second, incompatible batching "
+    },
+    {
+      "timestamp": "2026-03-30T13:12:21.239Z",
+      "action": "code review requested for Step 0 (Add Batch Status Method to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-30T13:16:21.730Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new `getBatchIssueStatus()` and `getBatchPrStatus()` methods do produce the right high-level shape and correctly reuse the existing dedupe/chunk/retry machinery. However, they are implemented by routing through the existing GraphQL badge batch path rather than the REST endpoints explicitly required by the task, so this step does not currently match the agreed implementation contract in `PROMPT.md`."
+    },
+    {
+      "timestamp": "2026-03-30T13:21:13.486Z",
+      "action": "code review requested for Step 0 (Add Batch Status Method to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-30T13:25:01.337Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new methods are implemented cleanly enough for basic mapping/retry behavior, but the batching strategy misses the task’s main performance outcome. Instead of fetching the requested issues/PRs directly, it scans paginated repo lists until it reaches the lowest requested number, which can turn one “batch” into many GitHub API calls for older items."
+    },
+    {
+      "timestamp": "2026-03-30T13:29:50.157Z",
+      "action": "code review requested for Step 0 (Add Batch Status Method to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-30T13:32:03.786Z",
+      "action": "code review Step 0: REVISE",
+      "outcome": "The new batch methods are small and the retry/chunking coverage is solid, but the implementation does not follow the contract defined in KB-064. Instead of adding REST-based batch fetchers, it wraps the existing GraphQL badge batching path, and the tests explicitly lock in that deviation."
+    },
+    {
+      "timestamp": "2026-03-30T13:36:17.323Z",
+      "action": "code review requested for Step 0 (Add Batch Status Method to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-30T13:38:29.814Z",
+      "action": "code review Step 0: APPROVE",
+      "outcome": "The new batch methods in `packages/dashboard/src/github.ts` correctly add issue and PR batch fetching with the expected REST-first behavior, filtering, merged-PR handling, and bounded retry logic. The accompanying tests in `packages/dashboard/src/github.test.ts` cover the main success paths, fallback behavior, and retry semantics well enough for this step to move forward."
+    },
+    {
+      "timestamp": "2026-03-30T13:38:35.656Z",
+      "action": "Step 0 (Add Batch Status Method to GitHubClient) → done"
+    },
+    {
+      "timestamp": "2026-03-30T13:38:47.727Z",
+      "action": "Step 1 (Create Batch Status API Endpoint) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T13:39:00.602Z",
+      "action": "plan review requested for Step 1 (Create Batch Status API Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T13:44:21.664Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The endpoint direction is reasonable, and the existing batch helpers in `packages/dashboard/src/github.ts:997-1066` give this step a solid foundation. But the current plan has a few correctness gaps that will either break the API contract outright or miss stated requirements around multi-repo handling and persistence."
+    },
+    {
+      "timestamp": "2026-03-30T13:53:08.169Z",
+      "action": "code review requested for Step 1 (Create Batch Status API Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T13:54:46.428Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T13:56:48.914Z",
+      "action": "Resumed KB-064 from existing worktree state. Verified git history already contains committed GitHub client and batch status route work for the first backend steps, so execution is continuing with the next pending frontend step.",
+      "outcome": "Proceeding to add the frontend batch status client integration before board-level coordination."
+    },
+    {
+      "timestamp": "2026-03-30T13:56:51.916Z",
+      "action": "Step 1 (Create Batch Status API Endpoint) → done"
+    },
+    {
+      "timestamp": "2026-03-30T13:56:54.584Z",
+      "action": "Step 2 (Add Frontend API Client Function) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T13:57:02.273Z",
+      "action": "plan review requested for Step 2 (Add Frontend API Client Function)"
+    },
+    {
+      "timestamp": "2026-03-30T13:58:48.571Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The step is close, but as written it leaves one important integration detail unspecified: the server does not return a bare `BatchStatusResult`; it returns a `BatchStatusResponse` envelope with a top-level `results` field. If the worker implements the client exactly from this step text, the frontend API function can return the wrong shape and break the board-level consumer later."
+    },
+    {
+      "timestamp": "2026-03-30T14:03:29.493Z",
+      "action": "code review requested for Step 2 (Add Frontend API Client Function)"
+    },
+    {
+      "timestamp": "2026-03-30T14:03:56.923Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds the `fetchBatchStatus()` client function to `packages/dashboard/app/api.ts` with proper TypeScript types, consistent API patterns, and adequate test coverage. The types are properly defined in `@kb/core` and re-exported for convenience."
+    },
+    {
+      "timestamp": "2026-03-30T14:06:33.123Z",
+      "action": "Step 2 (Add Frontend API Client Function) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:06:38.160Z",
+      "action": "Step 3 (Implement Board-Level Batch Fetching) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:06:49.047Z",
+      "action": "plan review requested for Step 3 (Implement Board-Level Batch Fetching)"
+    },
+    {
+      "timestamp": "2026-03-30T14:07:12.798Z",
+      "action": "plan review Step 3: RETHINK",
+      "outcome": "There's a naming mismatch and the actual work required differs from what's stated. Looking at the codebase:\n- **Step 3** (Add Frontend API Client) is **ALREADY COMPLETE** — `fetchBatchStatus()` exists at `packages/dashboard/app/api.ts:341-349`\n- **Step 4** (Board-Level Batch Fetching in `Board.tsx`) is **NOT YET DONE** and is the actual remaining work\n\nThe step checkboxes reference `Board.tsx` changes but the file scope says `packages/dashboard/app/api.ts`. The worker needs clarity on what actua"
+    },
+    {
+      "timestamp": "2026-03-30T14:07:12.801Z",
+      "action": "Step 3 (Implement Board-Level Batch Fetching) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:07:12.802Z",
+      "action": "RETHINK: Step 3 plan rewound — session checkpoint 2abd6a12",
+      "outcome": "There's a naming mismatch and the actual work required differs from what's stated. Looking at the codebase:\n- **Step 3** (Add Frontend API Client) is **ALREADY COMPLETE** — `fetchBatchStatus()` exists at `packages/dashboard/app/api.ts:341-349`\n- **Step 4** (Board-Level Batch Fetching in `Board.tsx`) is **NOT YET DONE** and is the actual remaining work\n\nThe step checkboxes reference `Board.tsx` changes but the file scope says `packages/dashboard/app/api.ts`. The worker needs clarity on what actua"
+    },
+    {
+      "timestamp": "2026-03-30T14:27:23.336Z",
+      "action": "Execution failed: upstream connect error or disconnect/reset before headers. retried and the latest reset reason: remote connection failure, transport failure reason: delayed connect error: Connection refused"
+    },
+    {
+      "timestamp": "2026-03-30T17:38:42.649Z",
+      "action": "Retry requested from dashboard"
+    },
+    {
+      "timestamp": "2026-03-30T17:38:55.979Z",
+      "action": "Execution failed: Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/clear-marsh\" \"kb/kb-064\"\nPreparing worktree (checking out 'kb/kb-064')\nfatal: 'kb/kb-064' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/sharp-stone'\n"
+    },
+    {
+      "timestamp": "2026-03-30T17:43:10.310Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:43:25.782Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive and well-structured. All file references point to real code locations with accurate line numbers. The mission is clear, steps have concrete verifiable outcomes, and testing requirements mandate real automated tests. The approach correctly extends existing batching infrastructure without breaking changes."
+    },
+    {
+      "timestamp": "2026-03-30T23:27:39.853Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/amber-peach"
+    },
+    {
+      "timestamp": "2026-03-30T23:27:41.797Z",
+      "action": "Step 3 (Implement Board-Level Batch Fetching) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:27:51.424Z",
+      "action": "plan review requested for Step 3 (Implement Board-Level Batch Fetching)"
+    },
+    {
+      "timestamp": "2026-03-30T23:28:28.026Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The step's approach will work, but it introduces unnecessary type duplication and inconsistency with existing patterns. The existing `fetchBatchStatus` function already calls a batch endpoint (`/github/batch/status`) that returns identical data structures. The new function should reuse existing types from `@kb/core` rather than redefining them."
+    },
+    {
+      "timestamp": "2026-03-30T23:28:54.869Z",
+      "action": "code review requested for Step 3 (Implement Board-Level Batch Fetching)"
+    },
+    {
+      "timestamp": "2026-03-30T23:29:38.683Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly adds batch fetching capabilities to the frontend. The `fetchBatchStatus` API function is properly implemented with tests, and the `useBatchBadgeFetch` hook provides sophisticated caching, deduplication, and retry logic. The Board component integrates batch fetching on initial load with proper debouncing and chunking for API limits."
+    },
+    {
+      "timestamp": "2026-03-30T23:29:40.322Z",
+      "action": "Step 3 (Implement Board-Level Batch Fetching) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:29:40.323Z",
+      "action": "Step 4 (Update TaskCard for Coordinated Fetching) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:29:41.148Z",
+      "action": "plan review requested for Step 4 (Update TaskCard for Coordinated Fetching)"
+    },
+    {
+      "timestamp": "2026-03-30T23:30:10.290Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The plan for Step 4 has significant gaps in how TaskCard will access batch data and coordinate with the Board's batch fetching. The claim that batch timestamp handling is \"already implemented\" in `pickPreferredBadge()` is incorrect. Additionally, there's a missing export in the batch fetch hook that prevents TaskCard from accessing the shared store, and the plan doesn't specify how to actually trigger individual fetches."
+    },
+    {
+      "timestamp": "2026-03-30T23:32:36.492Z",
+      "action": "code review requested for Step 4 (Update TaskCard for Coordinated Fetching)"
+    },
+    {
+      "timestamp": "2026-03-30T23:33:18.416Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation successfully creates the `useBatchBadgeFetch` hook with proper request deduplication, caching, and retry logic. TaskCard correctly integrates batch data alongside WebSocket and task data with freshness-based merging. Board.tsx properly orchestrates batch fetching with debouncing and chunking. The code follows existing patterns and will achieve the stated outcome of coordinated fetching."
+    },
+    {
+      "timestamp": "2026-03-30T23:33:19.599Z",
+      "action": "Step 4 (Update TaskCard for Coordinated Fetching) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:33:19.599Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:33:20.598Z",
+      "action": "plan review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T23:33:51.769Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The plan has significant gaps that could lead to incomplete test coverage and misaligned test targets. The endpoint path specified in the task (`/tasks/badges/batch`) doesn't match the actual implementation (`/github/batch/status`). Server-side tests already exist but lack coverage for the 50-task limit validation. The frontend hook test plan is missing critical testing utilities and underestimates the complexity of testing module-level state."
+    },
+    {
+      "timestamp": "2026-03-30T23:38:50.263Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:38:50.266Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:38:56.005Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:39:52.960Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:41:32.695Z",
+  "createdAt": "2026-03-30T03:11:14.273Z",
+  "updatedAt": "2026-03-30T23:41:32.695Z",
+  "size": "M",
+  "reviewLevel": 2
+}

@@ -1,0 +1,38 @@
+{
+  "id": "KB-342",
+  "title": "Add multi-project support with central core and per-project executors",
+  "description": "Transform kb from a single-project tool into a multi-project system where each project has its own board, tasks, agents, and executor instance, all reporting back to a central core.\n\n## Architecture\n\n### Central Core (`~/.pi/kb/kb-central.db`)\nA new SQLite database acting as the system-wide hub:\n- **Project registry** — name, working directory, status (active/paused/errored), isolation mode (in-process or child-process)\n- **Unified activity feed** — aggregated task events (created, moved, merged, failed) across all projects with project attribution\n- **Global concurrency limits** — a system-wide max concurrent agents cap that spans all projects, preventing resource exhaustion (e.g., max 4 agents total, not 4 per project)\n- **Project health tracking** — per-project status indicators, in-flight task counts, last activity timestamp, agent uptime\n- **Resource monitoring** — CPU, memory, and API usage per project, surfaced on the overview dashboard\n- **Shared model/auth config** — model presets and auth credentials shared across projects (extends existing global settings pattern)\n\n### Per-Project Runtime\nEach registered project gets its own scoped set of engine components:\n- `TaskStore` (pointing to the project's `.fusion/fusion.db`)\n- `TaskExecutor`, `TriageProcessor`, `Scheduler`, `WorktreePool`, etc.\n- All components scoped to the project's working directory\n- Each executor reports events (task transitions, errors, resource usage) back to the central core\n\n### Executor Lifecycle (Hybrid Model)\n- **Default: in-process** — project engine components run as instances inside the main dashboard Node process. Projects are activated lazily when selected and can be suspended when idle.\n- **Opt-in: child process isolation** — projects can be configured to run in a separate child process via IPC. One project crash doesn't affect others.\n- Central core abstracts over both modes with a uniform `ProjectRuntime` interface so the dashboard/API doesn't care which mode a project uses.\n\n## Dashboard UX\n\n### Overview Page (Home)\n- Shows all registered projects with health cards: status, active task count, last activity, resource usage\n- Unified activity feed timeline across all projects\n- Global concurrency usage indicator\n- \"Add Project\" button triggers setup wizard\n\n### Project Drill-Down\n- Clicking a project enters the existing full board view, scoped to that project\n- All existing task/board/settings views work as-is within a project context\n- Breadcrumb or back-nav to return to the overview\n\n### First Run Experience\n- Interactive setup wizard when no projects are registered\n- Prompts for project name, working directory, and basic configuration\n- Auto-migration path: if user has an existing `.fusion/` directory, the wizard pre-fills the cwd and detects the existing board, requiring only a name to complete registration\n\n## CLI Changes\n\n### New `fn project` subcommands:\n- `fn project list` — list all registered projects with status\n- `fn project add [dir]` — register a new project (interactive wizard)\n- `fn project remove <name>` — unregister a project (does not delete `.fusion/` data)\n- `fn project info [name]` — show project details and health\n\n### Existing commands:\n- Auto-detect project from cwd (walk up to find `.fusion/` dir, match against registry)\n- `--project <name>` flag on all task/settings commands to target a different project\n- `fn dashboard` launches the multi-project dashboard with overview + drill-down\n\n## Migration\n- On first run post-upgrade, if a `.fusion/` directory exists in cwd but no central database exists, auto-create `~/.pi/kb/kb-central.db` and register the current project\n- Wizard prompts for a display name (defaulting to directory name)\n- Existing `.fusion/fusion.db` data is untouched — the central DB only holds registry metadata and cross-project state\n- Fully backward-compatible: single-project users see minimal friction",
+  "column": "todo",
+  "dependencies": [],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:00:43.185Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:00:43.190Z",
+      "action": "Created via Planning Mode",
+      "outcome": "Initial plan: Add the concept of projects in the tool. Each project has its own dashboard, tasks, agents, etc. A project has one working directory. A project can be added or removed. On first run a project should b"
+    },
+    {
+      "timestamp": "2026-03-31T21:01:52.333Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:02:14.300Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a major architectural transformation. The spec correctly identifies the existing single-project architecture (TaskStore per `.fusion/fusion.db`, Scheduler/TaskExecutor per project) and proposes a coherent multi-project model with a central core (`~/.pi/kb/kb-central.db`) managing multiple project runtimes. The breakdown into 5 ordered subtasks (KB-001 → KB-002 → KB-003/KB-346 → KB-347) respects logical dependencies. The referenced source files exist at the spe"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T21:02:18.070Z",
+  "createdAt": "2026-03-31T21:00:43.185Z",
+  "updatedAt": "2026-03-31T21:02:18.070Z",
+  "size": "L",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "validatorModelProvider": "openai-codex",
+  "validatorModelId": "gpt-5.3-codex",
+  "reviewLevel": 3
+}

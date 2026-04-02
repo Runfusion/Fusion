@@ -1,0 +1,121 @@
+{
+  "id": "KB-321",
+  "description": "Make the logo simpler. Also remove the tasks from the logo",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Design and Implement Simplified Logo",
+      "status": "done"
+    },
+    {
+      "name": "Remove \"tasks\" Subtext from Header",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T19:20:48.702Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T19:21:32.912Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T19:21:55.885Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. All referenced files exist and match the described content. The task scope is appropriately small (size S) with concrete, verifiable steps. The \"tasks\" subtext is correctly identified at Header.tsx:193, and the test expectation is confirmed at Header.test.tsx:35. The 4-circle logo design matches the description. The review level 0 (None) is appropriate for this simple visual branding change."
+    },
+    {
+      "timestamp": "2026-03-31T19:22:01.886Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/deft-reef"
+    },
+    {
+      "timestamp": "2026-03-31T19:22:01.887Z",
+      "action": "Step 0 (Design and Implement Simplified Logo) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T19:22:04.006Z",
+      "action": "Step 0 (Design and Implement Simplified Logo) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:22:07.286Z",
+      "action": "Step 0 (Design and Implement Simplified Logo) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:22:07.288Z",
+      "action": "Step 1 (Remove \"tasks\" Subtext from Header) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:22:07.290Z",
+      "action": "Preflight complete. Current logo has 4 circles in a grid, header has 'Fusion' + 'tasks' subtext. Tests check for both. Will simplify logo to single geometric shape and remove 'tasks' subtext."
+    },
+    {
+      "timestamp": "2026-03-31T19:23:27.290Z",
+      "action": "Step 1 (Remove \"tasks\" Subtext from Header) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:27.292Z",
+      "action": "Step 2 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:27.294Z",
+      "action": "Step 1 complete: Simplified logo with nested hexagon design and stylized F lettermark. Using same brand color #58a6ff.",
+      "outcome": "Logo SVG updated with minimal geometric design"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:32.510Z",
+      "action": "Step 2 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:32.512Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:32.513Z",
+      "action": "Step 2 complete: Removed 'tasks' subtext span from Header.tsx header-left section.",
+      "outcome": "Header component updated"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:35.961Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:23:35.963Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:26:23.314Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:26:23.316Z",
+      "action": "Step 4 complete: All Header tests pass (58/58). Dashboard client build successful, logo copied to dist.",
+      "outcome": "Tests and build verified"
+    },
+    {
+      "timestamp": "2026-03-31T19:26:27.912Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T19:26:35.442Z",
+  "createdAt": "2026-03-31T19:20:48.702Z",
+  "updatedAt": "2026-03-31T19:26:35.442Z",
+  "size": "S",
+  "reviewLevel": 0,
+  "summary": "Successfully simplified the kb dashboard logo and removed the \"tasks\" subtext from the header. The new logo features a nested hexagon design with a stylized \"F\" lettermark using the same brand color (#58a6ff). All 58 Header tests pass. Dashboard client build succeeds with the new logo correctly copied to dist."
+}

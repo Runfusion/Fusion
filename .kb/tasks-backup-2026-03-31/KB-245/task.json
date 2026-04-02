@@ -1,0 +1,164 @@
+{
+  "id": "KB-245",
+  "title": "Activity log shows error Unexpected response format expected",
+  "description": "Activity log shows error - Unexpected response format: expected JSON, got text/html; charset=utf-8 (Response: <!doctype html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\" /> <meta name=\"viewport\" con...)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add API Error Handling Middleware",
+      "status": "done"
+    },
+    {
+      "name": "Improve User-Facing Error Messages",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:20:17.501Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:26:12.844Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:26:33.047Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a real issue in the dashboard: the SPA fallback at line 87-90 in `server.ts` catches API requests that fail to send responses, returning HTML instead of JSON. The spec correctly identifies the root cause (missing Express error handling middleware) and proposes a valid solution with appropriately scoped changes."
+    },
+    {
+      "timestamp": "2026-03-31T02:33:58.184Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pale-petal"
+    },
+    {
+      "timestamp": "2026-03-31T02:33:58.185Z",
+      "action": "Step 0 (Add API Error Handling Middleware) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T02:33:59.984Z",
+      "action": "Step 0 (Add API Error Handling Middleware) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:34:05.742Z",
+      "action": "Step 0 (Add API Error Handling Middleware) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:34:05.744Z",
+      "action": "Step 1 (Improve User-Facing Error Messages) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:34:05.746Z",
+      "action": "Step 0 complete: Understood the issue. The SPA fallback in server.ts catches API requests when errors occur, returning HTML instead of JSON. Need to add Express error handling middleware for API routes.",
+      "outcome": "Ready to implement Step 1"
+    },
+    {
+      "timestamp": "2026-03-31T02:34:07.055Z",
+      "action": "plan review requested for Step 1 (Add API Error Handling Middleware)"
+    },
+    {
+      "timestamp": "2026-03-31T02:34:28.250Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause: API requests that don't send a response fall through to the SPA fallback, which returns HTML instead of JSON. The proposed solution—adding Express error handling middleware between API routes and SPA fallback—will work. The test cases are appropriate, and the middleware ordering constraint (after API routes, before SPA fallback) is clearly specified."
+    },
+    {
+      "timestamp": "2026-03-31T02:36:06.003Z",
+      "action": "code review requested for Step 1 (Add API Error Handling Middleware)"
+    },
+    {
+      "timestamp": "2026-03-31T02:36:43.728Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation adds the required Express error handling middleware and API 404 handler to `server.ts`. The middleware is correctly positioned after API routes and before the SPA fallback. However, **critical tests are missing** that verify the core functionality — specifically testing that API 404s and 500s return JSON instead of HTML. The Step 1 requirements explicitly require these tests, but they were not implemented."
+    },
+    {
+      "timestamp": "2026-03-31T02:39:08.718Z",
+      "action": "code review requested for Step 1 (Add API Error Handling Middleware)"
+    },
+    {
+      "timestamp": "2026-03-31T02:39:40.702Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly addresses the core issue: API errors now return JSON instead of falling through to the SPA fallback that returns HTML. The 404 handler and error handling middleware are properly positioned between API routes and the SPA fallback in the Express middleware stack. Tests verify both the JSON response format and that HTML is never returned for API errors."
+    },
+    {
+      "timestamp": "2026-03-31T02:39:43.683Z",
+      "action": "Step 1 (Improve User-Facing Error Messages) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:39:43.685Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:39:43.686Z",
+      "action": "Step 1 complete: Added API error handling middleware and 404 handler to server.ts, plus comprehensive tests.",
+      "outcome": "API errors now return JSON instead of falling through to SPA fallback"
+    },
+    {
+      "timestamp": "2026-03-31T02:39:45.125Z",
+      "action": "plan review requested for Step 2 (Improve User-Facing Error Messages)"
+    },
+    {
+      "timestamp": "2026-03-31T02:39:56.802Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is clear and achievable. The step's checkboxes properly capture the work needed: updating the `api()` function in `app/api.ts` to detect HTML responses and provide user-friendly messages while preserving technical details for debugging. The ActivityLogModal already displays error messages correctly via its `error` state (lines 88-90, 188-193)."
+    },
+    {
+      "timestamp": "2026-03-31T02:41:08.188Z",
+      "action": "code review requested for Step 2 (Improve User-Facing Error Messages)"
+    },
+    {
+      "timestamp": "2026-03-31T02:41:32.959Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The implementation in `app/api.ts` correctly adds user-friendly error messages for the SPA fallback case, but **the tests have not been updated to match the new behavior**. The existing tests in `api.test.ts` expect the old technical error message format, which will cause test failures. Additionally, the task requirements specify testing the user-friendly error display in ActivityLogModal, and no verification steps have been documented."
+    },
+    {
+      "timestamp": "2026-03-31T02:42:03.214Z",
+      "action": "code review requested for Step 2 (Improve User-Facing Error Messages)"
+    },
+    {
+      "timestamp": "2026-03-31T02:42:21.092Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation successfully updates the `api()` function in `app/api.ts` to provide clearer, user-friendly error messages when HTML responses are received (SPA fallback case). The error message \"Server returned an unexpected response. Please refresh and try again.\" is now displayed instead of the technical \"Unexpected response format: expected JSON, got text/html\". The ActivityLogModal correctly displays these errors, and comprehensive tests have been added to verify the new behavior."
+    },
+    {
+      "timestamp": "2026-03-31T02:42:22.823Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:42:22.824Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:42:22.824Z",
+      "action": "Step 2 complete: Improved user-facing error messages in api.ts to show friendly message when HTML is received (SPA fallback case).",
+      "outcome": "Users now see 'Server returned an unexpected response. Please refresh and try again.' instead of technical error details"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:00.063Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:00.064Z",
+      "action": "Step 3 complete: All my tests pass (76 tests), build succeeds. Pre-existing test failures (2 in dashboard, 5 in engine) are unrelated to this task.",
+      "outcome": "Testing and verification complete"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:01.710Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T02:44:10.935Z",
+  "createdAt": "2026-03-31T02:20:17.501Z",
+  "updatedAt": "2026-03-31T02:44:10.935Z",
+  "size": "S",
+  "reviewLevel": 2
+}

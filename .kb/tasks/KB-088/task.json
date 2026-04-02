@@ -1,0 +1,195 @@
+{
+  "id": "KB-088",
+  "description": "Several cards are showing \"failed\" on dashboard but aren't actually failed",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix moveTask to clear status/error on in-progress exit",
+      "status": "done"
+    },
+    {
+      "name": "Add test coverage for the fix",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:41:54.776Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:35.223Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:57.126Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. The mission is clearly described, the file scope correctly identifies the exact location of the bug in `moveTask` (lines 293-319 of `packages/core/src/store.ts`), and the steps provide concrete, verifiable outcomes. The test requirements are thorough with specific test cases covering edge cases. The sizing (S) and review level (1 - Plan Only) are appropriate for this localized behavior fix with minimal blast radius."
+    },
+    {
+      "timestamp": "2026-03-30T04:42:58.645Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:26.072Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a high-quality specification for a straightforward bug fix. The spec accurately identifies the root cause in `moveTask`, correctly references existing code patterns, and provides concrete, verifiable steps. The file scope is tight, testing requirements are explicit, and the \"Do NOT\" constraints prevent scope creep."
+    },
+    {
+      "timestamp": "2026-03-30T04:43:38.174Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rosy-creek"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:38.181Z",
+      "action": "Step 0 (Fix moveTask to clear status/error on in-progress exit) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:41.636Z",
+      "action": "Step 0 (Fix moveTask to clear status/error on in-progress exit) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:56.928Z",
+      "action": "Step 0 (Fix moveTask to clear status/error on in-progress exit) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:57.961Z",
+      "action": "plan review requested for Step 1 (Fix moveTask to clear status/error on in-progress exit)"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:16.597Z",
+      "action": "Step 0 (Fix moveTask to clear status/error on in-progress exit) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:17.995Z",
+      "action": "plan review requested for Step 1 (Fix moveTask to clear status/error on in-progress exit)"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:21.334Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause and provides a straightforward fix. The `moveTask` function currently clears transient fields (`status`, `worktree`, `blockedBy`) only when moving to \"done\" (lines 403-408 in store.ts), but not when moving from \"in-progress\" back to reset columns (\"todo\" or \"triage\"). This leaves `status: \"failed\"` and `error` intact, causing the dashboard to continue showing failed badges on retried tasks. The proposed solution follows the established pattern and ali"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:22.261Z",
+      "action": "Step 1 (Add test coverage for the fix) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:34.344Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:40.494Z",
+      "action": "Step 1 (Add test coverage for the fix) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:43.630Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause and provides a clear implementation path. The approach follows the existing pattern in `moveTask` (lines 403-408 in store.ts) where transient fields are cleared when moving to \"done\". Extending this to cover \"in-progress\" → \"todo\"/\"triage\" transitions will fix the bug where failed tasks continue showing red badges after being moved for retry."
+    },
+    {
+      "timestamp": "2026-03-30T04:44:45.877Z",
+      "action": "Step 1 (Add test coverage for the fix) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:49.744Z",
+      "action": "plan review requested for Step 1 (Add test coverage for the fix)"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:50.268Z",
+      "action": "Step 1 (Add test coverage for the fix) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:51.388Z",
+      "action": "plan review requested for Step 2 (Add test coverage for the fix)"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:09.294Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan's test coverage strategy is sound and will adequately verify the fix. The checkboxes cover the key scenarios: clearing transient fields when moving from \"in-progress\" to reset columns (todo/triage), regression testing for the \"done\" column behavior, and a negative test case to ensure status is preserved when moving from \"todo\" to \"in-progress\"."
+    },
+    {
+      "timestamp": "2026-03-30T04:45:10.737Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:15.216Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan has a critical flaw: **the code change in `store.ts` already exists but contains duplicate blocks** (lines 407-412 and 415-420 are identical). The worker will likely skip the implementation assuming it's already done, but the duplicate code is a bug that needs fixing. Additionally, the plan omits clearing the `error` field when moving to \"done\" (inconsistent with clearing other transient fields). The test coverage checkboxes are comprehensive and well-structured."
+    },
+    {
+      "timestamp": "2026-03-30T04:45:21.592Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:23.862Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:42.457Z",
+      "action": "Fixed duplicate code in store.ts and added test for in-progress → done clearing",
+      "outcome": "Removed duplicate code blocks and added error clearing for 'done' column for consistency. Added test coverage for in-progress → done clearing."
+    },
+    {
+      "timestamp": "2026-03-30T04:45:49.154Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:57.464Z",
+      "action": "Step 1 (Add test coverage for the fix) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:59.026Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:00.134Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:00.136Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:15.096Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:15.112Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:23.961Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:23.961Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:23.962Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:46:27.220Z",
+      "action": "Execution failed: Invalid transition: 'in-review' → 'in-review'. Valid targets: done, in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:23:46.226Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T05:23:46.226Z",
+  "createdAt": "2026-03-30T04:41:54.776Z",
+  "updatedAt": "2026-03-30T05:23:46.226Z",
+  "size": "S",
+  "reviewLevel": 1
+}

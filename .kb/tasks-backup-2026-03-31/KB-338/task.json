@@ -1,0 +1,30 @@
+{
+  "id": "KB-338",
+  "description": "Fix pre-existing flaky test in store.test.ts: \"produces valid config.json with unique sequential IDs after 5 parallel createTask calls\". The test expects nextId to be 6 after creating 5 tasks in parallel, but sometimes it's 5 due to a race condition in ID allocation.",
+  "column": "todo",
+  "dependencies": [],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:21:13.331Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:26:37.120Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:26:49.276Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is technically accurate and complete. The race condition is correctly identified: `allocateId()` (line 536) atomically increments `nextId` via SQLite transaction, but the subsequent `config.json` sync (lines 548-553) occurs outside the `configLock`, allowing parallel calls to interleave and write stale values. The proposed fix using `withConfigLock()` (line 321) is the correct pattern. The test reference (lines 235-259 in `store.test.ts`) is accurate and the verification requir"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:26:51.531Z",
+  "createdAt": "2026-03-31T20:21:13.331Z",
+  "updatedAt": "2026-03-31T21:01:04.964Z",
+  "size": "S",
+  "reviewLevel": 2,
+  "status": "queued",
+  "blockedBy": "KB-313"
+}

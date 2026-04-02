@@ -1,0 +1,96 @@
+{
+  "id": "KB-647",
+  "description": "Add recovery when worktree is in use Failed to create worktree after 3 attempts: Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/happy-ember\" \"kb/kb-342\" Preparing worktree (checking out 'kb/kb-342') fatal: 'kb/kb-342' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/pale-shore'\n\n(Duplicated from KB-631)",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 3,
+  "summary": "Fixed a bug where worktree conflicts from the `createFromExistingBranch()` fallback path were not recovered. Extracted the conflict handling logic into a reusable `handleWorktreeConflict()` helper method that is now called from both the primary `createWithBranch()` error handler and the `createFromExistingBranch()` catch block. Added a test case verifying recovery from the fallback path conflict. Build passes and new test passes.",
+  "createdAt": "2026-04-01T02:00:51.099Z",
+  "updatedAt": "2026-04-01T03:01:40.747Z",
+  "columnMovedAt": "2026-04-01T03:01:40.747Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Extract and Reuse Conflict Recovery Logic",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:00:51.099Z",
+      "action": "Duplicated from KB-631"
+    },
+    {
+      "timestamp": "2026-04-01T02:14:00.607Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:14:19.955Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, focused specification for a surgical bug fix. The mission clearly describes the root cause (conflict recovery only applies to `createWithBranch()` errors, not the fallback `createFromExistingBranch()`), and the steps provide concrete, verifiable outcomes. The file scope is accurate, testing requirements are appropriate, and the size/review level (S/Plan Only) matches the complexity."
+    },
+    {
+      "timestamp": "2026-04-01T02:58:36.748Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/happy-finch"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:36.750Z",
+      "action": "Step 0 (Extract and Reuse Conflict Recovery Logic) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:38.318Z",
+      "action": "Step 0 (Extract and Reuse Conflict Recovery Logic) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:49.974Z",
+      "action": "Step 0 (Extract and Reuse Conflict Recovery Logic) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:49.975Z",
+      "action": "Step 0 Preflight complete. Bug identified: The `createFromExistingBranch()` fallback (lines 1420-1426) catches errors and re-throws them without going through the 'already used by worktree' conflict recovery logic that exists for the primary `createWithBranch()` path (lines 1369-1395). Need to extract conflict handling into a reusable helper method."
+    },
+    {
+      "timestamp": "2026-04-01T02:58:51.466Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:51.468Z",
+      "action": "plan review requested for Step 1 (Extract and Reuse Conflict Recovery Logic)"
+    },
+    {
+      "timestamp": "2026-04-01T02:59:12.821Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the bug and proposes a surgical fix. The extraction approach will make the conflict recovery logic reusable from both the `createWithBranch()` and `createFromExistingBranch()` paths. The helper method signature and return semantics (path on success, null on failure) are appropriate."
+    },
+    {
+      "timestamp": "2026-04-01T03:00:13.419Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:00:13.421Z",
+      "action": "Step 1 complete. Extracted conflict handling logic into `handleWorktreeConflict()` helper method and applied it to both the `createWithBranch()` error handler and the `createFromExistingBranch()` fallback catch block. Build passes for the engine package.",
+      "outcome": "Conflict recovery logic is now reused in both paths, fixing the bug where `createFromExistingBranch()` errors bypassed recovery."
+    },
+    {
+      "timestamp": "2026-04-01T03:00:15.033Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:00:55.029Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:25.756Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

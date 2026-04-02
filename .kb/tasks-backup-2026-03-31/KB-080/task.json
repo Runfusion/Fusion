@@ -1,0 +1,132 @@
+{
+  "id": "KB-080",
+  "description": "the model filter should be a combined dropdown and text entry - bring up the dropdown first and then you can type in a text box in the component to filter",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Create Combobox Component",
+      "status": "done"
+    },
+    {
+      "name": "Refactor ModelSelectorTab to Use Combobox",
+      "status": "done"
+    },
+    {
+      "name": "Update CSS Styles",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:36:02.581Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:41.596Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:51.201Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive and accurate. All referenced files exist at the specified paths with the described patterns. The mission is clear, steps have verifiable outcomes, and testing requirements demand real automated tests. The work is appropriately sized as a medium task with review level 2."
+    },
+    {
+      "timestamp": "2026-03-30T04:37:07.673Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:37:23.129Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for refactoring the ModelSelectorTab component. The mission is clear (unified combobox replacing separate filter + native select), file scope is accurate, and steps have concrete verifiable outcomes. The spec correctly references existing files (`filterModels`, `ModelInfo`, `dep-dropdown` pattern), includes comprehensive testing requirements, and appropriately notes compatibility with future KB-081 work."
+    },
+    {
+      "timestamp": "2026-03-30T05:20:48.067Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/hazy-robin"
+    },
+    {
+      "timestamp": "2026-03-30T05:20:48.069Z",
+      "action": "Step 0 (Create Combobox Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T05:23:03.806Z",
+      "action": "Step 0 (Create Combobox Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:23:03.809Z",
+      "action": "Preflight complete. Read all context files: ModelSelectorTab.tsx, modelFilter.ts, api.ts, tests, and styles.css. Current implementation uses separate filter inputs and native select elements. Ready to implement unified combobox pattern."
+    },
+    {
+      "timestamp": "2026-03-30T05:23:03.811Z",
+      "action": "Step 1 (Refactor ModelSelectorTab to Use Combobox) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:23:06.541Z",
+      "action": "plan review requested for Step 1 (Create Combobox Component)"
+    },
+    {
+      "timestamp": "2026-03-30T05:23:22.298Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows the existing `dep-dropdown` pattern already established in the codebase (see `InlineCreateCard.tsx:219-239`). The props interface aligns with current data formats (`provider/id` string value), and the checklist appropriately covers the combobox UI structure, keyboard navigation, and reuse of existing `filterModels()` utility. The plan correctly identifies state management needs (`isOpen`, `highlightedIndex`, `localFilter`) and references the exi"
+    },
+    {
+      "timestamp": "2026-03-30T05:24:43.120Z",
+      "action": "Step 1 (Refactor ModelSelectorTab to Use Combobox) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:24:43.123Z",
+      "action": "Step 2 (Update CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:24:43.126Z",
+      "action": "Step 3 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:24:43.128Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:24:43.130Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:25:55.657Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:25:55.658Z",
+      "action": "All ModelSelectorTab tests pass (26/26). Build completes successfully (vite build passes, only pre-existing tsc errors unrelated to this change).",
+      "outcome": "Combobox component working correctly with keyboard navigation, filtering, and all existing functionality maintained."
+    },
+    {
+      "timestamp": "2026-03-30T05:25:56.696Z",
+      "action": "Step 0 (Create Combobox Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:25:56.699Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T06:10:19.262Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T06:10:19.262Z",
+  "createdAt": "2026-03-30T04:36:02.581Z",
+  "updatedAt": "2026-03-30T06:10:19.262Z",
+  "size": "M",
+  "reviewLevel": 2
+}

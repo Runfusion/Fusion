@@ -1,0 +1,155 @@
+{
+  "id": "KB-095",
+  "description": "Hide done on list view should also hide archived",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Make hide-completed behavior include archived (strict hide)",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:53:17.395Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:56:01.850Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:57:12.389Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a solid, focused spec for a small UI behavior fix. The mission is clear and maps directly to real code paths that currently handle only `done` (not `archived`) in `ListView` filtering, stats, and drop-zone counts (`packages/dashboard/app/components/ListView.tsx:205`, `:256-259`, `:426-427`, `:503`). Test and documentation targets are appropriate and point to existing files (`packages/dashboard/app/components/__tests__/ListView.test.tsx`, `packages/dashboard/README.md:43`)."
+    },
+    {
+      "timestamp": "2026-03-30T04:57:13.327Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:58:05.439Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This spec is mostly strong: mission is clear, file scope matches the implementation area, and testing requirements include real automated tests (targeted + full suite + build). The referenced code paths and behaviors are real and correctly identified (e.g., `hideDoneTasks` filtering in `packages/dashboard/app/components/ListView.tsx:203-205`, done-only section suppression at `:502-503`, and done-only hidden stats at `:256-259` / `:400-401`).  \nHowever, Step 1 currently contains an internal contr"
+    },
+    {
+      "timestamp": "2026-03-30T04:58:34.978Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:59:28.019Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a strong, implementation-ready specification with clear intent and verifiable outcomes. It correctly targets the existing behavior gaps in `ListView` where hide-done logic currently applies only to `done` (not `archived`) and allows selected completed columns to bypass hiding (`packages/dashboard/app/components/ListView.tsx:203-205, 500-503, 426-427`). Test and documentation expectations are explicit, scoped, and aligned with real files."
+    },
+    {
+      "timestamp": "2026-03-30T05:00:36.092Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-eagle"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:36.096Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:36.260Z",
+      "action": "Execution failed: Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/dusky-thorn\" \"kb/kb-095\"\nPreparing worktree (checking out 'kb/kb-095')\nfatal: 'kb/kb-095' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/maple-eagle'\n"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:38.476Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:43.358Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:43.389Z",
+      "action": "Step 0 preflight complete. All required files exist: ListView.tsx, ListView.test.tsx, types.ts, README.md. The Column type includes both 'done' and 'archived' columns. Current implementation filters only 'done' when hideDoneTasks is true.",
+      "outcome": "Ready to proceed with Step 1"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:45.329Z",
+      "action": "plan review requested for Step 1 (Make hide-completed behavior include archived)"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:58.794Z",
+      "action": "Retry requested from dashboard"
+    },
+    {
+      "timestamp": "2026-03-30T05:01:00.149Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan accurately identifies the necessary changes across filtering, stats, section rendering, and drop-zone counts. The strict hide semantics are well-specified, and the test coverage requirements are comprehensive. The approach will correctly extend the existing `hideDoneTasks` behavior to include `archived` as a \"completed\" column."
+    },
+    {
+      "timestamp": "2026-03-30T05:01:02.745Z",
+      "action": "Step 1 (Make hide-completed behavior include archived (strict hide)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:04:21.073Z",
+      "action": "Step 1 (Make hide-completed behavior include archived (strict hide)) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:04:21.077Z",
+      "action": "Step 1 complete. Changes made:\n- Updated groupedTasks filtering to exclude both 'done' and 'archived' when hideDoneTasks is enabled (unless a specific column is selected)\n- Updated section rendering to suppress both Done and Archived sections when hidden\n- Updated stats to count both done and archived as 'hidden'\n- Updated drop zones to show '0 of N' for both completed columns when hidden\n- Added 7 new test cases covering archived behavior, combined stats, section suppression, drop-zone counts, and selected column override behavior",
+      "outcome": "All 76 ListView tests pass"
+    },
+    {
+      "timestamp": "2026-03-30T05:04:22.435Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:04:53.136Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:06:23.914Z",
+      "action": "ListView targeted tests passed (76 tests). Other test failures appear unrelated to KB-095 (Header test expects 'kb' but finds 'Fusion' from KB-071, routes.test.ts refine endpoint failures, terminal hook issues, timeouts). Running full test suite to verify."
+    },
+    {
+      "timestamp": "2026-03-30T05:20:46.906Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T05:20:50.725Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:21:27.213Z",
+      "action": "Step 2 Testing Analysis",
+      "outcome": "ListView tests (76 tests) all PASS. Other failures (23 total) are pre-existing from other tasks: Header.test.tsx (KB-071 rebrand 'kb'→'Fusion'), useTerminal.test.tsx (hook API changes), routes.test.ts (refine endpoint 404s), typecheck.test.ts (unrelated TS errors). Build passes successfully."
+    },
+    {
+      "timestamp": "2026-03-30T05:21:41.135Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:21:41.969Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:21:43.814Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T05:23:26.674Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T05:23:26.674Z",
+  "createdAt": "2026-03-30T04:53:17.395Z",
+  "updatedAt": "2026-03-30T05:23:26.674Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,164 @@
+{
+  "id": "KB-015",
+  "description": "the github import should read from the existing remotes and populate a dropdown where you can select a remote (or just default to a single remote if only one exists)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Backend API - Git Remotes Endpoint",
+      "status": "done"
+    },
+    {
+      "name": "Frontend API Client",
+      "status": "done"
+    },
+    {
+      "name": "GitHub Import Modal Enhancement",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T00:45:35.601Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T00:47:56.497Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T00:48:08.221Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured with concrete, verifiable outcomes for each step. All referenced files exist with the expected patterns and content. The mission is clear, testing requirements demand real assertions (not typechecks), and the step breakdown follows a logical backend→frontend→testing progression."
+    },
+    {
+      "timestamp": "2026-03-30T00:48:51.348Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/coral-robin"
+    },
+    {
+      "timestamp": "2026-03-30T00:48:51.349Z",
+      "action": "Step 0 (Backend API - Git Remotes Endpoint) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T00:48:59.978Z",
+      "action": "Step 1 (Frontend API Client) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:49:01.075Z",
+      "action": "plan review requested for Step 1 (Backend API - Git Remotes Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T00:49:15.729Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows existing patterns in the codebase. The outcomes are clear and verifiable. The endpoint will integrate cleanly with the existing GitHub routes section in `routes.ts`. Minor clarifications would help the implementation, but the step will succeed as specified."
+    },
+    {
+      "timestamp": "2026-03-30T00:51:35.663Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T00:51:47.021Z",
+      "action": "Step 0 (Backend API - Git Remotes Endpoint) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:51:48.803Z",
+      "action": "plan review requested for Step 1 (Frontend API Client)"
+    },
+    {
+      "timestamp": "2026-03-30T00:52:02.435Z",
+      "action": "plan review Step 1: RETHINK",
+      "outcome": "The backend API endpoint and tests for `/api/git/remotes` are **already fully implemented** in the codebase. The routes.ts file contains the complete implementation including `parseGitHubUrl()`, `getGitHubRemotes()`, and the `GET /git/remotes` endpoint (lines 40-303). Comprehensive tests already exist in routes.test.ts (lines 593-690). The worker cannot implement Step 1 because it already exists.\n\nThe actual remaining work starts at **Step 2** (Frontend API Client), which requires adding the `Gi"
+    },
+    {
+      "timestamp": "2026-03-30T00:52:02.437Z",
+      "action": "Step 1 (Frontend API Client) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T00:52:02.439Z",
+      "action": "RETHINK: Step 1 plan rewound — session checkpoint N/A",
+      "outcome": "The backend API endpoint and tests for `/api/git/remotes` are **already fully implemented** in the codebase. The routes.ts file contains the complete implementation including `parseGitHubUrl()`, `getGitHubRemotes()`, and the `GET /git/remotes` endpoint (lines 40-303). Comprehensive tests already exist in routes.test.ts (lines 593-690). The worker cannot implement Step 1 because it already exists.\n\nThe actual remaining work starts at **Step 2** (Frontend API Client), which requires adding the `Gi"
+    },
+    {
+      "timestamp": "2026-03-30T00:52:06.022Z",
+      "action": "plan review requested for Step 1 (Frontend API Client)"
+    },
+    {
+      "timestamp": "2026-03-30T00:52:22.718Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 2 is straightforward and will achieve the stated outcomes. The backend endpoint already exists at `GET /api/git/remotes`, so adding the frontend client is a simple mapping exercise. The plan correctly identifies following existing patterns in `api.ts`, which shows good consistency with the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T00:52:23.814Z",
+      "action": "Step 1 (Frontend API Client) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:54:59.049Z",
+      "action": "Step 1 (Frontend API Client) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:54:59.050Z",
+      "action": "Step 2 (GitHub Import Modal Enhancement) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:55:01.158Z",
+      "action": "plan review requested for Step 2 (Frontend API Client)"
+    },
+    {
+      "timestamp": "2026-03-30T00:55:19.229Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan is straightforward and achievable. Adding the `GitRemote` interface and `fetchGitRemotes()` function to `packages/dashboard/app/api.ts` follows established patterns in the codebase. The naming conventions align with existing interfaces (`GitHubIssue`, `ModelInfo`, `AuthProvider`) and function names (`fetchModels`, `fetchSettings`, `fetchConfig`)."
+    },
+    {
+      "timestamp": "2026-03-30T00:55:41.989Z",
+      "action": "Step 2 (GitHub Import Modal Enhancement) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:55:41.990Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:55:43.856Z",
+      "action": "plan review requested for Step 3 (GitHub Import Modal Enhancement)"
+    },
+    {
+      "timestamp": "2026-03-30T00:56:04.069Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan's high-level approach is correct—adding state for remotes, fetching on modal open, showing a dropdown, and auto-populating fields. However, there are **critical gaps in error handling, race condition prevention, and test mock updates** that would cause implementation failures and test regressions."
+    },
+    {
+      "timestamp": "2026-03-30T00:57:04.195Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:57:04.195Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:57:18.729Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:57:24.012Z",
+      "action": "Completed GitHub Import Remote Dropdown feature (KB-015)",
+      "outcome": "All 5 steps completed: Backend API endpoint added at /api/git/remotes, frontend API client with fetchGitRemotes(), GitHubImportModal enhanced with remote dropdown and auto-populate, all 353 tests passing, build succeeds, changeset created."
+    },
+    {
+      "timestamp": "2026-03-30T00:57:24.013Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T00:57:54.130Z",
+  "createdAt": "2026-03-30T00:45:35.601Z",
+  "updatedAt": "2026-03-30T00:57:54.130Z",
+  "size": "M",
+  "reviewLevel": 1
+}

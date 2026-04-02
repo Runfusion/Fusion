@@ -1,0 +1,79 @@
+{
+  "id": "KB-243",
+  "title": "In planning mode after the first step it shows",
+  "description": "In planning mode, after the first step it shows \"Connecting\" it should show \"Generating questions\" or \"Thinking\" and it should ahve a small preview of the agent output - similar to on first planning step",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Loading State Text and Streaming Output Display",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:17:58.902Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:18:37.755Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:18:46.419Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies a real UI bug in `PlanningModeModal.tsx` where the loading state shows \"Connecting...\" (intended for initial connection) after question submission instead of a more appropriate message. The fix is scoped correctly to a single component with test updates, and the review level of 0 (None) is appropriate for this straightforward UI polish."
+    },
+    {
+      "timestamp": "2026-03-31T02:20:12.597Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-robin"
+    },
+    {
+      "timestamp": "2026-03-31T02:20:12.598Z",
+      "action": "Step 0 (Fix Loading State Text and Streaming Output Display) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T02:20:23.146Z",
+      "action": "Step 0 (Fix Loading State Text and Streaming Output Display) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:20:24.037Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:20:29.082Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:20:31.085Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:25:05.674Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:25:08.339Z",
+      "action": "KB-243 completed successfully",
+      "outcome": "All steps complete:\n1. Fixed loading state text from 'Connecting...' to 'Generating next question...'\n2. Ensured thinking container is always visible during loading states\n3. Added 4 comprehensive tests for the new behavior\n4. Build passes\n5. All 17 PlanningModeModal tests pass (pre-existing unrelated failures in other tests)"
+    },
+    {
+      "timestamp": "2026-03-31T02:25:09.376Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T02:26:42.988Z",
+  "createdAt": "2026-03-31T02:17:58.902Z",
+  "updatedAt": "2026-03-31T02:26:42.988Z",
+  "size": "S",
+  "reviewLevel": 0
+}

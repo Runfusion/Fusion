@@ -1,0 +1,122 @@
+{
+  "id": "KB-264",
+  "title": "File editor doesn't scroll in markdown preview and",
+  "description": "File editor doesn't scroll in markdown preview and it should have a button that toggles word wrap (wrap on by default)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Markdown Preview Scrolling",
+      "status": "done"
+    },
+    {
+      "name": "Add Word Wrap Toggle Button",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T06:25:47.040Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T06:31:46.233Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:09.612Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification correctly identifies two real UI issues in the FileEditor component and provides concrete, verifiable implementation steps. The file scope is accurate, dependencies are minimal, and testing requirements are appropriate. The CSS fixes align with the existing styling patterns."
+    },
+    {
+      "timestamp": "2026-03-31T06:33:56.397Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-reef"
+    },
+    {
+      "timestamp": "2026-03-31T06:33:56.398Z",
+      "action": "Step 0 (Fix Markdown Preview Scrolling) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T06:35:12.082Z",
+      "action": "Step 0 (Fix Markdown Preview Scrolling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:35:21.260Z",
+      "action": "Step 0 (Fix Markdown Preview Scrolling) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:35:21.260Z",
+      "action": "Step 1 (Add Word Wrap Toggle Button) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:35:22.509Z",
+      "action": "plan review requested for Step 1 (Fix Markdown Preview Scrolling)"
+    },
+    {
+      "timestamp": "2026-03-31T06:35:40.427Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the CSS fix needed for markdown preview scrolling. The current `.file-editor-preview` class at line 6280 already has `flex: 1`, `overflow-y: auto`, and `min-height: 0`, but lacks `height: 100%`. Adding this property will ensure the preview container properly respects flex constraints in all browsers and edge cases."
+    },
+    {
+      "timestamp": "2026-03-31T06:35:57.901Z",
+      "action": "Step 1 (Add Word Wrap Toggle Button) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:35:57.901Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:35:59.003Z",
+      "action": "plan review requested for Step 2 (Add Word Wrap Toggle Button)"
+    },
+    {
+      "timestamp": "2026-03-31T06:36:10.524Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes for adding a word wrap toggle to the FileEditor component. The approach of adding state, a toolbar button with the `WrapText` icon, conditional CSS classes, and proper accessibility is sound. The test plan covers the essential functionality."
+    },
+    {
+      "timestamp": "2026-03-31T06:36:35.285Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:36:35.285Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:36:36.493Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T06:36:52.764Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The Step 3 plan is comprehensive and covers the essential test scenarios for both the word wrap toggle and markdown preview scrolling. The test approach aligns with existing patterns in the codebase (using `btn-primary` class checks for active state, similar to `SpecEditor.test.tsx`). The plan appropriately uses CSS class verification as a proxy for scrollability in a unit test context."
+    },
+    {
+      "timestamp": "2026-03-31T06:39:03.678Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:39:09.702Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:39:09.704Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T06:39:46.320Z",
+  "createdAt": "2026-03-31T06:25:47.040Z",
+  "updatedAt": "2026-03-31T06:39:46.320Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully implemented KB-264 with two fixes to the FileEditor component:\n\n1. **Fixed markdown preview scrolling**: Added `height: 100%` to `.file-editor-preview` CSS class to ensure it respects flex constraints and scrolls vertically when content exceeds viewport height.\n\n2. **Added word wrap toggle button**: Added a WrapText icon button to the file editor toolbar that appears for all editable file types (both markdown and non-markdown files). The button:\n   - Toggles between `white-space: pre-wrap` (wrap enabled, default) and `white-space: pre` (no wrap)\n   - Shows active state (btn-primary class) when word wrap is enabled\n   - Has proper aria-label \"Toggle word wrap\" for accessibility\n   - Is positioned on the right side of the toolbar\n\nAll 30 FileEditor tests pass, including 9 new tests covering word wrap functionality and markdown preview scrollability. Build passes successfully."
+}

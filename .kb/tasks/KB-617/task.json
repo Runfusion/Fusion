@@ -1,0 +1,30 @@
+{
+  "id": "KB-617",
+  "description": "Store a reference to files that are modified during an agent run and add a tab in the agent to view the diffs from the agent",
+  "column": "todo",
+  "status": "queued",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-618",
+  "createdAt": "2026-03-31T23:26:05.506Z",
+  "updatedAt": "2026-04-01T03:17:36.800Z",
+  "columnMovedAt": "2026-03-31T23:32:41.668Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:26:05.506Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:32:17.788Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:32:37.918Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a medium-complexity feature that touches core types, the executor agent, API routes, and dashboard UI. The mission is clear: capture modified files at task completion and expose them via a new \"Changes\" tab. All referenced files exist at the specified paths, and the spec follows established patterns in the codebase."
+    }
+  ]
+}

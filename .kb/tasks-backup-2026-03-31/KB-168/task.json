@@ -1,0 +1,174 @@
+{
+  "id": "KB-168",
+  "description": "On the usage indicator, I want to see a mark on the progress showing my expected weekly pace and I want text below showing me the percentage ahead or behind pace I am. Make sure it adjust for used/remaining toggle.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Pace Calculation and Types",
+      "status": "done"
+    },
+    {
+      "name": "Add Pace Marker to Progress Bar",
+      "status": "done"
+    },
+    {
+      "name": "Add Pace Percentage Text Below Progress Bar",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:38:18.850Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T17:38:55.376Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:07.396Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-specified, focused UI enhancement. The spec correctly identifies real files, components, and types. Steps have concrete, verifiable outcomes with specific styling values and test scenarios. The blast radius is appropriately limited to the UsageIndicator component and styles. The reference implementation notes and CSS snippets provide clear guidance without being overly prescriptive."
+    },
+    {
+      "timestamp": "2026-03-30T17:39:11.008Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rusty-flame"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:11.009Z",
+      "action": "Step 0 (Add Pace Calculation and Types) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:16.362Z",
+      "action": "Step 0 (Add Pace Calculation and Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:17.920Z",
+      "action": "Preflight complete. Read UsageIndicator.tsx, test file, API types, and CSS styles. Ready to implement pace indicator feature."
+    },
+    {
+      "timestamp": "2026-03-30T17:39:17.920Z",
+      "action": "Step 0 (Add Pace Calculation and Types) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:18.952Z",
+      "action": "Step 1 (Add Pace Marker to Progress Bar) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:18.953Z",
+      "action": "plan review requested for Step 1 (Add Pace Calculation and Types)"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:33.504Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and will achieve the stated outcomes. The calculation logic is mathematically correct (`100 - (resetMs/windowDurationMs * 100)` correctly gives the percentage of time elapsed), and the inversion strategy for \"remaining\" mode is clearly specified. The approach fits cleanly into the existing `UsageWindowRow` component structure."
+    },
+    {
+      "timestamp": "2026-03-30T17:39:45.695Z",
+      "action": "Step 1 & 2 complete: Added pace calculation logic and pace marker to UsageWindowRow component"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:46.615Z",
+      "action": "Step 1 (Add Pace Marker to Progress Bar) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:46.617Z",
+      "action": "Step 3 (Add CSS Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:48.936Z",
+      "action": "Step 2 (Add Pace Percentage Text Below Progress Bar) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:51.255Z",
+      "action": "Step 3 (Add CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:51.255Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:39:51.256Z",
+      "action": "plan review requested for Step 4 (Add CSS Styles)"
+    },
+    {
+      "timestamp": "2026-03-30T17:40:04.775Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan correctly identifies the missing CSS classes needed for the pace marker and text styling. The UsageIndicator.tsx component already references these classes (from completed Steps 1-3), and Step 4's checklist aligns perfectly with what's needed: wrapper positioning, marker styling, row layout, and color modifier classes."
+    },
+    {
+      "timestamp": "2026-03-30T17:40:09.309Z",
+      "action": "Step 4 complete: Added CSS styles for pace marker and pace text"
+    },
+    {
+      "timestamp": "2026-03-30T17:40:10.512Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:40:10.513Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T17:40:10.513Z",
+      "action": "plan review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T17:40:25.035Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The test plan for Step 5 is comprehensive and covers all the key scenarios for the pace marker feature. The test cases align well with the existing implementation which already includes proper `data-testid` attributes (`pace-marker`, `pace-row`) for test targeting. The plan follows the established testing patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T17:40:43.054Z",
+      "action": "Added 9 comprehensive tests for pace indicator functionality"
+    },
+    {
+      "timestamp": "2026-03-30T17:42:48.682Z",
+      "action": "Step 5 complete: All 9 new pace indicator tests pass, plus 23 existing tests (32 total). Remaining test failures are pre-existing issues unrelated to this change."
+    },
+    {
+      "timestamp": "2026-03-30T17:42:50.202Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T17:42:50.203Z",
+      "action": "plan review requested for Step 6 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-30T17:43:04.702Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The step plan is straightforward and appropriate for finalizing this feature. The implementation is already complete in the component, styles, and tests. The backend already provides the required timing data (`resetMs`, `windowDurationMs`) in the `UsageWindow` type (defined in `packages/dashboard/src/usage.ts:14` and re-exported in `packages/dashboard/app/api.ts:198`). Only the changeset file creation remains to satisfy the AGENTS.md requirement for published package changes."
+    },
+    {
+      "timestamp": "2026-03-30T17:44:03.380Z",
+      "action": "Step 6 complete: Changeset created and build passes. Feature implementation complete."
+    },
+    {
+      "timestamp": "2026-03-30T17:44:03.381Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T18:02:36.551Z",
+      "action": "Refinement requested",
+      "outcome": "I don't see the pace indicators"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T17:44:21.947Z",
+  "createdAt": "2026-03-30T17:38:18.850Z",
+  "updatedAt": "2026-03-30T18:02:36.551Z",
+  "size": "S",
+  "reviewLevel": 1
+}

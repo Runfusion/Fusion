@@ -1,0 +1,53 @@
+{
+  "id": "KB-002",
+  "description": "Per-Project Runtime Abstraction and Hybrid Executor Lifecycle",
+  "column": "triage",
+  "size": "L",
+  "reviewLevel": 3,
+  "currentStep": 0,
+  "paused": true,
+  "createdAt": "2026-03-31T21:01:18.281Z",
+  "updatedAt": "2026-03-31T21:21:07.285Z",
+  "columnMovedAt": "2026-03-31T21:21:07.285Z",
+  "dependencies": [
+    "KB-001"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:01:18.281Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:01:18.285Z",
+      "action": "Moved to triage for re-specification — new dependency added"
+    },
+    {
+      "timestamp": "2026-03-31T21:17:38.860Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:10.791Z",
+      "action": "Spec review: RETHINK",
+      "outcome": "The specification references types and classes that do not exist in the codebase. KB-001 (the stated dependency) is still in-progress at Step 0 with none of its deliverables implemented. The spec requires `Project`, `ProjectIsolationMode`, `CentralCoreStore`, and `ProjectRegistry` types from `@fusion/core`, but these types do not exist. Additionally, the spec makes several incorrect assumptions about existing code patterns and uses an incorrect package scope (`@fusion/engine` vs `@kb/engine`). P"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:10.795Z",
+      "action": "RETHINK: spec rewound — session checkpoint 94a6c326",
+      "outcome": "The specification references types and classes that do not exist in the codebase. KB-001 (the stated dependency) is still in-progress at Step 0 with none of its deliverables implemented. The spec requires `Project`, `ProjectIsolationMode`, `CentralCoreStore`, and `ProjectRegistry` types from `@fusion/core`, but these types do not exist. Additionally, the spec makes several incorrect assumptions about existing code patterns and uses an incorrect package scope (`@fusion/engine` vs `@kb/engine`). P"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:15.763Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:06.772Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:34.534Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-architected specification for a foundational multi-project runtime system. The mission is clear, steps are granular with verifiable outcomes, and the approach correctly balances introducing new abstractions while preserving backward compatibility. The spec appropriately handles the KB-001 dependency with inline type fallbacks."
+    }
+  ]
+}

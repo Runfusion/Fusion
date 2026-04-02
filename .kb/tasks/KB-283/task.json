@@ -1,0 +1,111 @@
+{
+  "id": "KB-283",
+  "title": "Implement agent heartbeat system for runtime state tracking",
+  "description": "Implement agent heartbeat system for runtime state tracking. The AgentStore data model (KB-283) provides the idle/active/paused/terminated lifecycle states, but actual runtime heartbeat monitoring (periodic pings, last-seen timestamps, auto-termination on missed heartbeats) needs a dedicated implementation similar to Paperclip's heartbeat_runs / heartbeat_run_events pattern.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Agent Type Definitions",
+      "status": "done"
+    },
+    {
+      "name": "AgentStore Implementation",
+      "status": "done"
+    },
+    {
+      "name": "HeartbeatMonitor Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Export Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T15:02:46.262Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T15:03:36.334Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T15:03:41.386Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T15:03:52.615Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is well-structured with clear steps and concrete outcomes, but it contains an incorrect changeset instruction. The task defines new AgentStore and HeartbeatMonitor infrastructure, but the changeset incorrectly targets internal private packages (`@kb/core` and `@kb/engine`) when AGENTS.md explicitly states changesets should only be created for the published `@dustinbyrne/kb` package. Additionally, Step 1 needs a minor clarification about where to place the new type definitions."
+    },
+    {
+      "timestamp": "2026-03-31T15:04:02.948Z",
+      "action": "Step 0 (Agent Type Definitions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:02.948Z",
+      "action": "Step 1 (AgentStore Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:02.948Z",
+      "action": "Step 2 (HeartbeatMonitor Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:02.949Z",
+      "action": "Step 3 (Export Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:02.949Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:02.950Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:05.213Z",
+      "action": "Task already moved from 'triage' — skipping transition to 'in-review'",
+      "outcome": "Invalid transition: 'triage' → 'in-review'. Valid targets: todo"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:13.163Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T15:04:24.899Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, technically accurate, and appropriately scoped. It correctly identifies the `StuckTaskDetector` pattern as a reference and adapts it for agent lifecycle management. The file scope is focused, testing requirements are explicit (real automated tests with assertions), and the implementation details follow established TaskStore patterns for filesystem-based persistence."
+    },
+    {
+      "timestamp": "2026-03-31T16:08:41.534Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T16:09:48.197Z",
+      "action": "Refinement requested",
+      "outcome": "Confirm this was checked in"
+    },
+    {
+      "timestamp": "2026-03-31T16:29:45.667Z",
+      "action": "Refinement requested",
+      "outcome": "Ensure this works properly"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T16:09:27.879Z",
+  "createdAt": "2026-03-31T15:02:46.262Z",
+  "updatedAt": "2026-03-31T16:29:45.667Z",
+  "summary": "Implemented the foundational Agent data model and AgentStore for kb's agent system. Created `agent-types.ts` with Agent, AgentDetail, AgentStatus, AgentCapabilities, AgentConfig, AgentConfigRevision, AgentMemoryEntry, AgentCreateInput, AgentUpdateInput, and AgentStoreEvents types. Implemented `AgentStore` class with full CRUD operations, status transitions (with terminal state enforcement), markdown content management (agents.md/soul.md), append-only memory (memory.jsonl), config revision tracking, atomic writes, per-agent locks, and EventEmitter events. All 72 tests pass covering creation, reading, updating, deletion, status transitions, memory operations, concurrency safety, and full lifecycle scenarios. Updated AGENTS.md with agent storage documentation.",
+  "size": "M",
+  "reviewLevel": 2
+}

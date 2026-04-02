@@ -1,0 +1,109 @@
+{
+  "id": "KB-234",
+  "title": "double click on the spec to edit in the new",
+  "description": "double click on the spec to edit in the new tak dialog",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Double-Click Handler to SpecEditor",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests to Existing SpecEditor Test File",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:36:13.615Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:36:49.299Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:37:02.812Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification has a critical file path error and misrepresents the test file situation. The spec says to create a new test file at `packages/dashboard/app/components/SpecEditor.test.tsx`, but a comprehensive test file already exists at `packages/dashboard/app/components/__tests__/SpecEditor.test.tsx`. Additionally, the CSS requirement needs clarification about where the cursor style should be applied."
+    },
+    {
+      "timestamp": "2026-03-31T00:37:09.139Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:37:19.544Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is clear, accurate, and well-scoped. The mission is straightforward: replicate TaskCard's double-click-to-edit pattern in SpecEditor. File references are correct, the implementation steps are concrete, and testing requirements are comprehensive for a size-S task."
+    },
+    {
+      "timestamp": "2026-03-31T02:06:37.154Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/vivid-pine"
+    },
+    {
+      "timestamp": "2026-03-31T02:06:37.154Z",
+      "action": "Step 0 (Add Double-Click Handler to SpecEditor) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T02:06:39.047Z",
+      "action": "Step 0 (Add Double-Click Handler to SpecEditor) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:06:44.914Z",
+      "action": "Step 0 (Add Double-Click Handler to SpecEditor) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:06:44.915Z",
+      "action": "Preflight complete. Read SpecEditor.tsx, TaskCard.tsx (reference for double-click pattern), test file, and styles.css. Ready to implement double-click feature.",
+      "outcome": "Understood the component structure and the handleDoubleClick pattern from TaskCard"
+    },
+    {
+      "timestamp": "2026-03-31T02:06:46.538Z",
+      "action": "Step 1 (Add Tests to Existing SpecEditor Test File) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:06:56.969Z",
+      "action": "Step 1 (Add Tests to Existing SpecEditor Test File) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:06:56.972Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:07:09.093Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:07:09.095Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:09:44.243Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:09:45.882Z",
+      "action": "Step 4 (Documentation & Delivery) - No documentation updates needed as UI behavior is self-discoverable. No changeset needed as this is a UI enhancement, not a CLI feature.",
+      "outcome": "All steps complete - double-click to edit feature implemented in SpecEditor"
+    },
+    {
+      "timestamp": "2026-03-31T02:09:45.884Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T02:09:56.673Z",
+  "createdAt": "2026-03-31T00:36:13.615Z",
+  "updatedAt": "2026-03-31T02:09:56.673Z",
+  "size": "S",
+  "reviewLevel": 0
+}

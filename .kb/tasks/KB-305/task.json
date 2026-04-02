@@ -1,0 +1,145 @@
+{
+  "id": "KB-305",
+  "description": "The model selector in the quick add should be a modal popup and not an inline submenu",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Create ModelSelectorModal Component",
+      "status": "done"
+    },
+    {
+      "name": "Update QuickEntryBox to Open Modal",
+      "status": "done"
+    },
+    {
+      "name": "Update App.tsx for Modal State Management",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T17:21:32.689Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T17:25:32.683Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T17:25:49.872Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification that accurately describes the current implementation, references real files and patterns, and provides concrete, verifiable outcomes for each step. The scope is appropriately bounded to a single UI component refactor with clear testing requirements."
+    },
+    {
+      "timestamp": "2026-03-31T17:42:12.043Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/clear-thorn"
+    },
+    {
+      "timestamp": "2026-03-31T17:42:12.043Z",
+      "action": "Step 0 (Create ModelSelectorModal Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T17:42:13.565Z",
+      "action": "Step 0 (Create ModelSelectorModal Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:44:18.945Z",
+      "action": "Step 0 (Create ModelSelectorModal Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:44:18.947Z",
+      "action": "Step 1 (Update QuickEntryBox to Open Modal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:44:19.917Z",
+      "action": "plan review requested for Step 1 (Create ModelSelectorModal Component)"
+    },
+    {
+      "timestamp": "2026-03-31T17:44:34.142Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows established dashboard modal patterns. The component will use the same `modal-overlay open` and `modal modal-lg` CSS classes as `SubtaskBreakdownModal`, with a standard header/body/footer layout and proper keyboard/overlay interaction handling. The props interface is complete and accounts for both executor and validator model selection."
+    },
+    {
+      "timestamp": "2026-03-31T17:44:35.906Z",
+      "action": "Creating ModelSelectorModal.tsx following SubtaskBreakdownModal pattern"
+    },
+    {
+      "timestamp": "2026-03-31T17:44:49.206Z",
+      "action": "Step 1 (Update QuickEntryBox to Open Modal) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:44:49.207Z",
+      "action": "Step 2 (Update App.tsx for Modal State Management) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:44:50.708Z",
+      "action": "plan review requested for Step 2 (Update QuickEntryBox to Open Modal)"
+    },
+    {
+      "timestamp": "2026-03-31T17:45:07.859Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan comprehensively identifies all necessary changes to convert QuickEntryBox from an inline dropdown pattern to a modal-based pattern. The approach correctly removes internal model loading state and delegates modal management to the parent (App.tsx), following the established pattern used by PlanningModeModal and SubtaskBreakdownModal."
+    },
+    {
+      "timestamp": "2026-03-31T17:45:09.479Z",
+      "action": "Updating QuickEntryBox.tsx to use modal pattern instead of inline dropdown"
+    },
+    {
+      "timestamp": "2026-03-31T17:46:49.357Z",
+      "action": "Step 2 (Update App.tsx for Modal State Management) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:46:49.358Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:46:50.342Z",
+      "action": "plan review requested for Step 3 (Update App.tsx for Modal State Management)"
+    },
+    {
+      "timestamp": "2026-03-31T17:47:24.947Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 correctly identifies the key implementation pieces needed in App.tsx to support the modal state management pattern. The approach follows the established patterns for other modals (PlanningModeModal, SubtaskBreakdownModal) with `isOpen` state, `initialXxx` state for passing data into the modal, and callback handlers. The file analysis confirms `availableModels` is already fetched and available to pass to QuickEntryBox instances."
+    },
+    {
+      "timestamp": "2026-03-31T17:47:27.235Z",
+      "action": "Updating App.tsx to add ModelSelectorModal state management and wire up QuickEntryBox callbacks"
+    },
+    {
+      "timestamp": "2026-03-31T17:48:45.160Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:48:46.181Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:48:47.516Z",
+      "action": "Creating ModelSelectorModal.test.tsx with comprehensive test coverage"
+    },
+    {
+      "timestamp": "2026-03-31T17:50:56.918Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:51:07.140Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T17:51:15.110Z",
+  "createdAt": "2026-03-31T17:21:32.689Z",
+  "updatedAt": "2026-03-31T17:51:15.110Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully converted the QuickEntryBox model selector from an inline dropdown to a modal popup dialog. Created ModelSelectorModal component following the existing modal patterns, updated QuickEntryBox to trigger the modal via callback, and integrated state management in App.tsx. Added 14 new tests for ModelSelectorModal and updated 59 existing QuickEntryBox tests. All 73 related tests pass."
+}

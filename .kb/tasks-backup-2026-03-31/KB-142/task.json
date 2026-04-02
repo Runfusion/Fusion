@@ -1,0 +1,157 @@
+{
+  "id": "KB-142",
+  "description": "Fix CLI executable packaging/tests so `pnpm test` passes build-exe suites with node-pty/native module support in compiled binaries.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Stop eager native loading and make standalone runtime resolve node-pty assets correctly",
+      "status": "done"
+    },
+    {
+      "name": "Align package metadata, bundle assertions, and release workflows with the executable payload",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T12:37:02.708Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T12:43:07.407Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T12:49:02.918Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is not a complete, reviewable specification as written. `.fusion/tasks/KB-142/PROMPT.md:1` contains only `DUPLICATE: KB-140`, so it provides no mission, scoped steps, file scope, testing requirements, or documentation guidance for an executor to follow.\n\nA duplicate marker is supported by the triage system (`packages/engine/src/triage.ts:144-146`), but that only works as an administrative handoff. It is not sufficient here because the referenced canonical task is itself still unapproved: `.fusion/t"
+    },
+    {
+      "timestamp": "2026-03-30T12:52:16.444Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T12:56:18.408Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a strong, well-researched spec overall: it points at the real hot spots in the current implementation, including the eager dashboard import in `packages/cli/src/bin.ts:41-42`, eager terminal-service initialization in `packages/dashboard/src/server.ts:45`, the static `node-pty` load in `packages/dashboard/src/terminal-service.ts:8`, and the isolated-dir/workflow packaging assumptions in `packages/cli/src/__tests__/build-exe.test.ts:17-20`, `.github/workflows/release.yml:114-116`, and `.gi"
+    },
+    {
+      "timestamp": "2026-03-30T12:58:18.832Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T13:02:23.297Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification is well-targeted to the actual failure surface in the repo. It correctly identifies the eager import chain from `packages/cli/src/bin.ts:41` into `packages/cli/src/commands/dashboard.ts:4-8`, then into `packages/dashboard/src/server.ts:45` and `packages/dashboard/src/terminal-service.ts:8`, and it also matches the current packaging gap where `packages/cli/build.ts:5-6,97-105` stages only `dist/client/` while release workflows upload only the top-level binary and checksum (`.gi"
+    },
+    {
+      "timestamp": "2026-03-31T06:47:21.548Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/clear-raven"
+    },
+    {
+      "timestamp": "2026-03-31T06:47:21.549Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T06:47:23.643Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:48:21.047Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:48:22.739Z",
+      "action": "Step 1 (Stop eager native loading and make standalone runtime resolve node-pty assets correctly) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:48:26.347Z",
+      "action": "plan review requested for Step 1 (Stop eager native loading and make standalone runtime resolve node-pty assets correctly)"
+    },
+    {
+      "timestamp": "2026-03-31T06:49:01.660Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan misdiagnoses the root cause. The dashboard code is **already** dynamically imported (line 50 in `bin.ts`), but the `native-patch.ts` is eagerly imported at line 12. The real issue is incomplete runtime native asset resolution: `native-patch.ts` creates a temp directory structure and sets `NODE_PATH`, but node-pty's native loader won't find assets there. The plan needs to fix the asset staging verification and the resolution mechanism, not just \"stop eager loading.\""
+    },
+    {
+      "timestamp": "2026-03-31T06:49:23.840Z",
+      "action": "Step 1: Implementing fix for native module resolution in Bun binary",
+      "outcome": "The fix needs to: 1) Make native-patch.ts lazy (only run when dashboard starts), 2) Create proper /tmp/kb-bunfs-<pid>/kb/ structure with prebuilds/<platform>/ subdirectory containing actual native files, 3) For macOS/Linux, try creating a symlink at /$bunfs/root to redirect to temp location"
+    },
+    {
+      "timestamp": "2026-03-31T06:52:47.960Z",
+      "action": "code review requested for Step 1 (Stop eager native loading and make standalone runtime resolve node-pty assets correctly)"
+    },
+    {
+      "timestamp": "2026-03-31T06:53:35.944Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly addresses the core issue: `bin.ts` now uses dynamic imports so dashboard/native code only loads when the dashboard command is selected. A new `runtime/native-patch.ts` module provides lazy initialization that sets up temp directory structures and symlinks for Bun's virtual filesystem, allowing node-pty to find its native assets. The build script stages native assets to `dist/runtime/<platform>/`, and `terminal-service.ts` has been updated to lazy-load the PTY module "
+    },
+    {
+      "timestamp": "2026-03-31T06:53:36.929Z",
+      "action": "Step 1 (Stop eager native loading and make standalone runtime resolve node-pty assets correctly) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:53:38.109Z",
+      "action": "Step 2 (Align package metadata, bundle assertions, and release workflows with the executable payload) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:54:22.736Z",
+      "action": "code review requested for Step 2 (Align package metadata, bundle assertions, and release workflows with the executable payload)"
+    },
+    {
+      "timestamp": "2026-03-31T06:54:53.118Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly aligns package metadata, bundle assertions, and release workflows with the new multi-file executable payload (binary + `client/` + `runtime/`). The `package.json` properly excludes Bun binaries and runtime assets from npm, tests are comprehensive, workflows correctly package the full payload, and macOS signing handles native assets. Documentation is updated with clear runtime asset expectations."
+    },
+    {
+      "timestamp": "2026-03-31T06:54:54.119Z",
+      "action": "Step 2 (Align package metadata, bundle assertions, and release workflows with the executable payload) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:54:55.251Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:54:56.935Z",
+      "action": "Step 3: Running full test suite",
+      "outcome": "Executing build-exe tests, bundle tests, and full pnpm test"
+    },
+    {
+      "timestamp": "2026-03-31T06:55:30.557Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:55:32.144Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:55:48.783Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:55:52.603Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T06:56:05.808Z",
+  "createdAt": "2026-03-30T12:37:02.708Z",
+  "updatedAt": "2026-03-31T06:56:05.808Z",
+  "size": "M",
+  "reviewLevel": 3,
+  "summary": "Fixed CLI build-exe native module packaging (KB-142):\n\n1. Made native module resolution lazy - bin.ts no longer eagerly imports native-patch.js, only initializes when dashboard command runs\n2. Updated native-patch.ts to create proper temp directory structure and attempt /$bunfs/root symlink with cleanup for stale links\n3. Added graceful degradation in terminal-service.ts - returns null (HTTP 503) instead of throwing when PTY module fails to load\n4. Added process.dlopen() fallback in terminal-service.ts for when symlink creation fails (macOS permissions)\n5. Updated signing scripts and workflows to sign native .node files alongside the main binary\n6. All build-exe tests pass (6/6), cross-platform tests pass (13/13), and build/verification passes\n7. Added patch changeset and updated STANDALONE.md documentation with runtime expectations and graceful degradation behavior"
+}

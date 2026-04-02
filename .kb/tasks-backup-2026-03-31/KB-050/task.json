@@ -1,0 +1,127 @@
+{
+  "id": "KB-050",
+  "description": "the progress bar on a task card needs to be at the top of the card details",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analysis & Planning",
+      "status": "done"
+    },
+    {
+      "name": "Implement Layout Change",
+      "status": "done"
+    },
+    {
+      "name": "Style Adjustments",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T02:40:43.272Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T02:42:15.273Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:42:24.261Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a straightforward UI layout change. The mission is clearly stated, steps have concrete verifiable outcomes, file references are accurate, and the scope is appropriately bounded. The before/after code structure examples in Step 2 are particularly helpful for ensuring correct implementation."
+    },
+    {
+      "timestamp": "2026-03-30T02:52:04.381Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/solar-plume"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:04.382Z",
+      "action": "Step 0 (Analysis & Planning) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:06.932Z",
+      "action": "Step 0 (Analysis & Planning) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:10.674Z",
+      "action": "Step 0 (Analysis & Planning) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:10.675Z",
+      "action": "Step 1 (Implement Layout Change) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:15.238Z",
+      "action": "plan review requested for Step 1 (Analysis & Planning)"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:25.324Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and correctly identifies the key analysis tasks. The worker will read the current TaskCard.tsx structure, identify the insertion point for the progress bar move, and review CSS spacing implications. The checkboxes align with the stated outcomes and will produce the necessary notes for implementation."
+    },
+    {
+      "timestamp": "2026-03-30T02:52:26.999Z",
+      "action": "Step 1 (Implement Layout Change) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:27.000Z",
+      "action": "Step 2 (Style Adjustments) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:44.708Z",
+      "action": "Moved progress bar block from after card-title to immediately after card-header"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:47.845Z",
+      "action": "Step 2 (Style Adjustments) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:47.847Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:52:50.028Z",
+      "action": "CSS review complete — no adjustments needed. The 8px margin-top on card-progress provides appropriate spacing after card-header."
+    },
+    {
+      "timestamp": "2026-03-30T02:53:10.616Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:53:10.617Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:53:17.128Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:53:17.130Z",
+      "action": "Task KB-050 complete — progress bar moved to top of TaskCard",
+      "outcome": "All 82 tests pass, build succeeds, changeset created"
+    },
+    {
+      "timestamp": "2026-03-30T02:53:17.132Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:53:17.137Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:53:33.172Z",
+  "createdAt": "2026-03-30T02:40:43.272Z",
+  "updatedAt": "2026-03-30T02:53:33.172Z",
+  "size": "S",
+  "reviewLevel": 1
+}

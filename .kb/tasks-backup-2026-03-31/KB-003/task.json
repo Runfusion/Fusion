@@ -1,0 +1,38 @@
+{
+  "id": "KB-003",
+  "description": "Dashboard Multi-Project UX: Overview page, drill-down, and setup wizard",
+  "column": "triage",
+  "status": "specifying",
+  "currentStep": 0,
+  "paused": true,
+  "createdAt": "2026-03-31T21:01:18.282Z",
+  "updatedAt": "2026-03-31T21:21:57.913Z",
+  "columnMovedAt": "2026-03-31T21:01:18.286Z",
+  "dependencies": [
+    "KB-002"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:01:18.282Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:01:18.286Z",
+      "action": "Moved to triage for re-specification — new dependency added"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:47.200Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:21.127Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:57.913Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This specification describes a comprehensive multi-project dashboard UX with Projects Overview, drill-down navigation, and a Setup Wizard. While the feature set is well-conceived, the spec has critical dependency issues: it assumes KB-001 (CentralCoreStore) and KB-002 (ProjectRuntimeManager) are complete, but examination shows these types and APIs do not exist in the codebase. The spec needs inline type definitions as fallbacks, or must wait for dependencies."
+    }
+  ]
+}

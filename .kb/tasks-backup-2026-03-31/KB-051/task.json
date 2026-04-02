@@ -1,0 +1,133 @@
+{
+  "id": "KB-051",
+  "description": "there's no button on dashboard to duplicate task",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add duplicateTask to useTasks Hook",
+      "status": "done"
+    },
+    {
+      "name": "Add Duplicate Button to TaskDetailModal",
+      "status": "done"
+    },
+    {
+      "name": "Wire Up in App.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T02:41:43.492Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T02:42:26.777Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:42:45.175Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. All referenced files exist with the expected functions and patterns. The `duplicateTask` API exists at `packages/dashboard/app/api.ts:78`, the `TaskDetailModal` has the expected structure with `modal-actions` div at line 620+, and the `useTasks` hook pattern is clearly established. The backend `duplicateTask` in `packages/core/src/store.ts:226-251` correctly creates a copy in triage with \"(Duplicated from X)\" in the description."
+    },
+    {
+      "timestamp": "2026-03-30T02:49:44.760Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fast-iris"
+    },
+    {
+      "timestamp": "2026-03-30T02:49:44.761Z",
+      "action": "Step 0 (Add duplicateTask to useTasks Hook) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:49:52.741Z",
+      "action": "Step 0 (Add duplicateTask to useTasks Hook) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:50:39.124Z",
+      "action": "Step 0 (Add duplicateTask to useTasks Hook) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:50:39.127Z",
+      "action": "Step 1 (Add Duplicate Button to TaskDetailModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:50:40.195Z",
+      "action": "plan review requested for Step 1 (Add duplicateTask to useTasks Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T02:50:53.671Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and follows established patterns in the codebase. The `duplicateTask` callback should mirror the simple wrapper pattern used by `createTask` and `retryTask`—no optimistic updates are needed since the SSE `task:created` event handler already exists to automatically add new tasks to state."
+    },
+    {
+      "timestamp": "2026-03-30T02:51:01.392Z",
+      "action": "Step 1 (Add Duplicate Button to TaskDetailModal) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:51:01.394Z",
+      "action": "Step 2 (Wire Up in App.tsx) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:51:02.596Z",
+      "action": "plan review requested for Step 2 (Add Duplicate Button to TaskDetailModal)"
+    },
+    {
+      "timestamp": "2026-03-30T02:51:14.345Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and will achieve the stated outcomes. The step correctly identifies all necessary interface changes, button placement, confirmation dialog behavior, and toast notifications. The approach follows existing patterns in the codebase for action buttons and confirmation flows."
+    },
+    {
+      "timestamp": "2026-03-30T02:51:27.852Z",
+      "action": "Step 2 (Wire Up in App.tsx) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:51:27.856Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:51:28.747Z",
+      "action": "plan review requested for Step 3 (Wire Up in App.tsx)"
+    },
+    {
+      "timestamp": "2026-03-30T02:51:36.858Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is technically correct and complete. The two checkboxes accurately describe the necessary changes to `App.tsx`. However, I note that Steps 1 and 2 appear to already be implemented in the codebase - `useTasks.ts` already exports `duplicateTask`, and `TaskDetailModal.tsx` already has the `onDuplicateTask` prop and Duplicate button implemented. Step 3 is the only remaining wiring needed."
+    },
+    {
+      "timestamp": "2026-03-30T02:51:43.187Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:51:43.189Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:54:42.740Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:55:57.352Z",
+      "action": "Successfully implemented duplicate task button feature",
+      "outcome": "All 764 tests passing, build successful. Changes include: 1) Added duplicateTask to useTasks hook, 2) Added Duplicate button to TaskDetailModal with confirmation dialog, 3) Wired up in App.tsx, 4) Added 6 comprehensive tests, 5) Created changeset file."
+    },
+    {
+      "timestamp": "2026-03-30T02:55:58.250Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:56:14.226Z",
+  "createdAt": "2026-03-30T02:41:43.492Z",
+  "updatedAt": "2026-03-30T02:56:14.226Z",
+  "size": "S",
+  "reviewLevel": 1
+}

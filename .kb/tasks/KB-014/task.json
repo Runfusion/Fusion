@@ -1,0 +1,204 @@
+{
+  "id": "KB-014",
+  "description": "add a way to edit the task spec/plan from the web dashboard, or ask ai to revise it with comments",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add SpecEditor Component",
+      "status": "done"
+    },
+    {
+      "name": "Add Spec Revision API",
+      "status": "done"
+    },
+    {
+      "name": "Enhance TriageProcessor for Re-Specification",
+      "status": "done"
+    },
+    {
+      "name": "Integrate Spec Tab in TaskDetailModal",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T00:39:52.446Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T00:41:27.571Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T00:41:48.584Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a well-crafted specification for a medium-complexity feature. The mission is clear (two capabilities: manual spec editing and AI revision requests), steps are concrete with verifiable outcomes, file references are accurate, and testing requirements are appropriately rigorous. The size (M) and review level (2) are correctly assessed."
+    },
+    {
+      "timestamp": "2026-03-30T00:42:00.763Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T00:42:26.866Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification that builds on existing dashboard patterns. The mission is clear (manual spec editing + AI revision flow), file scope is accurate with real files and patterns, and steps have concrete deliverables. The approach follows established patterns (tabs in TaskDetailModal, API functions in api.ts, toast notifications). Testing requirements are comprehensive."
+    },
+    {
+      "timestamp": "2026-03-30T01:30:10.073Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/calm-heron"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:10.074Z",
+      "action": "Step 0 (Add SpecEditor Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:15.596Z",
+      "action": "Step 0 (Add SpecEditor Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:25.768Z",
+      "action": "Step 0 (Add SpecEditor Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:25.771Z",
+      "action": "Step 0 (Preflight) complete. Examined existing code patterns: TaskDetailModal uses tab-based UI with definition/activity/agent-log/steering tabs, api.ts has all necessary API functions, routes.ts has PATCH /tasks/:id for prompt updates, triage.ts has specifyTask method with review_spec tool for REVISE/RETHINK flow.",
+      "outcome": "Ready to implement Step 1: SpecEditor component"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:28.553Z",
+      "action": "Step 1 (Add Spec Revision API) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:28.556Z",
+      "action": "plan review requested for Step 1 (Add SpecEditor Component)"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:55.679Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows established patterns in the codebase. The SpecEditor component design aligns with existing UI components like `SteeringTab.tsx`, and the test requirements match the comprehensive coverage patterns established in `SteeringTab.test.tsx`. The markdown rendering approach (ReactMarkdown + remarkGfm + `markdown-body` CSS class) correctly mirrors the current Definition tab implementation."
+    },
+    {
+      "timestamp": "2026-03-30T01:32:51.775Z",
+      "action": "code review requested for Step 1 (Add SpecEditor Component)"
+    },
+    {
+      "timestamp": "2026-03-30T01:32:51.777Z",
+      "action": "Step 1 (Add Spec Revision API) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:33:07.940Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly creates the `SpecEditor` component with all required functionality from the spec. The component handles view/edit mode toggling, markdown rendering with heading stripping, keyboard shortcuts, AI revision requests, and loading states. The test suite is comprehensive with 24 test cases covering all major behaviors and edge cases."
+    },
+    {
+      "timestamp": "2026-03-30T01:33:09.344Z",
+      "action": "Step 2 (Enhance TriageProcessor for Re-Specification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:33:09.344Z",
+      "action": "plan review requested for Step 2 (Add Spec Revision API)"
+    },
+    {
+      "timestamp": "2026-03-30T01:33:39.336Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The step's approach contains a fundamental design flaw: it proposes moving tasks to the \"triage\" column to trigger re-specification, but this violates the existing `VALID_TRANSITIONS` state machine. Tasks in \"in-review\" or \"done\" columns **cannot** transition to \"triage\" - these transitions are explicitly disallowed in the codebase. The plan will fail at runtime for any task in those columns."
+    },
+    {
+      "timestamp": "2026-03-30T01:34:39.554Z",
+      "action": "code review requested for Step 2 (Add Spec Revision API)"
+    },
+    {
+      "timestamp": "2026-03-30T01:34:39.558Z",
+      "action": "Step 2 (Enhance TriageProcessor for Re-Specification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:34:59.345Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds the Spec Revision API with proper validation, error handling, and comprehensive test coverage. The code follows existing patterns in the codebase and correctly handles all edge cases specified in the requirements."
+    },
+    {
+      "timestamp": "2026-03-30T01:35:02.007Z",
+      "action": "Step 3 (Integrate Spec Tab in TaskDetailModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:35:02.010Z",
+      "action": "plan review requested for Step 3 (Enhance TriageProcessor for Re-Specification)"
+    },
+    {
+      "timestamp": "2026-03-30T01:35:47.276Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan correctly identifies the need to modify `TriageProcessor.specifyTask()` and `buildSpecificationPrompt()` to support re-specification, but it lacks crucial specifics on:\n1. How to extract feedback from the task log entries\n2. How to access the existing PROMPT.md content (Task vs TaskDetail mismatch)\n3. The fact that `packages/engine/src/triage.test.ts` doesn't exist\n4. How to handle the status lifecycle during re-specification\n\nThese gaps will cause implementation confusion and likely re"
+    },
+    {
+      "timestamp": "2026-03-30T01:37:06.639Z",
+      "action": "code review requested for Step 3 (Enhance TriageProcessor for Re-Specification)"
+    },
+    {
+      "timestamp": "2026-03-30T01:37:06.701Z",
+      "action": "Step 3 (Integrate Spec Tab in TaskDetailModal) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:37:27.663Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly enhances the `TriageProcessor` to handle re-specification of existing tasks with user feedback. The changes integrate seamlessly with the existing triage flow: tasks with `status: \"needs-respecify\"` are detected, their existing PROMPT.md content and revision feedback are extracted and passed to the agent, and the prompt builder generates appropriate revision instructions. Error handling and status restoration are properly implemented for the re-specification flow."
+    },
+    {
+      "timestamp": "2026-03-30T01:37:29.152Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:37:29.156Z",
+      "action": "plan review requested for Step 4 (Integrate Spec Tab in TaskDetailModal)"
+    },
+    {
+      "timestamp": "2026-03-30T01:37:46.470Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is well-structured and follows existing patterns in the codebase. The approach correctly integrates the SpecEditor component (already created in Step 1) into the TaskDetailModal by adding a new tab, managing local state for editing operations, and wiring up the API functions (already added in Step 2). The checkboxes cover all necessary implementation details including state management, API integration, toast notifications, and error handling."
+    },
+    {
+      "timestamp": "2026-03-30T01:39:07.651Z",
+      "action": "code review requested for Step 4 (Integrate Spec Tab in TaskDetailModal)"
+    },
+    {
+      "timestamp": "2026-03-30T01:39:07.722Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:39:49.098Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation successfully integrates the Spec tab into TaskDetailModal with full edit and revision capabilities. The code follows existing patterns, includes comprehensive tests, and all quality gates (tests, typecheck, build) pass. The implementation properly handles loading states, error handling with toast notifications, and keyboard shortcuts as specified."
+    },
+    {
+      "timestamp": "2026-03-30T01:39:50.265Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:42:01.377Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:42:32.567Z",
+      "action": "Completed KB-014: Add Spec Edit and AI Revision from Dashboard",
+      "outcome": "Successfully implemented all 6 steps: (1) SpecEditor component with view/edit modes and AI revision UI, (2) Spec revision API endpoint with column transition validation, (3) Enhanced TriageProcessor for re-specification with feedback support, (4) Spec tab integration in TaskDetailModal, (5) All tests passing (1231 total: core 115, dashboard 521, engine 430, cli 165), (6) Documentation updated in README.md and changeset created. The feature allows users to manually edit task specs and request AI revisions with natural language feedback from the dashboard."
+    },
+    {
+      "timestamp": "2026-03-30T01:42:32.570Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T01:42:47.888Z",
+  "createdAt": "2026-03-30T00:39:52.446Z",
+  "updatedAt": "2026-03-30T01:42:47.888Z",
+  "size": "M",
+  "reviewLevel": 2
+}

@@ -1,0 +1,28 @@
+{
+  "id": "KB-652",
+  "description": "Openai-codex in model selector should use the openai logo",
+  "column": "todo",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 0,
+  "createdAt": "2026-04-01T02:36:05.138Z",
+  "updatedAt": "2026-04-01T02:44:13.850Z",
+  "columnMovedAt": "2026-04-01T02:44:13.850Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:36:05.138Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:44:02.233Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:44:12.967Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is complete and well-structured. The mission is clear, steps have verifiable outcomes, file scope is accurate, and testing requirements demand real automated tests. The size (S) and review level (0) are appropriate for this simple provider alias addition."
+    }
+  ]
+}

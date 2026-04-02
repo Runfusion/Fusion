@@ -1,0 +1,143 @@
+{
+  "id": "KB-292",
+  "description": "Add ability to run quick scripts (like npm build). Need a way to define scripts and then run them in a terminal",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 1,
+  "currentStep": 5,
+  "summary": "Successfully implemented KB-292: Add Ability to Run Quick Scripts. \n\n**Changes made:**\n1. Added `scripts?: Record<string, string>` field to `ProjectSettings` interface with default value `{}`\n2. Created `packages/cli/src/commands/script.ts` with `runScriptList()`, `runScriptAdd()`, `runScriptRemove()`, and `runScriptRun()` functions\n3. Added CLI routing in `bin.ts` for `fn script list|add|remove` and `fn run <name>` commands\n4. Created comprehensive test suite with 34 passing tests covering validation, add/remove/list/run operations, and edge cases\n5. Created changeset file for minor version bump\n\n**Usage:**\n- `fn script add build \"pnpm build\"` — add a new script\n- `fn script remove build` — remove a script\n- `fn script list` — show all scripts\n- `fn run build` — execute a script (with optional extra args)\n\nAll acceptance criteria met: types compile, tests pass, CLI commands work, and changeset file created.",
+  "createdAt": "2026-03-31T16:25:53.939Z",
+  "updatedAt": "2026-04-01T01:54:15.048Z",
+  "columnMovedAt": "2026-03-31T18:11:24.663Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Scripts Type to ProjectSettings",
+      "status": "done"
+    },
+    {
+      "name": "Create Script Command Module",
+      "status": "done"
+    },
+    {
+      "name": "Add CLI Routing",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:25:53.939Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T16:26:50.290Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:27:15.754Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-scoped, well-specified feature addition. The specification accurately references existing code patterns, correctly identifies affected files, and provides concrete verifiable outcomes for each step. The testing requirements are comprehensive and demand real automated tests with proper mocking patterns."
+    },
+    {
+      "timestamp": "2026-03-31T18:07:12.293Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/amber-sage"
+    },
+    {
+      "timestamp": "2026-03-31T18:07:12.294Z",
+      "action": "Step 0 (Add Scripts Type to ProjectSettings) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T18:07:14.892Z",
+      "action": "Step 0 (Add Scripts Type to ProjectSettings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:07:17.229Z",
+      "action": "Step 0 (Add Scripts Type to ProjectSettings) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:07:17.233Z",
+      "action": "Step 1 (Create Script Command Module) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:07:18.439Z",
+      "action": "plan review requested for Step 1 (Add Scripts Type to ProjectSettings)"
+    },
+    {
+      "timestamp": "2026-03-31T18:07:31.869Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and follows established patterns in the codebase. Adding `scripts?: Record<string, string>` to `ProjectSettings` is appropriate given the existing `testCommand` and `buildCommand` fields. The default value of `{}` is consistent with the pattern used for other object-type settings like `defaultPresetBySize`."
+    },
+    {
+      "timestamp": "2026-03-31T18:08:04.118Z",
+      "action": "Step 1 (Create Script Command Module) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:08:04.119Z",
+      "action": "Step 2 (Add CLI Routing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:08:04.120Z",
+      "action": "plan review requested for Step 2 (Create Script Command Module)"
+    },
+    {
+      "timestamp": "2026-03-31T18:08:26.958Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 follows established patterns from `settings.ts` and `git.ts` and will achieve the stated outcomes. The exported functions (`runScriptList`, `runScriptAdd`, `runScriptRemove`, `runScriptRun`) match the testing requirements in Step 4, and the use of `TaskStore.updateSettings()` aligns with how other CLI commands persist data. The `execSync` with `stdio: 'inherit'` approach is correct for streaming command output."
+    },
+    {
+      "timestamp": "2026-03-31T18:08:44.377Z",
+      "action": "Step 2 (Add CLI Routing) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:08:44.380Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:08:44.383Z",
+      "action": "plan review requested for Step 3 (Add CLI Routing)"
+    },
+    {
+      "timestamp": "2026-03-31T18:08:58.995Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and follows established patterns in the codebase. The `script.ts` command module (Step 2) is already implemented with all required exports (`runScriptList`, `runScriptAdd`, `runScriptRemove`, `runScriptRun`). The CLI routing in `bin.ts` uses a clear switch-based pattern that will accommodate the new commands cleanly."
+    },
+    {
+      "timestamp": "2026-03-31T18:09:25.122Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:09:25.123Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:09:25.123Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T18:09:48.029Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The testing plan for Step 4 is well-structured and follows established patterns from the codebase (specifically `git.test.ts`). The plan covers the essential test cases for all exported functions (`runScriptAdd`, `runScriptRemove`, `runScriptList`, `runScriptRun`) and includes proper mocking strategies for `execSync` and `TaskStore`. The test file location and naming convention match project standards."
+    },
+    {
+      "timestamp": "2026-03-31T18:11:10.767Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:11:18.365Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-04-01T01:54:15.048Z",
+      "action": "Refinement requested",
+      "outcome": "Need a way to run these scripts from the dashboard"
+    }
+  ]
+}

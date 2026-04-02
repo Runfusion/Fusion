@@ -1,0 +1,155 @@
+{
+  "id": "KB-312",
+  "description": "Tasks are being marked done but not moving columns",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add workflowStepResults to updateTask",
+      "status": "done"
+    },
+    {
+      "name": "Persist workflow step results in executor",
+      "status": "done"
+    },
+    {
+      "name": "Fix column movement on workflow step failure",
+      "status": "done"
+    },
+    {
+      "name": "Clear workflow results on task retry",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T18:06:17.104Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T18:07:22.604Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T18:07:42.242Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a focused bug fix. The mission is clearly articulated, the steps have concrete verifiable outcomes, and all file references are accurate. The bug is properly diagnosed: workflow step failures currently set `status: \"failed\"` but return early (line 515 in executor.ts), preventing the `moveTask(task.id, \"in-review\")` call on line 518 from executing. The specification correctly identifies the need to persist results and ensure visibility of failures."
+    },
+    {
+      "timestamp": "2026-03-31T20:04:47.149Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fleet-otter"
+    },
+    {
+      "timestamp": "2026-03-31T20:04:47.149Z",
+      "action": "Step 0 (Add workflowStepResults to updateTask) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T20:06:41.075Z",
+      "action": "Step 0 (Add workflowStepResults to updateTask) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:07:02.324Z",
+      "action": "Step 0 (Add workflowStepResults to updateTask) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:07:02.326Z",
+      "action": "Step 1 (Persist workflow step results in executor) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:07:03.941Z",
+      "action": "plan review requested for Step 1 (Add workflowStepResults to updateTask)"
+    },
+    {
+      "timestamp": "2026-03-31T20:07:26.753Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the minimal changes needed to support persisting workflow step results. The `updateTask` function in `store.ts` needs a new parameter to set/clear `workflowStepResults`, following the established pattern for array fields like `dependencies`. The existing infrastructure (DB schema, Task type, JSON serialization) already supports this field - it just needs to be exposed through the update API."
+    },
+    {
+      "timestamp": "2026-03-31T20:07:46.759Z",
+      "action": "Step 1 (Persist workflow step results in executor) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:07:46.762Z",
+      "action": "Step 2 (Fix column movement on workflow step failure) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:07:47.717Z",
+      "action": "plan review requested for Step 2 (Persist workflow step results in executor)"
+    },
+    {
+      "timestamp": "2026-03-31T20:08:15.733Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 correctly identifies the necessary changes to `runWorkflowSteps` in `executor.ts`. The approach of collecting results after each workflow step and persisting via `updateTask` will achieve the stated outcomes. The plan properly addresses persisting both successful and failed results before returning."
+    },
+    {
+      "timestamp": "2026-03-31T20:10:42.398Z",
+      "action": "Step 2 (Fix column movement on workflow step failure) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:10:42.399Z",
+      "action": "Step 3 (Clear workflow results on task retry) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:10:42.399Z",
+      "action": "plan review requested for Step 3 (Fix column movement on workflow step failure)"
+    },
+    {
+      "timestamp": "2026-03-31T20:11:13.976Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The step correctly identifies the bug in `executor.ts` lines 509-515: when `runWorkflowSteps` returns `false`, the code sets `status: \"failed\"` and returns early without moving the task to \"in-review\". The checkboxes properly address the fix: moving the task column, removing the early return blocker, and clarifying the error message. The approach will resolve the stated issue where failed workflow steps leave tasks stuck in \"in-progress\"."
+    },
+    {
+      "timestamp": "2026-03-31T20:11:35.720Z",
+      "action": "Step 3 (Clear workflow results on task retry) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:11:35.723Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:11:35.725Z",
+      "action": "plan review requested for Step 4 (Clear workflow results on task retry)"
+    },
+    {
+      "timestamp": "2026-03-31T20:12:02.980Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step's approach is sound and will achieve the stated outcome. The logic correctly identifies that workflow step results should be cleared when a task is retried (moved from \"in-review\" back to \"in-progress\"). The implementation pattern follows the existing convention in `moveTask` for clearing transient fields during column transitions."
+    },
+    {
+      "timestamp": "2026-03-31T20:13:57.458Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:13:57.460Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:21:03.849Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:21:10.603Z",
+      "action": "Completed KB-312 - Fixed workflow step column movement bug",
+      "outcome": "Tasks with enabled workflow steps now properly: 1) persist workflow step results to task.workflowStepResults, 2) move to in-review even when workflow steps fail, 3) clear workflowStepResults when moved back to todo/in-progress for retry. All core (419 tests) and engine (575 tests) tests pass."
+    },
+    {
+      "timestamp": "2026-03-31T20:21:15.328Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:21:46.659Z",
+  "createdAt": "2026-03-31T18:06:17.104Z",
+  "updatedAt": "2026-03-31T20:21:46.659Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Fixed KB-312 - tasks with enabled workflow steps now properly persist workflow step results, move to in-review even when workflow steps fail, and clear results on retry. Changes: 1) Added workflowStepResults parameter to updateTask in store.ts, 2) Modified runWorkflowSteps in executor.ts to persist results after each step, 3) Fixed column movement so tasks move to in-review even on workflow failure, 4) Added logic to clear workflowStepResults when moving from in-review back to todo/in-progress. All core (419) and engine (575) tests pass."
+}

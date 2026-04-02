@@ -1,0 +1,162 @@
+{
+  "id": "KB-061",
+  "description": "In the model selection dialogues add a way to type to filter the models",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Build Filtered Model Selector Component",
+      "status": "done"
+    },
+    {
+      "name": "Apply Filter to SettingsModal",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T03:10:25.081Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T03:11:17.859Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T03:11:31.618Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, focused specification for adding search filtering to model selection dropdowns. The spec correctly identifies all affected files, references existing patterns (`.dep-dropdown-search` in `packages/dashboard/app/styles.css:1346-1361`), and provides concrete implementation guidance. The task is appropriately sized as Small with Review Level 1, matching the limited blast radius of this UI enhancement."
+    },
+    {
+      "timestamp": "2026-03-30T03:48:57.791Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/crisp-ember"
+    },
+    {
+      "timestamp": "2026-03-30T03:48:57.794Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T03:49:00.643Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:50:20.427Z",
+      "action": "Preflight complete. Found:\n- ModelSelectorTab.tsx: Native select with optgroups, needs filter for executor and validator\n- SettingsModal.tsx: Has model section with default model selector, needs filter\n- InlineCreateCard.tsx: No model selection yet (KB-060 not complete), no changes needed\n- styles.css: Has .dep-dropdown-search pattern to reference for styling\n- api.ts: ModelInfo interface with provider, id, name, reasoning, contextWindow\n- All 72 component tests pass (baseline confirmed)"
+    },
+    {
+      "timestamp": "2026-03-30T03:50:20.429Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:50:21.768Z",
+      "action": "Step 1 (Build Filtered Model Selector Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:50:21.769Z",
+      "action": "plan review requested for Step 1 (Build Filtered Model Selector Component)"
+    },
+    {
+      "timestamp": "2026-03-30T03:50:37.203Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows established patterns in the codebase. The approach will achieve the stated outcomes of adding real-time filtering to the ModelSelectorTab component. The filter function design is sound, and the styling reference to `.dep-dropdown-search` (from `InlineCreateCard.tsx` lines 180-196) provides a proven pattern to follow."
+    },
+    {
+      "timestamp": "2026-03-30T03:51:05.671Z",
+      "action": "Step 1 (Build Filtered Model Selector Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:51:05.673Z",
+      "action": "Step 2 (Apply Filter to SettingsModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:51:06.866Z",
+      "action": "plan review requested for Step 2 (Apply Filter to SettingsModal)"
+    },
+    {
+      "timestamp": "2026-03-30T03:51:31.227Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The step plan has a **critical gap**: it assumes the CSS styles for the filter UI already exist from Step 1, but examining the codebase reveals `.model-selector-filter*` classes are used in `ModelSelectorTab.tsx` but are **not defined in `styles.css`**. This means the filter UI in ModelSelectorTab is currently unstyled, and following Step 2's plan would result in the same broken UI in SettingsModal. Additionally, the plan doesn't explicitly require extracting the `filterModels` function to a sha"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:08.710Z",
+      "action": "Step 2 (Apply Filter to SettingsModal) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:08.716Z",
+      "action": "Step 3 (Add CSS Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:14.909Z",
+      "action": "plan review requested for Step 3 (Add CSS Styles)"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:39.427Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "Step 3 involves adding CSS styles for the model selector filter components. The React components (ModelSelectorTab.tsx and SettingsModal.tsx) already have the filter markup implemented with the expected class names (`.model-selector-filter`, `.model-selector-filter-input`, `.model-selector-filter-clear`, `.model-selector-results-count`, `.model-selector-no-results`), but the corresponding CSS doesn't yet exist in styles.css. The plan correctly identifies all required style classes and references"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:53.031Z",
+      "action": "Step 3 (Add CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:53.033Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:52:55.332Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T03:53:17.591Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The testing plan for Step 4 is comprehensive and well-structured. It covers all critical filter functionality across both components with test cases that follow existing patterns in the codebase. The plan correctly identifies the need to test filtering logic, UI interactions (clear button, empty states), and the preservation of the \"Use default\" option."
+    },
+    {
+      "timestamp": "2026-03-30T03:54:38.804Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:54:38.808Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:54:44.083Z",
+      "action": "Step 5 (Documentation & Delivery) complete:\n- Created changeset file: .changeset/add-model-filter-search.md\n- KB-060 status: InlineCreateCard.tsx does not yet have model selection (KB-060 not complete), so no changes needed there\n- All filter functionality implemented in ModelSelectorTab and SettingsModal\n- 85 new tests added (22 for ModelSelectorTab, 63 for SettingsModal)\n- Total: 85 tests passing for the modified components",
+      "outcome": "Task KB-061 successfully completed"
+    },
+    {
+      "timestamp": "2026-03-30T03:54:45.578Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:54:51.321Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T06:12:07.374Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T06:12:07.374Z",
+  "createdAt": "2026-03-30T03:10:25.081Z",
+  "updatedAt": "2026-03-30T06:12:07.374Z",
+  "size": "S",
+  "reviewLevel": 1
+}

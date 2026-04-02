@@ -1,0 +1,139 @@
+{
+  "id": "KB-274",
+  "title": "For items with dependencies consider archived the same",
+  "description": "For items with dependencies, consider archived the same as done",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Scheduler Dependency Check",
+      "status": "done"
+    },
+    {
+      "name": "Update Executor Dependency Check",
+      "status": "done"
+    },
+    {
+      "name": "Update Dashboard Worktree Grouping",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T14:00:48.833Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T14:01:44.114Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T14:01:54.863Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and actionable. All file references are correct, line numbers match the actual code, and the proposed changes follow the existing code patterns. The testing approach is appropriate, building on the existing test structure for dependency handling."
+    },
+    {
+      "timestamp": "2026-03-31T14:02:03.646Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-badger"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:03.647Z",
+      "action": "Step 0 (Update Scheduler Dependency Check) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:05.859Z",
+      "action": "Step 0 (Update Scheduler Dependency Check) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:09.939Z",
+      "action": "Step 0 (Update Scheduler Dependency Check) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:09.942Z",
+      "action": "Step 1 (Update Executor Dependency Check) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:10.972Z",
+      "action": "plan review requested for Step 1 (Update Scheduler Dependency Check)"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:30.448Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the scheduler.ts modification needed to treat \"archived\" as a satisfied dependency state. The proposed change at line 383 follows the existing deny-list pattern and includes a comment update. The approach is sound and consistent with the task requirements."
+    },
+    {
+      "timestamp": "2026-03-31T14:02:35.539Z",
+      "action": "Step 1 (Update Executor Dependency Check) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:35.540Z",
+      "action": "Step 2 (Update Dashboard Worktree Grouping) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:36.694Z",
+      "action": "plan review requested for Step 2 (Update Executor Dependency Check)"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:50.545Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 correctly identifies the specific line and exact change needed in the executor. The logic change is consistent with the mission: treating \"archived\" as a satisfied dependency state alongside \"done\" and \"in-review\". The change is a straightforward extension of the existing filter condition."
+    },
+    {
+      "timestamp": "2026-03-31T14:02:54.171Z",
+      "action": "Step 2 (Update Dashboard Worktree Grouping) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:54.172Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:02:55.171Z",
+      "action": "plan review requested for Step 3 (Update Dashboard Worktree Grouping)"
+    },
+    {
+      "timestamp": "2026-03-31T14:03:03.660Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 correctly identifies the target file (`worktreeGrouping.ts`) and the specific line (83) that needs modification. The proposed change aligns with the already-completed updates in `scheduler.ts` and `executor.ts`, maintaining consistency across all three dependency satisfaction checks. The logic correctly treats \"archived\" as a completed state for dependency purposes."
+    },
+    {
+      "timestamp": "2026-03-31T14:03:07.305Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:03:07.305Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:03:08.813Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T14:03:33.576Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 correctly identifies the need to add a test case for archived dependencies in the scheduler tests. The test pattern (\"allows task to start when explicit dep is archived\") follows the existing naming convention. However, there's a minor inaccuracy in the describe block name, and the comment in worktreeGrouping.ts should be updated to maintain consistency."
+    },
+    {
+      "timestamp": "2026-03-31T14:05:48.167Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:05:58.458Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T14:06:05.980Z",
+  "createdAt": "2026-03-31T14:00:48.833Z",
+  "updatedAt": "2026-03-31T14:06:05.980Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully implemented KB-274 to treat \"archived\" tasks as satisfied dependencies. Modified 3 files (scheduler.ts, executor.ts, worktreeGrouping.ts) to include \"archived\" column alongside \"done\" and \"in-review\" when checking dependency satisfaction. Added test case verifying a todo task with an archived dependency gets scheduled. All 604 engine tests pass, build passes."
+}

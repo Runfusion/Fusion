@@ -1,0 +1,78 @@
+{
+  "id": "KB-339",
+  "description": "Fix dashboard build errors: AgentStore, Agent, AgentState types are not exported from @kb/core but are used in dashboard routes.ts. Need to either export these types from core or fix the imports in dashboard.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Agent exports to core index.ts",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:21:13.334Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:26:31.918Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:26:45.106Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. The dashboard's `routes.ts` dynamically imports `AgentStore`, `AgentCapability`, and `AgentState` from `@kb/core` (lines 5164, 5184, 5207, 5231, 5254, etc.), but these are not exported from `packages/core/src/index.ts`. The fix is straightforward: add three export statements to the core package's public API."
+    },
+    {
+      "timestamp": "2026-03-31T20:34:49.906Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/ivory-spark"
+    },
+    {
+      "timestamp": "2026-03-31T20:34:49.906Z",
+      "action": "Step 0 (Add Agent exports to core index.ts) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T20:34:52.659Z",
+      "action": "Step 0 (Add Agent exports to core index.ts) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:17.574Z",
+      "action": "Step 0 (Add Agent exports to core index.ts) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:17.577Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:05.078Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:05.080Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:06.149Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:37:14.444Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:37:19.005Z",
+  "createdAt": "2026-03-31T20:21:13.334Z",
+  "updatedAt": "2026-03-31T20:37:19.005Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Task KB-339 verification complete. The required Agent exports (AgentStore, AgentCapability, AgentState) are already properly exported from packages/core/src/index.ts. Core package typecheck passes and dashboard builds without TypeScript errors. No code changes were required as the exports were already in place."
+}

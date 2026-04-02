@@ -1,0 +1,100 @@
+{
+  "id": "KB-263",
+  "title": "The text I enter in the add task area isn't",
+  "description": "The text I enter in the add task area isn't being passed into \"Plan\" when its selected",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze the Bug",
+      "status": "done"
+    },
+    {
+      "name": "Implement the Fix",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T06:19:46.835Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T06:21:15.669Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T06:21:29.436Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-specified bug fix for a stale closure issue in `PlanningModeModal.tsx`. The spec correctly identifies the root cause: `handleStartPlanningWithPlan` is referenced in the auto-start useEffect but isn't included in its dependency array, causing it to capture stale values. The proposed solution—consolidating to a single `handleStartPlanning` with an optional override parameter—is clean and correct."
+    },
+    {
+      "timestamp": "2026-03-31T06:32:20.725Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/calm-tiger"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:20.726Z",
+      "action": "Step 0 (Analyze the Bug) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:25.679Z",
+      "action": "Step 0 (Analyze the Bug) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:48.449Z",
+      "action": "Step 0 (Analyze the Bug) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:48.451Z",
+      "action": "Preflight complete. Identified the bug: handleStartPlanningWithPlan has empty deps and is not in the auto-start useEffect's dependency array, causing stale closure issues when the modal reopens with different text."
+    },
+    {
+      "timestamp": "2026-03-31T06:32:49.898Z",
+      "action": "Step 1 (Implement the Fix) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:49.900Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:33:17.857Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:33:17.857Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:38:46.515Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:38:48.033Z",
+      "action": "Step 4: Creating changeset file for the bug fix"
+    },
+    {
+      "timestamp": "2026-03-31T06:38:57.087Z",
+      "action": "All changes committed. Fix includes: moved handleStartPlanning before useEffect, removed handleStartPlanningWithPlan, added planOverride parameter, fixed onClick handler, and adjusted hasAutoStartedRef timing.",
+      "outcome": "All 17 PlanningModeModal tests passing. Changeset created and committed."
+    },
+    {
+      "timestamp": "2026-03-31T06:38:57.091Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T06:39:25.696Z",
+  "createdAt": "2026-03-31T06:19:46.835Z",
+  "updatedAt": "2026-03-31T06:39:25.696Z",
+  "size": "S",
+  "reviewLevel": 0,
+  "summary": "Fixed the bug where text entered in QuickEntryBox/InlineCreateCard wasn't being passed into Planning Mode. The root cause was a stale closure in PlanningModeModal where handleStartPlanning was referenced in a useEffect before its declaration. Fixed by: 1) Moving handleStartPlanning before the auto-start useEffect, 2) Removing the redundant handleStartPlanningWithPlan callback, 3) Adding an optional planOverride parameter to handleStartPlanning, 4) Fixing the onClick handler type mismatch, 5) Moving hasAutoStartedRef assignment inside setTimeout to prevent early blocking of effect re-runs. All 17 PlanningModeModal tests now pass."
+}

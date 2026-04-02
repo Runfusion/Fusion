@@ -1,0 +1,96 @@
+{
+  "id": "KB-121",
+  "description": "Make provider icons on the dropdown accurate - use the actual provider icons",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Create Provider Brand SVG Icons",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:10:15.577Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T06:13:57.880Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T06:14:10.641Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, accurate, and complete. The mission is clearly stated, file scope is correct, dependencies are appropriate, and testing requirements demand real automated tests with assertions. All referenced source files exist and match the described implementation."
+    },
+    {
+      "timestamp": "2026-03-30T14:38:51.581Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/hazy-tiger"
+    },
+    {
+      "timestamp": "2026-03-30T14:38:51.582Z",
+      "action": "Step 0 (Create Provider Brand SVG Icons) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:38:56.190Z",
+      "action": "Step 0 (Create Provider Brand SVG Icons) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:38:56.192Z",
+      "action": "Starting KB-121: Make provider icons accurate with brand SVG logos",
+      "outcome": "Read current ProviderIcon.tsx implementation - uses Lucide icons (Brain, Sparkles, Search, Terminal, Cpu). Tests mock these icons. Component is used in CustomModelDropdown and ModelSelectorTab."
+    },
+    {
+      "timestamp": "2026-03-30T14:38:57.386Z",
+      "action": "Step 0 (Create Provider Brand SVG Icons) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:38:57.387Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:38:57.389Z",
+      "action": "plan review requested for Step 1 (Create Provider Brand SVG Icons)"
+    },
+    {
+      "timestamp": "2026-03-30T14:39:07.728Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the scope of work: replacing Lucide icons with inline SVG brand logos while preserving the existing API, sizing, colors, and fallback behavior. The approach is sound and the blast radius is appropriately limited to the ProviderIcon component itself."
+    },
+    {
+      "timestamp": "2026-03-30T14:39:19.525Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:40:12.369Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:40:14.786Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:40:19.320Z",
+      "action": "Completed all steps for KB-121",
+      "outcome": "ProviderIcon now displays actual brand logos (Anthropic 'A' monogram, OpenAI spiral, Gemini sparkle, Ollama llama) instead of generic Lucide icons. All 23 ProviderIcon tests pass, along with full dashboard test suite (1220 tests). Changeset created for patch release."
+    },
+    {
+      "timestamp": "2026-03-30T14:40:20.158Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T14:40:32.887Z",
+  "createdAt": "2026-03-30T06:10:15.577Z",
+  "updatedAt": "2026-03-30T14:40:32.887Z",
+  "size": "S",
+  "reviewLevel": 1
+}

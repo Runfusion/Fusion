@@ -1,0 +1,157 @@
+{
+  "id": "KB-204",
+  "description": "Add CLI command `kb task steer <id> <message>` to add steering comments to tasks.\n\n## Background\nThe dashboard allows adding steering comments via POST /api/tasks/:id/steer. Steering comments inject user guidance into AI execution context. CLI users need this for human-in-the-loop workflows.\n\n## Acceptance Criteria\n- [ ] Add `kb task steer <id> <message>` command to `packages/cli/src/bin.ts`\n- [ ] Implement `runTaskSteer(id, message)` in `packages/cli/src/commands/task.ts`\n- [ ] Use `store.addSteeringComment(id, text, 'user')`\n- [ ] Validate message length (1-2000 characters, per API validation)\n- [ ] Display success confirmation with comment preview\n- [ ] Support reading message from stdin if not provided as argument\n- [ ] Handle errors: task not found, message too long, empty message\n- [ ] Update CLI help text\n\n## Technical Notes\n- Steering comments are stored in `task.steeringComments` array\n- Each comment has: id, text, author ('user' or 'agent'), createdAt\n- Comments appear in agent execution context\n- Validation: text must be 1-2000 characters (same as dashboard API)\n\n## Parent Task\nThis subtask was identified as part of KB-182 dashboard vs CLI gap analysis.",
+  "column": "done",
+  "dependencies": [
+    "KB-182"
+  ],
+  "steps": [
+    {
+      "name": "Implement runTaskSteer() Command",
+      "status": "done"
+    },
+    {
+      "name": "Add CLI Routing and Help Text",
+      "status": "done"
+    },
+    {
+      "name": "Write Unit Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T19:12:16.037Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T19:20:56.936Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:21:11.153Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for adding the `kb task steer` CLI command. All referenced files, functions, and patterns exist exactly as described. The spec follows existing CLI command patterns (particularly `runTaskLog` and `runTaskRefine`), matches dashboard API validation rules, and includes comprehensive testing requirements with specific assertions."
+    },
+    {
+      "timestamp": "2026-03-31T00:46:57.684Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/jade-badger"
+    },
+    {
+      "timestamp": "2026-03-31T00:46:57.685Z",
+      "action": "Step 0 (Implement runTaskSteer() Command) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:00.139Z",
+      "action": "Step 0 (Implement runTaskSteer() Command) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:05.938Z",
+      "action": "Step 0 (Implement runTaskSteer() Command) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:05.939Z",
+      "action": "Step 1 (Add CLI Routing and Help Text) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:05.940Z",
+      "action": "plan review requested for Step 1 (Implement runTaskSteer() Command)"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:20.619Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and aligns with existing patterns in the codebase. The step correctly identifies `runTaskRefine()` as the reference pattern for optional argument handling with stdin fallback, and `runTaskLog()` as the pattern for success output formatting. The validation rules (1-2000 characters) match the dashboard API at `packages/dashboard/src/routes.ts:1023-1024`. The TaskStore method `addSteeringComment()` exists at `packages/core/src/store.ts:~1370` with the correct "
+    },
+    {
+      "timestamp": "2026-03-31T00:47:31.580Z",
+      "action": "Step 1 (Add CLI Routing and Help Text) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:31.582Z",
+      "action": "Step 2 (Write Unit Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:31.583Z",
+      "action": "code review requested for Step 1 (Implement runTaskSteer() Command)"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:55.106Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The `runTaskSteer()` function is correctly implemented in `packages/cli/src/commands/task.ts` following all requirements from the PROMPT.md. The implementation properly handles stdin input, validates message length (1-2000 characters), validates non-empty/whitespace-only messages, handles ENOENT errors for missing tasks, and displays success output with a preview. The function leverages the existing `createInterface` import from `node:readline/promises` that's already used by other commands in t"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:56.417Z",
+      "action": "plan review requested for Step 2 (Add CLI Routing and Help Text)"
+    },
+    {
+      "timestamp": "2026-03-31T00:48:17.949Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the required changes to `packages/cli/src/bin.ts`: adding the `runTaskSteer` import to the dynamic import block, implementing the `case \"steer\":` handler after \"unpause\", and updating help text. The command parsing logic (`kb task steer <id> [message]`) with optional stdin fallback is consistent with existing patterns like `kb task log`."
+    },
+    {
+      "timestamp": "2026-03-31T00:48:27.213Z",
+      "action": "Step 2 (Write Unit Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:48:27.214Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:48:27.215Z",
+      "action": "code review requested for Step 2 (Add CLI Routing and Help Text)"
+    },
+    {
+      "timestamp": "2026-03-31T00:48:40.488Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds CLI routing and help text for the `kb task steer` command. All Step 2 requirements are satisfied: the import is properly added to the dynamic import block, the case handler is positioned correctly after \"unpause\", command parsing handles both argument and stdin modes, and help text is formatted consistently with other commands."
+    },
+    {
+      "timestamp": "2026-03-31T00:48:41.450Z",
+      "action": "plan review requested for Step 3 (Write Unit Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T00:48:58.045Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The step's checkboxes cover all essential test scenarios for `runTaskSteer()`. The plan correctly references the existing test patterns in `task-plan.test.ts` for mocking `node:readline/promises` and `@kb/core`. All validation rules from the dashboard API (lines 1018-1025 in routes.ts) are accounted for in the test cases."
+    },
+    {
+      "timestamp": "2026-03-31T00:49:44.422Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:49:44.424Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:49:44.425Z",
+      "action": "code review requested for Step 3 (Write Unit Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T00:50:03.511Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The test file `packages/cli/src/__tests__/task-steer.test.ts` is well-structured, follows existing project patterns from `task-plan.test.ts`, and provides comprehensive coverage for the `runTaskSteer()` implementation. All required test scenarios from the task specification are addressed."
+    },
+    {
+      "timestamp": "2026-03-31T00:50:49.522Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:50:50.464Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:51:03.150Z",
+  "createdAt": "2026-03-30T19:12:16.037Z",
+  "updatedAt": "2026-03-31T00:51:03.150Z",
+  "size": "S",
+  "reviewLevel": 2
+}

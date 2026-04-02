@@ -1,0 +1,33 @@
+{
+  "id": "KB-007",
+  "description": "Have a one time import automatically of file based tasks",
+  "column": "triage",
+  "currentStep": 0,
+  "createdAt": "2026-03-31T21:17:39.363Z",
+  "updatedAt": "2026-03-31T21:21:41.435Z",
+  "columnMovedAt": "2026-03-31T21:21:01.596Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:17:39.363Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:18.631Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:20.476Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:27.653Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:41.435Z",
+      "action": "Task unpaused"
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "id": "KB-038",
+  "description": "Add a toggle on the dashboard code to show the list of tasks on a card (maybe collapsed that can be expanded)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Steps Toggle State and UI to TaskCard",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles for Steps Toggle and List",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:57:38.341Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:58:15.615Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:58:29.229Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured with a clear mission, concrete step outcomes, and accurate file references. The task is appropriately sized as a small UI enhancement with no external dependencies. Testing requirements demand real automated tests with specific assertions, matching the existing test patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T02:35:55.827Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/light-eagle"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:55.828Z",
+      "action": "Step 0 (Add Steps Toggle State and UI to TaskCard) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:58.444Z",
+      "action": "Step 0 (Add Steps Toggle State and UI to TaskCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:01.848Z",
+      "action": "Step 0 (Add Steps Toggle State and UI to TaskCard) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:01.849Z",
+      "action": "Step 1 (Add CSS Styles for Steps Toggle and List) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:01.850Z",
+      "action": "plan review requested for Step 1 (Add Steps Toggle State and UI to TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:12.227Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the necessary changes to add a collapsible steps toggle to TaskCard. The approach is sound: adding local React state, conditionally rendering the toggle when steps exist, placing it after the progress bar, and showing a chevron icon with rotation. The implementation details match the existing component patterns."
+    },
+    {
+      "timestamp": "2026-03-30T02:36:29.144Z",
+      "action": "Step 1 (Add CSS Styles for Steps Toggle and List) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:29.146Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:29.148Z",
+      "action": "plan review requested for Step 2 (Add CSS Styles for Steps Toggle and List)"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:44.993Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The CSS styles required by Step 2 are **already fully implemented** in `packages/dashboard/app/styles.css` (lines 635-699). All specified classes exist with correct styling: flex containers, transitions, status colors matching TaskDetailModal.tsx, and completed step strikethrough. The implementation aligns with the task requirements—Step 2's outcomes are already achieved."
+    },
+    {
+      "timestamp": "2026-03-30T02:38:24.825Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:30.371Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:39:19.434Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:39:19.435Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:39:29.720Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:39:48.895Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:40:24.002Z",
+  "createdAt": "2026-03-30T01:57:38.341Z",
+  "updatedAt": "2026-03-30T02:40:24.002Z",
+  "size": "S",
+  "reviewLevel": 1
+}

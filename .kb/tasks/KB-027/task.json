@@ -1,0 +1,132 @@
+{
+  "id": "KB-027",
+  "description": "Add dashboard UI toggle for autoResolveConflicts setting. Expose the new setting in the Settings panel with a checkbox/toggle that allows users to enable/disable automatic merge conflict resolution. The setting should be read from the store and updateSettings should be called when the toggle changes. Include a brief description explaining what auto-resolve does (lock files, generated files, retry logic).",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add autoResolveConflicts Toggle to Merge Section",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests for autoResolveConflicts Toggle",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:26:36.190Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:27:02.631Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:27:20.611Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is well-structured with clear steps and concrete test requirements, but it contains a critical dependency assumption that is not currently satisfied. The `smartConflictResolution` setting referenced throughout does not exist in the codebase, which would cause TypeScript compilation errors if this spec were implemented as written."
+    },
+    {
+      "timestamp": "2026-03-30T01:27:33.186Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:27:46.302Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification has a **critical naming mismatch** that will cause implementation failure. The spec repeatedly references `smartConflictResolution` as the setting name, but the actual setting in the codebase is `autoResolveConflicts`. This exists in `packages/core/src/types.ts` at line 131 and `DEFAULT_SETTINGS` at line 145. Since the setting already exists, the dependency on KB-023 is also questionable."
+    },
+    {
+      "timestamp": "2026-03-30T01:28:01.839Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:28:13.571Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a straightforward UI addition. The task correctly identifies that `autoResolveConflicts` already exists in `@kb/core` and only requires dashboard exposure. All file references are accurate, line numbers align with actual source code, and the implementation steps provide concrete, verifiable outcomes."
+    },
+    {
+      "timestamp": "2026-03-30T02:23:52.377Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fleet-mesa"
+    },
+    {
+      "timestamp": "2026-03-30T02:23:52.378Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:23:54.034Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:23:55.818Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:23:55.820Z",
+      "action": "Step 1 (Add autoResolveConflicts Toggle to Merge Section) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:23:59.864Z",
+      "action": "plan review requested for Step 1 (Add autoResolveConflicts Toggle to Merge Section)"
+    },
+    {
+      "timestamp": "2026-03-30T02:24:10.080Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the implementation location in the Merge section and follows established patterns for checkbox fields in `SettingsModal.tsx`. The checked state logic (`form.autoResolveConflicts !== false`) properly handles the default-to-true behavior from `DEFAULT_SETTINGS`, matching the existing pattern used for `includeTaskIdInCommit`."
+    },
+    {
+      "timestamp": "2026-03-30T02:24:18.705Z",
+      "action": "Step 1 (Add autoResolveConflicts Toggle to Merge Section) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:24:18.708Z",
+      "action": "Step 2 (Add Tests for autoResolveConflicts Toggle) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:25:10.680Z",
+      "action": "Step 2 (Add Tests for autoResolveConflicts Toggle) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:25:10.681Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:26:16.511Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:26:16.513Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:26:23.874Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:26:23.875Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:26:23.875Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:27:33.735Z",
+  "createdAt": "2026-03-30T01:26:36.190Z",
+  "updatedAt": "2026-03-30T02:27:33.735Z",
+  "size": "S",
+  "reviewLevel": 1
+}

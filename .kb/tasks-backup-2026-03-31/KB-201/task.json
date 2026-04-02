@@ -1,0 +1,172 @@
+{
+  "id": "KB-201",
+  "description": "Add CLI commands for kb settings management: `kb settings` (view) and `kb settings set <key> <value>` (update).\n\n## Background\nThe dashboard provides GET /api/settings and PUT /api/settings endpoints for managing kb configuration, but CLI users have no access. This blocks headless configuration management.\n\n## Acceptance Criteria\n- [ ] Add `kb settings` command to `packages/cli/src/bin.ts` - displays current settings\n- [ ] Add `kb settings set <key> <value>` command - updates a setting\n- [ ] Implement `runSettingsShow()` and `runSettingsSet(key, value)` in new `packages/cli/src/commands/settings.ts`\n- [ ] Display settings in formatted table (key: value pairs)\n- [ ] Support updating: `maxConcurrent`, `maxWorktrees`, `taskPrefix`, `defaultModel`, `autoResolveConflicts`, `requirePlanApproval`, `ntfyEnabled`, `ntfyTopic`, `worktreeNaming`, `smartConflictResolution`\n- [ ] Validate setting keys and values\n- [ ] Use `store.getSettings()` and `store.updateSettings()`\n- [ ] Handle type conversion for boolean/numeric values\n- [ ] Update CLI help text\n\n## Technical Notes\n- Settings are stored in `.fusion/config.json`\n- Use TaskStore methods: `getSettings()`, `updateSettings(patch)`\n- Boolean settings: accept \"true\"/\"false\" or \"yes\"/\"no\"\n- Display should include `githubTokenConfigured` indicator (read-only)\n\n## Parent Task\nThis subtask was identified as part of KB-182 dashboard vs CLI gap analysis.",
+  "column": "done",
+  "dependencies": [
+    "KB-182"
+  ],
+  "steps": [
+    {
+      "name": "Create settings command module",
+      "status": "done"
+    },
+    {
+      "name": "Add settings command routing to CLI",
+      "status": "done"
+    },
+    {
+      "name": "Implement unit tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T19:12:16.036Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T19:20:09.588Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:20:28.591Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for adding CLI settings management commands. The spec correctly identifies the gap (dashboard has settings endpoints but CLI lacks equivalent), follows existing project patterns, and provides concrete, verifiable outcomes for each step. All referenced files exist with the expected APIs."
+    },
+    {
+      "timestamp": "2026-03-30T20:37:36.096Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/cool-panda"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:36.096Z",
+      "action": "Step 0 (Create settings command module) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:40.407Z",
+      "action": "Step 0 (Create settings command module) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:44.390Z",
+      "action": "Step 0 (Create settings command module) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:44.391Z",
+      "action": "Step 1 (Add settings command routing to CLI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:37:44.392Z",
+      "action": "plan review requested for Step 1 (Create settings command module)"
+    },
+    {
+      "timestamp": "2026-03-30T20:38:01.048Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows established codebase patterns from `packages/cli/src/commands/task.ts`. The type conversion requirements are comprehensive, covering all necessary edge cases for boolean, numeric, enum, and string settings. The plan correctly identifies the need for a `VALID_SETTINGS` allowlist to prevent modification of internal/engine settings like `globalPause` and `enginePaused`."
+    },
+    {
+      "timestamp": "2026-03-30T20:38:23.648Z",
+      "action": "Step 1 (Add settings command routing to CLI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:38:23.651Z",
+      "action": "Step 2 (Implement unit tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:38:24.979Z",
+      "action": "plan review requested for Step 2 (Add settings command routing to CLI)"
+    },
+    {
+      "timestamp": "2026-03-30T20:38:37.592Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 correctly follows the established patterns in `packages/cli/src/bin.ts`. The command routing structure mirrors the existing \"task\" command implementation with a nested switch for subcommands, and the error handling approach aligns with the existing codebase conventions."
+    },
+    {
+      "timestamp": "2026-03-30T20:38:53.311Z",
+      "action": "Step 2 (Implement unit tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:38:53.313Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T20:38:54.566Z",
+      "action": "plan review requested for Step 3 (Implement unit tests)"
+    },
+    {
+      "timestamp": "2026-03-30T20:39:15.340Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 covers the essential test scenarios for the settings CLI commands. The implementation in `settings.ts` is already complete with proper type conversion, validation, and the `defaultModel` provider/modelId split logic. The test plan aligns well with the implementation and follows established patterns from `task.test.ts`."
+    },
+    {
+      "timestamp": "2026-03-30T20:39:47.566Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:39:47.567Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:38:05.348Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T00:24:15.172Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T00:24:17.739Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T00:27:28.652Z",
+      "action": "Steering comment added",
+      "outcome": "by user"
+    },
+    {
+      "timestamp": "2026-03-31T00:32:52.826Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T00:32:53.067Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sharp-flame"
+    },
+    {
+      "timestamp": "2026-03-31T00:32:55.291Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:34:19.970Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:34:19.973Z",
+      "action": "Step 4 complete: Created changeset for settings CLI commands",
+      "outcome": "Changeset created at .changeset/add-settings-cli-commands.md, committed as b83668f"
+    },
+    {
+      "timestamp": "2026-03-31T00:34:23.211Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:35:08.547Z",
+  "createdAt": "2026-03-30T19:12:16.036Z",
+  "updatedAt": "2026-03-31T00:35:08.547Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "steeringComments": [
+    {
+      "id": "1774916848652-ah4vy7",
+      "text": "continue",
+      "createdAt": "2026-03-31T00:27:28.652Z",
+      "author": "user"
+    }
+  ]
+}

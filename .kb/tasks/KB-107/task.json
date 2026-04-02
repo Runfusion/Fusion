@@ -1,0 +1,101 @@
+{
+  "id": "KB-107",
+  "description": "don't open the dashboard in a browser on startup",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove auto-open from CLI entry point",
+      "status": "done"
+    },
+    {
+      "name": "Simplify dashboard command implementation",
+      "status": "done"
+    },
+    {
+      "name": "Update pi extension",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T05:21:38.555Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T05:24:19.971Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:24:32.509Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, well-structured, and correctly identifies all files and code locations that need modification. The task scope is appropriately bounded for a simple behavioral change, testing requirements are explicit, and the review level (0 - None) is appropriate given the minimal blast radius."
+    },
+    {
+      "timestamp": "2026-03-30T14:31:48.588Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/light-dune"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:48.588Z",
+      "action": "Step 0 (Remove auto-open from CLI entry point) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:49.792Z",
+      "action": "Step 0 (Remove auto-open from CLI entry point) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:55.545Z",
+      "action": "Step 0 (Remove auto-open from CLI entry point) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:55.548Z",
+      "action": "Step 1 (Simplify dashboard command implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:32:03.940Z",
+      "action": "Step 1 (Simplify dashboard command implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:32:03.942Z",
+      "action": "Step 2 (Update pi extension) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:32:28.722Z",
+      "action": "Step 2 (Update pi extension) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:32:28.722Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:32:35.693Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:32:35.694Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:33:55.648Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:34:02.857Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T14:34:14.373Z",
+  "createdAt": "2026-03-30T05:21:38.555Z",
+  "updatedAt": "2026-03-30T14:34:14.373Z",
+  "size": "S",
+  "reviewLevel": 0
+}

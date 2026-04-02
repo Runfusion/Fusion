@@ -1,0 +1,75 @@
+{
+  "id": "KB-609",
+  "description": "Workflow steps should be merged into scheduled tasks. There’s no way to add steps to scheduled tasks.",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.3-codex",
+  "createdAt": "2026-03-31T21:50:43.715Z",
+  "updatedAt": "2026-04-01T00:30:41.290Z",
+  "columnMovedAt": "2026-04-01T00:30:41.290Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Extend Core Types",
+      "status": "in-progress"
+    },
+    {
+      "name": "Database Schema Update",
+      "status": "pending"
+    },
+    {
+      "name": "Automation Store Updates",
+      "status": "pending"
+    },
+    {
+      "name": "API Routes — Validation and Execution",
+      "status": "pending"
+    },
+    {
+      "name": "Frontend API Updates",
+      "status": "pending"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:50:43.715Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:54:59.414Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:55:23.897Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately describes a cross-cutting feature that bridges workflow steps with scheduled automations. The mission is clear, file scope is accurate, and the implementation approach is sound. The spec correctly identifies all affected files and type definitions from the codebase."
+    },
+    {
+      "timestamp": "2026-04-01T00:30:26.144Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/vivid-reef"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:26.146Z",
+      "action": "Step 0 (Extend Core Types) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:27.839Z",
+      "action": "Step 0 (Extend Core Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:41.097Z",
+      "action": "Agent finished without calling task_done — moved to in-review for inspection"
+    }
+  ]
+}

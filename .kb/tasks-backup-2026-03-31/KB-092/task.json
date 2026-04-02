@@ -1,0 +1,246 @@
+{
+  "id": "KB-092",
+  "description": "Improve the layout of the planning mode dialog - it looks horrible",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix CSS Class Mismatches and Structure",
+      "status": "done"
+    },
+    {
+      "name": "Improve Scroll Behavior and Content Flow",
+      "status": "done"
+    },
+    {
+      "name": "Polish Visual Design and Spacing",
+      "status": "done"
+    },
+    {
+      "name": "Responsive Layout Fixes",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:49:28.771Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:50:15.003Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:50:17.180Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:50:33.124Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for fixing layout issues in the PlanningModeModal component. The mission is clearly scoped to CSS/layout fixes only (no behavior changes), steps are concrete and verifiable, and the file scope accurately reflects the affected components. The testing requirements properly demand real automated tests with zero tolerance for failures."
+    },
+    {
+      "timestamp": "2026-03-30T04:50:34.605Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies class name mismatches between the React component and CSS file. The line number references are correct and the missing CSS classes are properly catalogued. The task scope is well-bounded as a UI-only fix with appropriate testing requirements."
+    },
+    {
+      "timestamp": "2026-03-30T08:47:16.247Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sleek-iris"
+    },
+    {
+      "timestamp": "2026-03-30T08:47:16.248Z",
+      "action": "Step 0 (Fix CSS Class Mismatches and Structure) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T08:47:35.419Z",
+      "action": "Step 0 (Fix CSS Class Mismatches and Structure) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T08:48:00.647Z",
+      "action": "plan review requested for Step 0 (Fix CSS class mismatches and structure)"
+    },
+    {
+      "timestamp": "2026-03-30T08:52:23.934Z",
+      "action": "plan review Step 0: REVISE",
+      "outcome": "This step is headed in the right direction, but as written it will not fully achieve the stated outcome of fixing the Planning Mode dialog’s CSS mismatches and structure. The plan focuses on the `planning-content` mismatch, while the current component has several other JSX/CSS name mismatches and missing style hooks that will leave major parts of the modal unstyled even after Step 0 is completed."
+    },
+    {
+      "timestamp": "2026-03-30T08:56:38.097Z",
+      "action": "Targeted dashboard test run failed because this worktree has no installed dependencies (`vitest: command not found`).",
+      "outcome": "Installing workspace dependencies is required before running the requested test and build commands."
+    },
+    {
+      "timestamp": "2026-03-30T08:58:02.693Z",
+      "action": "code review requested for Step 0 (Fix CSS class mismatches and structure)"
+    },
+    {
+      "timestamp": "2026-03-30T09:11:32.575Z",
+      "action": "code review Step 0: APPROVE",
+      "outcome": "The step achieves the stated outcome: `PlanningModeModal` now renders a dedicated `planning-modal-body` container instead of the nonexistent `planning-content`/generic `modal-body` combination, and the corresponding CSS gives that container the expected flex/scroll behavior. The added test coverage verifies the structural regression that caused the mismatch, and the changes are low risk within the dashboard modal pattern."
+    },
+    {
+      "timestamp": "2026-03-30T09:11:35.628Z",
+      "action": "Step 0 (Fix CSS Class Mismatches and Structure) → done"
+    },
+    {
+      "timestamp": "2026-03-30T09:11:39.347Z",
+      "action": "Step 1 (Improve Scroll Behavior and Content Flow) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T09:11:52.109Z",
+      "action": "plan review requested for Step 1 (Improve scroll behavior and content flow)"
+    },
+    {
+      "timestamp": "2026-03-30T09:13:46.521Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The step is aimed at the right pain points—summary spacing, per-view overflow, and dependency chip behavior—but as written it will not fully deliver the stated outcome that action buttons remain visible while content scrolls. It also needs to be updated to reflect the current codebase, because some of the foundational modal-body/flex work described in the task is already present."
+    },
+    {
+      "timestamp": "2026-03-30T09:19:35.029Z",
+      "action": "code review requested for Step 1 (Improve scroll behavior and content flow)"
+    },
+    {
+      "timestamp": "2026-03-30T09:21:54.372Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation addresses the layout/scrolling goals cleanly: the modal now uses a dedicated `planning-modal-body`, each major view has its own scrollable content region, and the fixed footer/action areas are separated from the scrolling content so buttons remain visible. The CSS updates also remove the inherited `.form-group` horizontal padding problem in the planning views and add bounded scrolling for the dependency chips list."
+    },
+    {
+      "timestamp": "2026-03-30T09:22:04.182Z",
+      "action": "Step 1 (Improve Scroll Behavior and Content Flow) → done"
+    },
+    {
+      "timestamp": "2026-03-30T09:22:15.278Z",
+      "action": "Step 2 (Polish Visual Design and Spacing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T09:22:35.556Z",
+      "action": "plan review requested for Step 2 (Polish visual design and spacing)"
+    },
+    {
+      "timestamp": "2026-03-30T09:28:44.111Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step is focused on the right surfaces in `packages/dashboard/app/components/PlanningModeModal.tsx` and the planning-specific section of `packages/dashboard/app/styles.css`. The checkboxes cover the main visual pain points in all three modal states—initial, question, and summary—and should achieve the stated polish goals without expanding into logic changes."
+    },
+    {
+      "timestamp": "2026-03-30T09:34:02.202Z",
+      "action": "code review requested for Step 2 (Polish visual design and spacing)"
+    },
+    {
+      "timestamp": "2026-03-30T09:37:14.233Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The modal styling is much closer to the desired layout: the question and summary views now have better card structure, fixed footers, and improved spacing. However, one of the explicit Step 3 requirements is still not met in the initial view: the textarea and example-chip area are still constrained to different widths, so that screen remains visually misaligned."
+    },
+    {
+      "timestamp": "2026-03-30T09:37:57.859Z",
+      "action": "code review requested for Step 2 (Polish visual design and spacing)"
+    },
+    {
+      "timestamp": "2026-03-30T09:43:39.238Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "This pass substantially improves the Planning Mode modal’s layout and presentation. The new scroll/body/footer structure is consistent across initial, question, and summary views, and the spacing/overflow treatment for summary cards, size buttons, and dependency chips aligns well with the task’s stated outcomes. I found one small visual inconsistency and a couple of follow-up quality opportunities, but nothing blocking."
+    },
+    {
+      "timestamp": "2026-03-30T09:43:47.280Z",
+      "action": "Step 2 (Polish Visual Design and Spacing) → done"
+    },
+    {
+      "timestamp": "2026-03-30T09:43:53.397Z",
+      "action": "Step 3 (Responsive Layout Fixes) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T09:44:04.216Z",
+      "action": "plan review requested for Step 3 (Responsive layout fixes)"
+    },
+    {
+      "timestamp": "2026-03-30T09:48:38.271Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The step is pointed at the right files and the listed mobile concerns are relevant, but it is missing one mobile layout area that is currently most likely to break: the footer action rows. It also underspecifies how to achieve “full-screen on mobile” given the sizing rules are split across shared modal styles and planning-specific overrides."
+    },
+    {
+      "timestamp": "2026-03-30T09:50:18.302Z",
+      "action": "code review requested for Step 3 (Responsive layout fixes)"
+    },
+    {
+      "timestamp": "2026-03-30T09:57:42.988Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The responsive changes in `packages/dashboard/app/styles.css:6203-6278` address the stated Step 4 requirements well: the planning modal is full-screen on mobile, example chips stack cleanly, dependency chips become touch-friendly full-width rows, and size selector buttons get a larger minimum tap target. The component structure in `packages/dashboard/app/components/PlanningModeModal.tsx:198-252` and `:512-604` already supports these CSS changes cleanly, and the updated tests in `packages/dashboa"
+    },
+    {
+      "timestamp": "2026-03-30T10:02:52.189Z",
+      "action": "Step 3 (Responsive Layout Fixes) → done"
+    },
+    {
+      "timestamp": "2026-03-30T10:03:03.724Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T10:03:55.647Z",
+      "action": "plan review requested for Step 4 (Testing and verification)"
+    },
+    {
+      "timestamp": "2026-03-30T10:06:08.561Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The proposed test/build commands are a good baseline, and `cd packages/dashboard && pnpm test` / `pnpm build` are valid per `packages/dashboard/package.json:19-22`. However, this step is supposed to verify layout, scrolling, and responsive behavior, while the current automated coverage only checks a few DOM wrappers in `PlanningModeModal.test.tsx` and would not catch most of the CSS regressions this task is fixing."
+    },
+    {
+      "timestamp": "2026-03-30T10:13:44.183Z",
+      "action": "Full dashboard test suite is not green on the current branch baseline.",
+      "outcome": "`cd packages/dashboard && pnpm test` fails in unrelated terminal/header/typecheck tests, so Step 5 verification must document these pre-existing failures while still confirming the targeted PlanningModeModal tests pass."
+    },
+    {
+      "timestamp": "2026-03-30T10:15:37.744Z",
+      "action": "Verification results: targeted PlanningModeModal tests pass, dashboard/root builds pass, but the full dashboard/root test suites still fail in unrelated existing terminal/header/typecheck areas.",
+      "outcome": "KB-092 changes are validated by focused modal tests plus a TaskDetailModal smoke test, while broader suite failures remain outside this task’s scope and preclude a fully green workspace test run."
+    },
+    {
+      "timestamp": "2026-03-30T10:15:58.974Z",
+      "action": "code review requested for Step 4 (Testing and verification)"
+    },
+    {
+      "timestamp": "2026-03-30T10:18:16.347Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The Step 4 changes add focused regression coverage for the layout work without introducing correctness issues. The updated tests verify the new `planning-modal-body` structure, confirm the question and summary views preserve the intended scroll/action regions, and include a useful smoke check against `TaskDetailModal`'s established modal-body pattern."
+    },
+    {
+      "timestamp": "2026-03-30T10:18:21.447Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T10:18:31.327Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T10:18:45.767Z",
+      "action": "Reviewed dashboard README for planning feature documentation impact; no README updates are needed because the task only changes modal layout and not planning behavior.",
+      "outcome": "Documentation remains accurate without edits."
+    },
+    {
+      "timestamp": "2026-03-30T10:18:57.799Z",
+      "action": "Did not create a changeset for KB-092.",
+      "outcome": "The change only affects the private @kb/dashboard package, and project guidelines restrict changesets to published @dustinbyrne/kb package changes."
+    },
+    {
+      "timestamp": "2026-03-30T10:19:10.444Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T10:19:13.503Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T10:47:05.418Z",
+  "createdAt": "2026-03-30T04:49:28.771Z",
+  "updatedAt": "2026-03-30T10:47:05.418Z",
+  "size": "M",
+  "reviewLevel": 2
+}

@@ -1,0 +1,127 @@
+{
+  "id": "KB-646",
+  "description": "The agent icon in the header isn't bringing up the agent view",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 5,
+  "summary": "Fixed the agent icon (Bot icon) in the dashboard header so clicking it properly opens the AgentListModal. The issue was that the Workflow Steps, Agents, and Settings buttons were positioned AFTER the pause/stop controls and mobile overflow menu trigger, which caused rendering/event handling issues. Moved all three desktop-only buttons to be grouped together BEFORE the pause/stop controls. All 52 Header tests pass including 6 specific tests for Agents button functionality.",
+  "createdAt": "2026-04-01T02:00:13.061Z",
+  "updatedAt": "2026-04-01T02:52:14.745Z",
+  "columnMovedAt": "2026-04-01T02:52:14.745Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Investigate and Fix Header Agents Button",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests for Agents Button",
+      "status": "done"
+    },
+    {
+      "name": "Verify End-to-End Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:00:13.061Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:14:14.737Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:14:31.489Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and actionable. It correctly identifies a UI bug where the Agents button in Header.tsx is positioned after the pause/stop controls instead of being grouped with other desktop action buttons. The test requirements are concrete with specific assertions, and file references are accurate."
+    },
+    {
+      "timestamp": "2026-04-01T02:47:51.079Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-cliff"
+    },
+    {
+      "timestamp": "2026-04-01T02:47:51.080Z",
+      "action": "Step 0 (Investigate and Fix Header Agents Button) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:00.392Z",
+      "action": "Step 0 (Investigate and Fix Header Agents Button) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:00.393Z",
+      "action": "plan review requested for Step 1 (Investigate and Fix Header Agents Button)"
+    },
+    {
+      "timestamp": "2026-04-01T02:48:12.969Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the issue: the Agents button is positioned after the mobile overflow menu conditional block and pause/stop controls, which may cause rendering or event handling issues. The investigation steps are thorough and the fix (repositioning the button before pause/stop controls, grouped with other desktop-only action buttons) is appropriate. The overflow menu version is already correctly implemented."
+    },
+    {
+      "timestamp": "2026-04-01T02:48:17.880Z",
+      "action": "Step 1 (Add Tests for Agents Button) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:49:28.095Z",
+      "action": "Step 1 (Add Tests for Agents Button) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:49:28.097Z",
+      "action": "Step 1 complete: Fixed Agents button position in Header.tsx",
+      "outcome": "Moved Workflow Steps, Agents, and Settings buttons to be grouped together BEFORE the pause/stop controls. All 52 Header tests pass."
+    },
+    {
+      "timestamp": "2026-04-01T02:49:36.605Z",
+      "action": "Step 2 (Verify End-to-End Integration) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:49:36.606Z",
+      "action": "Step 2 complete: All Agents button tests already exist and pass",
+      "outcome": "All 52 Header tests pass including 6 specific tests for the Agents button functionality on both desktop and mobile."
+    },
+    {
+      "timestamp": "2026-04-01T02:49:38.297Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:50:00.060Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:50:00.061Z",
+      "action": "Step 3 complete: End-to-end integration verified",
+      "outcome": "App.tsx correctly integrates Header with AgentListModal via handleOpenAgents/handleCloseAgents callbacks. All 52 Header tests pass."
+    },
+    {
+      "timestamp": "2026-04-01T02:50:01.778Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:51:56.007Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:51:56.008Z",
+      "action": "Step 4 complete: All Header tests pass",
+      "outcome": "52/52 Header tests pass. Other test failures in dashboard are pre-existing issues unrelated to this task (SettingsModal initialization errors)."
+    },
+    {
+      "timestamp": "2026-04-01T02:51:58.462Z",
+      "action": "Step 0 (Investigate and Fix Header Agents Button) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:51:58.463Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

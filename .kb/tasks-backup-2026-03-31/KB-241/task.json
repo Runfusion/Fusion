@@ -1,0 +1,130 @@
+{
+  "id": "KB-241",
+  "title": "When sending test notification I get an error",
+  "description": "When sending test notification I get an error '\nRequest failed: 400 Bad Request (Response: {\"error\":\"ntfy notifications are not enabled\"})\n\"",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Backend Route Update",
+      "status": "done"
+    },
+    {
+      "name": "Frontend API Client Update",
+      "status": "done"
+    },
+    {
+      "name": "Settings Modal Update",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:14:05.550Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:16:13.647Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:16:31.287Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, actionable specification for a straightforward UX bug fix. The problem is clearly articulated (test notification uses saved settings instead of form values), and the three-step implementation approach is logical and correct. The file scope accurately identifies the three files requiring changes, though the line numbers for one file are significantly off."
+    },
+    {
+      "timestamp": "2026-03-31T12:14:43.478Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pearl-panda"
+    },
+    {
+      "timestamp": "2026-03-31T12:14:43.478Z",
+      "action": "Step 0 (Backend Route Update) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T12:14:45.392Z",
+      "action": "Step 0 (Backend Route Update) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:14:50.689Z",
+      "action": "plan review requested for Step 1 (Backend Route Update)"
+    },
+    {
+      "timestamp": "2026-03-31T12:15:04.649Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the needed changes for the backend route. The current implementation at `routes.ts:1009` reads exclusively from `store.getSettings()`, causing the bug where unsaved form values are ignored. The proposed fix—accepting optional body parameters with fallback to stored settings—is the right approach and maintains backward compatibility."
+    },
+    {
+      "timestamp": "2026-03-31T12:15:08.545Z",
+      "action": "Step 1 (Frontend API Client Update) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:16:18.011Z",
+      "action": "Step 1 (Frontend API Client Update) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:16:23.925Z",
+      "action": "Step 2 (Settings Modal Update) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:16:23.927Z",
+      "action": "plan review requested for Step 2 (Frontend API Client Update)"
+    },
+    {
+      "timestamp": "2026-03-31T12:16:35.911Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and follows the existing patterns in the codebase. The backend route has already been updated (Step 1 is effectively complete based on the current state of `routes.ts` lines 311-358), so this step correctly focuses on threading the config parameter from the UI through the API layer."
+    },
+    {
+      "timestamp": "2026-03-31T12:16:39.450Z",
+      "action": "Step 2 (Settings Modal Update) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:16:50.097Z",
+      "action": "plan review requested for Step 3 (Settings Modal Update)"
+    },
+    {
+      "timestamp": "2026-03-31T12:16:50.112Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:17:07.925Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 correctly identifies the required change to `handleTestNotification` in `SettingsModal.tsx`. The current implementation calls `testNtfyNotification()` without arguments, which causes the backend to read from stored settings rather than the current form values. The fix is minimal and targeted—passing `form.ntfyEnabled` and `form.ntfyTopic` to the API call will resolve the bug while maintaining backward compatibility through the API's optional parameter design."
+    },
+    {
+      "timestamp": "2026-03-31T12:17:14.084Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:17:15.087Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:31:40.071Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:31:45.665Z",
+      "action": "Step 0 (Backend Route Update) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:31:45.667Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T12:31:54.393Z",
+  "createdAt": "2026-03-31T02:14:05.550Z",
+  "updatedAt": "2026-03-31T12:31:54.393Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Fixed the test notification feature (KB-241) so it uses current form values (ntfyEnabled, ntfyTopic) instead of saved settings. Updated the backend route to accept optional config in request body with fallback to stored settings, modified the API client to pass config, and updated SettingsModal to pass form values. All SettingsModal tests pass (80 tests), build succeeds, and changeset created for patch release."
+}

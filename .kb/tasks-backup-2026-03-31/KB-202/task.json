@@ -1,0 +1,136 @@
+{
+  "id": "KB-202",
+  "description": "Add CLI command `kb task logs <id> [--follow]` to view task agent execution logs.\n\n## Background\nThe dashboard provides GET /api/tasks/:id/logs to view historical agent logs, but CLI users cannot access this debugging information. Essential for troubleshooting failed tasks.\n\n## Acceptance Criteria\n- [ ] Add `kb task logs <id>` command to `packages/cli/src/bin.ts`\n- [ ] Implement `runTaskLogs(id, options)` in `packages/cli/src/commands/task.ts`\n- [ ] Use `store.getAgentLogs(id)` from TaskStore\n- [ ] Display logs in chronological order with timestamps\n- [ ] Format different entry types (text, tool, tool_result, thinking) distinctly\n- [ ] Support `--follow` flag to stream new entries (like `tail -f`)\n- [ ] Support `--limit <n>` to show only last N entries\n- [ ] Support `--type <type>` to filter by entry type\n- [ ] Handle errors: task not found, no logs available\n- [ ] Update CLI help text\n\n## Technical Notes\n- Agent logs are stored in `.fusion/tasks/{id}/agent.log` (JSONL format)\n- Each entry has: timestamp, type, text, detail?, agent?\n- Types: 'text', 'thinking', 'tool', 'tool_result', 'tool_error', 'system'\n- Follow mode: watch file for changes and stream new entries\n- Consider using `fs.watchFile` or polling for follow mode\n\n## Parent Task\nThis subtask was identified as part of KB-182 dashboard vs CLI gap analysis.",
+  "column": "done",
+  "dependencies": [
+    "KB-182"
+  ],
+  "steps": [
+    {
+      "name": "Implement `runTaskLogs()` in task.ts",
+      "status": "done"
+    },
+    {
+      "name": "Add CLI Command Routing and Help Text",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T19:12:16.036Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T19:18:59.639Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:19:14.453Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is well-structured and follows established patterns, with clear steps and concrete outcomes. However, there is a **critical factual error**: the spec references a `system` entry type for `AgentLogType` that does not exist in the actual codebase. This will cause implementation confusion and test failures. Additionally, the `follow` mode implementation approach needs clarification to ensure clean unwatching on exit."
+    },
+    {
+      "timestamp": "2026-03-30T19:19:28.200Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:19:43.080Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, actionable specification for a self-contained CLI feature. The mission is clear, steps have verifiable outcomes, and all referenced files and APIs exist exactly as described. The test requirements are appropriately rigorous with specific mocking strategies for follow mode. The file scope is accurate and complete for the work described."
+    },
+    {
+      "timestamp": "2026-03-31T00:37:23.695Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/cool-hawk"
+    },
+    {
+      "timestamp": "2026-03-31T00:37:23.695Z",
+      "action": "Step 0 (Implement `runTaskLogs()` in task.ts) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:37:25.069Z",
+      "action": "Step 0 (Implement `runTaskLogs()` in task.ts) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:37:30.336Z",
+      "action": "Step 0 (Implement `runTaskLogs()` in task.ts) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:37:30.337Z",
+      "action": "Step 1 (Add CLI Command Routing and Help Text) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:37:31.463Z",
+      "action": "plan review requested for Step 1 (Implement runTaskLogs() in task.ts)"
+    },
+    {
+      "timestamp": "2026-03-31T00:37:45.884Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and achievable. It follows established patterns in the codebase (similar to `runTaskShow` for timestamps and error handling) and provides clear formatting specifications for each agent log entry type. The follow-mode implementation notes correctly reference `fs.watchFile()`/`fs.unwatchFile()` patterns."
+    },
+    {
+      "timestamp": "2026-03-31T00:38:44.819Z",
+      "action": "Step 1 (Add CLI Command Routing and Help Text) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:44.821Z",
+      "action": "Completed Step 1: Implemented runTaskLogs() with follow mode, filtering by type/limit, and ANSI formatting",
+      "outcome": "Added runTaskLogs function with support for --follow, --limit, and --type flags"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:46.667Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:46.669Z",
+      "action": "plan review requested for Step 2 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:57.854Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The test plan for Step 3 is comprehensive and covers all critical aspects of the `runTaskLogs()` implementation. The checkboxes address functional behavior (log display, filtering, limits), error handling (task not found, no logs), and follow mode mechanics (fs.watchFile mocking, SIGINT handler cleanup). The plan follows established test patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T00:40:01.479Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:01.482Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:01.484Z",
+      "action": "plan review requested for Step 3 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:13.220Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is straightforward and appropriate. Steps 1 and 2 are already complete (implementation and CLI routing), leaving only documentation and delivery tasks. The required changeset follows the project's established pattern from AGENTS.md, and the CLI help text (primary documentation) was already updated in Step 2."
+    },
+    {
+      "timestamp": "2026-03-31T00:40:23.011Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:23.012Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:40:23.012Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:40:40.253Z",
+  "createdAt": "2026-03-30T19:12:16.036Z",
+  "updatedAt": "2026-03-31T00:40:40.253Z",
+  "size": "M",
+  "reviewLevel": 1
+}

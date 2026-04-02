@@ -1,0 +1,32 @@
+{
+  "id": "KB-635",
+  "description": "KB-628d — CLI Commands, Pi Extension, and Engine Integration. Integrate the Missions system into the CLI with mission management commands, extend the pi extension with mission tools for chat-based interaction, and modify the engine scheduler to handle slice activation and auto-advance. See `.fusion/tasks/KB-628d/PROMPT.md` for full specification.",
+  "column": "todo",
+  "status": "queued",
+  "size": "L",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-503",
+  "createdAt": "2026-04-01T01:05:35.675Z",
+  "updatedAt": "2026-04-01T03:17:36.842Z",
+  "columnMovedAt": "2026-04-01T01:10:33.211Z",
+  "dependencies": [
+    "KB-632"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T01:05:35.675Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T01:10:03.834Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T01:10:28.872Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive, well-structured, and ready for implementation. The mission clearly bridges the Missions data layer (KB-632) with user-facing interfaces through CLI commands, pi extension tools, and scheduler/executor integration. All context files exist and the referenced patterns are correctly identified. The dependency on KB-632 is appropriately called out and the file scope accurately reflects what needs to be created versus modified."
+    }
+  ]
+}

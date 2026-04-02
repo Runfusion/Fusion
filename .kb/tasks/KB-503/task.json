@@ -1,0 +1,137 @@
+{
+  "id": "KB-503",
+  "description": "CLI Multi-Project Commands: project subcommands and --project flag",
+  "column": "in-progress",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 1,
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/merry-otter",
+  "createdAt": "2026-03-31T21:01:18.283Z",
+  "updatedAt": "2026-04-01T03:18:30.015Z",
+  "columnMovedAt": "2026-04-01T03:17:36.670Z",
+  "dependencies": [
+    "KB-501"
+  ],
+  "steps": [
+    {
+      "name": "Preflight (Dependency Validation)",
+      "status": "done"
+    },
+    {
+      "name": "Project Context Resolution Utilities",
+      "status": "pending"
+    },
+    {
+      "name": "Project Subcommand Implementation",
+      "status": "pending"
+    },
+    {
+      "name": "CLI Argument Parsing Updates",
+      "status": "pending"
+    },
+    {
+      "name": "Add --project Flag to Task Commands",
+      "status": "pending"
+    },
+    {
+      "name": "Add --project Flag to Other Commands",
+      "status": "pending"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:01:18.283Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:01:18.286Z",
+      "action": "Moved to triage for re-specification — new dependency added"
+    },
+    {
+      "timestamp": "2026-03-31T21:17:20.183Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:17:46.845Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification describes a multi-project CLI feature that depends on infrastructure (KB-500 and KB-501) that does not yet exist. The spec references types, classes, and methods (`Project`, `ProjectStore`, `listProjects()`, `createProject()`, etc.) that are not present in the codebase. The dependency chain is inverted — KB-503 should not proceed until KB-501 is complete."
+    },
+    {
+      "timestamp": "2026-03-31T21:18:10.601Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:36.458Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:57.759Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for adding multi-project CLI support. The spec correctly identifies the dependency on KB-501 for ProjectStore infrastructure and provides clear step-by-step implementation guidance. The backward compatibility requirements are explicitly stated, and the testing strategy is comprehensive. The file scope accurately reflects the CLI package structure."
+    },
+    {
+      "timestamp": "2026-03-31T21:32:01.515Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T21:32:07.296Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T22:48:56.990Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:49:12.273Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification describes a well-structured CLI extension for multi-project support with clear steps, concrete outcomes, and appropriate testing requirements. However, there's a **critical blocking issue**: the spec depends on `CentralCore` and `ProjectRegistry` from KB-500/KB-501 that do not exist in the codebase. The entire implementation architecture relies on these non-existent dependencies, making the spec unimplementable as written."
+    },
+    {
+      "timestamp": "2026-03-31T22:49:23.012Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:49:44.642Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and comprehensive. It correctly identifies dependencies on KB-500 (CentralCore/ProjectRegistry) that don't yet exist in the codebase, and appropriately blocks implementation until those are available. The file scope accurately references existing CLI patterns, and steps have concrete, verifiable outcomes with clear testing requirements."
+    },
+    {
+      "timestamp": "2026-04-01T03:17:36.799Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/merry-otter"
+    },
+    {
+      "timestamp": "2026-04-01T03:17:36.801Z",
+      "action": "Step 0 (Preflight (Dependency Validation)) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T03:17:39.776Z",
+      "action": "Step 0 (Preflight (Dependency Validation)) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:18:03.429Z",
+      "action": "Preflight validation complete. Dependencies status:",
+      "outcome": "✅ CentralCore class exists with all required methods (listProjects, registerProject, unregisterProject, getProject, getProjectByPath)\n✅ Required types exist (RegisteredProject, ProjectStatus, IsolationMode)\n⚠️ Architecture differs slightly from spec: methods are directly on CentralCore (no .registry property)\n⚠️ detectProjectFromCwd() will be implemented in CLI layer as it's a utility function\n\nProceeding with implementation."
+    },
+    {
+      "timestamp": "2026-04-01T03:18:03.430Z",
+      "action": "Step 0 (Preflight (Dependency Validation)) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:18:05.700Z",
+      "action": "plan review requested for Step 1 (Project Context Resolution Utilities)"
+    },
+    {
+      "timestamp": "2026-04-01T03:18:30.015Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan for Step 1 has a solid structural foundation but contains critical API mismatches with the existing CentralCore implementation that will cause implementation failures. The `detectProjectFromCwd()` method doesn't exist on CentralCore, `GlobalSettings` lacks a `defaultProjectId` field, and the CentralCore lifecycle management (init/close) isn't addressed. These need resolution before implementation can proceed."
+    }
+  ]
+}

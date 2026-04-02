@@ -1,0 +1,154 @@
+{
+  "id": "KB-020",
+  "description": "in the list view on the dashboard add ability to hide columns",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Column Visibility State Management",
+      "status": "done"
+    },
+    {
+      "name": "Column Toggle UI",
+      "status": "done"
+    },
+    {
+      "name": "Conditional Column Rendering",
+      "status": "done"
+    },
+    {
+      "name": "Testing",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:05:34.999Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:09:39.593Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:09:53.689Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and comprehensive. The mission is clear, steps have verifiable outcomes, file scope is accurate, and testing requirements are thorough. The localStorage persistence pattern is correctly identified from `App.tsx` (line 24-30, 59-61), and the column structure matches `ListView.tsx` (lines 9, 245-272)."
+    },
+    {
+      "timestamp": "2026-03-30T01:48:04.318Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/faint-raven"
+    },
+    {
+      "timestamp": "2026-03-30T01:48:04.319Z",
+      "action": "Step 0 (Column Visibility State Management) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T01:48:06.326Z",
+      "action": "Step 0 (Column Visibility State Management) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:48:10.781Z",
+      "action": "Step 0 (Column Visibility State Management) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:48:10.782Z",
+      "action": "Preflight complete. Read all context files: ListView.tsx, ListView.test.tsx, App.tsx, types.ts, and styles.css. Understood the existing patterns for localStorage persistence (used in App.tsx for view preference), table structure, and CSS styling.",
+      "outcome": "Ready to proceed with Step 1: Column Visibility State Management"
+    },
+    {
+      "timestamp": "2026-03-30T01:48:12.215Z",
+      "action": "plan review requested for Step 1 (Column Visibility State Management)"
+    },
+    {
+      "timestamp": "2026-03-30T01:48:29.884Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the state management needs for column visibility. The approach follows the established localStorage persistence pattern used elsewhere in the codebase (`kb-dashboard-view` in App.tsx:41-51). The type definition aligns with the actual columns rendered in the current table (ListView.tsx:277-293)."
+    },
+    {
+      "timestamp": "2026-03-30T01:48:30.929Z",
+      "action": "Step 1 (Column Toggle UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:48:43.928Z",
+      "action": "Step 1 (Column Toggle UI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:48:44.875Z",
+      "action": "plan review requested for Step 2 (Column Toggle UI)"
+    },
+    {
+      "timestamp": "2026-03-30T01:48:55.281Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and will achieve the stated outcomes. The worker has already implemented Step 1 (state management) correctly with the `ALL_LIST_COLUMNS` constant, `ListColumn` type, `visibleColumns` state with localStorage persistence, and proper validation. The Step 2 checkboxes provide a clear path for adding the UI components."
+    },
+    {
+      "timestamp": "2026-03-30T01:48:56.630Z",
+      "action": "Step 2 (Conditional Column Rendering) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:49:20.916Z",
+      "action": "Step 2 (Conditional Column Rendering) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:49:21.955Z",
+      "action": "plan review requested for Step 3 (Conditional Column Rendering)"
+    },
+    {
+      "timestamp": "2026-03-30T01:49:34.519Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 correctly identifies the core requirement: conditionally rendering table headers and cells based on the `visibleColumns` state already established in Steps 1-2. The approach will work, though there's one implementation detail (dynamic `colSpan`) that the worker will need to discover during implementation but isn't critical enough to block."
+    },
+    {
+      "timestamp": "2026-03-30T01:49:36.250Z",
+      "action": "Step 3 (Testing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:49:58.455Z",
+      "action": "Step 3 (Testing) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:49:59.743Z",
+      "action": "plan review requested for Step 4 (Testing)"
+    },
+    {
+      "timestamp": "2026-03-30T01:50:11.494Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The test plan covers all core functionality for the column visibility feature. The 9 test cases address UI rendering, user interactions, localStorage persistence, edge case handling (preventing hide-all), and integration with existing features (sorting). The plan aligns well with the already-implemented feature in `ListView.tsx` and follows the established testing patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T01:50:13.022Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:50:31.869Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:50:33.250Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:52:39.071Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:52:46.952Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T01:55:42.963Z",
+  "createdAt": "2026-03-30T01:05:34.999Z",
+  "updatedAt": "2026-03-30T01:55:42.963Z",
+  "size": "M",
+  "reviewLevel": 1
+}

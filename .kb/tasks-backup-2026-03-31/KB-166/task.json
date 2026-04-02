@@ -1,0 +1,91 @@
+{
+  "id": "KB-166",
+  "description": "Fix TaskDetailModal dependency dropdown search reset bug - when the dependency dropdown closes and reopens, the search field should reset to empty string, but it's retaining the previous search value.\n\nFailed test: \"resets search when dropdown closes and reopens\"\nExpected: \"\"\nReceived: \"login\"",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix the search reset bug",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T15:37:33.567Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T15:38:08.040Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T15:38:24.025Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. The bug is well-defined, the file references are correct, and the proposed fix is minimal and appropriate. The test case exists and matches the described failure mode. The task is correctly sized as small (S) with Review Level 1 (Plan Only)."
+    },
+    {
+      "timestamp": "2026-03-30T16:12:25.453Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sharp-pine"
+    },
+    {
+      "timestamp": "2026-03-30T16:12:25.454Z",
+      "action": "Step 0 (Fix the search reset bug) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T16:12:29.484Z",
+      "action": "Step 0 (Fix the search reset bug) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:12:38.276Z",
+      "action": "Step 0 (Fix the search reset bug) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:12:38.278Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:12:38.279Z",
+      "action": "plan review requested for Step 1 (Fix the search reset bug)"
+    },
+    {
+      "timestamp": "2026-03-30T16:12:58.050Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the bug and proposes a clean, minimal fix using `useEffect`. The approach avoids closure staleness issues present in the current callback-based clearing logic and will satisfy the failing test's expectation that `depSearch` resets to `\"\"` when the dropdown closes."
+    },
+    {
+      "timestamp": "2026-03-30T16:13:18.783Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:13:18.784Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:15:05.138Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:15:05.140Z",
+      "action": "Fixed TaskDetailModal dependency dropdown search reset bug",
+      "outcome": "Added useEffect hook that resets depSearch to empty string when showDepDropdown becomes false. All 107 TaskDetailModal tests pass, including the previously failing 'resets search when dropdown closes and reopens' test. Build passes successfully."
+    },
+    {
+      "timestamp": "2026-03-30T16:15:22.800Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T16:15:33.493Z",
+  "createdAt": "2026-03-30T15:37:33.567Z",
+  "updatedAt": "2026-03-30T16:15:33.493Z",
+  "size": "S",
+  "reviewLevel": 1
+}

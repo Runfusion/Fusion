@@ -1,0 +1,30 @@
+{
+  "id": "KB-660",
+  "description": "The git manager dialog renders off screen",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "blockedBy": "KB-625",
+  "createdAt": "2026-04-01T02:41:53.945Z",
+  "updatedAt": "2026-04-01T03:01:51.782Z",
+  "columnMovedAt": "2026-04-01T02:47:41.352Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:41:53.945Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:47:23.760Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:47:38.929Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and technically accurate. The issue is clearly identified (`.gm-modal` lacks proper flex/overflow containment compared to `.planning-modal`), the file references are correct, and the fix approach follows established patterns in the codebase. The size (S) and review level (1) are appropriate for a CSS-only positioning fix."
+    }
+  ]
+}

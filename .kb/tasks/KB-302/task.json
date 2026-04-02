@@ -1,0 +1,118 @@
+{
+  "id": "KB-302",
+  "description": "The save button on the quick add task doesn’t work",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add onMouseDown Protection to Action Buttons",
+      "status": "done"
+    },
+    {
+      "name": "Add Regression Test",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T17:11:35.301Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T17:21:50.597Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T17:22:46.805Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification correctly identifies a real UI bug in the QuickEntryBox component where clicking action buttons causes textarea blur that interrupts click handlers. The mission is clear, steps are concrete and verifiable, file scope is accurate, and testing requirements are appropriate. The only issue is an incorrect claim about the Refine button already having blur protection."
+    },
+    {
+      "timestamp": "2026-03-31T17:36:42.026Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/merry-shore"
+    },
+    {
+      "timestamp": "2026-03-31T17:36:42.027Z",
+      "action": "Step 0 (Add onMouseDown Protection to Action Buttons) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T17:36:46.616Z",
+      "action": "Step 0 (Add onMouseDown Protection to Action Buttons) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:40:12.732Z",
+      "action": "Step 0 (Add onMouseDown Protection to Action Buttons) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:40:12.734Z",
+      "action": "Step 0 preflight complete: All 55 QuickEntryBox tests pass, build environment ready",
+      "outcome": "Ready to implement fix"
+    },
+    {
+      "timestamp": "2026-03-31T17:40:14.218Z",
+      "action": "plan review requested for Step 1 (Add onMouseDown Protection to Action Buttons)"
+    },
+    {
+      "timestamp": "2026-03-31T17:40:38.123Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the bug: clicking the Save, Plan, or Subtask buttons triggers the textarea's blur handler, which starts a 200ms timeout that can collapse the controls before the click handler executes. The fix—adding `onMouseDown={(e) => e.preventDefault()}`—is the established pattern already used by dropdown menus in this component. The step checkboxes are clear and will achieve the stated outcome."
+    },
+    {
+      "timestamp": "2026-03-31T17:40:39.836Z",
+      "action": "Step 1 (Add Regression Test) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:40:49.514Z",
+      "action": "Step 1 (Add Regression Test) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:40:50.729Z",
+      "action": "plan review requested for Step 2 (Add Regression Test)"
+    },
+    {
+      "timestamp": "2026-03-31T17:41:05.718Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 will achieve its stated outcomes. The test approach correctly targets the regression risk (blur prevention via `onMouseDown`), and the existing test infrastructure supports this approach. The plan notes that Step 1 has already been completed—all three buttons (Save, Plan, Subtask) now have `onMouseDown={(e) => e.preventDefault()}` handlers at lines 614, 625, and 636 in QuickEntryBox.tsx."
+    },
+    {
+      "timestamp": "2026-03-31T17:41:06.687Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:41:27.121Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:41:28.574Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:41:46.529Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:41:46.530Z",
+      "action": "Step 3 complete: All 58 QuickEntryBox tests pass, build errors are pre-existing in @kb/core package",
+      "outcome": "Quality gate passed for modified component"
+    },
+    {
+      "timestamp": "2026-03-31T17:41:54.805Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T17:42:07.328Z",
+  "createdAt": "2026-03-31T17:11:35.301Z",
+  "updatedAt": "2026-03-31T17:42:07.328Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Fixed the QuickEntryBox save button blur issue by adding `onMouseDown={(e) => e.preventDefault()}` to the Save, Plan, and Subtask buttons. This prevents the textarea from losing focus when clicking these buttons, which was causing a 200ms collapse timer to interrupt the click handlers. Added 3 regression tests (58 total) to verify the blur protection works correctly for all three buttons. All tests pass."
+}

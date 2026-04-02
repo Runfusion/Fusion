@@ -1,0 +1,112 @@
+{
+  "id": "KB-280",
+  "title": "Add a save button to the quick add test entry",
+  "description": "Add a save button to the quick add test entry next to refine",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Save Button to QuickEntryBox",
+      "status": "done"
+    },
+    {
+      "name": "Add Styling (if needed)",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests for Save Button",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T14:43:20.760Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:03.092Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:13.180Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, complete, and accurate. It correctly identifies the target component (`QuickEntryBox.tsx`), references real existing patterns (`STORAGE_KEY`, `addToast`, `btn btn-sm`, `quick-entry-controls-left`), and provides concrete, verifiable outcomes for each step. The testing requirements are comprehensive with real automated test assertions. The file scope is appropriately limited to 3 files."
+    },
+    {
+      "timestamp": "2026-03-31T14:44:29.330Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bright-grove"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:29.338Z",
+      "action": "Step 0 (Add Save Button to QuickEntryBox) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:31.750Z",
+      "action": "Step 0 (Add Save Button to QuickEntryBox) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:38.282Z",
+      "action": "Step 0 (Add Save Button to QuickEntryBox) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:38.283Z",
+      "action": "Step 1 (Add Styling (if needed)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:40.449Z",
+      "action": "plan review requested for Step 1 (Add Save Button to QuickEntryBox)"
+    },
+    {
+      "timestamp": "2026-03-31T14:44:56.928Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan provides clear, actionable checkboxes that will achieve the stated outcomes. The approach correctly identifies the existing patterns in QuickEntryBox (localStorage persistence at line 90-93, `addToast` usage at lines 406/415, button styling with `btn btn-sm`), and positions the Save button logically between the Subtask and Refine buttons. The test requirements in Step 3 are comprehensive and follow existing patterns."
+    },
+    {
+      "timestamp": "2026-03-31T14:45:15.341Z",
+      "action": "Step 1 (Add Styling (if needed)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:45:15.342Z",
+      "action": "Step 2 (Add Tests for Save Button) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:45:18.321Z",
+      "action": "Step 2 (Add Tests for Save Button) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:45:18.321Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:45:33.205Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:45:33.209Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:47:29.431Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:47:36.015Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T14:47:46.496Z",
+  "createdAt": "2026-03-31T14:43:20.760Z",
+  "updatedAt": "2026-03-31T14:47:46.496Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully added a Save button to the QuickEntryBox component. The button is positioned between the Subtask and Refine buttons, uses the existing btn btn-sm styling, and provides visual feedback when clicked by showing a \"Draft saved\" success toast. The button is disabled when the textarea is empty or during task submission. Added 7 new tests for the Save button functionality, all 55 QuickEntryBox tests pass, and the build compiles without errors. Created a changeset for the @kb/dashboard package."
+}

@@ -1,0 +1,117 @@
+{
+  "id": "KB-021",
+  "description": "add a \"--dev\" cli option that launches kb dashboard but without starting the execution engine or scheduler (this assumes the execution engine and scheduler are running in another process)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add --dev argument parsing",
+      "status": "done"
+    },
+    {
+      "name": "Implement dev mode in dashboard command",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:06:40.383Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:10:14.738Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:10:25.708Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. The mission is clear, file scope correctly identifies affected files, and steps have concrete verifiable outcomes. The testing requirements are comprehensive with real assertions required. Review Level 1 (Plan Only) is appropriate for this small, additive change."
+    },
+    {
+      "timestamp": "2026-03-30T01:27:40.038Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sleek-hawk"
+    },
+    {
+      "timestamp": "2026-03-30T01:27:40.039Z",
+      "action": "Step 0 (Add --dev argument parsing) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T01:27:44.744Z",
+      "action": "Step 1 (Implement dev mode in dashboard command) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:27:44.745Z",
+      "action": "plan review requested for Step 1 (Add --dev argument parsing)"
+    },
+    {
+      "timestamp": "2026-03-30T01:27:54.126Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the locations needing modification in `bin.ts`. The approach of detecting `--dev` via `args.includes(\"--dev\")` follows the existing pattern used for `--paused` and `--no-open`. The checkboxes adequately cover the required changes: flag detection, passing to `runDashboard()`, and HELP text updates. A minor sequencing issue exists where passing `dev: true` to `runDashboard()` will cause a TypeScript error until Step 2 adds the parameter, but this is acceptable given t"
+    },
+    {
+      "timestamp": "2026-03-30T01:28:02.139Z",
+      "action": "Step 1 (Implement dev mode in dashboard command) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:28:03.770Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:28:03.772Z",
+      "action": "plan review requested for Step 2 (Implement dev mode in dashboard command)"
+    },
+    {
+      "timestamp": "2026-03-30T01:28:13.279Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 correctly identifies all engine components that must be conditionally skipped when `dev` mode is active. The checkboxes cover the three core engine classes (TriageProcessor, TaskExecutor, Scheduler), the auto-merge infrastructure (queue, periodic timer, startup sweeps), and the required console output change. The approach preserves essential non-engine functionality as required."
+    },
+    {
+      "timestamp": "2026-03-30T01:28:27.047Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:28:28.989Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:28:28.991Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T01:28:41.951Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The Step 3 plan correctly identifies the required test coverage for the `--dev` mode feature. The existing test infrastructure in `dashboard.test.ts` already has the necessary mocks for `TriageProcessor`, `TaskExecutor`, and `Scheduler`, making the proposed test cases straightforward to implement. The quality gate requirements (full test suite + build) are appropriate for this change."
+    },
+    {
+      "timestamp": "2026-03-30T01:29:38.491Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:25.443Z",
+      "action": "KB-021 implementation complete",
+      "outcome": "All 4 steps finished:\n- Step 1: Added --dev flag parsing in bin.ts with updated HELP text\n- Step 2: Implemented dev mode in dashboard.ts that skips TriageProcessor, TaskExecutor, Scheduler, auto-merge queue, and startup sweeps\n- Step 3: Added 9 comprehensive test cases for --dev mode (all 35 dashboard tests pass)\n- Step 4: Created changeset (minor bump) and updated STANDALONE.md documentation\n\nCommits: c122f88, 76eb623, c35a836, 3250f1b\nTests: 155 CLI tests pass, 1242 total tests pass across all packages"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:26.261Z",
+      "action": "Step 0 (Add --dev argument parsing) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:26.263Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T01:30:46.953Z",
+  "createdAt": "2026-03-30T01:06:40.383Z",
+  "updatedAt": "2026-03-30T01:30:46.953Z",
+  "size": "S",
+  "reviewLevel": 1
+}

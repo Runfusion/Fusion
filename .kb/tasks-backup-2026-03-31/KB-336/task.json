@@ -1,0 +1,41 @@
+{
+  "id": "KB-336",
+  "description": "After KB-330 and KB-332 complete, execute KB-334: rename data directory from .fusion to .fusion",
+  "column": "todo",
+  "dependencies": [
+    "KB-330",
+    "KB-332"
+  ],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:20:34.274Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:24:35.605Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:25:03.165Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification correctly identifies the primary core files (`store.ts`, `agent-store.ts`, `db.ts`, `db-migrate.ts`) and CLI output strings that need updating. However, **critical source files with hardcoded `.fusion` paths are missing from the file scope**, which would result in an incomplete rename and runtime bugs. The test file list is also incomplete."
+    },
+    {
+      "timestamp": "2026-03-31T20:25:32.559Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:25:54.363Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is an exceptionally well-crafted specification for a mechanical rename task. The spec accurately identifies all 57+ locations where `.fusion` appears across core, engine, dashboard, and CLI packages. All file references, line numbers, and grep patterns have been verified against the actual codebase and match precisely. The step breakdown is logical, test coverage is comprehensive, and the \"Do NOT\" section properly fences out-of-scope work."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:25:56.937Z",
+  "createdAt": "2026-03-31T20:20:34.274Z",
+  "updatedAt": "2026-03-31T21:13:50.044Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued"
+}

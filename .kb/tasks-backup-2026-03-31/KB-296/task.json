@@ -1,0 +1,113 @@
+{
+  "id": "KB-296",
+  "description": "When tasks are moved to done I can’t see the model that was used for execution",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Model Badge Component and Styles",
+      "status": "done"
+    },
+    {
+      "name": "Display Model Badge on TaskCard",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:31:54.688Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T16:38:55.386Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:39:07.296Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a straightforward UI enhancement. The mission is clear, steps have concrete verifiable outcomes, file references are accurate, and testing requirements are explicit. The sizing as \"S\" with Review Level 1 is appropriate for this read-only display feature."
+    },
+    {
+      "timestamp": "2026-03-31T17:06:41.972Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/green-lotus"
+    },
+    {
+      "timestamp": "2026-03-31T17:06:41.977Z",
+      "action": "Step 0 (Add Model Badge Component and Styles) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T17:06:43.900Z",
+      "action": "Step 0 (Add Model Badge Component and Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:06:50.793Z",
+      "action": "Step 0 (Add Model Badge Component and Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:06:50.794Z",
+      "action": "Preflight complete. Reviewed TaskCard.tsx, ProviderIcon.tsx, ModelSelectorTab.tsx, and styles.css. Understand the badge patterns and model selection structure.",
+      "outcome": "Ready to implement model badge feature. Model fields already tracked in areTaskCardPropsEqual."
+    },
+    {
+      "timestamp": "2026-03-31T17:06:50.795Z",
+      "action": "Step 1 (Display Model Badge on TaskCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:06:50.796Z",
+      "action": "plan review requested for Step 1 (Add Model Badge Component and Styles)"
+    },
+    {
+      "timestamp": "2026-03-31T17:07:02.363Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and achievable. The approach follows existing badge patterns in the codebase (`.card-size-badge`, `.card-status-badge`) and correctly identifies the minimal CSS additions needed. The truncation strategy can leverage CSS `text-overflow: ellipsis` for simplicity."
+    },
+    {
+      "timestamp": "2026-03-31T17:07:40.009Z",
+      "action": "Step 1 (Display Model Badge on TaskCard) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:07:41.459Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:07:41.460Z",
+      "action": "plan review requested for Step 2 (Display Model Badge on TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-31T17:08:10.382Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and will achieve the stated outcomes. The CSS foundation from Step 1 is already in place (`.card-model-badge` exists at styles.css:648), and the `areTaskCardPropsEqual` comparator already includes model fields (TaskCard.tsx:97-100). The approach correctly identifies where to place the badge logic and what conditions to check."
+    },
+    {
+      "timestamp": "2026-03-31T17:08:36.695Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:08:38.017Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T17:12:43.993Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T17:12:55.384Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T17:18:11.630Z",
+  "createdAt": "2026-03-31T16:31:54.688Z",
+  "updatedAt": "2026-03-31T17:18:11.630Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Added executor model badge to TaskCard for completed tasks (done, in-review, archived columns). The badge displays provider icon + truncated model name when a per-task model override was used. Includes CSS styling with hover effect and tooltip showing full model name. All TaskCard tests pass (138 tests), build passes."
+}

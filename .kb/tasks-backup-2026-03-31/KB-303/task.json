@@ -1,0 +1,123 @@
+{
+  "id": "KB-303",
+  "description": "Global settings should be stored in the user home directory under .fusion",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Global Settings Directory Path",
+      "status": "done"
+    },
+    {
+      "name": "Update Documentation References in Types",
+      "status": "done"
+    },
+    {
+      "name": "Update Documentation in Store",
+      "status": "done"
+    },
+    {
+      "name": "Update Dashboard Routes Documentation",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T17:18:24.509Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T17:23:15.623Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T17:23:31.325Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a simple path migration task. The mission is clear, file references are accurate, and all affected locations containing `~/.pi/kb` references have been identified. The steps are concrete and verifiable, with appropriate testing requirements and documentation updates specified."
+    },
+    {
+      "timestamp": "2026-03-31T18:27:12.439Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/opal-thorn"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:12.440Z",
+      "action": "Step 0 (Update Global Settings Directory Path) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:15.743Z",
+      "action": "Step 0 (Update Global Settings Directory Path) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:21.516Z",
+      "action": "Step 0 (Update Global Settings Directory Path) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:21.518Z",
+      "action": "plan review requested for Step 1 (Update Global Settings Directory Path)"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:43.006Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The Step 1 plan for updating the global settings directory path is generally well-structured and the checkboxes correctly identify the changes needed in `global-settings.ts`. However, **the overall File Scope is incomplete** — there's an additional file (`packages/dashboard/app/api.ts`) containing a JSDoc comment referencing the old `~/.pi/kb/settings.json` path that is not covered by any step."
+    },
+    {
+      "timestamp": "2026-03-31T18:27:45.826Z",
+      "action": "Step 1 (Update Documentation References in Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:51.942Z",
+      "action": "Step 1 (Update Documentation References in Types) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:51.945Z",
+      "action": "Step 2 (Update Documentation in Store) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:58.395Z",
+      "action": "Step 2 (Update Documentation in Store) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:27:58.397Z",
+      "action": "Step 3 (Update Dashboard Routes Documentation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:28:06.025Z",
+      "action": "Step 3 (Update Dashboard Routes Documentation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:28:06.025Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:28:12.796Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:28:12.798Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:28:54.580Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:28:57.770Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:29:04.393Z",
+  "createdAt": "2026-03-31T17:18:24.509Z",
+  "updatedAt": "2026-03-31T18:29:04.393Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully changed the global settings storage location from `~/.pi/kb/settings.json` to `~/.fusion/settings.json`. Updated the `defaultGlobalDir()` function in `packages/core/src/global-settings.ts`, all JSDoc comments across `types.ts`, `store.ts`, `routes.ts`, and `api.ts`, test mock paths in `routes.test.ts`, and the README.md. Created a changeset file for the `@dustinbyrne/kb` package. All core tests pass (340 tests)."
+}

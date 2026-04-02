@@ -1,0 +1,146 @@
+{
+  "id": "KB-124",
+  "description": "ntfy.sh notifications not working\n\n(Duplicated from KB-085)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove Duplicate Notification",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests for Correct Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:11:53.673Z",
+      "action": "Duplicated from KB-085"
+    },
+    {
+      "timestamp": "2026-03-30T06:14:55.643Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-30T06:17:09.989Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:30.146Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:42.918Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and correctly identifies the root cause of duplicate notifications. All file references are verified and line numbers match the actual source code. The fix approach is sound: remove the redundant notification from `handleTaskMoved` for the \"done\" column while keeping `handleTaskMerged` as the single source of truth."
+    },
+    {
+      "timestamp": "2026-03-30T14:40:51.596Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pale-hawk"
+    },
+    {
+      "timestamp": "2026-03-30T14:40:51.597Z",
+      "action": "Step 0 (Remove Duplicate Notification) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:01.259Z",
+      "action": "Step 0 (Remove Duplicate Notification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:03.682Z",
+      "action": "Preflight complete: verified notifier already contains the intended done-event comment and identified test file still needs explicit duplicate-merge coverage plus full verification.",
+      "outcome": "Proceeding with step-by-step review and implementation within notifier/test file scope."
+    },
+    {
+      "timestamp": "2026-03-30T14:46:05.857Z",
+      "action": "Step 0 (Remove Duplicate Notification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:08.229Z",
+      "action": "Step 1 (Update Tests for Correct Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:09.838Z",
+      "action": "plan review requested for Step 1 (Remove Duplicate Notification)"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:23.149Z",
+      "action": "plan review Step 1: RETHINK",
+      "outcome": "The step describes removing duplicate notification code that **no longer exists in the codebase**. The fix has already been implemented. The `handleTaskMoved` method in `notifier.ts` already lacks the \"done\" notification block and contains a comment explaining that `task:merged` handles those notifications. The test file also already contains the updated test case. Continuing with this step as written would result in no changes or potentially creating confusion."
+    },
+    {
+      "timestamp": "2026-03-30T14:46:23.153Z",
+      "action": "Step 1 (Update Tests for Correct Behavior) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:23.155Z",
+      "action": "RETHINK: Step 1 plan rewound — session checkpoint 377ecd51",
+      "outcome": "The step describes removing duplicate notification code that **no longer exists in the codebase**. The fix has already been implemented. The `handleTaskMoved` method in `notifier.ts` already lacks the \"done\" notification block and contains a comment explaining that `task:merged` handles those notifications. The test file also already contains the updated test case. Continuing with this step as written would result in no changes or potentially creating confusion."
+    },
+    {
+      "timestamp": "2026-03-30T14:46:27.192Z",
+      "action": "Plan review revealed the implementation fix is already present in notifier.ts and the done-move test already exists; Step 1 is effectively already satisfied by current codebase state.",
+      "outcome": "Adapting execution to verify and preserve existing correct behavior, then add any missing regression coverage in the test step."
+    },
+    {
+      "timestamp": "2026-03-30T14:46:35.281Z",
+      "action": "Step 1 (Update Tests for Correct Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:38.618Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:40.721Z",
+      "action": "plan review requested for Step 2 (Update Tests for Correct Behavior)"
+    },
+    {
+      "timestamp": "2026-03-30T14:47:11.687Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is directionally correct. The test updates are appropriate for verifying the duplicate notification fix. The current test file already has most of the required test coverage in place, with the key test (`does not send notification when task moves to done`) already asserting no notification is sent for `task:moved` to \"done\". The main gap is the missing explicit test for firing both events together, which the plan correctly identifies."
+    },
+    {
+      "timestamp": "2026-03-30T14:47:33.212Z",
+      "action": "Initial verification command failed because this workspace does not expose vitest via `pnpm vitest`; tests must be run through package scripts or `pnpm exec`.",
+      "outcome": "Retrying with `pnpm exec vitest` and package/root test scripts to satisfy verification requirements."
+    },
+    {
+      "timestamp": "2026-03-30T14:49:15.028Z",
+      "action": "Added regression coverage for the real merge event sequence: task:moved to done followed by task:merged now asserts exactly one merged notification.",
+      "outcome": "Notifier tests pass for the targeted file; broader workspace test/build commands exposed pre-existing package build dependency issues outside KB-124 scope."
+    },
+    {
+      "timestamp": "2026-03-30T14:49:16.414Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:49:17.894Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:49:27.592Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:49:32.471Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T14:49:53.338Z",
+  "createdAt": "2026-03-30T06:11:53.673Z",
+  "updatedAt": "2026-03-30T14:49:53.338Z",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "size": "S",
+  "reviewLevel": 1
+}

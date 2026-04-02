@@ -1,0 +1,32 @@
+{
+  "id": "KB-331",
+  "description": "Add a button to respecify a task or automatically specify after moving it back to trisge",
+  "column": "todo",
+  "dependencies": [
+    "KB-330"
+  ],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:15:00.322Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:19:58.904Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:20:20.312Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for renaming the published npm package. The spec correctly identifies all files requiring updates, provides concrete verification steps, and appropriately scopes the work. The blast radius assessment is accurate—this affects 117+ changeset files, package metadata, and documentation. The dependency on KB-330 is correctly noted for internal package namespace changes."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:20:23.763Z",
+  "createdAt": "2026-03-31T20:15:00.322Z",
+  "updatedAt": "2026-03-31T21:01:04.962Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued",
+  "blockedBy": "KB-313"
+}

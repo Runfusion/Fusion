@@ -1,0 +1,109 @@
+{
+  "id": "KB-639",
+  "description": "When working on a plan provide a warning when dismissing the dialog like in subtask screen",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 4,
+  "summary": "Successfully added dismiss warning to PlanningModeModal. Added `hasProgress` state that tracks when user makes planning progress (question received, summary received, or response submitted). Updated `handleCancel` to show confirmation dialog \"Are you sure you want to close? Your planning progress will be lost.\" when hasProgress is true. The X button, overlay click, and Escape key all now consistently show this warning. Added 5 new tests to verify the behavior: X button confirmation, overlay confirmation, no confirmation in initial state, confirmation with confirm=true, and summary view confirmation. All 22 PlanningModeModal tests pass.",
+  "createdAt": "2026-04-01T01:50:31.146Z",
+  "updatedAt": "2026-04-01T02:58:30.876Z",
+  "columnMovedAt": "2026-04-01T02:58:30.876Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add Progress Tracking State and Update handleCancel",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T01:50:31.146Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T01:51:16.548Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T01:51:29.290Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted and accurate. It correctly identifies the gap between the Escape key handler (which has confirmation logic) and the `handleCancel` function (which doesn't), provides a clear reference implementation from SubtaskBreakdownModal, and outlines concrete implementation steps with verifiable test scenarios."
+    },
+    {
+      "timestamp": "2026-04-01T02:53:51.739Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/vivid-pine"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:51.741Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:54.321Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:59.348Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:59.349Z",
+      "action": "Step 1 (Add Progress Tracking State and Update handleCancel) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:53:59.350Z",
+      "action": "Preflight complete. Files exist and are readable. PlanningModeModal lacks confirmation on handleCancel for X button and overlay click, while Escape key already has it.",
+      "outcome": "Ready to implement hasProgress state and update handleCancel"
+    },
+    {
+      "timestamp": "2026-04-01T02:54:32.439Z",
+      "action": "Step 1 (Add Progress Tracking State and Update handleCancel) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:54:32.440Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:54:32.441Z",
+      "action": "Completed Step 1 implementation. Added hasProgress state that tracks when planning session starts (question/summary received) or user submits responses. Updated handleCancel to show confirmation when hasProgress is true. Updated escape key handler to use hasProgress for consistency.",
+      "outcome": "PlanningModeModal now shows confirmation on X button click, overlay click, and Escape key when user has made progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:12.387Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:12.389Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:12.389Z",
+      "action": "Completed Step 2. All 22 PlanningModeModal tests pass, including 5 new tests for the dismiss warning behavior. Build errors in mission-routes.ts are pre-existing issues unrelated to my changes.",
+      "outcome": "Tests pass for X button click, overlay click, initial state (no confirmation), confirmed dismiss, and summary view confirmation"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:18.091Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:18.092Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:58:18.094Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "id": "KB-650",
+  "description": "Refresh usage when bringing up the usage modal",
+  "column": "todo",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 2,
+  "createdAt": "2026-04-01T02:34:03.915Z",
+  "updatedAt": "2026-04-01T02:46:00.977Z",
+  "columnMovedAt": "2026-04-01T02:46:00.977Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Refresh-on-Open Effect to UsageIndicator",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "in-progress"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:34:03.915Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:34:35.502Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:34:48.510Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a small, focused change. The mission is clear, the implementation approach is technically sound, and the testing requirements are comprehensive. All referenced files exist and contain the expected interfaces."
+    },
+    {
+      "timestamp": "2026-04-01T02:35:05.986Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/hazy-trail"
+    },
+    {
+      "timestamp": "2026-04-01T02:35:05.987Z",
+      "action": "Step 0 (Add Refresh-on-Open Effect to UsageIndicator) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T02:35:10.102Z",
+      "action": "Step 0 (Add Refresh-on-Open Effect to UsageIndicator) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:35:13.495Z",
+      "action": "Step 0 (Add Refresh-on-Open Effect to UsageIndicator) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:35:13.496Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:35:13.497Z",
+      "action": "Starting Step 1: Add refresh-on-open effect to UsageIndicator",
+      "outcome": "Will add useEffect that triggers refresh() when isOpen transitions from false to true, with 5-second debounce"
+    },
+    {
+      "timestamp": "2026-04-01T02:35:24.694Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:35:24.695Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:35:24.696Z",
+      "action": "Step 1 complete. Moving to Step 2: Adding tests for refresh-on-open behavior",
+      "outcome": "Implementation committed, now adding tests"
+    },
+    {
+      "timestamp": "2026-04-01T02:46:00.973Z",
+      "action": "Task terminated due to stuck agent session (no activity for ~10 minutes)"
+    }
+  ]
+}

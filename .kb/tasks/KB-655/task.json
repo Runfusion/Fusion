@@ -1,0 +1,28 @@
+{
+  "id": "KB-655",
+  "description": "Hide done by default on list view",
+  "column": "todo",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 0,
+  "createdAt": "2026-04-01T02:38:03.605Z",
+  "updatedAt": "2026-04-01T02:45:21.246Z",
+  "columnMovedAt": "2026-04-01T02:45:21.246Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:38:03.605Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:45:11.285Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:45:20.252Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is clear, appropriately scoped, and correctly identifies the files and behavior to change. The task is a simple default value change from `false` to `true` for the `hideDoneTasks` state, with clear test requirements. The review level of 0 (None) and size S are appropriate for this low-risk, reversible change."
+    }
+  ]
+}

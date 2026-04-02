@@ -1,0 +1,76 @@
+{
+  "id": "KB-187",
+  "description": "Make sure refinement tasks includes relevant context in the prompt so the agent knows what it is refining - include summary and original description and a link to the task file",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Enhance Refinement PROMPT.md Generation",
+      "status": "in-progress"
+    },
+    {
+      "name": "Update Tests",
+      "status": "in-progress"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
+  "currentStep": 1,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:03:15.128Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:04:42.081Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:04:53.216Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes the current implementation and provides clear, verifiable steps for enhancing refinement task PROMPT.md generation. All file references are correct, the mission is unambiguous, and testing requirements are appropriately rigorous."
+    },
+    {
+      "timestamp": "2026-03-30T19:21:14.457Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/vivid-hawk"
+    },
+    {
+      "timestamp": "2026-03-30T19:21:14.458Z",
+      "action": "Step 0 (Enhance Refinement PROMPT.md Generation) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:21:16.695Z",
+      "action": "Step 0 (Enhance Refinement PROMPT.md Generation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:21:25.546Z",
+      "action": "plan review requested for Step 1 (Enhance Refinement PROMPT.md Generation)"
+    },
+    {
+      "timestamp": "2026-03-30T19:21:37.927Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan is clear, well-scoped, and achievable. The checkboxes correctly identify all required sections for the enhanced PROMPT.md (Original Task Context, Completed Work Summary, Refinement Request, and Refines reference). The data needed (`sourceTask.description`, `sourceTask.log`, `taskDir` paths) is already available via the existing `getTask` call. Testing strategy appropriately covers updating the existing test and adding new ones for the enhanced content."
+    },
+    {
+      "timestamp": "2026-03-30T19:21:40.885Z",
+      "action": "Step 1 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:22:14.059Z",
+      "action": "Agent finished without calling task_done — moved to in-review for inspection"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:22:14.245Z",
+  "createdAt": "2026-03-30T18:03:15.128Z",
+  "updatedAt": "2026-03-30T19:22:14.245Z",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.3-codex",
+  "size": "S",
+  "reviewLevel": 1
+}

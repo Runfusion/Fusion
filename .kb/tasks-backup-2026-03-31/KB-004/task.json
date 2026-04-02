@@ -1,0 +1,48 @@
+{
+  "id": "KB-004",
+  "description": "CLI Multi-Project Commands: project subcommands and --project flag",
+  "column": "triage",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "paused": true,
+  "createdAt": "2026-03-31T21:01:18.283Z",
+  "updatedAt": "2026-03-31T21:21:04.397Z",
+  "columnMovedAt": "2026-03-31T21:21:04.397Z",
+  "dependencies": [
+    "KB-002"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:01:18.283Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:01:18.286Z",
+      "action": "Moved to triage for re-specification — new dependency added"
+    },
+    {
+      "timestamp": "2026-03-31T21:17:20.183Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:17:46.845Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification describes a multi-project CLI feature that depends on infrastructure (KB-001 and KB-002) that does not yet exist. The spec references types, classes, and methods (`Project`, `ProjectStore`, `listProjects()`, `createProject()`, etc.) that are not present in the codebase. The dependency chain is inverted — KB-004 should not proceed until KB-002 is complete."
+    },
+    {
+      "timestamp": "2026-03-31T21:18:10.601Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:36.458Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:18:57.759Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for adding multi-project CLI support. The spec correctly identifies the dependency on KB-002 for ProjectStore infrastructure and provides clear step-by-step implementation guidance. The backward compatibility requirements are explicitly stated, and the testing strategy is comprehensive. The file scope accurately reflects the CLI package structure."
+    }
+  ]
+}

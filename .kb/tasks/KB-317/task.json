@@ -1,0 +1,135 @@
+{
+  "id": "KB-317",
+  "description": "Tasks are being marked done but not progressing",
+  "column": "archived",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 3,
+  "createdAt": "2026-03-31T18:38:56.598Z",
+  "updatedAt": "2026-03-31T20:35:14.561Z",
+  "columnMovedAt": "2026-03-31T20:34:50.811Z",
+  "dependencies": [
+    "KB-312"
+  ],
+  "steps": [
+    {
+      "name": "Move KB-317 to Done Column",
+      "status": "done"
+    },
+    {
+      "name": "Archive KB-317 as Duplicate",
+      "status": "done"
+    },
+    {
+      "name": "Verify Archive",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T18:38:56.598Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T18:39:54.217Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-31T18:40:21.279Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-31T18:44:57.718Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-31T18:46:11.429Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T18:46:31.906Z",
+      "action": "Spec review: RETHINK",
+      "outcome": "KB-317 is a duplicate task of KB-312 (\"Tasks are being marked done but not moving columns\" vs \"Tasks are being marked done but not progressing\"). KB-312 already has an approved, high-quality specification and is queued in the \"todo\" column. KB-317's PROMPT.md simply states \"DUPLICATE: KB-312\" without any actual specification content. Rather than proceeding with spec review, this task should be archived as a duplicate."
+    },
+    {
+      "timestamp": "2026-03-31T18:46:31.906Z",
+      "action": "RETHINK: spec rewound — session checkpoint e7f0854e",
+      "outcome": "KB-317 is a duplicate task of KB-312 (\"Tasks are being marked done but not moving columns\" vs \"Tasks are being marked done but not progressing\"). KB-312 already has an approved, high-quality specification and is queued in the \"todo\" column. KB-317's PROMPT.md simply states \"DUPLICATE: KB-312\" without any actual specification content. Rather than proceeding with spec review, this task should be archived as a duplicate."
+    },
+    {
+      "timestamp": "2026-03-31T18:46:41.634Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T18:47:05.321Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification correctly identifies KB-317 as a duplicate of KB-312 and establishes appropriate administrative goals. However, **Step 1 contains a critical technical error**: the `archiveTask` API cannot archive a task from the \"triage\" column — it only works on tasks in \"done\". This will cause runtime failure when executed."
+    },
+    {
+      "timestamp": "2026-03-31T18:47:11.018Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T18:47:29.113Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted administrative specification for archiving a duplicate task. The mission is clear, steps are concrete and verifiable, file references are accurate, and the technical approach correctly accounts for the column transition constraints (archive only works from \"done\"). Review Level 0 is appropriate as no code changes are required."
+    },
+    {
+      "timestamp": "2026-03-31T20:33:49.847Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/glad-badger"
+    },
+    {
+      "timestamp": "2026-03-31T20:33:49.848Z",
+      "action": "Step 0 (Move KB-317 to Done Column) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T20:34:50.810Z",
+      "action": "Marked as duplicate of KB-312, preparing to archive"
+    },
+    {
+      "timestamp": "2026-03-31T20:34:50.811Z",
+      "action": "Task archived"
+    },
+    {
+      "timestamp": "2026-03-31T20:34:50.812Z",
+      "action": "Archived as duplicate of KB-312"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:09.243Z",
+      "action": "Step 0 (Move KB-317 to Done Column) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:09.244Z",
+      "action": "Moved KB-317 from 'in-progress' → 'in-review' → 'done'",
+      "outcome": "Successfully moved task through valid column transitions to reach 'done' column"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:09.246Z",
+      "action": "Archived KB-317 as duplicate of KB-312",
+      "outcome": "Task column now set to 'archived' with cleanup=false to preserve files for reference"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:09.247Z",
+      "action": "Verified archive status",
+      "outcome": "Confirmed KB-317 column='archived' and KB-312 remains in 'done' column"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:11.625Z",
+      "action": "Step 1 (Archive KB-317 as Duplicate) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:11.627Z",
+      "action": "Step 2 (Verify Archive) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:12.965Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-31T20:35:14.561Z",
+      "action": "Task already moved from 'archived' — skipping transition to 'in-review'",
+      "outcome": "Invalid transition: 'archived' → 'in-review'. Valid targets: done"
+    }
+  ],
+  "summary": "KB-317 has been successfully archived as a duplicate of KB-312. The task was moved from 'in-progress' through 'in-review' to 'done', then archived with the \"archived\" column status. All log entries were added documenting the duplicate relationship. KB-312 remains in 'done' column with all 6 steps completed. No code changes were made as this was purely an administrative archive operation."
+}

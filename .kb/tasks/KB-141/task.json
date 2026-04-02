@@ -1,0 +1,155 @@
+{
+  "id": "KB-141",
+  "description": "Fix workspace-wide dashboard typecheck baseline failures so `pnpm typecheck` passes from a clean checkout.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Remove dist-dependent workspace type resolution",
+      "status": "done"
+    },
+    {
+      "name": "Add a clean-checkout typecheck regression test",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T12:36:51.661Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T13:08:00.708Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T13:12:42.248Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The mission is clear and the implementation/test outcomes are mostly concrete: the spec correctly targets the clean-checkout `pnpm typecheck` failure, the `routes.ts` model-override typing drift, and requires a real assertion-based regression test. However, the spec has two accuracy gaps that make execution unnecessarily ambiguous: it treats a non-existent root `tsconfig.json` as pre-existing context, and it excludes package-level `package.json` files that currently encode the `dist/*.d.ts` depe"
+    },
+    {
+      "timestamp": "2026-03-30T13:13:25.100Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T13:18:08.712Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a strong spec overall: the mission is clear, the failure mode is well described, and the testing requirements correctly insist on a real regression that exercises the exact workspace command (`package.json:15`) rather than a local `tsc` approximation (`packages/dashboard/src/__tests__/typecheck.test.ts:5-9`). However, the File Scope is too narrow for the stated workspace-wide outcome, because clean-checkout package resolution affects consumers well beyond `packages/dashboard/src/routes.t"
+    },
+    {
+      "timestamp": "2026-03-30T13:19:36.075Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T13:22:46.234Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The mission is clear and the verification bar is strong: the spec ties success to a clean-checkout `pnpm typecheck`, preserves strictness, and requires a real regression test instead of a type-only smoke check. The main quality gap is file-scope accuracy for the dashboard frontend: the dashboard package typecheck explicitly compiles `app/`, but the spec only scopes `packages/dashboard/src/**`, which can block legitimate fixes if source-based workspace resolution exposes frontend failures too."
+    },
+    {
+      "timestamp": "2026-03-30T13:23:29.309Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T13:27:00.024Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification is well-scoped and grounded in the current repository state. The clean-checkout failure mode it describes is real: the root workspace typecheck runs recursively from `package.json:15`, ignored build output is excluded by `.gitignore:5`, and internal package exports still point consumers at `./dist/*.d.ts` (`packages/core/package.json:8`, `packages/engine/package.json:8`, `packages/dashboard/package.json:8`). It also correctly targets the existing regression gap, since the only"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:53.596Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/faint-grove"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:53.597Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:14:11.607Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:14:18.621Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:14:18.624Z",
+      "action": "plan review requested for Step 1 (Remove dist-dependent workspace type resolution)"
+    },
+    {
+      "timestamp": "2026-03-30T15:14:42.052Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the core problem: workspace packages currently declare `exports[\".\"].types` pointing to `./dist/*.d.ts` files that don't exist in a clean checkout (they're gitignored). The plan outlines a valid approach using TypeScript Project References to enable source-based type resolution between workspace packages without requiring pre-built `dist/` artifacts.\n\nThe step's checkboxes appropriately cover: reproducing the failure, configuring project references, verifying cross-"
+    },
+    {
+      "timestamp": "2026-03-30T15:20:50.041Z",
+      "action": "Step 1 (Remove dist-dependent workspace type resolution) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:20:50.041Z",
+      "action": "code review requested for Step 1 (Remove dist-dependent workspace type resolution)"
+    },
+    {
+      "timestamp": "2026-03-30T15:21:26.241Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly addresses the core requirement by updating all internal workspace package exports to point `types` to source files (`.ts`) instead of built declaration files (`.d.ts`). This enables `pnpm typecheck` to work from a clean checkout without requiring pre-existing `packages/*/dist` artifacts. All cross-package consumers typecheck correctly, and the dashboard routes.ts properly handles the TaskCreateInput model override fields."
+    },
+    {
+      "timestamp": "2026-03-30T15:21:27.533Z",
+      "action": "Step 1 (Remove dist-dependent workspace type resolution) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:21:27.535Z",
+      "action": "plan review requested for Step 2 (Add a clean-checkout typecheck regression test)"
+    },
+    {
+      "timestamp": "2026-03-30T15:21:49.900Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step's approach is sound and will achieve the stated outcomes. The plan correctly identifies the need to simulate a clean checkout by moving `packages/*/dist` directories aside, handling `*.tsbuildinfo` artifacts, restoring state in a `finally` block, and using serialized test execution to prevent concurrent interference. The requirement to run `pnpm typecheck` from the workspace root and assert on exit code with full output context covers the regression scenario."
+    },
+    {
+      "timestamp": "2026-03-30T15:21:51.421Z",
+      "action": "Step 2 (Add a clean-checkout typecheck regression test) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:22:27.614Z",
+      "action": "Step 2 (Add a clean-checkout typecheck regression test) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:22:28.917Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:23:40.946Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:23:40.949Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:23:57.283Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:24:07.620Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:24:22.085Z",
+  "createdAt": "2026-03-30T12:36:51.661Z",
+  "updatedAt": "2026-03-30T15:24:22.085Z",
+  "size": "M",
+  "reviewLevel": 2
+}

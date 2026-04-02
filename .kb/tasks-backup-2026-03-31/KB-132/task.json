@@ -1,0 +1,133 @@
+{
+  "id": "KB-132",
+  "description": "Terminal shows disconnected and string did not match expected pattern at the top",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Restore the terminal bootstrap path in `kb board`",
+      "status": "done"
+    },
+    {
+      "name": "Harden terminal connection and error handling in the dashboard UI",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:40:00.419Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T08:04:00.954Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T08:08:34.162Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This spec is well grounded in the current codebase: `runDashboard()` currently starts the HTTP server at `packages/cli/src/commands/dashboard.ts:616` but the package root only exports `createServer` from `packages/dashboard/src/index.ts:1`, even though the websocket mount already exists in `packages/dashboard/src/server.ts:165-297`. The frontend side is also accurately targeted, with websocket bootstrap in `packages/dashboard/app/hooks/useTerminal.ts:154-156,249` and raw error display/session li"
+    },
+    {
+      "timestamp": "2026-03-30T08:09:34.939Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T08:13:34.149Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a strong, implementation-ready spec. I verified that the referenced code paths are real and align with the failure described: `runDashboard()` creates the app and listens on the HTTP server without mounting the separate terminal WebSocket setup (`packages/cli/src/commands/dashboard.ts:461,616`), while `setupTerminalWebSocket()` already exists in the dashboard package (`packages/dashboard/src/server.ts:165-295`) but is not re-exported from `packages/dashboard/src/index.ts:1`. The client-s"
+    },
+    {
+      "timestamp": "2026-03-31T00:45:25.383Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sleek-falcon"
+    },
+    {
+      "timestamp": "2026-03-31T00:45:25.384Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:45:27.114Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:45.785Z",
+      "action": "Step 0: Preflight completed. Found and fixed duplicate delay() function in github.ts (pre-existing issue). CLI typecheck has unrelated pre-existing error. Dashboard tests pass except for pre-existing failures.",
+      "outcome": "Dashboard build now passes typecheck. Ready to implement terminal fix."
+    },
+    {
+      "timestamp": "2026-03-31T00:47:46.807Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:48.882Z",
+      "action": "Step 1 (Restore the terminal bootstrap path in `kb board`) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:47:50.236Z",
+      "action": "plan review requested for Step 1 (Restore the terminal bootstrap path in kb board)"
+    },
+    {
+      "timestamp": "2026-03-31T00:48:14.602Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies that the terminal bootstrap path is broken because `setupTerminalWebSocket` is not exported from `@kb/dashboard` and needs explicit invocation in `runDashboard()`. The step checkboxes address the core issues: exporting the function, invoking it properly, ensuring end-to-end session creation works, and adding comprehensive tests. The approach follows the existing PTY/WebSocket architecture without introducing new transport mechanisms."
+    },
+    {
+      "timestamp": "2026-03-31T00:52:09.941Z",
+      "action": "Step 1 (Restore the terminal bootstrap path in `kb board`) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:52:10.862Z",
+      "action": "Step 2 (Harden terminal connection and error handling in the dashboard UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:52:11.954Z",
+      "action": "plan review requested for Step 2 (Harden terminal connection and error handling in the dashboard UI)"
+    },
+    {
+      "timestamp": "2026-03-31T00:52:34.933Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the core issues: `useTerminal()` doesn't surface connection errors to the UI, and raw browser error messages (like \"string did not match expected pattern\") leak through to users. The approach of hardening error handling in the hook and presenting actionable messaging in the modal is sound. However, the plan lacks specificity on the error propagation mechanism between the hook and modal, which could lead to an incomplete implementation if the worker misses the implic"
+    },
+    {
+      "timestamp": "2026-03-31T00:54:35.120Z",
+      "action": "Step 2 (Harden terminal connection and error handling in the dashboard UI) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:54:36.172Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:01.316Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:02.362Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:20.659Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:23.224Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:56:31.167Z",
+  "createdAt": "2026-03-30T06:40:00.419Z",
+  "updatedAt": "2026-03-31T00:56:31.167Z",
+  "size": "M",
+  "reviewLevel": 2
+}

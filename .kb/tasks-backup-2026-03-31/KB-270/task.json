@@ -1,0 +1,130 @@
+{
+  "id": "KB-270",
+  "title": "Improve subtask breakdown UX with drag-and-drop reordering inside",
+  "description": "Improve subtask breakdown UX with drag-and-drop reordering inside the breakdown modal once the initial dialog flow is stable.",
+  "column": "done",
+  "dependencies": [
+    "KB-247"
+  ],
+  "steps": [
+    {
+      "name": "Add Drag-and-Drop State Management",
+      "status": "done"
+    },
+    {
+      "name": "Add Drag Attributes to Subtask Items",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles for Drag States",
+      "status": "done"
+    },
+    {
+      "name": "Update Dependency Logic After Reordering",
+      "status": "done"
+    },
+    {
+      "name": "Component Tests for Drag-and-Drop",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-31T12:48:13.226Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T12:48:57.333Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T12:49:12.879Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and ready for implementation. It provides a clear mission, concrete step-by-step outcomes, accurate file references, and comprehensive testing requirements. The drag-and-drop patterns referenced from Column.tsx and TaskCard.tsx are appropriate and correctly described."
+    },
+    {
+      "timestamp": "2026-03-31T12:49:28.653Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-grove"
+    },
+    {
+      "timestamp": "2026-03-31T12:49:28.653Z",
+      "action": "Step 0 (Add Drag-and-Drop State Management) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T12:49:34.110Z",
+      "action": "Step 0 (Add Drag-and-Drop State Management) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:49:34.910Z",
+      "action": "Step 0 (Add Drag-and-Drop State Management) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:49:34.911Z",
+      "action": "Step 1 (Add Drag Attributes to Subtask Items) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:49:36.721Z",
+      "action": "plan review requested for Step 1 (Add Drag-and-Drop State Management)"
+    },
+    {
+      "timestamp": "2026-03-31T12:49:51.293Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows the established drag-and-drop patterns in the codebase. The approach correctly identifies the necessary state variables and handlers needed for reordering subtasks within the modal. The checklist items will achieve the stated outcome of adding drag-and-drop state management to the SubtaskBreakdownModal component."
+    },
+    {
+      "timestamp": "2026-03-31T12:50:21.793Z",
+      "action": "Step 1 (Add Drag Attributes to Subtask Items) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:50:21.795Z",
+      "action": "Step 3 (Update Dependency Logic After Reordering) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:50:35.125Z",
+      "action": "Step 3 (Update Dependency Logic After Reordering) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:50:35.126Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:53:54.966Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:53:54.968Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:57:08.481Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:59:59.456Z",
+      "action": "Step 2 (Add CSS Styles for Drag States) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:59:59.459Z",
+      "action": "Step 4 (Component Tests for Drag-and-Drop) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:59:59.461Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T13:00:17.419Z",
+  "createdAt": "2026-03-31T12:48:13.226Z",
+  "updatedAt": "2026-03-31T13:00:17.419Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Successfully implemented drag-and-drop reordering for the SubtaskBreakdownModal component. Added drag state management (draggingId, dragOverId, dragOverPosition), drag handlers (handleDragStart, handleDragEnd, handleDragOver, handleDrop, handleDragLeave), keyboard reordering buttons (move up/down), visual drag handles (GripVertical icon), and CSS styles for drag states. Updated dependency logic to only show earlier subtasks as dependency options to prevent cycles. Added comprehensive tests covering drag-and-drop behavior, keyboard reordering, and dependency validation. Build passes and all 19 component tests pass."
+}

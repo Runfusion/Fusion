@@ -1,0 +1,147 @@
+{
+  "id": "KB-171",
+  "description": "In the add task quick entry box, have a button to set model quickly and dependency",
+  "column": "done",
+  "dependencies": [
+    "KB-163"
+  ],
+  "steps": [
+    {
+      "name": "Extend QuickEntryBox Component API and UI",
+      "status": "done"
+    },
+    {
+      "name": "Update Parent Components to Pass New Props",
+      "status": "done"
+    },
+    {
+      "name": "Update and Add Tests",
+      "status": "done"
+    },
+    {
+      "name": "Styling and Polish",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:40:26.253Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T17:41:22.712Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:41:39.213Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately describes extending QuickEntryBox with model/dependency selection following the InlineCreateCard pattern. The file references are correct, the API signatures match reality, and the step breakdown is logical. However, there are two minor gaps: Board.tsx needs to be added to the File Scope since it must thread `availableModels` through to Column, and a changeset should be required for this user-facing feature."
+    },
+    {
+      "timestamp": "2026-03-31T00:38:38.701Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/azure-olive"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:38.703Z",
+      "action": "Step 0 (Extend QuickEntryBox Component API and UI) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:40.001Z",
+      "action": "Step 0 (Extend QuickEntryBox Component API and UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:05.793Z",
+      "action": "Step 0 (Extend QuickEntryBox Component API and UI) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:09.285Z",
+      "action": "Step 1 (Update Parent Components to Pass New Props) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:11.249Z",
+      "action": "Step 1 (Update Parent Components to Pass New Props) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:12.324Z",
+      "action": "plan review requested for Step 2 (Update Parent Components to Pass New Props)"
+    },
+    {
+      "timestamp": "2026-03-31T00:41:41.567Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan correctly identifies the prop threading work needed for Column.tsx, ListView.tsx, and App.tsx, but **misses a critical file in the chain**: Board.tsx must also be modified to pass `availableModels` from App.tsx down to Column.tsx. Without this, the props can't reach QuickEntryBox. Additionally, the `handleQuickCreate` update may already be complete based on current code inspection."
+    },
+    {
+      "timestamp": "2026-03-31T00:42:34.616Z",
+      "action": "code review requested for Step 2 (Update Parent Components to Pass New Props)"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:04.343Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Step 2 implementation correctly threads the new `tasks` and `availableModels` props through the component hierarchy from App.tsx down to QuickEntryBox via Column.tsx, ListView.tsx, and Board.tsx. The data flow follows established patterns and maintains backward compatibility through optional props. All affected test files have been properly updated with appropriate mocks and test coverage."
+    },
+    {
+      "timestamp": "2026-03-31T00:43:05.427Z",
+      "action": "Step 2 (Update and Add Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:07.290Z",
+      "action": "Step 3 (Styling and Polish) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:09.227Z",
+      "action": "Step 3 (Styling and Polish) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:10.412Z",
+      "action": "plan review requested for Step 3 (Update and Add Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T00:43:27.202Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and aligns with the current implementation state. The QuickEntryBox component has been fully implemented with model/dependency features, and the parent components (Column.tsx, ListView.tsx) have been updated to pass the required props. The existing test file already covers most of the critical functionality; the plan correctly identifies the remaining gaps (dropdown mutual exclusivity, blur behavior) that need explicit verification."
+    },
+    {
+      "timestamp": "2026-03-31T00:56:12.702Z",
+      "action": "Step 3 (Styling and Polish) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:14.245Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:22.809Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:56:24.432Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:59:54.328Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:59:56.888Z",
+      "action": "Task KB-171 complete - Added Model and Dependency Buttons to Quick Entry Box",
+      "outcome": "Successfully updated QuickEntryBox to support model/dependency selection by:\n1. App.tsx - Added availableModels state and fetchModels effect, passed availableModels to Board and ListView\n2. Board.tsx - Added availableModels prop and passed to Column\n3. Column.tsx - Added availableModels prop and passed to QuickEntryBox\n4. ListView.tsx - Added availableModels prop and passed to QuickEntryBox with tasks\n5. Board.test.tsx - Updated mock to include availableModels prop\n\nAll 30 QuickEntryBox tests pass, Column (15) and ListView (83) tests pass. Build succeeds."
+    },
+    {
+      "timestamp": "2026-03-31T00:59:58.145Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:00:18.631Z",
+  "createdAt": "2026-03-30T17:40:26.253Z",
+  "updatedAt": "2026-03-31T01:00:18.631Z",
+  "size": "M",
+  "reviewLevel": 2
+}

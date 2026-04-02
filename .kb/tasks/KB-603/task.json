@@ -1,0 +1,108 @@
+{
+  "id": "KB-603",
+  "description": "Automatically save draft of input as the user types. The save button should create the task",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 4,
+  "summary": "Successfully unified task creation experience between QuickEntryBox and InlineCreateCard:\n\n1. **QuickEntryBox Save button** now creates the task (calls `handleSubmit` → `onCreate`) instead of just showing a toast. Updated title to \"Create task\" and removed explicit localStorage.setItem since auto-save useEffect already handles persistence.\n\n2. **InlineCreateCard draft persistence** added via localStorage with key \"kb-inline-create-text\":\n   - Initializes description from localStorage on mount\n   - Persists description to localStorage on every change via useEffect\n   - Clears localStorage after successful task creation\n   - Clears localStorage when user cancels via Escape key\n   - Cleans up localStorage on unmount if empty\n\n3. **Tests updated**:\n   - QuickEntryBox: Save button now tests task creation instead of toast\n   - InlineCreateCard: Added 5 new tests for localStorage persistence (restore, update, clear on create, clear on cancel, empty start)\n   - Added global localStorage.clear() to prevent test isolation issues\n\nAll QuickEntryBox and InlineCreateCard tests pass. Build succeeds.",
+  "createdAt": "2026-03-31T21:39:29.364Z",
+  "updatedAt": "2026-04-01T00:02:17.616Z",
+  "columnMovedAt": "2026-04-01T00:02:17.616Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Modify QuickEntryBox Save Button Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Add Draft Persistence to InlineCreateCard",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:39:29.364Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:46:34.412Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:46:49.865Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, complete, and actionable. All referenced files exist at the specified paths, function names match the actual implementation, and the described behavior changes align with the current code patterns. Steps have concrete, verifiable outcomes with clear testing requirements."
+    },
+    {
+      "timestamp": "2026-03-31T23:45:24.377Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-trail"
+    },
+    {
+      "timestamp": "2026-03-31T23:45:24.379Z",
+      "action": "Step 0 (Modify QuickEntryBox Save Button Behavior) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T23:45:26.186Z",
+      "action": "Step 0 (Modify QuickEntryBox Save Button Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:45:30.826Z",
+      "action": "Step 0 (Modify QuickEntryBox Save Button Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:45:35.168Z",
+      "action": "Step 1 (Add Draft Persistence to InlineCreateCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:45:35.170Z",
+      "action": "plan review requested for Step 1 (Modify QuickEntryBox Save Button Behavior)"
+    },
+    {
+      "timestamp": "2026-03-31T23:45:44.630Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the key behavioral changes needed for the Save button in QuickEntryBox. The approach is sound: changing `handleSaveClick` to trigger actual task creation via `handleSubmit`, removing redundant localStorage operations (since auto-save useEffect already handles persistence), and maintaining proper disabled states. The step appropriately recognizes that test updates will be required."
+    },
+    {
+      "timestamp": "2026-03-31T23:51:32.691Z",
+      "action": "Step 1 (Add Draft Persistence to InlineCreateCard) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:51:32.692Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:51:32.693Z",
+      "action": "plan review requested for Step 2 (Add Draft Persistence to InlineCreateCard)"
+    },
+    {
+      "timestamp": "2026-03-31T23:51:52.932Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step's approach mirrors the proven pattern from QuickEntryBox.tsx. The checklist covers all required behaviors: initialization from localStorage, persistence on change, cleanup on success, and cleanup on cancel. The plan will achieve consistent draft persistence between both task creation surfaces."
+    },
+    {
+      "timestamp": "2026-03-31T23:52:23.456Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:52:23.457Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:58:21.702Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:58:30.122Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

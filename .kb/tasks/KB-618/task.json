@@ -1,0 +1,122 @@
+{
+  "id": "KB-618",
+  "description": "Dashboard Multi-Project UX: Add overview page, project health cards, drill-down navigation, and setup wizard to the dashboard for multi-project management.\n\n1. **Overview Page** (`packages/dashboard/app/routes/overview.tsx`) — New home page showing all registered projects:\n   - Project health cards with status indicators (active/paused/errored)\n   - In-flight task counts, last activity timestamps\n   - Global concurrency usage indicator\n   - \"Add Project\" button that triggers setup wizard\n   - Unified activity feed timeline across all projects\n\n2. **Project Health Cards** — Dashboard cards for each project:\n   - Project name and working directory\n   - Status badge (active/paused/errored)\n   - Task counts by column (triage/todo/in-progress/in-review/done)\n   - Last activity timestamp\n   - Quick actions (pause/resume, open project, remove)\n\n3. **Drill-Down Navigation** — Clicking a project enters the existing board view scoped to that project:\n   - URL routing: `/projects/:projectId/board`, `/projects/:projectId/list`\n   - All existing board/list/detail views work within project context\n   - Breadcrumb navigation back to overview\n   - Project switcher dropdown in header\n\n4. **Setup Wizard** — Interactive wizard for first-time or new project setup:\n   - Directory picker (browse or enter path)\n   - Project name input with auto-suggestion from directory name\n   - Isolation mode selector (in-process default, child-process opt-in)\n   - Validation that directory has `.fusion/` or offer to initialize\n\n5. **API Routes** — New dashboard API endpoints:\n   - `GET /api/projects` — list all projects with health\n   - `POST /api/projects` — register new project\n   - `DELETE /api/projects/:id` — unregister project\n   - `GET /api/projects/:id/health` — project health details\n   - `GET /api/activity-feed` — unified activity feed\n   - `POST /api/projects/:id/pause` / `POST /api/projects/:id/resume`\n\n6. **First Run Experience** — Auto-detect single-project → show migration prompt, or show setup wizard if no projects registered\n\n**File scope:**\n- `packages/dashboard/app/routes/overview.tsx` (new)\n- `packages/dashboard/app/routes/projects/` (new directory)\n- `packages/dashboard/app/components/ProjectCard.tsx` (new)\n- `packages/dashboard/app/components/SetupWizard.tsx` (new)\n- `packages/dashboard/app/components/ActivityFeed.tsx` (new)\n- `packages/dashboard/app/routes.ts` (update routing)\n- `packages/dashboard/app/api.ts` (add project API methods)\n- `packages/dashboard/server/api-routes.ts` (add project endpoints)\n\n**Context:** Read `packages/dashboard/app/api.ts` for existing API patterns, `packages/dashboard/app/routes.ts` for routing structure.",
+  "column": "in-progress",
+  "size": "L",
+  "reviewLevel": 3,
+  "currentStep": 2,
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/sleek-marsh",
+  "createdAt": "2026-03-31T23:26:20.160Z",
+  "updatedAt": "2026-04-01T03:19:10.548Z",
+  "columnMovedAt": "2026-04-01T03:15:21.660Z",
+  "dependencies": [
+    "KB-616"
+  ],
+  "steps": [
+    {
+      "name": "Core Types and API Layer",
+      "status": "done"
+    },
+    {
+      "name": "Server-Side API Routes",
+      "status": "done"
+    },
+    {
+      "name": "ProjectCard Component",
+      "status": "in-progress"
+    },
+    {
+      "name": "ActivityFeed Component",
+      "status": "pending"
+    },
+    {
+      "name": "SetupWizard Component",
+      "status": "pending"
+    },
+    {
+      "name": "Overview Page",
+      "status": "pending"
+    },
+    {
+      "name": "Project Switcher and Drill-Down Routes",
+      "status": "pending"
+    },
+    {
+      "name": "App.tsx Routing Refactor",
+      "status": "pending"
+    },
+    {
+      "name": "First Run Experience",
+      "status": "pending"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:26:20.160Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:32:46.516Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:33:15.617Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, comprehensive specification for implementing multi-project dashboard UX. The spec correctly references existing file patterns (`packages/dashboard/app/App.tsx`, `api.ts`, `Header.tsx`, `routes.ts`, `server.ts`) and follows established conventions in the codebase. Steps have concrete, verifiable outcomes with specific API signatures and component interfaces. The dependency on KB-616 (CentralCore) is appropriately declared, though the implementation is currently blocked pen"
+    },
+    {
+      "timestamp": "2026-04-01T03:15:21.790Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sleek-marsh"
+    },
+    {
+      "timestamp": "2026-04-01T03:15:21.791Z",
+      "action": "Step 0 (Core Types and API Layer) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T03:15:24.981Z",
+      "action": "Step 0 (Core Types and API Layer) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:15:37.375Z",
+      "action": "Step 0 (Preflight) complete - CentralCore API available with: listProjects, registerProject, unregisterProject, getProjectHealth, listAllHealth, getRecentActivity, updateGlobalConcurrency, etc.",
+      "outcome": "Ready to implement. CentralCore is exported from @fusion/core. Dependencies KB-615/616 are satisfied."
+    },
+    {
+      "timestamp": "2026-04-01T03:15:37.377Z",
+      "action": "Step 0 (Core Types and API Layer) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:15:39.983Z",
+      "action": "Step 1 (Server-Side API Routes) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:15:39.984Z",
+      "action": "plan review requested for Step 1 (Core Types and API Layer)"
+    },
+    {
+      "timestamp": "2026-04-01T03:15:59.606Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and achievable. The multi-project types already exist in `packages/core/src/types.ts` (lines 658-727), including `RegisteredProject`, `ProjectHealth`, `CentralActivityLogEntry`, and `GlobalConcurrencyState`. The API methods follow established patterns in `packages/dashboard/app/api.ts`, and the testing infrastructure in `packages/dashboard/app/api.test.ts` provides clear examples to follow."
+    },
+    {
+      "timestamp": "2026-04-01T03:19:10.547Z",
+      "action": "Step 1 (Server-Side API Routes) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:19:10.548Z",
+      "action": "Step 2 (ProjectCard Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:19:10.548Z",
+      "action": "plan review requested for Step 2 (Server-Side API Routes)"
+    }
+  ]
+}

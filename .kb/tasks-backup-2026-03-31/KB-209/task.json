@@ -1,0 +1,161 @@
+{
+  "id": "KB-209",
+  "description": "Fix dashboard useMultiAgentLogs hook tests - 7 tests failing due to EventSource not being a constructor in test environment. Also has issues with duplicate connections and race conditions. Location: packages/dashboard/app/hooks/__tests__/useMultiAgentLogs.test.ts",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Global EventSource Mock to Test Setup",
+      "status": "done"
+    },
+    {
+      "name": "Fix Infinite Loop in useMultiAgentLogs Hook",
+      "status": "done"
+    },
+    {
+      "name": "Refactor Test File to Use Global Mock Pattern",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T21:07:34.464Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T21:12:28.175Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T21:12:46.251Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a high-quality, well-researched specification. The author has done thorough analysis of the failing tests, correctly identified root causes (infinite loop in hook at lines 98-101, local MockEventSource pattern causing race conditions, React Strict Mode double-rendering), and referenced the correct working pattern from `useTasks.test.ts`. All file paths are accurate, steps have concrete verifiable outcomes, and the testing requirements appropriately demand real automated tests with zero f"
+    },
+    {
+      "timestamp": "2026-03-30T23:07:52.324Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pearl-panda"
+    },
+    {
+      "timestamp": "2026-03-30T23:07:52.324Z",
+      "action": "Step 0 (Add Global EventSource Mock to Test Setup) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:08:55.832Z",
+      "action": "Step 0 (Add Global EventSource Mock to Test Setup) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:08:59.698Z",
+      "action": "Step 0 (Add Global EventSource Mock to Test Setup) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:08:59.699Z",
+      "action": "Step 1 (Fix Infinite Loop in useMultiAgentLogs Hook) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:08:59.699Z",
+      "action": "Starting Step 1: Adding global EventSource mock to vitest.setup.ts",
+      "outcome": "Will follow the useTasks.test.ts pattern with static instances array"
+    },
+    {
+      "timestamp": "2026-03-30T23:09:13.889Z",
+      "action": "code review requested for Step 1 (Add Global EventSource Mock to Test Setup)"
+    },
+    {
+      "timestamp": "2026-03-30T23:09:29.252Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The global EventSource mock has been correctly implemented in `vitest.setup.ts` with all required functionality. The mock follows the same pattern as the working `useTasks.test.ts` implementation, with proper static `instances` tracking, lifecycle methods (`addEventListener`, `removeEventListener`, `close`), and `readyState` properties. The beforeEach/afterEach hooks ensure proper test isolation."
+    },
+    {
+      "timestamp": "2026-03-30T23:09:30.677Z",
+      "action": "Step 1 (Fix Infinite Loop in useMultiAgentLogs Hook) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:09:30.678Z",
+      "action": "Step 2 (Refactor Test File to Use Global Mock Pattern) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:09:30.679Z",
+      "action": "plan review requested for Step 2 (Fix Infinite Loop in useMultiAgentLogs Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T23:09:44.070Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan correctly identifies the problematic `setStateMap` call in the initialization loop but misses a critical root cause: the `taskIds` array dependency is unstable and will cause the effect to re-run continuously even after fixing the setStateMap issue. Additionally, the plan doesn't account for the `setStateMap` calls during cleanup when tasks are removed, which also contributes to the infinite loop."
+    },
+    {
+      "timestamp": "2026-03-30T23:10:14.203Z",
+      "action": "code review requested for Step 2 (Fix Infinite Loop in useMultiAgentLogs Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T23:10:39.137Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The infinite loop fix in `useMultiAgentLogs.ts` is correctly implemented. The worker identified that the original code was calling `setStateMap` unconditionally for every task ID on every render, which caused React 19 Strict Mode to trigger re-renders even when returning unchanged state. The fix moves the existence check outside the state update, only calling `setStateMap` when there are actual new tasks to initialize."
+    },
+    {
+      "timestamp": "2026-03-30T23:10:40.942Z",
+      "action": "Step 2 (Refactor Test File to Use Global Mock Pattern) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:10:40.944Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:10:40.946Z",
+      "action": "plan review requested for Step 3 (Refactor Test File to Use Global Mock Pattern)"
+    },
+    {
+      "timestamp": "2026-03-30T23:11:04.877Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes to refactor `useMultiAgentLogs.test.ts` to use the global MockEventSource from `vitest.setup.ts`. The global mock (lines 45-88 in vitest.setup.ts) already has the required static `instances` array, proper lifecycle hooks, and the `_emit` helper. The hook has been fixed in Step 2 (uses `taskIdsKey` and conditional `setStateMap`). The test refactor removes local duplication and aligns with the working pattern from `useTasks.test.ts`."
+    },
+    {
+      "timestamp": "2026-03-30T23:11:32.720Z",
+      "action": "code review requested for Step 3 (Refactor Test File to Use Global Mock Pattern)"
+    },
+    {
+      "timestamp": "2026-03-30T23:12:05.808Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation successfully refactors `useMultiAgentLogs.test.ts` to use the global `MockEventSource` pattern from `vitest.setup.ts`. The test file now properly handles React Strict Mode double-rendering and all 16 tests are structured to work with the global mock. The changes align well with the step requirements and maintain test readability while fixing the race condition issues."
+    },
+    {
+      "timestamp": "2026-03-30T23:12:07.498Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:12:07.500Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:12:07.501Z",
+      "action": "Starting Step 4: Running tests to verify all 16 tests pass",
+      "outcome": "Will run the useMultiAgentLogs test suite first, then full dashboard tests"
+    },
+    {
+      "timestamp": "2026-03-30T23:15:05.947Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:15:05.947Z",
+      "action": "Step 4 complete: All 16 useMultiAgentLogs tests pass",
+      "outcome": "Full test suite shows 4 pre-existing failures in other components (Header, TaskCard, mobile-planning-input-font-size) - these are separate tasks as noted in PROMPT.md. Build passes successfully."
+    },
+    {
+      "timestamp": "2026-03-30T23:15:08.450Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:15:22.891Z",
+  "createdAt": "2026-03-30T21:07:34.464Z",
+  "updatedAt": "2026-03-30T23:15:22.891Z",
+  "size": "M",
+  "reviewLevel": 2
+}

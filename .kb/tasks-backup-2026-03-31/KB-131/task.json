@@ -1,0 +1,118 @@
+{
+  "id": "KB-131",
+  "description": "On mobile don’t zoom in on dashboard text entry boxes like the quick entry or the fields in new task",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Implement mobile-safe task-entry sizing",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:39:11.858Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T07:50:35.240Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T07:52:49.127Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is generally strong: the mission is clear, the referenced implementation files are real, and the test plan requires real automated assertions rather than manual verification. The main blocking problem is that Step 3 requires a changeset for a dashboard-only fix, which conflicts with repository policy because `@kb/dashboard` is a private internal package, not the published `@dustinbyrne/kb` package."
+    },
+    {
+      "timestamp": "2026-03-30T07:53:27.523Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T07:55:23.997Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification is clear, tightly scoped, and grounded in the actual codebase. The referenced implementation points are real and match the current problem: the quick-entry input is `13px` in `packages/dashboard/app/styles.css:6565-6575`, modal text fields are `14px` via the shared form rule at `packages/dashboard/app/styles.css:968-979`, and the viewport meta in `packages/dashboard/app/index.html:5` already avoids the forbidden “disable zoom globally” workaround."
+    },
+    {
+      "timestamp": "2026-03-30T15:33:53.706Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pearl-robin"
+    },
+    {
+      "timestamp": "2026-03-30T15:33:53.707Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:33:56.703Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:34:07.931Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:34:07.932Z",
+      "action": "Step 1 (Implement mobile-safe task-entry sizing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:34:07.932Z",
+      "action": "Step 0 complete. All required files exist and dependencies are satisfied. The current font-size for .quick-entry-input is 13px, which is below the iOS Safari no-zoom threshold of 16px.",
+      "outcome": "Confirmed: Need to add mobile-only CSS to bump task-entry inputs to 16px on mobile viewports."
+    },
+    {
+      "timestamp": "2026-03-30T15:36:10.958Z",
+      "action": "Step 1 complete: Added mobile font-size CSS override and regression tests",
+      "outcome": "All 5 mobile-input-font-size tests pass, and all 34 QuickEntryBox/NewTaskModal tests pass. The CSS now sets 16px font-size for .quick-entry-input and #new-task-description on mobile viewports."
+    },
+    {
+      "timestamp": "2026-03-30T15:36:12.314Z",
+      "action": "Step 1 (Implement mobile-safe task-entry sizing) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:36:12.315Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:37:22.090Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:37:22.092Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:37:22.093Z",
+      "action": "Step 2 complete: All targeted tests pass and build succeeds",
+      "outcome": "48 tests pass in the relevant test files. Build completes successfully. Pre-existing test failures in other files (PlanningModeModal, TaskDetailModal) are unrelated to my changes."
+    },
+    {
+      "timestamp": "2026-03-30T15:37:39.724Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:37:39.725Z",
+      "action": "Step 3 complete: Documentation updated and out-of-scope issues created as new tasks",
+      "outcome": "Added Mobile Task Entry section to README.md. Created KB-165 and KB-166 for pre-existing test failures. No changeset needed as this is a private package change."
+    },
+    {
+      "timestamp": "2026-03-30T15:37:44.517Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:38:33.613Z",
+  "createdAt": "2026-03-30T06:39:11.858Z",
+  "updatedAt": "2026-03-30T15:38:33.613Z",
+  "size": "S",
+  "reviewLevel": 1
+}

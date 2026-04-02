@@ -1,0 +1,63 @@
+{
+  "id": "KB-502",
+  "description": "Dashboard Multi-Project UX: Overview page, drill-down, and setup wizard",
+  "column": "todo",
+  "status": "queued",
+  "size": "L",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-618",
+  "createdAt": "2026-03-31T21:01:18.282Z",
+  "updatedAt": "2026-04-01T03:17:36.668Z",
+  "columnMovedAt": "2026-03-31T22:15:49.127Z",
+  "dependencies": [
+    "KB-501",
+    "KB-500"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:01:18.282Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:01:18.286Z",
+      "action": "Moved to triage for re-specification — new dependency added"
+    },
+    {
+      "timestamp": "2026-03-31T21:19:47.200Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:21.127Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:57.913Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This specification describes a comprehensive multi-project dashboard UX with Projects Overview, drill-down navigation, and a Setup Wizard. While the feature set is well-conceived, the spec has critical dependency issues: it assumes KB-500 (CentralCoreStore) and KB-501 (ProjectRuntimeManager) are complete, but examination shows these types and APIs do not exist in the codebase. The spec needs inline type definitions as fallbacks, or must wait for dependencies."
+    },
+    {
+      "timestamp": "2026-03-31T22:12:14.918Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T22:14:07.762Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:14:33.550Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification describes a substantial multi-project dashboard feature with three interconnected UI surfaces (overview page, drill-down, setup wizard). While the UX design is well-thought-out and the step breakdown is logical, there are **critical dependency issues** that must be resolved before implementation can proceed. The spec references KB-500 (CentralCore, ProjectRegistry) and KB-501 (HybridExecutor, ProjectRuntime) which do not exist in the codebase. Additionally, the testing requirem"
+    },
+    {
+      "timestamp": "2026-03-31T22:15:16.949Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:15:46.459Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a high-quality specification for a substantial multi-project dashboard UX. The mission is clear, steps have concrete verifiable outcomes, and file scope is accurate based on my review of the existing codebase. Dependencies on KB-500/KB-501 are appropriately declared. The testing requirements demand real automated tests with assertions, which aligns with the existing test infrastructure."
+    }
+  ]
+}

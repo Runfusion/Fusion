@@ -1,0 +1,110 @@
+{
+  "id": "KB-106",
+  "description": "ntfy is failing with too many requests - only send once and when a task is completed",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove Duplicate Notification Handler",
+      "status": "done"
+    },
+    {
+      "name": "Add Per-Event-Type Deduplication",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T05:06:28.766Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T05:21:33.346Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:21:43.087Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes the duplicate notification bug and provides a clear, verifiable fix. The mission is well-scoped to a small S-sized task with concrete outcomes. All referenced files exist and the described behavior matches the actual code."
+    },
+    {
+      "timestamp": "2026-03-30T14:31:33.597Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sharp-dune"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:33.598Z",
+      "action": "Step 0 (Remove Duplicate Notification Handler) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:44.724Z",
+      "action": "Step 0 (Remove Duplicate Notification Handler) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:46.392Z",
+      "action": "plan review requested for Step 1 (Remove Duplicate Notification Handler)"
+    },
+    {
+      "timestamp": "2026-03-30T14:31:57.896Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the duplicate notification source and provides a clean, minimal fix. Removing the `to === \"done\"` block from `handleTaskMoved` (notifier.ts lines 99-107) will eliminate the duplicate while keeping `handleTaskMerged` as the single source of truth for merged notifications. The debounce mechanism will continue to work for rapid column transitions."
+    },
+    {
+      "timestamp": "2026-03-30T14:32:03.209Z",
+      "action": "Step 1 (Add Per-Event-Type Deduplication) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:32:47.960Z",
+      "action": "Step 1 (Add Per-Event-Type Deduplication) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:32:47.963Z",
+      "action": "Completed Step 1: Removed duplicate \"done\" notification from handleTaskMoved. The merged notification now only comes from handleTaskMerged."
+    },
+    {
+      "timestamp": "2026-03-30T14:33:48.738Z",
+      "action": "Step 2 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:33:48.740Z",
+      "action": "Completed Step 2: Added per-event-type deduplication using a Set to track (taskId, eventType) tuples."
+    },
+    {
+      "timestamp": "2026-03-30T14:33:50.004Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:33:50.004Z",
+      "action": "Completed Step 3: Updated all tests to reflect the new single-notification behavior and added tests for per-event-type deduplication."
+    },
+    {
+      "timestamp": "2026-03-30T14:33:52.881Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:34:55.741Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:35:04.602Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T14:35:21.432Z",
+  "createdAt": "2026-03-30T05:06:28.766Z",
+  "updatedAt": "2026-03-30T14:35:21.432Z",
+  "size": "S",
+  "reviewLevel": 1
+}

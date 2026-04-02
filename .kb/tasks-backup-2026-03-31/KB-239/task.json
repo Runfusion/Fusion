@@ -1,0 +1,105 @@
+{
+  "id": "KB-239",
+  "title": "In the inline-editor models selector it renders below",
+  "description": "In the inline-editor \"models\" selector, it renders below the card boundary so the model selector is cut off and it pushes the card to the side",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Fix Dropdown z-index",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:11:00.066Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:44.501Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:11:57.506Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification correctly identifies the dropdown clipping issue and the root cause (z-index of 50 being too low compared to dep-dropdown's 200). However, there's a factual error regarding `quick-entry-model-wrap` positioning, and the testing requirement needs clarification on what constitutes meaningful verification."
+    },
+    {
+      "timestamp": "2026-03-31T02:12:06.536Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:12:23.431Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is technically accurate and well-scoped. All referenced CSS classes and line numbers exist in `styles.css` as documented, and the React components (`QuickEntryBox.tsx` and `InlineCreateCard.tsx`) correctly use the `inline-create-model-dropdown` class. The proposed z-index increase from 50 to 500 is appropriate given the `.dep-dropdown` reference at 200. The sizing (S) and review level (1) are appropriate for this isolated CSS fix."
+    },
+    {
+      "timestamp": "2026-03-31T02:13:07.212Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gilt-olive"
+    },
+    {
+      "timestamp": "2026-03-31T02:13:07.212Z",
+      "action": "Step 0 (Fix Dropdown z-index) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T02:13:18.621Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:13:18.623Z",
+      "action": "Preflight complete. Context verified:\n- .inline-create-model-dropdown has z-index: 50 (needs change to 500)\n- .dep-dropdown has z-index: 200 (reference - working)\n- .model-combobox-dropdown has z-index: 100\n- .inline-create-model-wrap has position: relative ✓\n- .quick-entry-model-wrap has position: relative ✓\n- Both QuickEntryBox and InlineCreateCard use the same CSS class"
+    },
+    {
+      "timestamp": "2026-03-31T02:13:19.616Z",
+      "action": "plan review requested for Step 1 (Fix Dropdown z-index)"
+    },
+    {
+      "timestamp": "2026-03-31T02:13:34.166Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause: `.inline-create-model-dropdown` has `z-index: 50` which is lower than `.dep-dropdown`'s `z-index: 200`, causing rendering issues. Increasing to `500` follows the established pattern in the codebase. The positioning contexts (`.inline-create-model-wrap` and `.quick-entry-model-wrap` with `position: relative`) are already properly set up."
+    },
+    {
+      "timestamp": "2026-03-31T02:13:39.159Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:13:39.160Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:15:33.523Z",
+      "action": "Step 2 verification complete",
+      "outcome": "Build passes successfully. 2 pre-existing test failures are unrelated to CSS z-index change (mobile font-size test and React render optimization test). No z-index or dropdown-specific tests exist in the test suite. CSS modification is valid and builds correctly."
+    },
+    {
+      "timestamp": "2026-03-31T02:15:34.356Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:15:35.644Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:15:40.914Z",
+      "action": "Step 0 (Fix Dropdown z-index) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:15:40.917Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T02:16:40.878Z",
+  "createdAt": "2026-03-31T02:11:00.066Z",
+  "updatedAt": "2026-03-31T02:16:40.878Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,32 @@
+{
+  "id": "KB-651",
+  "description": "When clicking files changed, the file editor should only show changed files and show a diff view of the changes",
+  "column": "todo",
+  "status": "queued",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-618",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "createdAt": "2026-04-01T02:35:50.893Z",
+  "updatedAt": "2026-04-01T03:17:36.847Z",
+  "columnMovedAt": "2026-04-01T02:41:37.980Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:35:50.893Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:41:05.995Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:41:36.227Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification that correctly references existing patterns in the codebase. The spec accurately identifies real files, functions, and CSS classes. The step breakdown follows a logical progression from backend API to frontend components to integration. The size (M) and review level (2) are appropriate for the scope. Testing requirements align with existing patterns using vitest and testing-library."
+    }
+  ]
+}

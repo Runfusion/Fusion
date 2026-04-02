@@ -1,0 +1,90 @@
+{
+  "id": "KB-612",
+  "description": "The time setting for stuck tasks should be in minutes - let the user type minutes and convert it internally as needed",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 4,
+  "summary": "Successfully converted the Stuck Task Timeout setting from milliseconds to minutes input. Updated SettingsModal.tsx to show \"Stuck Task Timeout (minutes)\" with step=1 and min=1, converting user input (minutes) to milliseconds internally (× 60000) and displaying stored milliseconds as minutes (÷ 60000). Updated all 5 related tests and fixed a pre-existing test that didn't account for the Backups section. Created a minor changeset for this UX improvement. All 88 SettingsModal tests pass. Manual verification confirms correct conversion: 10 minutes → 600000ms storage → displays as 10, and empty input correctly disables the feature.",
+  "createdAt": "2026-03-31T21:52:40.047Z",
+  "updatedAt": "2026-04-01T00:34:16.170Z",
+  "columnMovedAt": "2026-04-01T00:34:16.170Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update SettingsModal.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Update SettingsModal Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:52:40.047Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T22:52:18.675Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:52:33.830Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a straightforward UI-only change. The mission is clear, steps have concrete verifiable outcomes, and all file references are accurate. The testing requirements demand real automated tests with specific assertions. The \"Do NOT\" section correctly guards against scope creep."
+    },
+    {
+      "timestamp": "2026-04-01T00:30:56.152Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/clear-brook"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:56.153Z",
+      "action": "Step 0 (Update SettingsModal.tsx) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T00:31:03.916Z",
+      "action": "Step 0 (Update SettingsModal.tsx) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:31:04.765Z",
+      "action": "Step 1 (Update SettingsModal Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:31:11.406Z",
+      "action": "Step 1 (Update SettingsModal Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:31:11.407Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:31:34.710Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:31:34.712Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:33:57.521Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:04.850Z",
+      "action": "Step 0 (Update SettingsModal.tsx) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:34:04.852Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

@@ -1,0 +1,110 @@
+{
+  "id": "KB-223",
+  "title": "Add dashboard settings UI field for taskStuckTimeoutMs setting",
+  "description": "Add dashboard settings UI field for `taskStuckTimeoutMs` setting. The stuck task detection feature (KB-206) added a new `taskStuckTimeoutMs` setting to the Settings type, but the dashboard Settings modal doesn't have a field for configuring it. Add a numeric input field in the Settings UI to allow users to enable/configure the stuck task timeout from the web dashboard.",
+  "column": "done",
+  "dependencies": [
+    "KB-206"
+  ],
+  "steps": [
+    {
+      "name": "Add taskStuckTimeoutMs Field to SettingsModal",
+      "status": "done"
+    },
+    {
+      "name": "Add Test Coverage",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:14:23.798Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:19:26.033Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:19:36.448Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a straightforward UI addition. The spec correctly identifies the existing patterns in `SettingsModal.tsx` and the `Settings` type in core, and provides concrete implementation guidance with verifiable outcomes for each step."
+    },
+    {
+      "timestamp": "2026-03-31T01:22:48.482Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/coral-cliff"
+    },
+    {
+      "timestamp": "2026-03-31T01:22:48.482Z",
+      "action": "Step 0 (Add taskStuckTimeoutMs Field to SettingsModal) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:22:50.588Z",
+      "action": "Step 0 (Add taskStuckTimeoutMs Field to SettingsModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:22:53.377Z",
+      "action": "Step 0 (Add taskStuckTimeoutMs Field to SettingsModal) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:22:53.379Z",
+      "action": "Preflight complete: Read SettingsModal.tsx, test file, and types.ts. The taskStuckTimeoutMs setting already exists in types.ts with default undefined. Will add numeric input field in the Scheduling section following the existing pattern for maxConcurrent and pollIntervalMs."
+    },
+    {
+      "timestamp": "2026-03-31T01:22:55.143Z",
+      "action": "plan review requested for Step 1 (Add taskStuckTimeoutMs Field to SettingsModal)"
+    },
+    {
+      "timestamp": "2026-03-31T01:23:07.931Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the location (scheduling section), field specifications, and value handling logic for the new `taskStuckTimeoutMs` setting. The approach follows established patterns in the codebase for optional numeric settings with undefined-as-disabled semantics, similar to how `taskPrefix` and `ntfyTopic` handle empty/undefined conversion."
+    },
+    {
+      "timestamp": "2026-03-31T01:23:12.406Z",
+      "action": "Step 1 (Add Test Coverage) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:23:16.971Z",
+      "action": "Step 1 (Add Test Coverage) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:23:16.971Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:23:30.907Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:23:30.909Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:25:12.869Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:25:12.870Z",
+      "action": "Step 3 complete: All 75 SettingsModal tests pass including 4 new tests for taskStuckTimeoutMs field. Dashboard typecheck and build succeed.",
+      "outcome": "Numeric input field for taskStuckTimeoutMs added to Scheduling section with proper min=0, step=60000, helper text, and undefined/0 handling. Test coverage includes field presence, value saving, empty/0 handling, and helper text verification."
+    },
+    {
+      "timestamp": "2026-03-31T01:25:18.297Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:25:28.991Z",
+  "createdAt": "2026-03-31T00:14:23.798Z",
+  "updatedAt": "2026-03-31T01:25:28.991Z",
+  "size": "S",
+  "reviewLevel": 1
+}

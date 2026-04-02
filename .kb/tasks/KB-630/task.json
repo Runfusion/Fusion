@@ -1,0 +1,105 @@
+{
+  "id": "KB-630",
+  "description": "Subtasks that are created should use the model of the parent unless otherwise specified",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 4,
+  "summary": "Implemented parent task model inheritance for subtasks. Modified `/subtasks/create-tasks` endpoint in routes.ts and `taskCreate` tool in triage.ts to pass parent task's model fields (`modelProvider`, `modelId`, `validatorModelProvider`, `validatorModelId`) to subtasks. Added 4 new tests (2 for dashboard, 2 for engine) verifying inheritance and graceful fallback when parent is missing. Build passes, all new tests pass, changeset created.",
+  "createdAt": "2026-03-31T23:41:34.221Z",
+  "updatedAt": "2026-04-01T01:32:02.156Z",
+  "columnMovedAt": "2026-04-01T01:32:02.156Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Dashboard Subtask Breakdown Model Inheritance",
+      "status": "done"
+    },
+    {
+      "name": "Triage Agent Subtask Creation Model Inheritance",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:41:34.221Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:43:10.468Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:43:32.021Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification clearly defines the mission: ensuring subtasks inherit parent task AI model settings (`modelProvider`, `modelId`, `validatorModelProvider`, `validatorModelId`) in both the dashboard subtask breakdown and triage agent flows. The approach is sound—fetch the parent task and pass its model fields during subtask creation. However, there is a significant line number inaccuracy in the triage.ts reference that should be corrected to prevent implementation confusion."
+    },
+    {
+      "timestamp": "2026-04-01T01:27:01.367Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/swift-falcon"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:01.368Z",
+      "action": "Step 0 (Dashboard Subtask Breakdown Model Inheritance) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:03.978Z",
+      "action": "Step 0 (Dashboard Subtask Breakdown Model Inheritance) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:18.759Z",
+      "action": "Step 0 (Dashboard Subtask Breakdown Model Inheritance) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:19.656Z",
+      "action": "Step 1 (Triage Agent Subtask Creation Model Inheritance) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:26.564Z",
+      "action": "Modified /subtasks/create-tasks endpoint to inherit parent task model fields",
+      "outcome": "Subtasks now inherit modelProvider, modelId, validatorModelProvider, and validatorModelId from parent task when parentTaskId is provided"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:27.316Z",
+      "action": "Step 1 (Triage Agent Subtask Creation Model Inheritance) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:29.010Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:38.526Z",
+      "action": "Modified taskCreate tool in triage.ts to inherit parent task model fields",
+      "outcome": "Subtasks created by the triage agent now inherit modelProvider, modelId, validatorModelProvider, and validatorModelId from the parent task"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:41.169Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:42.463Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:31:40.048Z",
+      "action": "Tests passed for subtask model inheritance features",
+      "outcome": "5 subtask-related tests pass, 2 triage model inheritance tests pass, build succeeds"
+    },
+    {
+      "timestamp": "2026-04-01T01:31:41.231Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:31:49.592Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

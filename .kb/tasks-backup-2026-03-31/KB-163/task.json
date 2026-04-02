@@ -1,0 +1,196 @@
+{
+  "id": "KB-163",
+  "description": "In list view there is a model and dependency selector in the inline new task area, lets have the same in the board inline entry box",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update QuickEntryBox with Rich Creation UI",
+      "status": "done"
+    },
+    {
+      "name": "Update Column Component Props",
+      "status": "done"
+    },
+    {
+      "name": "Update Board Component Props",
+      "status": "done"
+    },
+    {
+      "name": "Update App.tsx Handler",
+      "status": "done"
+    },
+    {
+      "name": "Add Required Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T15:31:21.425Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T15:33:24.835Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T15:33:40.092Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification that accurately describes bringing rich task creation capabilities from the list view's `InlineCreateCard` to the board view's `QuickEntryBox`. The spec correctly identifies all affected files, references real existing patterns, and provides concrete implementation steps with verifiable outcomes."
+    },
+    {
+      "timestamp": "2026-03-31T00:22:58.685Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/early-trout"
+    },
+    {
+      "timestamp": "2026-03-31T00:22:58.686Z",
+      "action": "Step 0 (Update QuickEntryBox with Rich Creation UI) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:23:51.843Z",
+      "action": "Step 0 (Update QuickEntryBox with Rich Creation UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:23:58.584Z",
+      "action": "Step 0 (Update QuickEntryBox with Rich Creation UI) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:23:58.585Z",
+      "action": "Preflight complete - read all context files including InlineCreateCard.tsx, QuickEntryBox.tsx, Column.tsx, Board.tsx, App.tsx, tests, and styles"
+    },
+    {
+      "timestamp": "2026-03-31T00:24:00.356Z",
+      "action": "Step 1 (Update Column Component Props) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:24:02.656Z",
+      "action": "plan review requested for Step 1 (Update QuickEntryBox with Rich Creation UI)"
+    },
+    {
+      "timestamp": "2026-03-31T00:24:26.555Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and comprehensive. The checkboxes cover all necessary interface changes, state management, user interactions, and integration points. The approach correctly mirrors the existing `InlineCreateCard` patterns while adapting them for QuickEntryBox's rapid-entry UX paradigm."
+    },
+    {
+      "timestamp": "2026-03-31T00:24:55.261Z",
+      "action": "code review requested for Step 1 (Update QuickEntryBox with Rich Creation UI)"
+    },
+    {
+      "timestamp": "2026-03-31T00:25:24.069Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The QuickEntryBox component has been updated with the rich creation UI structure matching InlineCreateCard patterns, but **critical gaps exist**: (1) Existing tests still expect the old string-based `onCreate` API and will fail, (2) Required CSS classes for the new UI controls are missing, and (3) No tests have been added for the new functionality (dependency selection, model selectors, break-into-subtasks). These issues must be addressed before proceeding to Step 2."
+    },
+    {
+      "timestamp": "2026-03-31T00:26:00.254Z",
+      "action": "code review requested for Step 1 (Update QuickEntryBox with Rich Creation UI)"
+    },
+    {
+      "timestamp": "2026-03-31T00:26:27.280Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation of Step 1 is well-executed and comprehensive. The `QuickEntryBox` component has been successfully enhanced with rich creation capabilities matching the `InlineCreateCard` pattern. The code follows existing project conventions, includes extensive test coverage, and maintains backward compatibility while adding the new features."
+    },
+    {
+      "timestamp": "2026-03-31T00:26:28.754Z",
+      "action": "Step 1 (Update Column Component Props) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:26:28.756Z",
+      "action": "Step 1 complete - QuickEntryBox now has rich creation UI with model selector, dependency dropdown, and break-into-subtasks toggle"
+    },
+    {
+      "timestamp": "2026-03-31T00:26:30.648Z",
+      "action": "Step 2 (Update Board Component Props) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:26:30.650Z",
+      "action": "plan review requested for Step 2 (Update Column Component Props)"
+    },
+    {
+      "timestamp": "2026-03-31T00:26:58.908Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan correctly identifies the need to update the `onQuickCreate` signature and pass `tasks` to `QuickEntryBox`, but it has a critical gap: Column only receives filtered column-specific tasks, but `QuickEntryBox` needs ALL tasks for dependency selection. The plan also contains a confusing typo suggesting `allTasks` should be passed as `availableModels`."
+    },
+    {
+      "timestamp": "2026-03-31T00:27:13.627Z",
+      "action": "Step 2 (Update Board Component Props) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:27:15.338Z",
+      "action": "Step 3 (Update App.tsx Handler) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:27:15.340Z",
+      "action": "plan review requested for Step 3 (Update Board Component Props)"
+    },
+    {
+      "timestamp": "2026-03-31T00:27:32.583Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is sound and correctly identifies the necessary changes to align the Board component with the updated Column and QuickEntryBox interfaces. The two checkboxes properly cover the required work: updating the `onQuickCreate` prop signature to accept `TaskCreateInput` instead of `string`, and ensuring the `tasks` (via `allTasks`) flow through to QuickEntryBox for dependency selection."
+    },
+    {
+      "timestamp": "2026-03-31T00:27:43.086Z",
+      "action": "Step 3 (Update App.tsx Handler) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:27:44.803Z",
+      "action": "Step 4 (Add Required Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:27:44.803Z",
+      "action": "plan review requested for Step 4 (Update App.tsx Handler)"
+    },
+    {
+      "timestamp": "2026-03-31T00:28:09.621Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The plan for Step 4 has a **critical oversight**: it fails to account for `ListView.tsx`, which also consumes `handleQuickCreate` but still expects the **old signature** `(description: string)`. If App.tsx is updated to the new `TaskCreateInput` signature without modifying ListView, the list view's quick entry will break. Additionally, the \"Keep toast notification\" checkbox is misleading since `handleQuickCreate` currently has no toast handling—error toasts are managed within `QuickEntryBox` its"
+    },
+    {
+      "timestamp": "2026-03-31T00:32:52.826Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T00:33:11.746Z",
+      "action": "Step 4 (Add Required Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:33:11.748Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:08.850Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:08.851Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:13.113Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:38:16.033Z",
+      "action": "Completed KB-163 - Add Model and Dependency Selectors to Board Quick Entry",
+      "outcome": "All 7 steps complete. Key changes made:\n\n1. Fixed QuickEntryBox.tsx - Added `justResetRef` to prevent controls from showing after successful task creation (the auto-focus useEffect was triggering expand on focus after reset)\n\n2. Updated App.tsx - Changed `handleQuickCreate` to `handleBoardQuickCreate` with TaskCreateInput signature, updated both Board and ListView references\n\n3. Updated ListView.tsx - Changed onQuickCreate prop from `(description: string)` to `(input: TaskCreateInput)`\n\n4. Updated ListView.test.tsx - Changed test expectations to match TaskCreateInput format\n\nAll 30 QuickEntryBox tests and 83 ListView tests pass. The dashboard build completes successfully (vite build passes, tsc has pre-existing github.ts issues unrelated to this task)."
+    },
+    {
+      "timestamp": "2026-03-31T00:38:17.475Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:38:30.274Z",
+  "createdAt": "2026-03-30T15:31:21.425Z",
+  "updatedAt": "2026-03-31T00:38:30.274Z",
+  "size": "M",
+  "reviewLevel": 2
+}

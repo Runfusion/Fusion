@@ -1,0 +1,34 @@
+{
+  "id": "KB-636",
+  "description": "KB-628e — Final Integration: Testing, Documentation, and Polish. Complete the Missions system by performing comprehensive end-to-end testing, updating all documentation, adding the final integration touches, and ensuring the entire feature is production-ready. This task serves as the final quality gate before the Missions system can be considered fully implemented. See `.fusion/tasks/KB-628e/PROMPT.md` for full specification.",
+  "column": "todo",
+  "status": "queued",
+  "size": "L",
+  "reviewLevel": 3,
+  "currentStep": 0,
+  "createdAt": "2026-04-01T01:05:39.475Z",
+  "updatedAt": "2026-04-01T03:17:36.843Z",
+  "columnMovedAt": "2026-04-01T01:14:44.800Z",
+  "dependencies": [
+    "KB-632",
+    "KB-633",
+    "KB-634",
+    "KB-635"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T01:05:39.475Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T01:14:17.643Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T01:14:40.669Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a comprehensive and well-structured specification for the final integration task of the Missions system. The spec correctly identifies all cross-cutting concerns across 4 previous tasks (KB-632 through KB-635) and provides concrete, verifiable outcomes for each step. The testing strategy is thorough, requiring both automated tests (3 new test files) and manual workflow verification. Documentation requirements appropriately target user-facing surfaces (README.md, CLI help text, changeset)"
+    }
+  ]
+}

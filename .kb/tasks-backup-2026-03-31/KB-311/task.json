@@ -1,0 +1,129 @@
+{
+  "id": "KB-311",
+  "description": "Reduce the size of the Id column in the list view",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Current ID Column Sizing",
+      "status": "done"
+    },
+    {
+      "name": "Implement Compact ID Column Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T17:34:23.580Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T17:36:18.213Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T17:36:30.687Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-scoped, accurate, and actionable. The task correctly identifies the CSS selectors needed (`.list-cell-id` and `.list-table th:first-child.list-header-cell`), references real files and line numbers that match the codebase, and has appropriate testing requirements for a CSS-only change. The Size \"S\" and Review Level 1 (Plan Only) are correctly assessed for this low-risk visual tweak."
+    },
+    {
+      "timestamp": "2026-03-31T18:31:42.429Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/lunar-wren"
+    },
+    {
+      "timestamp": "2026-03-31T18:31:42.430Z",
+      "action": "Step 0 (Analyze Current ID Column Sizing) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T18:31:44.483Z",
+      "action": "Step 0 (Analyze Current ID Column Sizing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:31:49.961Z",
+      "action": "Step 0 (Analyze Current ID Column Sizing) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:31:51.429Z",
+      "action": "Step 1 (Implement Compact ID Column Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:31:54.235Z",
+      "action": "plan review requested for Step 1 (Analyze Current ID Column Sizing)"
+    },
+    {
+      "timestamp": "2026-03-31T18:32:07.958Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is appropriate and well-scoped. The current CSS already shows some optimization attempts (reduced right padding in `.list-cell-id`), but further tightening is possible. The approach correctly identifies the key files and focuses on CSS-only changes without touching TypeScript/JSX logic. The test coverage is comprehensive and should catch any regressions."
+    },
+    {
+      "timestamp": "2026-03-31T18:32:10.866Z",
+      "action": "Step 1 (Implement Compact ID Column Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:32:11.634Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:32:12.993Z",
+      "action": "plan review requested for Step 2 (Implement Compact ID Column Styles)"
+    },
+    {
+      "timestamp": "2026-03-31T18:32:32.393Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and will achieve the stated outcome of a more compact ID column. The approach correctly identifies the CSS rules to modify (`.list-cell-id` and `.list-table th:first-child.list-header-cell`) and includes appropriate verification steps for text alignment, `white-space: nowrap`, and the sorting interaction."
+    },
+    {
+      "timestamp": "2026-03-31T18:32:45.360Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:32:46.154Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:32:49.692Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:32:51.280Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:35:37.531Z",
+      "action": "ListView tests verified: 86 tests passed",
+      "outcome": "All existing ListView tests pass with the new compact ID column styles"
+    },
+    {
+      "timestamp": "2026-03-31T18:35:38.361Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:35:39.719Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:35:45.177Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:35:49.497Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:35:55.420Z",
+  "createdAt": "2026-03-31T17:34:23.580Z",
+  "updatedAt": "2026-03-31T18:35:55.420Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Reduced the ID column width in the dashboard list view by updating CSS in packages/dashboard/app/styles.css. Changes include: reducing .list-cell-id padding from 12px 8px 12px 16px to 12px 4px 12px 12px, adding max-width: 72px to constrain the column, and updating the header cell to match data cell padding. All 86 ListView tests pass. Created changeset file for patch release."
+}

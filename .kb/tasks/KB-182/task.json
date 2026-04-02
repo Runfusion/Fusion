@@ -1,0 +1,119 @@
+{
+  "id": "KB-182",
+  "description": "Examine things that have been added to the dashboard but don't have CLI equivalents, create sub tasks for the most critical things we should add",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Dashboard Routes",
+      "status": "done"
+    },
+    {
+      "name": "Analyze CLI Coverage",
+      "status": "done"
+    },
+    {
+      "name": "Identify Critical Gaps",
+      "status": "done"
+    },
+    {
+      "name": "Create Subtasks",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:56:19.613Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:02:22.086Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:02:41.340Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification is well-structured and accurately describes an analysis/planning task to audit dashboard API routes and identify missing CLI features. The mission is clear, the file references are correct, and the step outcomes are verifiable. The review level of 1 (Plan Only) is appropriate for this analysis work."
+    },
+    {
+      "timestamp": "2026-03-30T19:11:29.454Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/clear-crane"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:29.455Z",
+      "action": "Step 0 (Analyze Dashboard Routes) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:31.542Z",
+      "action": "Step 0 (Analyze Dashboard Routes) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:35.400Z",
+      "action": "Step 0 (Analyze Dashboard Routes) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:35.401Z",
+      "action": "Step 1 (Analyze CLI Coverage) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:40.890Z",
+      "action": "Step 1 (Analyze CLI Coverage) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:40.891Z",
+      "action": "Completed comprehensive analysis of dashboard routes, CLI commands, and Pi extension tools. Identified 60+ dashboard endpoints vs 20+ CLI commands.",
+      "outcome": "Gap analysis shows critical missing features: task deletion, retry, PR creation, settings management, agent logs, git operations, and steering comments."
+    },
+    {
+      "timestamp": "2026-03-30T19:11:56.271Z",
+      "action": "Step 1 (Analyze CLI Coverage) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:56.272Z",
+      "action": "Step 2 (Identify Critical Gaps) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:57.336Z",
+      "action": "Step 2 (Identify Critical Gaps) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:11:57.337Z",
+      "action": "Step 3 (Create Subtasks) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:12:18.252Z",
+      "action": "Step 3 (Create Subtasks) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:12:18.252Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:12:18.253Z",
+      "action": "Created 7 subtasks from gap analysis: KB-198 (delete), KB-199 (retry), KB-200 (pr-create), KB-201 (settings), KB-202 (logs), KB-203 (git), KB-204 (steer)",
+      "outcome": "Subtasks created with clear acceptance criteria and dependencies on KB-182"
+    },
+    {
+      "timestamp": "2026-03-30T19:12:24.598Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:12:24.599Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:12:24.599Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:12:27.684Z",
+  "createdAt": "2026-03-30T17:56:19.613Z",
+  "updatedAt": "2026-03-30T19:12:27.684Z",
+  "size": "M",
+  "reviewLevel": 1
+}

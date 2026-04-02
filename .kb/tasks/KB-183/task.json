@@ -1,0 +1,112 @@
+{
+  "id": "KB-183",
+  "description": "In settings for model selection, use the same consolidated dropdown/filter as used on model cards",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Replace Model Selector in SettingsModal",
+      "status": "done"
+    },
+    {
+      "name": "Update SettingsModal Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:58:18.033Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:02:25.550Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:02:36.589Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a straightforward UI consolidation task. The spec accurately identifies the current implementation in `SettingsModal.tsx`, correctly maps the `CustomModelDropdown` component interface, and provides concrete, verifiable outcomes for each step. The file scope is appropriate, testing requirements are clear, and the sizing/review level (S, Review Level 1) matches the work complexity."
+    },
+    {
+      "timestamp": "2026-03-30T19:12:29.487Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bright-wren"
+    },
+    {
+      "timestamp": "2026-03-30T19:12:29.488Z",
+      "action": "Step 0 (Replace Model Selector in SettingsModal) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:13:08.810Z",
+      "action": "Step 0 (Replace Model Selector in SettingsModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:13:12.717Z",
+      "action": "Step 0 (Replace Model Selector in SettingsModal) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:13:12.718Z",
+      "action": "Step 1 (Update SettingsModal Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:13:12.719Z",
+      "action": "plan review requested for Step 1 (Replace Model Selector in SettingsModal)"
+    },
+    {
+      "timestamp": "2026-03-30T19:13:28.601Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and achievable. The checkboxes correctly identify the necessary changes: removing the legacy `modelFilter` state and `filterModels` import, integrating `CustomModelDropdown`, and preserving the existing value format (`provider/modelId` or empty string). The component interface aligns perfectly with SettingsModal's current data handling patterns."
+    },
+    {
+      "timestamp": "2026-03-30T19:13:59.187Z",
+      "action": "Step 1 (Update SettingsModal Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:13:59.188Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:13:59.188Z",
+      "action": "plan review requested for Step 2 (Update SettingsModal Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T19:14:13.912Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan provides a solid approach for updating the SettingsModal tests to work with CustomModelDropdown. The checklist items correctly identify the key test changes needed: converting SELECT-based assertions to button-trigger interactions, replacing fireEvent.change with click+select patterns, and adapting filter tests to use the dropdown's internal search. The reference to ModelSelectorTab.test.tsx is appropriate as it contains well-established testing patterns for this component."
+    },
+    {
+      "timestamp": "2026-03-30T19:14:50.131Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:14:50.132Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:16:05.568Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:16:05.569Z",
+      "action": "SettingsModal CustomModelDropdown integration complete",
+      "outcome": "All 65 SettingsModal tests pass. Build succeeds. Component now uses CustomModelDropdown for consistent UX with model cards."
+    },
+    {
+      "timestamp": "2026-03-30T19:16:06.755Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:17:04.391Z",
+  "createdAt": "2026-03-30T17:58:18.033Z",
+  "updatedAt": "2026-03-30T19:17:04.391Z",
+  "size": "S",
+  "reviewLevel": 1
+}

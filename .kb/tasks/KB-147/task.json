@@ -1,0 +1,186 @@
+{
+  "id": "KB-147",
+  "description": "In dashboard settings allow setting a model for planning separate from execution. Also have separate model for verification",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Extend Core Settings Types",
+      "status": "done"
+    },
+    {
+      "name": "Add Model Selection UI in Settings",
+      "status": "done"
+    },
+    {
+      "name": "Update Triage to Use Planning Model",
+      "status": "done"
+    },
+    {
+      "name": "Update Reviewer to Use Validator Model",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T14:01:04.093Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T14:28:56.181Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T14:29:15.670Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. All referenced source files exist and contain the expected patterns. The mission is clear, steps have concrete verifiable outcomes, and the file scope correctly identifies all files needing modification. Testing requirements demand real automated tests."
+    },
+    {
+      "timestamp": "2026-03-31T06:56:06.623Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-orbit"
+    },
+    {
+      "timestamp": "2026-03-31T06:56:06.623Z",
+      "action": "Step 0 (Extend Core Settings Types) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T06:56:08.609Z",
+      "action": "Step 0 (Extend Core Settings Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:56:19.665Z",
+      "action": "Step 0 (Extend Core Settings Types) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:56:20.761Z",
+      "action": "Step 1 (Add Model Selection UI in Settings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:56:20.762Z",
+      "action": "plan review requested for Step 1 (Extend Core Settings Types)"
+    },
+    {
+      "timestamp": "2026-03-31T06:56:34.236Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes to `packages/core/src/types.ts`. The approach is sound: add optional provider/modelId pairs for planning and validator models, following the existing pattern established by `defaultProvider`/`defaultModelId` and the per-task `validatorModelProvider`/`validatorModelId` fields. The fallback semantics (use specialized settings if both fields set, otherwise fall back to defaults) are clearly documented and consistent with existing behavior."
+    },
+    {
+      "timestamp": "2026-03-31T06:56:47.035Z",
+      "action": "code review requested for Step 1 (Extend Core Settings Types)"
+    },
+    {
+      "timestamp": "2026-03-31T06:57:14.344Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds the four new settings fields to the `Settings` interface and `DEFAULT_SETTINGS` constant in `packages/core/src/types.ts`. The changes follow the existing code patterns, include proper JSDoc documentation, and maintain backward compatibility by initializing all new fields to `undefined`."
+    },
+    {
+      "timestamp": "2026-03-31T06:57:15.213Z",
+      "action": "Step 1 (Add Model Selection UI in Settings) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:57:16.196Z",
+      "action": "Step 2 (Update Triage to Use Planning Model) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:57:16.199Z",
+      "action": "plan review requested for Step 2 (Add Model Selection UI in Settings)"
+    },
+    {
+      "timestamp": "2026-03-31T06:57:31.645Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is clear, achievable, and follows the established patterns in the codebase. The types were already added in Step 1 (`planningProvider`, `planningModelId`, `validatorProvider`, `validatorModelId` in `packages/core/src/types.ts`). The CustomModelDropdown component (`packages/dashboard/app/components/CustomModelDropdown.tsx`) provides a well-defined pattern for model selection with filter input, provider grouping, and \"Use default\" option."
+    },
+    {
+      "timestamp": "2026-03-31T06:57:51.377Z",
+      "action": "code review requested for Step 2 (Add Model Selection UI in Settings)"
+    },
+    {
+      "timestamp": "2026-03-31T06:58:09.389Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly extends the SettingsModal with three model selectors (Default, Planning, Validator) as specified in the task requirements. The code reuses the existing `CustomModelDropdown` component with consistent styling and behavior, including filter inputs, provider grouping, and \"Use default\" options. The form state management properly handles the new `planningProvider`/`planningModelId` and `validatorProvider`/`validatorModelId` fields."
+    },
+    {
+      "timestamp": "2026-03-31T06:58:11.790Z",
+      "action": "Step 2 (Update Triage to Use Planning Model) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:58:14.786Z",
+      "action": "Step 3 (Update Reviewer to Use Validator Model) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:58:14.788Z",
+      "action": "plan review requested for Step 3 (Update Triage to Use Planning Model)"
+    },
+    {
+      "timestamp": "2026-03-31T06:58:35.898Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan correctly identifies the `createKbAgent` call in `specifyTask` (lines 237-250) that needs to use planning model settings. The approach is sound: conditionally use `settings.planningProvider`/`settings.planningModelId` when both are set, otherwise fall back to `settings.defaultProvider`/`settings.defaultModelId`. The Settings type already includes the planning fields from Step 1."
+    },
+    {
+      "timestamp": "2026-03-31T06:58:59.884Z",
+      "action": "code review requested for Step 3 (Update Triage to Use Planning Model)"
+    },
+    {
+      "timestamp": "2026-03-31T06:59:26.164Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly updates the triage processor to use planning model settings when creating the AI agent for specification tasks, and properly passes validator model settings to the spec review step. The fallback logic is correctly implemented: when planning/validator model fields are both set, they override the defaults; otherwise, the system falls back to the default provider/model. Tests are comprehensive and cover all override scenarios."
+    },
+    {
+      "timestamp": "2026-03-31T06:59:27.560Z",
+      "action": "Step 3 (Update Reviewer to Use Validator Model) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:59:28.820Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:59:28.822Z",
+      "action": "plan review requested for Step 4 (Update Reviewer to Use Validator Model)"
+    },
+    {
+      "timestamp": "2026-03-31T06:59:39.831Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan's checkboxes are already satisfied by existing code in the codebase. The `reviewStep` function already accepts `ReviewOptions` with `validatorModelProvider`/`validatorModelId` fields, implements proper fallback logic, and the `triage.ts` call site already passes these settings. No additional implementation work is required for this step."
+    },
+    {
+      "timestamp": "2026-03-31T06:59:56.222Z",
+      "action": "code review requested for Step 4 (Update Reviewer to Use Validator Model)"
+    },
+    {
+      "timestamp": "2026-03-31T07:00:17.518Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation correctly adds validator model support to the reviewer with proper fallback behavior and comprehensive test coverage. All call sites properly pass the validator model settings through the chain: global settings → `reviewStep` options → `createKbAgent`."
+    },
+    {
+      "timestamp": "2026-03-31T07:00:19.156Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T07:00:20.148Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T07:01:31.983Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T07:02:07.290Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T07:02:21.710Z",
+  "createdAt": "2026-03-30T14:01:04.093Z",
+  "updatedAt": "2026-03-31T07:02:21.710Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Successfully implemented KB-147 - Add Separate Planning and Verification Model Settings.\n\n**Changes made:**\n1. **Core types** (`packages/core/src/types.ts`): Added `planningProvider`, `planningModelId`, `validatorProvider`, `validatorModelId` to Settings interface with JSDoc documentation, and updated DEFAULT_SETTINGS.\n\n2. **Dashboard UI** (`packages/dashboard/app/components/SettingsModal.tsx`): Added two new model selectors in the Model section - Planning Model and Validator Model, using the same CustomModelDropdown pattern as the existing Default Model selector.\n\n3. **Triage** (`packages/engine/src/triage.ts`): Updated `specifyTask` to use planning model settings when available, and updated `createReviewSpecTool` to pass validator model settings to `reviewStep`.\n\n4. **Executor** (`packages/engine/src/executor.ts`): Updated the `reviewStep` call to use per-task validator overrides when set, falling back to global validator settings.\n\n5. **Documentation**: Created changeset file and updated AGENTS.md with the new \"Model Settings Hierarchy\" section explaining the precedence of model selection.\n\n**Testing:**\n- All core and engine tests pass\n- Typecheck passes for core and engine packages\n- Build succeeds for all packages\n\nUsers can now configure separate AI models for planning (triage/specification) and validation (review) in the dashboard Settings > Model section."
+}

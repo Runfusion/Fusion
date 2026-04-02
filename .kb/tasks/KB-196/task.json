@@ -1,0 +1,152 @@
+{
+  "id": "KB-196",
+  "description": "I don't see all models listed in model selector - I have some models from pi-claude-cli extension that dont show up",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Extension Discovery and Loading",
+      "status": "done"
+    },
+    {
+      "name": "Error Handling and Edge Cases",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:31:26.475Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:35:23.577Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:36:03.124Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is technically sound and correctly identifies the extension loading APIs from `@mariozechner/pi-coding-agent`. The approach of loading extensions and applying their `pendingProviderRegistrations` to the ModelRegistry before server startup will correctly fix the issue where extension-registered models (like those from pi-claude-cli) don't appear in the dashboard model selector."
+    },
+    {
+      "timestamp": "2026-03-31T10:12:39.756Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/swift-lotus"
+    },
+    {
+      "timestamp": "2026-03-31T10:12:39.757Z",
+      "action": "Step 0 (Extension Discovery and Loading) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T10:12:45.499Z",
+      "action": "Step 0 (Extension Discovery and Loading) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:12:58.883Z",
+      "action": "Step 0 (Extension Discovery and Loading) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:13:01.300Z",
+      "action": "Completed preflight review of dashboard model loading flow and route handling.",
+      "outcome": "Confirmed runDashboard creates a standalone ModelRegistry without extension discovery; /api/models currently refreshes and returns available models with no specialized error handling."
+    },
+    {
+      "timestamp": "2026-03-31T10:13:04.295Z",
+      "action": "Step 1 (Error Handling and Edge Cases) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:13:06.047Z",
+      "action": "plan review requested for Step 1 (Extension Discovery and Loading)"
+    },
+    {
+      "timestamp": "2026-03-31T10:13:31.384Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the gap (standalone `ModelRegistry` misses extension-registered providers) and proposes a viable fix using the existing `@mariozechner/pi-coding-agent` API surface. The approach of calling `discoverAndLoadExtensions()` and applying `pendingProviderRegistrations` to the `ModelRegistry` matches the pattern used internally by `ExtensionRunner.bindCore()` (see `loader.js:112-120` and `runner.js:139-142`)."
+    },
+    {
+      "timestamp": "2026-03-31T10:15:05.802Z",
+      "action": "code review requested for Step 1 (Extension Discovery and Loading)"
+    },
+    {
+      "timestamp": "2026-03-31T10:15:37.548Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation correctly adds extension discovery and loading to populate the ModelRegistry with providers from extensions. However, **the test mocks are incomplete** — they don't include `discoverAndLoadExtensions`, `createExtensionRuntime`, or the required `registerProvider`/`refresh` methods on `ModelRegistry`. This will cause test failures. Additionally, there's no test coverage for the new extension loading functionality."
+    },
+    {
+      "timestamp": "2026-03-31T10:15:41.495Z",
+      "action": "Step 1 code review requested changes.",
+      "outcome": "Reviewer flagged incomplete pi-coding-agent test mocks and missing coverage for extension discovery/provider registration paths; step remains in progress until tests and mocks are added."
+    },
+    {
+      "timestamp": "2026-03-31T10:16:48.391Z",
+      "action": "code review requested for Step 1 (Extension Discovery and Loading)"
+    },
+    {
+      "timestamp": "2026-03-31T10:17:22.699Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation correctly adds extension discovery and loading to the dashboard command, importing `discoverAndLoadExtensions` and `createExtensionRuntime` from `@mariozechner/pi-coding-agent` and applying pending provider registrations to the ModelRegistry. However, there's a critical test mismatch: the test at `routes.test.ts:1096` expects a 500 status code when the registry throws, but the new implementation returns an empty array with 200 status. The test must be updated to match the new "
+    },
+    {
+      "timestamp": "2026-03-31T10:17:48.425Z",
+      "action": "code review requested for Step 1 (Extension Discovery and Loading)"
+    },
+    {
+      "timestamp": "2026-03-31T10:18:32.969Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds extension discovery and loading to the dashboard server initialization. The code imports the required functions from `@mariozechner/pi-coding-agent`, discovers extensions from standard locations, applies their provider registrations to the ModelRegistry, and handles errors gracefully without blocking server startup."
+    },
+    {
+      "timestamp": "2026-03-31T10:18:34.808Z",
+      "action": "Step 1 (Error Handling and Edge Cases) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:18:37.318Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:18:40.284Z",
+      "action": "plan review requested for Step 2 (Error Handling and Edge Cases)"
+    },
+    {
+      "timestamp": "2026-03-31T10:19:04.278Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 provides a solid foundation for error handling and edge cases. The checkboxes appropriately cover the key scenarios: preventing server crashes from extension errors, logging handling, ensuring model registry refresh, graceful degradation when no extensions exist, and duplicate provider handling. The plan aligns well with the actual API surface of `@mariozechner/pi-coding-agent` based on my inspection of the package exports."
+    },
+    {
+      "timestamp": "2026-03-31T10:20:41.109Z",
+      "action": "Ran required verification commands for Step 2.",
+      "outcome": "Dashboard and workspace test suites fail due to numerous pre-existing unrelated failures (package resolution/build asset/test expectation issues outside KB-196 scope). KB-196-specific tests and updated route expectations were added and code review for Step 1 passed."
+    },
+    {
+      "timestamp": "2026-03-31T10:20:45.161Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:20:49.225Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:21:02.977Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:21:08.642Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T10:21:22.207Z",
+  "createdAt": "2026-03-30T18:31:26.475Z",
+  "updatedAt": "2026-03-31T10:21:22.207Z",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Updated dashboard startup to discover pi extensions, apply pending provider registrations to the ModelRegistry, and refresh models so extension-registered providers appear in the dashboard selector. Hardened /api/models to fail gracefully by logging model-loading errors and returning an empty list. Added CLI/dashboard test coverage for extension loading and aligned route tests with the new graceful fallback behavior; created a patch changeset. Verification was attempted with the requested test commands, but the workspace currently has unrelated pre-existing failures in dashboard/engine/CLI test suites outside KB-196 scope."
+}

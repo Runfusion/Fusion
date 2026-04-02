@@ -1,0 +1,46 @@
+{
+  "id": "KB-504",
+  "description": "Migration and First-Run Experience: Auto-migration and backward compatibility",
+  "column": "todo",
+  "status": "queued",
+  "size": "M",
+  "reviewLevel": 3,
+  "currentStep": 0,
+  "createdAt": "2026-03-31T21:01:18.284Z",
+  "updatedAt": "2026-04-01T03:17:36.798Z",
+  "columnMovedAt": "2026-03-31T22:13:59.657Z",
+  "dependencies": [
+    "KB-500",
+    "KB-501",
+    "KB-502",
+    "KB-503"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:01:18.284Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:01:18.287Z",
+      "action": "Moved to triage for re-specification — new dependency added"
+    },
+    {
+      "timestamp": "2026-03-31T21:21:31.241Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T22:12:12.574Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T22:13:32.149Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:13:55.956Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for the migration and first-run experience. The spec correctly identifies the critical need for backward compatibility and smooth transitions from single-project to multi-project mode. The mission is clear, steps have concrete outcomes, and testing requirements are rigorous. Minor issues exist around file naming conventions and a few dependency assumptions."
+    }
+  ]
+}

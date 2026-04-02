@@ -1,0 +1,200 @@
+{
+  "id": "KB-069",
+  "description": "add a way to archive all items in done",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add archiveAllDone Method to TaskStore",
+      "status": "done"
+    },
+    {
+      "name": "Add Archive All API Endpoint",
+      "status": "done"
+    },
+    {
+      "name": "Add Frontend API Function",
+      "status": "done"
+    },
+    {
+      "name": "Add useTasks Hook Integration",
+      "status": "done"
+    },
+    {
+      "name": "Add Archive All Button to Done Column",
+      "status": "done"
+    },
+    {
+      "name": "Wire Up Props Through Board and App",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:25:39.211Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:26:13.952Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:26:41.747Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:26:43.040Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for adding a batch \"archive all done tasks\" feature. The mission is clear, steps have concrete verifiable outcomes, all referenced files and patterns exist in the codebase, and testing requirements are comprehensive. The spec correctly follows existing architectural patterns across core, dashboard, and CLI packages."
+    },
+    {
+      "timestamp": "2026-03-30T04:27:08.605Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a focused UI + API feature. The mission is clear, the file references are accurate, and the implementation steps follow the existing codebase patterns. The sizing (M) and review level (1) are appropriate for a straightforward bulk operation addition that leverages existing `archiveTask()` logic."
+    },
+    {
+      "timestamp": "2026-03-30T23:41:43.491Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bold-shore"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:43.492Z",
+      "action": "Step 0 (Add archiveAllDone Method to TaskStore) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:44.991Z",
+      "action": "Step 0 (Add archiveAllDone Method to TaskStore) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:53.323Z",
+      "action": "Step 0 (Add archiveAllDone Method to TaskStore) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:53.325Z",
+      "action": "Step 1 (Add Archive All API Endpoint) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:54.441Z",
+      "action": "plan review requested for Step 1 (Add archiveAllDone Method to TaskStore)"
+    },
+    {
+      "timestamp": "2026-03-30T23:42:09.162Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and follows established patterns in the codebase. The approach correctly leverages the existing `archiveTask()` method which already handles validation (done column check), per-task locking, logging, and event emission. Using `Promise.all()` with `archiveTask()` is safe because each task has independent serialization via `withTaskLock()`."
+    },
+    {
+      "timestamp": "2026-03-30T23:42:35.178Z",
+      "action": "Step 1 (Add Archive All API Endpoint) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:42:35.180Z",
+      "action": "Step 2 (Add Frontend API Function) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:42:35.182Z",
+      "action": "plan review requested for Step 2 (Add Archive All API Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T23:42:56.626Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step correctly identifies the need for a bulk archive endpoint at `POST /tasks/archive-all-done`. The approach follows established patterns from the existing `POST /tasks/:id/archive` endpoint (lines 417-430 in `routes.ts`). The `TaskStore.archiveAllDone()` method already exists (lines 657-674 in `store.ts`) and is comprehensively tested, so this step focuses solely on the API layer wiring."
+    },
+    {
+      "timestamp": "2026-03-30T23:46:05.858Z",
+      "action": "Step 2 (Add Frontend API Function) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:46:05.859Z",
+      "action": "Step 3 (Add useTasks Hook Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:46:05.860Z",
+      "action": "plan review requested for Step 3 (Add Frontend API Function)"
+    },
+    {
+      "timestamp": "2026-03-30T23:46:21.889Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is straightforward and consistent with the existing codebase patterns. The backend endpoint from Step 2 returns `{ archived: Task[] }`, and the frontend function needs to unwrap this to return `Promise<Task[]>` as specified. The placement in `packages/dashboard/app/api.ts` alongside existing task functions (`archiveTask`, `unarchiveTask`) is correct."
+    },
+    {
+      "timestamp": "2026-03-30T23:46:28.589Z",
+      "action": "Step 3 (Add useTasks Hook Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:46:28.591Z",
+      "action": "Step 4 (Add Archive All Button to Done Column) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:46:28.593Z",
+      "action": "plan review requested for Step 4 (Add useTasks Hook Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T23:46:41.629Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is sound and follows established patterns in the codebase. The approach correctly mirrors the existing `archiveTask` and `unarchiveTask` implementations, updating local state by mapping over tasks and replacing those that were archived. The SSE event handling for `task:moved` already has timestamp-based race condition prevention, so concurrent updates from the bulk archive operation will be handled correctly."
+    },
+    {
+      "timestamp": "2026-03-30T23:48:01.939Z",
+      "action": "Step 4 (Add Archive All Button to Done Column) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:48:01.941Z",
+      "action": "Step 5 (Wire Up Props Through Board and App) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:48:01.943Z",
+      "action": "plan review requested for Step 5 (Add Archive All Button to Done Column)"
+    },
+    {
+      "timestamp": "2026-03-30T23:48:15.499Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 is solid and follows existing patterns in the codebase. The approach correctly identifies where to add the new prop, button placement, and confirmation flow. The implementation will integrate cleanly with the existing Column header structure and follows the same async handling patterns used for single-task archive operations."
+    },
+    {
+      "timestamp": "2026-03-30T23:48:36.284Z",
+      "action": "Step 5 (Wire Up Props Through Board and App) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:48:36.286Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:48:36.287Z",
+      "action": "plan review requested for Step 6 (Wire Up Props Through Board and App)"
+    },
+    {
+      "timestamp": "2026-03-30T23:48:48.240Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The step plan is clear, achievable, and correctly identifies the minimal prop-drilling work needed. Looking at the current codebase, `Column.tsx` and `useTasks.ts` already have their implementations complete (the `onArchiveAllDone` prop and callback are already in place). The remaining work is purely plumbing: adding the prop to `BoardProps`, passing it through to the \"done\" column, and extracting it from `useTasks()` in `App.tsx`."
+    },
+    {
+      "timestamp": "2026-03-30T23:49:08.409Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:49:08.411Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:50:19.107Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:50:26.747Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:50:35.918Z",
+  "createdAt": "2026-03-30T04:25:39.211Z",
+  "updatedAt": "2026-03-30T23:50:35.918Z",
+  "size": "M",
+  "reviewLevel": 1
+}

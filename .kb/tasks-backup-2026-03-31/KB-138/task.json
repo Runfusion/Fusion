@@ -1,0 +1,157 @@
+{
+  "id": "KB-138",
+  "description": "Duplicate of KB-134 — superseded; do not implement separately",
+  "column": "done",
+  "dependencies": [
+    "KB-134"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Make KB-138 visibly superseded by KB-134",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T10:18:37.534Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T10:51:04.161Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:52:20.551Z",
+      "action": "Spec review: REVISE",
+      "outcome": "`KB-138` is pointing at a real, relevant task: `KB-134` already contains a complete spec for the dashboard regression work, and the referenced source files/issues do exist (`packages/dashboard/app/components/Header.tsx:35-37`, `packages/dashboard/app/hooks/useTerminal.test.ts:64-133`, `packages/dashboard/src/__tests__/typecheck.test.ts:5-9`). However, `KB-138`’s own `PROMPT.md` is only a one-line duplicate marker (`.fusion/tasks/KB-138/PROMPT.md:1`), so it is not a usable specification and fails the"
+    },
+    {
+      "timestamp": "2026-03-30T10:53:29.571Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:55:23.771Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The duplicate-resolution intent is clear, and the spec references real task and dashboard files. However, as written, it does not fully specify how KB-138 is actually *closed* as a duplicate in repo-managed task metadata, and it mixes this administrative task with KB-134’s implementation/test execution in a way that makes the outcome less concrete and locally verifiable."
+    },
+    {
+      "timestamp": "2026-03-30T10:56:44.822Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T10:58:33.589Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The duplicate-resolution intent is clear, and the spec references real files and repo behavior correctly: KB-134 already owns the dashboard regression implementation scope (`.fusion/tasks/KB-134/PROMPT.md:24-40,55-76`), the affected dashboard test files exist, and dependencies are real task metadata (`README.md:43`, `packages/core/src/store.ts:108,195,452`). However, the spec still leaves KB-138’s visible task metadata misleading and contains a contradictory verification section, so it does not yet "
+    },
+    {
+      "timestamp": "2026-03-30T10:59:22.763Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T11:01:08.086Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a well-bounded duplicate-resolution spec: it points at the real canonical task (`.fusion/tasks/KB-134/PROMPT.md:24-25,36-38,83-85`), limits file scope to KB-138 metadata, and correctly accounts for how dependency metadata and dashboard task labels are used (`README.md:43`, `packages/core/src/store.ts:108,452`, `packages/dashboard/app/components/TaskCard.tsx:492`, `packages/dashboard/app/components/TaskDetailModal.tsx:411`). It also addresses the actual current problem in KB-138’s metadata, w"
+    },
+    {
+      "timestamp": "2026-03-30T11:01:56.884Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T11:03:28.804Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a strong, well-bounded duplicate-resolution specification. It correctly anchors KB-138 to the real canonical task in `.fusion/tasks/KB-134/PROMPT.md:13,24-29,36-40,83-85`, matches current repo behavior for dependency persistence in `packages/core/src/store.ts:108,195,433-452` and dependency sequencing in `README.md:43`, and explicitly addresses the current misleading KB-138 metadata in `.fusion/tasks/KB-138/task.json:3-5`. The UI rationale is also grounded in real rendering behavior: task labels"
+    },
+    {
+      "timestamp": "2026-03-30T15:12:53.594Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gentle-falcon"
+    },
+    {
+      "timestamp": "2026-03-30T15:12:53.595Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:07.856Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:09.194Z",
+      "action": "Preflight check - verifying required files exist in main repository"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:10.708Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:12.209Z",
+      "action": "Step 1 (Make KB-138 visibly superseded by KB-134) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:12.212Z",
+      "action": "Step 1: Updating KB-138 task.json to mark it as duplicate/superseded by KB-134"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:23.952Z",
+      "action": "Step 1 (Make KB-138 visibly superseded by KB-134) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:23.953Z",
+      "action": "Step 1 complete: Updated KB-138 task.json description to 'Duplicate of KB-134 — superseded; do not implement separately'",
+      "outcome": "Dependencies already set to ['KB-134'], PROMPT.md already explains duplicate rationale"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:25.028Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:25.028Z",
+      "action": "Step 2: Running scripted verification against KB-138 task artifacts"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:30.804Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:30.805Z",
+      "action": "Step 2 complete: Verification passed - dependencies=['KB-134'], description contains duplicate/superseded, no dashboard files modified"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:31.817Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:31.818Z",
+      "action": "Step 3: Final documentation check - KB-138 is documented as superseded by KB-134"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:36.966Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:36.969Z",
+      "action": "Step 3 complete: Documentation verified - KB-138 marked as duplicate of KB-134 in both PROMPT.md and task.json",
+      "outcome": "No changeset added (metadata-only task with no published-package changes)"
+    },
+    {
+      "timestamp": "2026-03-30T15:13:38.892Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:13:41.273Z",
+  "createdAt": "2026-03-30T10:18:37.534Z",
+  "updatedAt": "2026-03-30T15:13:41.273Z",
+  "size": "S",
+  "reviewLevel": 0
+}

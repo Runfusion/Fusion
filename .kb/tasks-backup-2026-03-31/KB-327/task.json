@@ -1,0 +1,32 @@
+{
+  "id": "KB-327",
+  "description": "Enable automatic database backups (user configurable retention and interval)",
+  "column": "todo",
+  "dependencies": [
+    "KB-310"
+  ],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T19:58:56.136Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:00:43.112Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:01:15.533Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification provides a solid foundation for implementing automatic database backups. The mission is clear, the step breakdown is logical, and the technical approach integrates well with existing automation infrastructure. The spec correctly identifies the key integration points with the settings system, automation framework, and dashboard UI. Minor path corrections and clarifications are noted below, but the overall design is sound and implementable."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:01:18.523Z",
+  "createdAt": "2026-03-31T19:58:56.136Z",
+  "updatedAt": "2026-03-31T21:01:04.961Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued",
+  "blockedBy": "KB-313"
+}

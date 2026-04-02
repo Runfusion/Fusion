@@ -1,0 +1,184 @@
+{
+  "id": "KB-098",
+  "description": "model settings should save on change, don't require a separate save step. also they toast dialog should reflect the save and the tag at the top should show the right saved model",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Refactor ModelSelectorTab for Auto-save",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests for Auto-save Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "in-progress"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
+  "currentStep": 2,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:57:22.956Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:58:55.453Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:59:10.442Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-scoped, focused UI/UX improvement specification. The mission is clear: convert the ModelSelectorTab from manual save to auto-save behavior with improved feedback. The file scope is accurate (two files), dependencies are correctly identified as none, and the review level (2 - Plan and Code) is appropriate for this limited blast-radius change."
+    },
+    {
+      "timestamp": "2026-03-30T05:00:16.745Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:00:27.627Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately reflects the current codebase. The mission is clear, steps have concrete verifiable outcomes, file scope is correct, and testing requirements demand real automated tests. All referenced files exist and contain the expected functions and patterns described in the spec."
+    },
+    {
+      "timestamp": "2026-03-30T11:59:06.026Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/lunar-petal"
+    },
+    {
+      "timestamp": "2026-03-30T11:59:06.027Z",
+      "action": "Step 0 (Refactor ModelSelectorTab for Auto-save) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T11:59:18.023Z",
+      "action": "Step 0 (Refactor ModelSelectorTab for Auto-save) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T11:59:34.809Z",
+      "action": "Started KB-098 preflight: reviewing component, tests, API, and toast usage before implementation.",
+      "outcome": "Establishing current save flow, state model, and test expectations."
+    },
+    {
+      "timestamp": "2026-03-30T11:59:53.372Z",
+      "action": "plan review requested for Step 0 (Refactor ModelSelectorTab for Auto-save)"
+    },
+    {
+      "timestamp": "2026-03-30T12:03:00.366Z",
+      "action": "plan review Step 0: REVISE",
+      "outcome": "The step is close to the stated outcomes, but it misses one backend-contract detail that will cause incorrect saves and one state-management detail that can leave the UI showing/saving the wrong task's values. Without addressing those, the auto-save refactor can clear the untouched model override or retain stale selector state when the modal switches tasks."
+    },
+    {
+      "timestamp": "2026-03-30T12:04:55.118Z",
+      "action": "Incorporated plan-review feedback for Step 1.",
+      "outcome": "Auto-save implementation will always send all four model fields to preserve untouched overrides and will resync local selected/saved state when the task prop changes."
+    },
+    {
+      "timestamp": "2026-03-30T12:10:21.266Z",
+      "action": "code review requested for Step 0 (Refactor ModelSelectorTab for Auto-save)"
+    },
+    {
+      "timestamp": "2026-03-30T12:12:56.315Z",
+      "action": "code review Step 0: APPROVE",
+      "outcome": "The refactor in `packages/dashboard/app/components/ModelSelectorTab.tsx` matches the step requirements: model changes now auto-save on selection, success toasts are specific to executor vs. validator, and the badge is driven by confirmed saved state rather than optimistic UI state. The updated tests in `packages/dashboard/app/components/__tests__/ModelSelectorTab.test.tsx` cover the main behavioral changes well, including auto-save, loading disablement, success/error toasts, and badge updates."
+    },
+    {
+      "timestamp": "2026-03-30T12:13:08.277Z",
+      "action": "Step 0 (Refactor ModelSelectorTab for Auto-save) → done"
+    },
+    {
+      "timestamp": "2026-03-30T12:13:13.132Z",
+      "action": "Step 1 (Update Tests for Auto-save Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T12:13:17.558Z",
+      "action": "plan review requested for Step 1 (Update Tests for Auto-save Behavior)"
+    },
+    {
+      "timestamp": "2026-03-30T12:16:01.505Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The test update plan is mostly aligned with the current `ModelSelectorTab` architecture, which already separates pending dropdown state from confirmed saved state (`packages/dashboard/app/components/ModelSelectorTab.tsx:74-77, 111-112, 243-267`) and disables selectors during in-flight saves (`packages/dashboard/app/components/ModelSelectorTab.tsx:113, 253, 277`). However, two gaps would leave a stated requirement insufficiently covered: the clear-to-default expectation is described as `null` eve"
+    },
+    {
+      "timestamp": "2026-03-30T12:17:29.396Z",
+      "action": "Expanded ModelSelectorTab coverage for auto-save behavior.",
+      "outcome": "Added pending-badge coverage, cross-field preservation regression coverage, and clarified clear-to-default expectations around undefined model fields."
+    },
+    {
+      "timestamp": "2026-03-30T12:17:39.638Z",
+      "action": "code review requested for Step 1 (Update Tests for Auto-save Behavior)"
+    },
+    {
+      "timestamp": "2026-03-30T12:20:53.041Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The auto-save refactor and most of the new test coverage look directionally correct: the component now saves on selection, keeps a separate saved badge state, and exercises the new toast/disable/revert flows. However, the clear-to-default path is asserting and sending `undefined` instead of the API/store contract’s `null`, which makes the implementation rely on incidental JSON omission behavior and leaves the tests enforcing the wrong thing."
+    },
+    {
+      "timestamp": "2026-03-30T12:23:34.422Z",
+      "action": "Addressed code-review feedback on clear-to-default payloads.",
+      "outcome": "ModelSelectorTab now sends explicit nulls for cleared overrides, the frontend API type matches backend behavior, and tests assert the null wire contract."
+    },
+    {
+      "timestamp": "2026-03-30T12:23:43.151Z",
+      "action": "code review requested for Step 1 (Update Tests for Auto-save Behavior)"
+    },
+    {
+      "timestamp": "2026-03-30T12:24:51.822Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation matches the task requirements: model changes now auto-save immediately, success/error feedback is specific, and the badge is driven by saved state rather than pending selection. The updated test suite covers the important behavior changes well, including immediate saves, clearing to default, disabled state during save, failure rollback, toast messaging, and badge updates."
+    },
+    {
+      "timestamp": "2026-03-30T12:24:54.190Z",
+      "action": "Step 1 (Update Tests for Auto-save Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-30T12:25:01.635Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T12:25:05.899Z",
+      "action": "plan review requested for Step 2 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T12:28:20.348Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The root-level quality gates are appropriate: `pnpm test`, `pnpm typecheck`, and `pnpm build` all exist in `package.json:10-15`, so this step will catch broad regressions across the workspace. However, the planned verification is missing one requirement-critical test: proving the badge continues to show the last confirmed saved model while an auto-save request is still in flight, which is the reason `ModelSelectorTab` separates selected and saved state."
+    },
+    {
+      "timestamp": "2026-03-30T12:28:28.762Z",
+      "action": "Step 3 plan review noted pending-save badge verification.",
+      "outcome": "The targeted ModelSelectorTab suite already covers badge-vs-pending selection behavior, so proceeding to full workspace quality gates."
+    },
+    {
+      "timestamp": "2026-03-30T12:29:10.585Z",
+      "action": "Root workspace tests initially failed before project build.",
+      "outcome": "Failure was due to missing internal package build artifacts for @kb/core (dist entrypoint absent), so proceeding with workspace build/typecheck and then re-running tests."
+    },
+    {
+      "timestamp": "2026-03-30T12:33:47.970Z",
+      "action": "code review requested for Step 2 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T12:36:37.799Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The updated `ModelSelectorTab` tests cover the key auto-save behaviors from the task well: immediate saves on selection, clearing to default, disabled state during saves, rollback on failure, toast specificity, and badge behavior for pending vs saved values. The component implementation in `packages/dashboard/app/components/ModelSelectorTab.tsx` matches those expectations and uses a sound saved-vs-selected state split to keep the badge honest during async saves."
+    },
+    {
+      "timestamp": "2026-03-30T12:38:03.774Z",
+      "action": "Verification completed for in-scope changes, but full workspace gates remain blocked by pre-existing repo issues.",
+      "outcome": "`pnpm build` passed and dashboard tests covering ModelSelectorTab passed. Root `pnpm typecheck` still fails on unrelated dashboard baseline errors, and root `pnpm test` is blocked by existing CLI build-exe/node-pty packaging failures (captured as KB-141 and KB-142)."
+    },
+    {
+      "timestamp": "2026-03-30T12:38:28.358Z",
+      "action": "Agent finished without calling task_done — moved to in-review for inspection"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T13:01:27.246Z",
+  "createdAt": "2026-03-30T04:57:22.956Z",
+  "updatedAt": "2026-03-30T13:01:27.246Z",
+  "size": "S",
+  "reviewLevel": 2
+}

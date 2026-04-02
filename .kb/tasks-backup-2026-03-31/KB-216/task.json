@@ -1,0 +1,91 @@
+{
+  "id": "KB-216",
+  "title": "on import from github don't need a separate load",
+  "description": "on import from github, don't need a separate load button - load after selecting/changing the repo (or for a single remote, load when the dialog is presented)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Implement Auto-Load Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests for Auto-Load Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:05:40.838Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:10:15.205Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:10:32.634Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and complete for a small UI enhancement. The mission is clear, file scope is accurate, and steps have concrete verifiable outcomes. The testing requirements appropriately demand real automated test updates with specific assertions."
+    },
+    {
+      "timestamp": "2026-03-31T00:51:12.711Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/proud-ember"
+    },
+    {
+      "timestamp": "2026-03-31T00:51:12.711Z",
+      "action": "Step 0 (Implement Auto-Load Behavior) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T00:51:17.441Z",
+      "action": "Step 0 (Implement Auto-Load Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:51:17.441Z",
+      "action": "Step 0 (Implement Auto-Load Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:51:18.233Z",
+      "action": "Step 1 (Update Tests for Auto-Load Behavior) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:57:00.313Z",
+      "action": "Step 1 (Update Tests for Auto-Load Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:57:00.314Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:58:18.960Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:58:18.961Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:58:23.165Z",
+      "action": "Auto-load behavior implemented for GitHub import modal",
+      "outcome": "Single remote: issues auto-load immediately when modal opens. Multiple remotes: issues auto-load when user selects a remote. Load button changed to Refresh button for manual re-fetch. All 27 GitHubImportModal tests pass."
+    },
+    {
+      "timestamp": "2026-03-31T00:58:23.165Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:58:34.577Z",
+  "createdAt": "2026-03-31T00:05:40.838Z",
+  "updatedAt": "2026-03-31T00:58:34.577Z",
+  "size": "S",
+  "reviewLevel": 0
+}

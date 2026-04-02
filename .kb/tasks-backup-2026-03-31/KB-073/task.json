@@ -1,0 +1,228 @@
+{
+  "id": "KB-073",
+  "description": "create a startup script that lets you specifcy a port interactively (or hit enter to use default port)",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Interactive Flag to CLI Parser",
+      "status": "done"
+    },
+    {
+      "name": "Implement Interactive Port Prompt",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:31:20.493Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:31:47.686Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:31:53.220Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:06.910Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is well-structured and clear, but has one critical issue: the proposed test file location (`scripts/start.test.ts`) falls outside any package directory, which means it won't be discovered by `pnpm -r test` (the root test command runs vitest recursively across packages only). Additionally, the line number reference for port handling in `bin.ts` needs a small correction."
+    },
+    {
+      "timestamp": "2026-03-30T04:32:11.565Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and complete for a small UX enhancement. The mission is clear, steps have concrete verifiable outcomes, and file scope accurately reflects the codebase. Testing requirements demand real automated tests with assertions. Documentation sections are properly filled with actual files that exist."
+    },
+    {
+      "timestamp": "2026-03-30T04:32:23.009Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fast-grove"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:23.010Z",
+      "action": "Step 0 (Add Interactive Flag to CLI Parser) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:23.791Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:24.789Z",
+      "action": "Step 0 (Add Interactive Flag to CLI Parser) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:25.235Z",
+      "action": "Step 0 (Add Interactive Flag to CLI Parser) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:27.143Z",
+      "action": "Step 0 (Add Interactive Flag to CLI Parser) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:30.550Z",
+      "action": "Step 0 (Add Interactive Flag to CLI Parser) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:30.553Z",
+      "action": "Step 1 (Implement Interactive Port Prompt) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:30.805Z",
+      "action": "plan review requested for Step 1 (Add Interactive Flag to CLI Parser)"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:32.398Z",
+      "action": "plan review requested for Step 1 (Add Interactive Flag to CLI Parser)"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:38.099Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-scoped, accurate, and actionable. All referenced files exist and are correctly identified. The mission is clear (add `--interactive` flag for runtime port prompting), steps have verifiable outcomes, and testing requirements demand real automated tests with assertions. The size (S) and review level (1) are appropriate for this contained UX enhancement."
+    },
+    {
+      "timestamp": "2026-03-30T04:32:39.188Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is straightforward and follows existing patterns in the codebase. The step correctly identifies the three required changes: flag parsing in the dashboard command block (lines 113-120), passing the flag through to `runDashboard()`, and preserving default behavior when the flag is absent. The approach aligns with how other flags (`--paused`, `--dev`) are currently handled."
+    },
+    {
+      "timestamp": "2026-03-30T04:32:40.153Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The step is straightforward and well-scoped. The plan correctly identifies the dashboard command block in `bin.ts` where the `--interactive` flag needs to be added, and the requirement to pass it through to `runDashboard()`. The checkboxes adequately capture the required work."
+    },
+    {
+      "timestamp": "2026-03-30T04:32:43.917Z",
+      "action": "Step 1 (Implement Interactive Port Prompt) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:57.696Z",
+      "action": "Step 1 (Implement Interactive Port Prompt) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:57.896Z",
+      "action": "Step 1 (Implement Interactive Port Prompt) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:57.897Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:59.582Z",
+      "action": "plan review requested for Step 2 (Implement Interactive Port Prompt)"
+    },
+    {
+      "timestamp": "2026-03-30T04:32:59.908Z",
+      "action": "plan review requested for Step 2 (Implement Interactive Port Prompt)"
+    },
+    {
+      "timestamp": "2026-03-30T04:33:14.198Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan covers the essential implementation details for adding interactive port selection. The checkboxes correctly identify the key tasks: adding readline import, creating a `promptForPort()` helper, updating `runDashboard()` signature, and handling SIGINT. The approach is sound and will achieve the stated outcomes."
+    },
+    {
+      "timestamp": "2026-03-30T04:33:16.371Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows the existing patterns in the codebase. The checkboxes cover all necessary implementation aspects: readline import, helper function creation, signature modification, and integration into the startup flow. The approach will work correctly."
+    },
+    {
+      "timestamp": "2026-03-30T04:33:19.106Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:33:45.429Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:33:45.431Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:33:46.538Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T04:33:52.209Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:33:53.982Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T04:34:01.755Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The test plan covers the core validation scenarios for `promptForPort()` and aligns with the existing test patterns in `dashboard.test.ts`. The checkboxes will achieve the stated outcomes. The implementation already exists in `dashboard.ts` (lines 19-89 for `promptForPort`, lines 96-105 for the interactive integration), so these tests verify that implementation."
+    },
+    {
+      "timestamp": "2026-03-30T04:34:13.064Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is sound and will achieve its stated outcomes. The `promptForPort()` function is already implemented in `dashboard.ts` (lines 42-89) with proper validation logic, empty input handling, and SIGINT handling. The test coverage requirements in the step's checkboxes are appropriate and cover the key edge cases."
+    },
+    {
+      "timestamp": "2026-03-30T04:34:14.207Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:35:13.936Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:35:38.020Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:35:39.206Z",
+      "action": "plan review requested for Step 4 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-30T04:35:53.471Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan's checkboxes align with the stated outcomes of updating help text, README documentation, and creating a changeset. However, I observe that the documentation updates appear to already be implemented in the current codebase. The step should verify the existing content is correct rather than expecting to add new content."
+    },
+    {
+      "timestamp": "2026-03-30T04:36:01.152Z",
+      "action": "Task KB-073 completed successfully",
+      "outcome": "Added --interactive flag to kb dashboard command with interactive port prompt. Includes full test coverage for promptForPort() helper function, updated documentation in README.md and STANDALONE.md, and created changeset for minor version bump."
+    },
+    {
+      "timestamp": "2026-03-30T04:36:01.156Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:24.165Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:28.045Z",
+      "action": "Execution failed: Invalid transition: 'done' → 'in-review'. Valid targets: none"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:47.652Z",
+      "action": "Retry requested from dashboard"
+    },
+    {
+      "timestamp": "2026-03-30T04:36:59.644Z",
+      "action": "Retry requested from dashboard"
+    },
+    {
+      "timestamp": "2026-03-30T04:54:49.859Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T04:54:49.859Z",
+  "createdAt": "2026-03-30T04:31:20.493Z",
+  "updatedAt": "2026-03-30T04:54:49.859Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "status": "failed"
+}

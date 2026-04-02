@@ -1,0 +1,87 @@
+{
+  "id": "KB-219",
+  "title": "In the new task dialog the description field",
+  "description": "In the new task dialog, the description field should have the text inptu focus immediately",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Implement Auto-Focus on Modal Open",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:10:07.498Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:17:52.007Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:18:06.442Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. The referenced source files exist and contain the expected elements (`descTextareaRef` at line 167 in NewTaskModal.tsx). The testing setup includes `@testing-library/jest-dom` which provides the `toHaveFocus()` matcher. The mission is clear, steps are verifiable, and the review level (Plan Only) is appropriate for this simple UI enhancement."
+    },
+    {
+      "timestamp": "2026-03-31T01:10:57.775Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pearl-moss"
+    },
+    {
+      "timestamp": "2026-03-31T01:10:57.776Z",
+      "action": "Step 0 (Implement Auto-Focus on Modal Open) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:01.763Z",
+      "action": "Step 0 (Implement Auto-Focus on Modal Open) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:01.764Z",
+      "action": "Step 0 (Implement Auto-Focus on Modal Open) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:04.159Z",
+      "action": "plan review requested for Step 1 (Implement Auto-Focus on Modal Open)"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:13.107Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the implementation approach for adding auto-focus to the description textarea. The component already has `descTextareaRef` available at line 239, and the plan follows existing patterns in the codebase (similar to the `setTimeout(..., 0)` approach used in `ModelCombobox` at line 103)."
+    },
+    {
+      "timestamp": "2026-03-31T01:11:15.058Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:20.875Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:11:20.875Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:12:58.829Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:13:00.612Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:13:15.266Z",
+  "createdAt": "2026-03-31T00:10:07.498Z",
+  "updatedAt": "2026-03-31T01:13:15.266Z",
+  "size": "S",
+  "reviewLevel": 1
+}

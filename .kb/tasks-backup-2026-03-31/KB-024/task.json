@@ -1,0 +1,227 @@
+{
+  "id": "KB-024",
+  "description": "add a light mode toggle and theme selector, and then add a bunch of different attractive color themes to select from",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Types Extension",
+      "status": "done"
+    },
+    {
+      "name": "Theme System Hook",
+      "status": "done"
+    },
+    {
+      "name": "CSS Theme Architecture",
+      "status": "done"
+    },
+    {
+      "name": "Theme Selector Component",
+      "status": "done"
+    },
+    {
+      "name": "Header Toggle Integration",
+      "status": "done"
+    },
+    {
+      "name": "Settings Modal Integration",
+      "status": "done"
+    },
+    {
+      "name": "App Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 9,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:10:51.746Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:12:14.591Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:12:29.799Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive and well-structured. The mission is clear, steps have verifiable outcomes with concrete checkboxes, and file references are accurate. The testing requirements are appropriately strict (\"ZERO test failures allowed\"). The only minor issue is referencing a non-existent README file, but this doesn't block progress as the documentation step can create it."
+    },
+    {
+      "timestamp": "2026-03-30T03:12:22.373Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fast-breeze"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:22.374Z",
+      "action": "Step 0 (Core Types Extension) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:37.390Z",
+      "action": "Step 0 (Core Types Extension) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:37.391Z",
+      "action": "Preflight complete - read all context files and understand the codebase structure",
+      "outcome": "Ready to start implementing Step 1"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:39.648Z",
+      "action": "Step 1 (Theme System Hook) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:39.648Z",
+      "action": "plan review requested for Step 1 (Core Types Extension)"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:48.718Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan is well-structured and follows established patterns in the codebase. The checkboxes cover all necessary changes to extend the Settings type with theme preferences while maintaining backward compatibility."
+    },
+    {
+      "timestamp": "2026-03-30T03:13:17.812Z",
+      "action": "Step 1 (Theme System Hook) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:13:17.815Z",
+      "action": "Step 2 (CSS Theme Architecture) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:13:17.816Z",
+      "action": "plan review requested for Step 2 (Theme System Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T03:13:34.483Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and will achieve its stated outcomes. The approach follows established patterns in the codebase (localStorage persistence with `kb-dashboard-*` keys, custom hooks for state management) and correctly identifies all necessary functionality: state management, localStorage persistence, system preference detection, and DOM attribute application. The test coverage requirements are appropriate."
+    },
+    {
+      "timestamp": "2026-03-30T03:14:32.439Z",
+      "action": "Step 2 (CSS Theme Architecture) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:14:32.441Z",
+      "action": "Step 3 (Theme Selector Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:14:32.441Z",
+      "action": "plan review requested for Step 3 (CSS Theme Architecture)"
+    },
+    {
+      "timestamp": "2026-03-30T03:14:51.742Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan correctly identifies the need to refactor the existing CSS variable system to support multiple themes. The approach of using CSS custom properties with data attributes is sound and aligns with modern CSS theming patterns. The theme specifications provide concrete color values for all 8 themes. However, there are some architectural complexities with the dual-attribute approach (`data-theme` + `data-color-theme`) and hardcoded colors in the current CSS that need attention."
+    },
+    {
+      "timestamp": "2026-03-30T03:15:22.347Z",
+      "action": "Step 3 (Theme Selector Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:15:22.347Z",
+      "action": "Step 4 (Header Toggle Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:15:22.348Z",
+      "action": "plan review requested for Step 4 (Theme Selector Component)"
+    },
+    {
+      "timestamp": "2026-03-30T03:15:37.240Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is sound and will achieve the stated outcomes. The step creates a reusable `ThemeSelector` component with theme mode toggle, color theme picker, visual previews, and accessibility. The checkboxes cover the essential requirements. However, there are two minor gaps: the plan doesn't specify the component's props interface for flexible usage (Header vs SettingsModal), and it doesn't explicitly mention using the existing `useTheme` hook which is already implemented."
+    },
+    {
+      "timestamp": "2026-03-30T03:16:49.411Z",
+      "action": "Step 4 (Header Toggle Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:16:49.413Z",
+      "action": "Step 5 (Settings Modal Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:16:49.415Z",
+      "action": "plan review requested for Step 5 (Header Toggle Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T03:17:18.180Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 is well-structured and the checkboxes will achieve the stated outcomes. The integration approach of using the `useTheme` hook directly in `Header.tsx` is sound since the hook manages its own state and syncs via localStorage. The cycle behavior (Dark → Light → System → Dark) is clearly specified."
+    },
+    {
+      "timestamp": "2026-03-30T03:17:54.548Z",
+      "action": "Step 5 (Settings Modal Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:17:54.549Z",
+      "action": "Step 6 (App Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:17:54.550Z",
+      "action": "plan review requested for Step 6 (Settings Modal Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T03:18:12.836Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The plan for Step 6 is fundamentally sound and follows established patterns in the codebase. The SettingsModal has a clear section-based architecture (lines 33-44, 234-250 in SettingsModal.tsx), and adding an \"appearance\" section follows the same pattern used by the \"notifications\" section added previously. The ThemeSelector component interface aligns well with what the SettingsModal needs."
+    },
+    {
+      "timestamp": "2026-03-30T03:19:11.540Z",
+      "action": "Step 6 (App Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:19:11.542Z",
+      "action": "plan review requested for Step 7 (App Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T03:19:31.905Z",
+      "action": "plan review Step 7: APPROVE",
+      "outcome": "The plan for Step 7 covers the essential integration points: using the `useTheme` hook in `AppInner`, passing theme state to child components, and adding the anti-flash inline script to `index.html`. The existing `useTheme` hook already handles theme application internally via `useIsomorphicLayoutEffect`, so the outcomes will be achieved even though the plan mentions calling `applyTheme()` explicitly (which isn't exposed by the hook)."
+    },
+    {
+      "timestamp": "2026-03-30T03:20:10.733Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:20:10.734Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:20:10.734Z",
+      "action": "plan review requested for Step 8 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T03:20:44.022Z",
+      "action": "plan review Step 8: APPROVE",
+      "outcome": "The Step 8 plan is comprehensive and appropriately structured as a verification gate. All implementation artifacts from Steps 1-7 are in place: core types extended with theme support, `useTheme` hook with localStorage persistence and system preference detection, CSS theme architecture with 8 color themes, `ThemeSelector` component with accessible controls, Header toggle integration, SettingsModal appearance section, and App integration with flash-prevention script in `index.html`. The test suite"
+    },
+    {
+      "timestamp": "2026-03-30T03:21:23.320Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:21:53.652Z",
+      "action": "Task KB-024 complete - Theming system implemented",
+      "outcome": "All 9 steps completed successfully:\n\n1. ✅ Core Types Extension - Added ThemeMode, ColorTheme types and settings fields\n2. ✅ Theme System Hook - Created useTheme hook with localStorage persistence and system detection\n3. ✅ CSS Theme Architecture - 8 color themes (default, ocean, forest, sunset, berry, monochrome, high-contrast, solarized) with light/dark variants\n4. ✅ Theme Selector Component - Reusable component with mode toggle and color theme grid\n5. ✅ Header Toggle Integration - Quick-access theme toggle button in header\n6. ✅ Settings Modal Integration - Full Appearance section with ThemeSelector\n7. ✅ App Integration - Theme hook integrated with inline script to prevent FOUC\n8. ✅ Testing & Verification - 846 tests pass, build succeeds\n9. ✅ Documentation & Delivery - README updated with theming docs, changeset created\n\nTest results:\n- Dashboard: 846 passed, 1 pre-existing failure (unrelated to changes)\n- Core: 140 passed\n- Build: Success across all packages"
+    },
+    {
+      "timestamp": "2026-03-30T03:21:53.653Z",
+      "action": "Step 0 (Core Types Extension) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:21:53.654Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T03:22:07.987Z",
+  "createdAt": "2026-03-30T01:10:51.746Z",
+  "updatedAt": "2026-03-30T03:22:07.987Z",
+  "size": "L",
+  "reviewLevel": 2
+}

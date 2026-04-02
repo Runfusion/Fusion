@@ -1,0 +1,277 @@
+{
+  "id": "KB-632",
+  "description": "KB-628a — Missions Foundation: Database Schema, Types, and Core Store. Create the foundational data layer for the Missions hierarchy system. Implement the SQLite database schema for missions, milestones, slices, and features, define comprehensive TypeScript types, and build the MissionStore class with full CRUD operations and status rollup logic. See `.fusion/tasks/KB-628a/PROMPT.md` for full specification.",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 13,
+  "summary": "Successfully implemented the Missions Foundation data layer for KB-632. Added schema version 3 with four new tables (missions, milestones, slices, mission_features) and task linking columns. Created comprehensive type definitions in mission-types.ts and a full MissionStore class with EventEmitter pattern, CRUD operations for all four hierarchy levels, and automatic status rollup logic (slice → milestone → mission). All 598 tests pass including 67 new MissionStore tests. Changeset created for the minor version bump of @fusion/core.",
+  "createdAt": "2026-04-01T01:05:25.243Z",
+  "updatedAt": "2026-04-01T01:28:29.403Z",
+  "columnMovedAt": "2026-04-01T01:28:29.403Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Database Schema Migration",
+      "status": "done"
+    },
+    {
+      "name": "Mission Types Definition",
+      "status": "done"
+    },
+    {
+      "name": "MissionStore Class Foundation",
+      "status": "done"
+    },
+    {
+      "name": "Mission CRUD Operations",
+      "status": "done"
+    },
+    {
+      "name": "Milestone Operations",
+      "status": "done"
+    },
+    {
+      "name": "Slice Operations",
+      "status": "done"
+    },
+    {
+      "name": "Feature Operations",
+      "status": "done"
+    },
+    {
+      "name": "Status Rollup Logic",
+      "status": "done"
+    },
+    {
+      "name": "MissionStore Tests",
+      "status": "done"
+    },
+    {
+      "name": "Integration & Exports",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-04-01T01:05:25.243Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T01:06:05.407Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T01:06:34.447Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive, technically accurate, and well-structured. It correctly follows established patterns from the codebase (TaskStore, AgentStore, AutomationStore) and references real files and functions. The mission hierarchy (missions → milestones → slices → features) is clearly defined with appropriate status enums and rollup logic. The schema migration plan properly handles both new tables and the addition of `missionId`/`sliceId` columns to the existing `tasks` table."
+    },
+    {
+      "timestamp": "2026-04-01T01:14:46.331Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-peach"
+    },
+    {
+      "timestamp": "2026-04-01T01:14:46.333Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T01:14:48.086Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:15:00.193Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:15:00.194Z",
+      "action": "Step 1 (Database Schema Migration) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:15:01.598Z",
+      "action": "plan review requested for Step 1 (Database Schema Migration)"
+    },
+    {
+      "timestamp": "2026-04-01T01:15:20.138Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows the established patterns in the codebase. The worker correctly identifies the need to bump `SCHEMA_VERSION` from 2→3, use `addColumnIfMissing` for idempotent column additions to the tasks table, and add new mission tables to `SCHEMA_SQL` with proper foreign key constraints. The migration approach aligns with the existing migration block pattern in `db.ts`."
+    },
+    {
+      "timestamp": "2026-04-01T01:15:34.360Z",
+      "action": "code review requested for Step 1 (Database Schema Migration)"
+    },
+    {
+      "timestamp": "2026-04-01T01:15:58.544Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The database schema implementation is correct and well-structured, following established patterns. All 4 new tables (`missions`, `milestones`, `slices`, `mission_features`) are properly defined with correct foreign key constraints and cascade rules. The migration from v2→v3 correctly adds the `missionId` and `sliceId` columns using the idempotent `addColumnIfMissing` helper.\n\nHowever, **critical test failures will occur** because `db.test.ts` contains hardcoded expectations for schema version 2,"
+    },
+    {
+      "timestamp": "2026-04-01T01:17:06.756Z",
+      "action": "code review requested for Step 1 (Database Schema Migration)"
+    },
+    {
+      "timestamp": "2026-04-01T01:17:50.508Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The database schema migration for the Missions hierarchy is correctly implemented. The code follows all existing patterns from the codebase, includes proper foreign key constraints with cascade rules, and has comprehensive test coverage for both the new tables and the v2→v3 migration path."
+    },
+    {
+      "timestamp": "2026-04-01T01:17:52.360Z",
+      "action": "Step 1 (Database Schema Migration) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:17:52.361Z",
+      "action": "Step 2 (Mission Types Definition) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:17:54.499Z",
+      "action": "plan review requested for Step 2 (Mission Types Definition)"
+    },
+    {
+      "timestamp": "2026-04-01T01:18:08.563Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows the established patterns in the codebase. The database schema is already in place (I verified `db.ts` has schema version 3 with mission tables and the migration block adding `missionId`/`sliceId` columns to tasks). The type definitions outlined in the checkboxes align correctly with existing patterns from `types.ts`, including proper use of const assertions for enums, optional fields via `?:`, and the `CreateInput` pattern for insertion types."
+    },
+    {
+      "timestamp": "2026-04-01T01:18:30.830Z",
+      "action": "code review requested for Step 2 (Mission Types Definition)"
+    },
+    {
+      "timestamp": "2026-04-01T01:18:53.109Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The `mission-types.ts` implementation is comprehensive and follows existing project patterns correctly. All required type definitions are present with proper JSDoc documentation. The status enums use the const assertion pattern consistent with existing code (like `COLUMNS`, `THEME_MODES`), and the entity interfaces match the database schema defined in Step 1."
+    },
+    {
+      "timestamp": "2026-04-01T01:18:54.752Z",
+      "action": "Step 2 (Mission Types Definition) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:18:54.754Z",
+      "action": "Step 3 (MissionStore Class Foundation) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:18:55.860Z",
+      "action": "plan review requested for Step 3 (MissionStore Class Foundation)"
+    },
+    {
+      "timestamp": "2026-04-01T01:19:28.536Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan for Step 3 has a critical inconsistency with the established TaskStore pattern regarding Database instance sharing. Additionally, there's a schema migration gap where `missionId` and `sliceId` columns need to be added to existing databases via migration, but they're currently missing from the v3 migration block. Step 2 (mission-types.ts) is already complete, which is good."
+    },
+    {
+      "timestamp": "2026-04-01T01:20:44.299Z",
+      "action": "code review requested for Step 3 (MissionStore Class Foundation)"
+    },
+    {
+      "timestamp": "2026-04-01T01:21:10.267Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The MissionStore implementation is comprehensive and follows TaskStore patterns well. However, there is one **blocking issue**: the mission types and MissionStore are not exported from `index.ts`, which breaks the module's public API contract. Additionally, there's a minor pattern inconsistency in the `rowToFeature` method."
+    },
+    {
+      "timestamp": "2026-04-01T01:21:53.409Z",
+      "action": "code review requested for Step 3 (MissionStore Class Foundation)"
+    },
+    {
+      "timestamp": "2026-04-01T01:22:11.097Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The MissionStore implementation is comprehensive and well-structured, following TaskStore patterns correctly. However, the event payload types in `MissionStoreEvents` interface don't match the specification requirements from the task PROMPT.md. Several events wrap payloads in wrapper objects when they should pass the entity directly, and some payload structures differ from the spec."
+    },
+    {
+      "timestamp": "2026-04-01T01:22:57.196Z",
+      "action": "code review requested for Step 3 (MissionStore Class Foundation)"
+    },
+    {
+      "timestamp": "2026-04-01T01:23:22.620Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The MissionStore class foundation is well-implemented and follows the TaskStore patterns correctly. The code includes comprehensive CRUD operations, proper EventEmitter integration, status rollup logic, and follows SQLite transaction patterns. The JSDoc documentation is thorough. Minor issues exist with missing Task type fields and a redundant import, but these don't block progress."
+    },
+    {
+      "timestamp": "2026-04-01T01:23:24.151Z",
+      "action": "Step 3 (MissionStore Class Foundation) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:23:24.153Z",
+      "action": "Step 9 (MissionStore Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:23:25.135Z",
+      "action": "plan review requested for Step 9 (MissionStore Tests)"
+    },
+    {
+      "timestamp": "2026-04-01T01:23:41.089Z",
+      "action": "plan review Step 9: APPROVE",
+      "outcome": "The step's checkboxes provide solid coverage for the MissionStore test suite and align well with the existing TaskStore test patterns. The plan follows established conventions: temporary databases via `mkdtempSync`, vitest utilities, event emission testing, cascade delete verification, and transaction rollback validation. The checklist structure will produce a comprehensive test file that validates the mission hierarchy CRUD operations, status rollup logic, and foreign key cascades."
+    },
+    {
+      "timestamp": "2026-04-01T01:26:04.428Z",
+      "action": "code review requested for Step 9 (MissionStore Tests)"
+    },
+    {
+      "timestamp": "2026-04-01T01:26:45.408Z",
+      "action": "code review Step 9: APPROVE",
+      "outcome": "The MissionStore test file is comprehensive and well-structured, covering all required test scenarios from Step 9. The tests follow existing TaskStore patterns using temporary databases with `mkdtempSync`, properly isolate tests with `beforeEach`/`afterEach`, and validate all CRUD operations, cascade deletes, status rollup logic, event emissions, and transaction handling."
+    },
+    {
+      "timestamp": "2026-04-01T01:26:47.854Z",
+      "action": "Step 9 (MissionStore Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:26:47.855Z",
+      "action": "Step 10 (Integration & Exports) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:26:47.856Z",
+      "action": "Step 11 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:35.516Z",
+      "action": "Step 11 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:27:35.518Z",
+      "action": "Step 12 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:28:13.759Z",
+      "action": "Step 12 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:28:13.760Z",
+      "action": "Step 4 (Mission CRUD Operations) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:28:13.761Z",
+      "action": "Step 5 (Milestone Operations) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:28:13.761Z",
+      "action": "Step 6 (Slice Operations) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:28:13.762Z",
+      "action": "Step 7 (Feature Operations) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:28:13.763Z",
+      "action": "Step 8 (Status Rollup Logic) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:28:13.764Z",
+      "action": "Step 12 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:28:13.765Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

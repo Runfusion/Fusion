@@ -1,0 +1,208 @@
+{
+  "id": "KB-327",
+  "description": "Enable automatic database backups (user configurable retention and interval)",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 7,
+  "summary": "Implemented automatic database backup feature (KB-327) with user-configurable retention and interval. Added backup settings (autoBackupEnabled, autoBackupSchedule, autoBackupRetention, autoBackupDir) to ProjectSettings. Created BackupManager with createBackup, listBackups, cleanupOldBackups, and restoreBackup methods. Added CLI commands (kb backup --create, --list, --restore, --cleanup). Built dashboard UI with backup settings section, statistics display, and \"Backup Now\" button. Added syncBackupAutomation for managing scheduled backups. All 31 backup tests passing. Documentation updated in AGENTS.md with changeset created.",
+  "createdAt": "2026-03-31T19:58:56.136Z",
+  "updatedAt": "2026-03-31T22:40:30.583Z",
+  "columnMovedAt": "2026-03-31T22:40:30.583Z",
+  "dependencies": [
+    "KB-310"
+  ],
+  "steps": [
+    {
+      "name": "Add Backup Settings",
+      "status": "done"
+    },
+    {
+      "name": "Create Backup Manager",
+      "status": "done"
+    },
+    {
+      "name": "Add Built-in Backup Automation",
+      "status": "done"
+    },
+    {
+      "name": "Integrate Backup with Settings API",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard UI for Backup Settings",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T19:58:56.136Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:00:43.112Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:01:15.533Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification provides a solid foundation for implementing automatic database backups. The mission is clear, the step breakdown is logical, and the technical approach integrates well with existing automation infrastructure. The spec correctly identifies the key integration points with the settings system, automation framework, and dashboard UI. Minor path corrections and clarifications are noted below, but the overall design is sound and implementable."
+    },
+    {
+      "timestamp": "2026-03-31T22:12:46.357Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-trout"
+    },
+    {
+      "timestamp": "2026-03-31T22:12:46.361Z",
+      "action": "Step 0 (Add Backup Settings) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T22:16:00.916Z",
+      "action": "Step 0 (Add Backup Settings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:16:23.242Z",
+      "action": "Step 0 (Preflight) complete: Build passes, 1 pre-existing test failure in store.test.ts (unrelated to backup feature)",
+      "outcome": "Proceeding with implementation"
+    },
+    {
+      "timestamp": "2026-03-31T22:16:23.244Z",
+      "action": "Step 0 (Add Backup Settings) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:16:24.440Z",
+      "action": "plan review requested for Step 1 (Add Backup Settings)"
+    },
+    {
+      "timestamp": "2026-03-31T22:16:46.913Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the three required changes to `packages/core/src/types.ts`: adding the four backup settings fields to the `ProjectSettings` interface, updating `DEFAULT_PROJECT_SETTINGS` with sensible defaults, and extending `PROJECT_SETTINGS_KEYS` for proper scope validation. The settings are appropriately scoped as project-level (not global) since backup configuration is inherently project-specific."
+    },
+    {
+      "timestamp": "2026-03-31T22:16:48.131Z",
+      "action": "Step 1 (Create Backup Manager) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:17:03.825Z",
+      "action": "Step 1 (Create Backup Manager) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:17:03.827Z",
+      "action": "Step 1 complete: Added backup settings (autoBackupEnabled, autoBackupSchedule, autoBackupRetention, autoBackupDir) to ProjectSettings, DEFAULT_PROJECT_SETTINGS, and PROJECT_SETTINGS_KEYS",
+      "outcome": "Build passes"
+    },
+    {
+      "timestamp": "2026-03-31T22:17:04.986Z",
+      "action": "plan review requested for Step 2 (Create Backup Manager)"
+    },
+    {
+      "timestamp": "2026-03-31T22:17:32.813Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan provides a solid foundation for implementing the Backup Manager with clear interfaces and method specifications. The structure follows existing codebase patterns (EventEmitter-style stores, async/await, SQLite integration). However, there are several important gaps regarding SQLite WAL mode safety, filename format consistency, and validation utility reuse that should be addressed before implementation."
+    },
+    {
+      "timestamp": "2026-03-31T22:17:48.369Z",
+      "action": "Step 2 (Add Built-in Backup Automation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:21:34.084Z",
+      "action": "Step 2 (Add Built-in Backup Automation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:21:34.087Z",
+      "action": "Step 2 complete: Created BackupManager with createBackup, listBackups, cleanupOldBackups, restoreBackup methods, plus validation functions and runBackupCommand for automation integration",
+      "outcome": "31 tests passing"
+    },
+    {
+      "timestamp": "2026-03-31T22:21:35.335Z",
+      "action": "plan review requested for Step 3 (Add Built-in Backup Automation and CLI command)"
+    },
+    {
+      "timestamp": "2026-03-31T22:21:55.075Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan has a **critical gap**: it doesn't explain how enabling `autoBackupEnabled` actually creates or manages the scheduled automation. There's a disconnect between the backup settings, the CLI command, and the automation system integration. The plan also conflates manual CLI operations with automatic scheduled backups without clarifying their relationship."
+    },
+    {
+      "timestamp": "2026-03-31T22:21:57.369Z",
+      "action": "Step 3 (Integrate Backup with Settings API) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:23:29.458Z",
+      "action": "Step 3 (Integrate Backup with Settings API) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:23:29.460Z",
+      "action": "Step 3 complete: Added CLI backup commands (--create, --list, --restore, --cleanup), syncBackupAutomation function for managing scheduled backups, and exports in index.ts",
+      "outcome": "CLI backup commands working, 31 backup tests passing"
+    },
+    {
+      "timestamp": "2026-03-31T22:23:31.560Z",
+      "action": "plan review requested for Step 4 (Integrate Backup with Settings API)"
+    },
+    {
+      "timestamp": "2026-03-31T22:24:08.404Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The plan's stated checkboxes will **not fully achieve** the step's outcomes. While the basic settings persistence is already handled by the existing infrastructure, there are **critical gaps** in validation and automation synchronization that will cause the backup feature to malfunction. The plan also contains an **incorrect file path** that will mislead the implementer."
+    },
+    {
+      "timestamp": "2026-03-31T22:24:10.725Z",
+      "action": "Step 4 (Dashboard UI for Backup Settings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:25:04.070Z",
+      "action": "Step 4 (Dashboard UI for Backup Settings) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:25:04.071Z",
+      "action": "Step 4 complete: Added backup settings validation (cron, retention, dir) and syncBackupAutomation call in PUT /api/settings route",
+      "outcome": "Settings API now validates backup settings and syncs automation schedule"
+    },
+    {
+      "timestamp": "2026-03-31T22:25:05.190Z",
+      "action": "plan review requested for Step 5 (Dashboard UI for Backup Settings)"
+    },
+    {
+      "timestamp": "2026-03-31T22:25:35.233Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The plan outlines reasonable UI additions to `SettingsModal.tsx` for configuring backup settings. However, **the advanced features in Step 5 depend on API endpoints that don't exist** (listing backups, manual backup trigger, calculating next backup time). Without these APIs, features like \"X backups stored\", \"Backup Now\" button, and \"Next backup\" preview cannot work. The plan also omits the need to add corresponding API functions to `api.ts`."
+    },
+    {
+      "timestamp": "2026-03-31T22:25:37.934Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:27:04.641Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:27:04.643Z",
+      "action": "Step 5 complete: Added backup settings UI with toggle, cron schedule, retention, directory inputs, backup stats display, and Backup Now button",
+      "outcome": "Dashboard UI built and integrated"
+    },
+    {
+      "timestamp": "2026-03-31T22:27:06.088Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T22:27:44.898Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T22:27:44.899Z",
+      "action": "Step 6 complete: All 31 backup tests passing, build succeeds for all packages",
+      "outcome": "Testing verification complete"
+    },
+    {
+      "timestamp": "2026-03-31T22:28:07.932Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

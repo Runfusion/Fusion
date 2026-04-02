@@ -1,0 +1,160 @@
+{
+  "id": "KB-262",
+  "title": "Add a tab in the github modal issue import to",
+  "description": "Add a tab in the github modal (issue import) to view pull requests (for a remote repo). select a pull request and create a task to \"address issues in PR\"",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Backend - Add PR List Method to GitHubClient",
+      "status": "done"
+    },
+    {
+      "name": "Backend - Add PR API Endpoints",
+      "status": "done"
+    },
+    {
+      "name": "Frontend - Add API Functions",
+      "status": "done"
+    },
+    {
+      "name": "Frontend - Add Tab UI to GitHubImportModal",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T06:18:15.336Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T06:21:18.058Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T06:21:32.879Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and provides clear guidance for implementing the PR import feature. After reviewing the referenced source files, I confirm the spec accurately describes existing patterns, correctly identifies all affected files, and provides concrete, verifiable outcomes for each step. The testing requirements are appropriately rigorous."
+    },
+    {
+      "timestamp": "2026-03-31T12:52:43.676Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/maple-breeze"
+    },
+    {
+      "timestamp": "2026-03-31T12:52:43.676Z",
+      "action": "Step 0 (Backend - Add PR List Method to GitHubClient) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T12:52:45.005Z",
+      "action": "Step 0 (Backend - Add PR List Method to GitHubClient) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:52:52.358Z",
+      "action": "Step 0 (Backend - Add PR List Method to GitHubClient) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:52:52.360Z",
+      "action": "Step 1 (Backend - Add PR API Endpoints) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:52:55.037Z",
+      "action": "plan review requested for Step 1 (Backend - Add PR List Method to GitHubClient)"
+    },
+    {
+      "timestamp": "2026-03-31T12:53:08.401Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows the established patterns in the codebase. The `listPullRequests` method will mirror the existing `listIssues` implementation, using the gh CLI with REST API fallback approach. The return type specification is appropriate for the PR import feature."
+    },
+    {
+      "timestamp": "2026-03-31T12:56:33.265Z",
+      "action": "Step 1 (Backend - Add PR API Endpoints) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:56:33.266Z",
+      "action": "Step 2 (Frontend - Add API Functions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:56:33.267Z",
+      "action": "plan review requested for Step 2 (Backend - Add PR API Endpoints)"
+    },
+    {
+      "timestamp": "2026-03-31T12:56:58.654Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows the established patterns in the codebase. The GitHubClient methods (`listPullRequests` and `getPullRequest`) were already implemented in Step 1, so this step only needs to add the Express routes that use them. The plan correctly mirrors the issue import patterns for validation, error handling, duplicate detection, and task creation."
+    },
+    {
+      "timestamp": "2026-03-31T12:57:23.918Z",
+      "action": "Step 2 (Frontend - Add API Functions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:57:23.920Z",
+      "action": "Step 3 (Frontend - Add Tab UI to GitHubImportModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:57:23.921Z",
+      "action": "plan review requested for Step 3 (Frontend - Add API Functions)"
+    },
+    {
+      "timestamp": "2026-03-31T12:57:42.629Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is straightforward and correctly mirrors the existing issue import API patterns. Steps 1 and 2 are already complete (verified via grep), providing the necessary backend foundation. The worker needs to add two API functions and one interface that directly follow established patterns in `packages/dashboard/app/api.ts`."
+    },
+    {
+      "timestamp": "2026-03-31T12:57:55.694Z",
+      "action": "Step 3 (Frontend - Add Tab UI to GitHubImportModal) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:57:55.695Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:57:55.695Z",
+      "action": "plan review requested for Step 4 (Frontend - Add Tab UI to GitHubImportModal)"
+    },
+    {
+      "timestamp": "2026-03-31T12:58:20.291Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is well-structured and follows the existing patterns in the codebase. The backend API (`/github/pulls/fetch`, `/github/pulls/import`) and frontend API functions (`apiFetchGitHubPulls`, `apiImportGitHubPull`) are already implemented, so Step 4 can proceed as planned. The step correctly mirrors the existing issue import pattern and includes proper mobile view support."
+    },
+    {
+      "timestamp": "2026-03-31T13:02:24.049Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:02:24.050Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:02:24.050Z",
+      "action": "plan review requested for Step 5 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T13:02:46.152Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The step plan identifies the correct test scenarios for PR tab functionality, but it has a critical gap: it doesn't mention updating the mock setup in the test file to include the new PR API functions (`apiFetchGitHubPulls`, `apiImportGitHubPull`). Without this, any PR-related tests will fail because the existing mock only covers issue functions. Additionally, the plan should clarify how to handle the tab-specific filter UI changes when switching between Issues and Pulls tabs."
+    },
+    {
+      "timestamp": "2026-03-31T13:03:24.951Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:03:40.012Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T13:03:50.712Z",
+  "createdAt": "2026-03-31T06:18:15.336Z",
+  "updatedAt": "2026-03-31T13:03:50.712Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Added a \"Pull Requests\" tab to the GitHub Import Modal alongside the existing \"Issues\" tab. Users can now browse open PRs from a remote repository, select one, and create a kb review task titled \"Review PR #N: ...\". The implementation includes:\n\n1. Backend: Added `listPullRequests` and `getPullRequest` methods to GitHubClient with gh CLI and REST API fallbacks\n2. Backend: Added `/github/pulls/fetch` and `/github/pulls/import` endpoints following the existing patterns\n3. Frontend: Added `apiFetchGitHubPulls` and `apiImportGitHubPull` API functions with `GitHubPull` interface\n4. Frontend: Added tab UI with Issues/Pull Requests tabs, PR list with branch info, PR preview pane, and tab-aware import functionality\n5. Tests: Added 14 new comprehensive tests covering PR tab switching, loading, selection, import, \"already imported\" badge, and error states\n\nAll 45 GitHubImportModal tests pass, build succeeds, and changeset created for patch release."
+}

@@ -1,0 +1,288 @@
+{
+  "id": "KB-093",
+  "title": "Add support for creating (and merging) pull requests",
+  "description": "Amazing project - it works really well!\n\nIt would be great if there was an option to have the tool create a pull request instead of merge - and then watch the pull request for comments and suggestions, then merges the pull request once checks pass\n\nSource: https://github.com/dustinbyrne/kb/issues/9",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add a merge strategy setting for direct vs PR-based completion",
+      "status": "done"
+    },
+    {
+      "name": "Implement PR-first auto-completion flow in the runtime merge queue",
+      "status": "done"
+    },
+    {
+      "name": "Wire PR comment monitoring into PR-first automation and task UX",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "in-progress"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:55:39.143Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:56:07.014Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:58:24.166Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a strong, implementation-ready specification with clear mission intent, concrete step outcomes, and an appropriate full-review gate for the blast radius. I verified the referenced runtime patterns exist (e.g., direct auto-merge queue in `packages/cli/src/commands/dashboard.ts:211-441`, existing PR routes in `packages/dashboard/src/routes.ts:1467,1555,1594`, and existing PR monitor hooks in `packages/engine/src/scheduler.ts:123-156`). The plan is specific enough to execute and verify with"
+    },
+    {
+      "timestamp": "2026-03-30T04:59:51.691Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is strong overall: mission is clear, outcomes are testable, and the cross-package test/doc requirements are appropriately strict for a high-impact behavior change. However, there is one important file-scope gap that will likely block a correct implementation of Step 3 as written. Fixing that scope issue would make this spec execution-ready."
+    },
+    {
+      "timestamp": "2026-03-30T05:00:41.231Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:04:27.130Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The spec is strong overall: mission intent is clear, steps are mostly outcome-oriented, and testing/documentation expectations are substantial and concrete. However, there are two gaps that can force rework: one file-scope omission around package exports needed for implementation, and one policy ambiguity in PR readiness gating that could produce behavior that doesn’t match repository governance requirements."
+    },
+    {
+      "timestamp": "2026-03-30T05:05:22.063Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:26:18.394Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/ivory-fern"
+    },
+    {
+      "timestamp": "2026-03-30T05:26:18.410Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T05:26:22.935Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:26:25.813Z",
+      "action": "Starting KB-093 preflight by reading required context files and verifying repository state.",
+      "outcome": "Preparing implementation plan within the allowed file scope."
+    },
+    {
+      "timestamp": "2026-03-30T05:26:56.027Z",
+      "action": "Preflight completed: required files exist, current branch is kb/kb-093, and baseline HEAD was captured for upcoming reviewed steps.",
+      "outcome": "Ready to implement Step 1 within the declared file scope."
+    },
+    {
+      "timestamp": "2026-03-30T05:26:57.997Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:27:01.784Z",
+      "action": "Step 1 (Add a merge strategy setting for direct vs PR-based completion) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:27:09.226Z",
+      "action": "plan review requested for Step 1 (Add a merge strategy setting for direct vs PR-based completion)"
+    },
+    {
+      "timestamp": "2026-03-30T05:27:26.709Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The step's approach is sound and will achieve its stated outcomes. Adding a new `mergeMode` (or `mergeStrategy`) field to the `Settings` interface with a default value of `\"direct\"` properly preserves backward compatibility, and integrating it into the existing Merge section of `SettingsModal.tsx` follows established patterns. The test coverage requirements are appropriate."
+    },
+    {
+      "timestamp": "2026-03-30T05:29:11.676Z",
+      "action": "Targeted tests could not start because the worktree lacks installed dependencies (`vitest: command not found`, local node_modules missing).",
+      "outcome": "Will bootstrap workspace dependencies in the worktree before continuing with verification."
+    },
+    {
+      "timestamp": "2026-03-30T05:30:08.825Z",
+      "action": "code review requested for Step 1 (Add a merge strategy setting for direct vs PR-based completion)"
+    },
+    {
+      "timestamp": "2026-03-30T05:30:50.765Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds a backward-compatible merge strategy setting with a default of \"direct\" preserving existing behavior. The Settings interface is extended with a new `mergeStrategy` field, the UI provides clear user-facing copy in the Merge section of the Settings modal, and comprehensive tests are included for both the store persistence and UI behavior."
+    },
+    {
+      "timestamp": "2026-03-30T05:30:55.485Z",
+      "action": "code review requested for Step 1 (Add a merge strategy setting for direct vs PR-based completion (tests))"
+    },
+    {
+      "timestamp": "2026-03-30T05:31:31.995Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds a backward-compatible merge strategy setting with proper type definitions, default values, and UI integration. The tests cover default behavior, persistence, and form interactions. All requirements from the step outcomes are satisfied."
+    },
+    {
+      "timestamp": "2026-03-30T05:31:35.491Z",
+      "action": "Completed Step 1 by adding a backward-compatible mergeStrategy setting with dashboard controls and persistence coverage.",
+      "outcome": "Direct merge remains the default while PR-first mode is now configurable in settings."
+    },
+    {
+      "timestamp": "2026-03-30T05:31:45.985Z",
+      "action": "Step 1 (Add a merge strategy setting for direct vs PR-based completion) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:33:01.637Z",
+      "action": "Step 2 (Implement PR-first auto-completion flow in the runtime merge queue) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:33:03.921Z",
+      "action": "plan review requested for Step 2 (Implement PR-first auto-completion flow in the runtime merge queue)"
+    },
+    {
+      "timestamp": "2026-03-30T05:33:34.083Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan correctly identifies the high-level changes needed (export `GitHubClient`, branch merge queue logic, implement PR lifecycle), but has **critical gaps** in the implementation details. The `GitHubClient` class lacks essential methods for merge-readiness checking (`getCheckRuns`, `getReviewState`) and PR merging (`mergePr`) that are required to fulfill the stated outcomes. Additionally, the test requirements under-specify the truth table coverage needed for the merge-readiness policy."
+    },
+    {
+      "timestamp": "2026-03-30T05:47:52.124Z",
+      "action": "Implemented PR-first runtime helpers, GitHub merge-readiness evaluation, package-root GitHubClient export, and CLI merge-queue branching for direct vs pull-request completion.",
+      "outcome": "Targeted GitHub client tests, CLI merge-queue tests, and CLI typecheck now pass for the new PR automation path."
+    },
+    {
+      "timestamp": "2026-03-30T05:48:08.549Z",
+      "action": "code review requested for Step 2 (Implement PR-first auto-completion flow in the runtime merge queue)"
+    },
+    {
+      "timestamp": "2026-03-30T05:48:52.644Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds PR-first auto-completion flow alongside the existing direct merge path. The merge queue now branches based on `mergeStrategy` setting, with comprehensive PR lifecycle management including creation, readiness monitoring, and merge via GitHub API. The code preserves backward compatibility and includes robust error handling with status reset on failures."
+    },
+    {
+      "timestamp": "2026-03-30T05:48:56.882Z",
+      "action": "code review requested for Step 2 (Implement PR-first auto-completion flow in the runtime merge queue (tests))"
+    },
+    {
+      "timestamp": "2026-03-30T05:49:18.898Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation is comprehensive and well-structured. The PR-first auto-completion flow correctly implements all requirements from the task specification:\n\n1. **Merge strategy routing** — Cleanly separates direct merge (`aiMergeTask`) from PR-first flow (`processPullRequestMergeTask`) based on `mergeStrategy` setting\n2. **GitHubClient exposure** — Properly exports `GitHubClient` and related types from `@kb/dashboard` package root\n3. **PR lifecycle management** — Correctly handles PR creation/"
+    },
+    {
+      "timestamp": "2026-03-30T05:49:21.939Z",
+      "action": "Step 2 (Implement PR-first auto-completion flow in the runtime merge queue) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:50:59.491Z",
+      "action": "Step 3 (Wire PR comment monitoring into PR-first automation and task UX) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:51:03.262Z",
+      "action": "plan review requested for Step 3 (Wire PR comment monitoring into PR-first automation and task UX)"
+    },
+    {
+      "timestamp": "2026-03-30T05:51:29.055Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The step plan has a structural gap: it requires reusing scheduler-based PR monitor hooks and ensuring \"PR comment events still become task steering comments in PR mode,\" but there's no explicit plan for how `PrCommentHandler` connects to `PrMonitor`. The existing `PrMonitor` class (lines 52-257 in `pr-monitor.ts`) accepts a callback via `onNewComments()`, but the wiring isn't described in the step plan. Additionally, the state transition contract requirements are clear, but the test plan lacks s"
+    },
+    {
+      "timestamp": "2026-03-30T06:01:58.552Z",
+      "action": "Wired scheduler-based PR monitoring to the runtime, exporting PrCommentHandler and connecting PrMonitor comment events into task steering comments.",
+      "outcome": "Task detail PR UX now reflects PR-first automation states, and targeted engine/dashboard/CLI tests pass for monitoring and waiting-state behavior."
+    },
+    {
+      "timestamp": "2026-03-30T06:02:11.531Z",
+      "action": "code review requested for Step 3 (Wire PR comment monitoring into PR-first automation and task UX)"
+    },
+    {
+      "timestamp": "2026-03-30T06:02:46.322Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly wires PR comment monitoring into the PR-first automation flow. The scheduler properly integrates with the PrMonitor to track in-review PRs, and the dashboard UI (PrSection/TaskDetailModal) correctly displays PR-first automation states. All required symbols are exported from the engine package, and tests cover the key behaviors."
+    },
+    {
+      "timestamp": "2026-03-30T06:02:51.160Z",
+      "action": "code review requested for Step 3 (Wire PR comment monitoring into PR-first automation and task UX (tests))"
+    },
+    {
+      "timestamp": "2026-03-30T06:03:45.461Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly wires PR comment monitoring into the PR-first automation flow. The scheduler properly integrates with the PR monitor via event handlers, comment events flow through to steering comments via `PrCommentHandler`, and the UI reflects PR automation states. All required exports are in place via `packages/engine/src/index.ts`. Tests cover the core PR monitoring, comment handling, route payloads, and UI behavior."
+    },
+    {
+      "timestamp": "2026-03-30T06:03:48.832Z",
+      "action": "Step 3 (Wire PR comment monitoring into PR-first automation and task UX) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:04:13.657Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T06:04:54.317Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:05:01.418Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T06:05:27.962Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The testing approach in Step 4 is comprehensive and well-structured. The targeted test commands cover all modified packages and components: core settings persistence, dashboard GitHub client and routes, UI components (SettingsModal, PrSection, TaskDetailModal), engine PR monitoring, and CLI dashboard integration. The existing test files already contain substantial coverage for the PR-first merge mode functionality."
+    },
+    {
+      "timestamp": "2026-03-30T06:05:32.682Z",
+      "action": "Started Step 4 validation from existing Step 3 commit baseline.",
+      "outcome": "Captured current HEAD and proceeding with targeted tests before full suite/build."
+    },
+    {
+      "timestamp": "2026-03-30T06:08:11.594Z",
+      "action": "Targeted tests now pass after restoring the refinement route, updating the CLI dashboard mock for GitHubClient, and rebuilding workspace package artifacts.",
+      "outcome": "Proceeding to full workspace test suite and final build verification."
+    },
+    {
+      "timestamp": "2026-03-30T06:09:17.327Z",
+      "action": "Full workspace test suite is blocked by pre-existing @kb/dashboard failures outside KB-093 scope.",
+      "outcome": "Created follow-up task KB-118 for the unrelated Header/useTerminal/typecheck regressions; KB-093-specific targeted tests remain green."
+    },
+    {
+      "timestamp": "2026-03-30T06:10:53.669Z",
+      "action": "code review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T06:11:25.185Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The testing implementation for Step 4 is comprehensive and well-structured. All required test files have been created or updated with thorough coverage of the PR-first merge mode functionality. The tests validate the merge strategy setting, PR lifecycle flow, merge readiness policy, scheduler integration, and UI components. The test suite follows the project's established patterns using Vitest with proper mocking strategies."
+    },
+    {
+      "timestamp": "2026-03-30T06:11:30.221Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:11:34.528Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:11:39.018Z",
+      "action": "Updated user-facing docs and release notes for the new PR-first merge mode.",
+      "outcome": "README, CLI README, dashboard README, and a minor changeset now describe merge strategies, GitHub auth requirements, and the explicit non-goal of auto-pushing branches."
+    },
+    {
+      "timestamp": "2026-03-30T06:11:54.318Z",
+      "action": "Workspace build completed successfully after the KB-093 changes.",
+      "outcome": "All packages build cleanly; remaining validation blocker is the unrelated @kb/dashboard full-suite failure tracked in KB-118."
+    },
+    {
+      "timestamp": "2026-03-30T06:12:13.436Z",
+      "action": "Agent finished without calling task_done — moved to in-review for inspection"
+    }
+  ],
+  "createdAt": "2026-03-30T00:00:00.000Z",
+  "updatedAt": "2026-03-30T06:13:30.117Z",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "size": "L",
+  "reviewLevel": 3,
+  "columnMovedAt": "2026-03-30T06:13:30.117Z"
+}

@@ -1,0 +1,79 @@
+{
+  "id": "KB-240",
+  "title": "the edit button in the spec area of the task",
+  "description": "the edit button in the spec area of the task dialog should be at the top",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Move Edit Button to Top of Spec Section",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:12:21.334Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:12:45.043Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:12:54.906Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is complete and accurate. It correctly identifies the current edit button location at the bottom of the spec section in `TaskDetailModal.tsx` (lines 562-567), and provides clear steps to move it to the top. The file scope is correct, dependencies are accurate (none), and testing requirements appropriately reference existing test patterns for the edit button functionality."
+    },
+    {
+      "timestamp": "2026-03-31T02:16:37.228Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/proud-crane"
+    },
+    {
+      "timestamp": "2026-03-31T02:16:37.229Z",
+      "action": "Step 0 (Move Edit Button to Top of Spec Section) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T02:16:45.709Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T02:19:48.678Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:19:49.943Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:19:55.807Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:19:57.941Z",
+      "action": "Successfully moved the spec edit button from bottom to top of spec section in TaskDetailModal.tsx",
+      "outcome": "All 110 TaskDetailModal tests pass. Build passes. The edit button now appears at the top of the spec section with marginBottom: 12px styling, and is hidden when in edit mode (isEditingSpec is true)."
+    },
+    {
+      "timestamp": "2026-03-31T02:19:58.699Z",
+      "action": "Step 0 (Move Edit Button to Top of Spec Section) → done"
+    },
+    {
+      "timestamp": "2026-03-31T02:19:58.701Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T02:20:12.424Z",
+  "createdAt": "2026-03-31T02:12:21.334Z",
+  "updatedAt": "2026-03-31T02:20:12.424Z",
+  "size": "S",
+  "reviewLevel": 0
+}

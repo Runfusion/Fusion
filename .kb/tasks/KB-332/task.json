@@ -1,0 +1,223 @@
+{
+  "id": "KB-332",
+  "description": "Execute subtask KB-330: rename internal packages from @kb/* to @fusion/* per .fusion/tasks/KB-330/PROMPT.md",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 6,
+  "summary": "Successfully completed KB-332 - renamed default task ID prefix from KB- to FN- and git branch naming from kb/ to fusion/. All 6 steps completed: (0) Changed default prefix in allocateId() from \"KB\" to \"FN\", (1) Updated branch naming patterns in 6 source files, (2) Updated JSDoc comments to reflect fusion/fn-XXX pattern, (3) Updated all test expectations for FN- IDs and fusion/ branches, (4) Verified builds and tests pass for core, engine, and CLI packages, (5) Created changeset documenting the change. The core package has 635 passing tests. Existing KB- tasks remain unchanged; only new tasks use the FN- prefix.",
+  "createdAt": "2026-03-31T20:20:34.273Z",
+  "updatedAt": "2026-04-01T02:29:54.274Z",
+  "columnMovedAt": "2026-04-01T02:29:54.274Z",
+  "dependencies": [
+    "KB-330"
+  ],
+  "steps": [
+    {
+      "name": "Update Default Task Prefix (KB- → FN-)",
+      "status": "done"
+    },
+    {
+      "name": "Update Branch Naming Pattern (kb/ → fusion/)",
+      "status": "done"
+    },
+    {
+      "name": "Update JSDoc Comments and Documentation",
+      "status": "done"
+    },
+    {
+      "name": "Update Test Files",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:20:34.273Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:22:22.194Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:22:40.205Z",
+      "action": "Spec review: RETHINK",
+      "outcome": "The KB-332 specification is fundamentally incorrect. The task is labeled \"DUPLICATE: KB-330\" in its PROMPT.md, but according to the parent epic (KB-329), KB-332 should be **\"Rename task ID prefix and branch naming (KB-XXX → FN-XXX, kb/ → fusion/)\"** — a completely different scope from KB-330 (which is about package renaming)."
+    },
+    {
+      "timestamp": "2026-03-31T20:22:40.207Z",
+      "action": "RETHINK: spec rewound — session checkpoint d42f10f1",
+      "outcome": "The KB-332 specification is fundamentally incorrect. The task is labeled \"DUPLICATE: KB-330\" in its PROMPT.md, but according to the parent epic (KB-329), KB-332 should be **\"Rename task ID prefix and branch naming (KB-XXX → FN-XXX, kb/ → fusion/)\"** — a completely different scope from KB-330 (which is about package renaming)."
+    },
+    {
+      "timestamp": "2026-03-31T20:23:29.103Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:23:51.554Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, mechanically precise specification for renaming task ID prefixes and branch naming patterns. All file references and line numbers have been verified against the actual codebase. The spec correctly identifies 6 source locations requiring changes, documents all affected test files with specific line references, and maintains backward compatibility constraints. The dependency on KB-330 is appropriately stated given the changeset references."
+    },
+    {
+      "timestamp": "2026-04-01T01:59:23.283Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fresh-dune"
+    },
+    {
+      "timestamp": "2026-04-01T01:59:23.284Z",
+      "action": "Step 0 (Update Default Task Prefix (KB- → FN-)) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T01:59:26.873Z",
+      "action": "Step 0 (Update Default Task Prefix (KB- → FN-)) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:59:42.327Z",
+      "action": "Step 0 (Update Default Task Prefix (KB- → FN-)) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:59:42.330Z",
+      "action": "Step 0 Preflight complete - identified all files needing changes: store.ts (prefix + branch), types.ts (JSDoc), task.ts (branch), routes.ts (branch), merger.ts (branch), executor.ts (branch + JSDoc), worktree-pool.ts (JSDoc), and multiple test files"
+    },
+    {
+      "timestamp": "2026-04-01T01:59:43.735Z",
+      "action": "plan review requested for Step 1 (Update Default Task Prefix (KB- → FN-))"
+    },
+    {
+      "timestamp": "2026-04-01T02:00:21.136Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The step 1 plan correctly identifies the two core locations for changing the default task prefix from \"KB\" to \"FN\" in the source code. However, the plan has significant gaps in Step 2 (branch naming) that affect the completeness of this rename operation. Three critical source locations are missing from the file scope, which would result in inconsistent branch naming patterns across the codebase."
+    },
+    {
+      "timestamp": "2026-04-01T02:00:27.345Z",
+      "action": "Step 1 (Update Branch Naming Pattern (kb/ → fusion/)) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:00:31.636Z",
+      "action": "code review requested for Step 1 (Update Default Task Prefix (KB- → FN-))"
+    },
+    {
+      "timestamp": "2026-04-01T02:01:06.826Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The Step 1 implementation correctly changes the default task ID prefix from \"KB\" to \"FN\" in both the core store logic and the type documentation. Both required file modifications are present and accurate. Note that test files have not yet been updated (expected in Step 4), so tests will currently fail."
+    },
+    {
+      "timestamp": "2026-04-01T02:01:08.147Z",
+      "action": "Step 1 (Update Branch Naming Pattern (kb/ → fusion/)) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:01:08.149Z",
+      "action": "plan review requested for Step 2 (Update Branch Naming Pattern (kb/ → fusion/))"
+    },
+    {
+      "timestamp": "2026-04-01T02:01:38.735Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan identifies the correct outcome (changing branch naming from `kb/{id}` to `fusion/{id}`) and most of the affected files, but it is **missing two critical source files** and has **inaccurate line numbers**. If executed as written, the branch naming change will be incomplete, leaving `kb/` patterns in `scheduler.ts` and the exported `getTaskBranchName()` helper in `dashboard.ts`, causing inconsistent branch naming across the system."
+    },
+    {
+      "timestamp": "2026-04-01T02:01:44.553Z",
+      "action": "Step 2 (Update JSDoc Comments and Documentation) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:01:55.533Z",
+      "action": "code review requested for Step 2 (Update Branch Naming Pattern (kb/ → fusion/))"
+    },
+    {
+      "timestamp": "2026-04-01T02:02:19.810Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The worker has correctly updated all hardcoded branch naming patterns from `kb/${id}` to `fusion/${id}` across 8 source locations in 6 files. The changes are thorough, including two additional locations not explicitly listed in the original task (scheduler.ts and dashboard.ts). All test files remain untouched (as expected for Step 4), and JSDoc comments remain unchanged (as expected for Step 3)."
+    },
+    {
+      "timestamp": "2026-04-01T02:02:21.832Z",
+      "action": "Step 2 (Update JSDoc Comments and Documentation) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:02:21.833Z",
+      "action": "plan review requested for Step 3 (Update JSDoc Comments and Documentation)"
+    },
+    {
+      "timestamp": "2026-04-01T02:02:47.619Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan has incorrect line numbers for executor.ts (lines 1011/1013 don't exist at the stated content) and is missing two additional JSDoc references in the same file that need updating. Additionally, a test file with JSDoc-style inline documentation is missing from Step 4's coverage."
+    },
+    {
+      "timestamp": "2026-04-01T02:02:52.979Z",
+      "action": "Step 3 (Update Test Files) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:03:00.425Z",
+      "action": "code review requested for Step 3 (Update JSDoc Comments and Documentation)"
+    },
+    {
+      "timestamp": "2026-04-01T02:03:23.540Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The JSDoc comment updates for Step 3 are complete and correct. All source file documentation has been updated from `kb/kb-XXX` to `fusion/fn-XXX` patterns as required. The remaining `kb/kb-` references found are exclusively in test files, which are scheduled for update in Step 4."
+    },
+    {
+      "timestamp": "2026-04-01T02:03:25.042Z",
+      "action": "Step 3 (Update Test Files) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:03:25.044Z",
+      "action": "plan review requested for Step 4 (Update Test Files)"
+    },
+    {
+      "timestamp": "2026-04-01T02:03:49.249Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The plan has the right general approach but contains a critical line number error (line 688 vs 769) and is missing approximately 10+ test files that need updating. Additionally, the plan incorrectly suggests changing KB-999 references which are intentionally testing backward compatibility with existing tasks."
+    },
+    {
+      "timestamp": "2026-04-01T02:03:54.920Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:05:06.120Z",
+      "action": "code review requested for Step 4 (Update Test Files)"
+    },
+    {
+      "timestamp": "2026-04-01T02:05:58.506Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The test files have been largely updated to use the new FN- prefix and fusion/ branch naming patterns. However, several critical test assertions were missed or incorrectly updated, resulting in test expectations that don't match the new behavior. These issues will cause test failures when the test suite runs."
+    },
+    {
+      "timestamp": "2026-04-01T02:06:19.455Z",
+      "action": "code review requested for Step 4 (Update Test Files)"
+    },
+    {
+      "timestamp": "2026-04-01T02:13:00.855Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-04-01T02:13:02.975Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:13:33.661Z",
+      "action": "Verified core, engine, and cli packages build successfully. Dashboard failure is pre-existing issue in mission-routes.ts (KB-633), unrelated to KB-332 changes.",
+      "outcome": "Proceeding with tests for modified packages"
+    },
+    {
+      "timestamp": "2026-04-01T02:28:44.246Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:28:44.247Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T02:28:50.514Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T02:28:54.409Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

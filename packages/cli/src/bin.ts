@@ -47,11 +47,13 @@ const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./co
 const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
 const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice } = await import("./commands/mission.js");
 const { runProjectList, runProjectAdd, runProjectRemove, runProjectShow, runProjectInfo, runProjectSetDefault, runProjectDetect } = await import("./commands/project.js");
+const { runInit } = await import("./commands/init.js");
 
 const HELP = `
 fn — AI-orchestrated task board
 
 Usage:
+  fn init [opts]                      Initialize a new kb project in the current directory
   fn dashboard                        Start the board web UI
   fn dashboard --paused               Start with automation paused
   fn dashboard --dev                  Start web UI only (no AI engine)
@@ -155,6 +157,51 @@ function extractGlobalProjectFlag(argv: string[]): { cleanedArgs: string[]; proj
   return { cleanedArgs, projectName };
 }
 
+/**
+ * Check if migration is needed and run it automatically.
+ * This handles the transition from single-project to multi-project mode.
+ */
+async function checkAndMigrate(): Promise<void> {
+  // Skip if KB_SKIP_MIGRATION is set
+  if (process.env.KB_SKIP_MIGRATION === "1") {
+    return;
+  }
+
+  try {
+    const { needsCentralMigration, autoMigrateToCentral } = await import("@fusion/core");
+
+    // Check if migration is needed
+    if (!needsCentralMigration(process.cwd())) {
+      return;
+    }
+
+    console.log("\n🔄 Migrating to multi-project mode...");
+
+    // Get CentralCore and run migration
+    const { CentralCore } = await import("@fusion/core");
+    const central = new CentralCore();
+    await central.init();
+
+    try {
+      const result = await autoMigrateToCentral(process.cwd(), central);
+
+      if (result.success) {
+        console.log(`✓ Registered project: ${result.projectsRegistered.join(", ")}`);
+        if (result.errors.length > 0) {
+          console.log(`  Warnings: ${result.errors.join(", ")}`);
+        }
+      } else {
+        console.log(`⚠ Migration warnings: ${result.errors.join(", ")}`);
+      }
+    } finally {
+      await central.close();
+    }
+  } catch (err) {
+    // Migration errors are non-fatal - continue with legacy mode
+    console.log(`⚠ Migration check failed: ${(err as Error).message}`);
+  }
+}
+
 async function main() {
   const { cleanedArgs: args, projectName } = extractGlobalProjectFlag(process.argv.slice(2));
 
@@ -165,8 +212,25 @@ async function main() {
 
   const command = args[0];
 
+  // Migration check: run auto-migration for existing single-project users
+  // Skip for init command itself (user is explicitly initializing)
+  if (command !== "init" && command !== "dashboard") {
+    await checkAndMigrate();
+  }
+
   try {
     switch (command) {
+      case "init": {
+        // Parse init options
+        const nameIdx = args.indexOf("--name");
+        const name = nameIdx !== -1 && nameIdx + 1 < args.length ? args[nameIdx + 1] : undefined;
+        const pathIdx = args.indexOf("--path");
+        const path = pathIdx !== -1 && pathIdx + 1 < args.length ? args[pathIdx + 1] : undefined;
+
+        await runInit({ name, path });
+        break;
+      }
+
       case "dashboard": {
         // Initialize native module resolution for Bun binary before starting dashboard
         // This sets up the paths so node-pty can find its native assets

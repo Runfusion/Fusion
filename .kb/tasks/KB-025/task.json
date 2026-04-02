@@ -1,0 +1,191 @@
+{
+  "id": "KB-025",
+  "description": "add per-task model and validator model selections (on the dashboad - optional, not required, use defaults normally, but can select different model)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Types and Store Updates",
+      "status": "done"
+    },
+    {
+      "name": "API Route Updates",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard UI — Model Selector Tab",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard UI — TaskDetailModal Integration",
+      "status": "done"
+    },
+    {
+      "name": "Engine — Use Per-Task Model Overrides in Executor",
+      "status": "done"
+    },
+    {
+      "name": "Engine — Use Per-Task Validator Model Overrides in Reviewer",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:16:22.693Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:18:08.433Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:18:23.886Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification that follows the project's established patterns. The mission is clear, steps have concrete verifiable outcomes, and all referenced files exist with the expected patterns. The spec correctly identifies existing model selection UI patterns in SettingsModal.tsx and the createKbAgent/reviewStep call sites in the engine."
+    },
+    {
+      "timestamp": "2026-03-30T02:26:07.362Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/lemon-lark"
+    },
+    {
+      "timestamp": "2026-03-30T02:26:07.363Z",
+      "action": "Step 0 (Core Types and Store Updates) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:26:20.148Z",
+      "action": "Step 0 (Core Types and Store Updates) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:14.560Z",
+      "action": "Step 1 (API Route Updates) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:14.563Z",
+      "action": "plan review requested for Step 1 (Core Types and Store Updates)"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:36.593Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the necessary changes to support per-task model overrides. It follows established patterns in the codebase for optional fields (matching `paused`, `size`, `reviewLevel`, etc.) and correctly scopes the work to type definitions and persistence logic. The testing approach aligns with existing `updateTask` test patterns in `store.test.ts` (lines 603-615)."
+    },
+    {
+      "timestamp": "2026-03-30T02:28:08.486Z",
+      "action": "Step 1 (API Route Updates) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:28:09.965Z",
+      "action": "Step 2 (Dashboard UI — Model Selector Tab) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:28:09.967Z",
+      "action": "plan review requested for Step 2 (API Route Updates)"
+    },
+    {
+      "timestamp": "2026-03-30T02:28:25.244Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and will achieve the stated outcomes. The store layer already supports the model fields (added in Step 1), so the route work is straightforward: extract the four new fields from the request body, pass them to `store.updateTask()`, and add corresponding tests. The validation strategy (checking for string or undefined) is appropriate for this API layer."
+    },
+    {
+      "timestamp": "2026-03-30T02:29:26.341Z",
+      "action": "Step 2 (Dashboard UI — Model Selector Tab) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:28.331Z",
+      "action": "Step 3 (Dashboard UI — TaskDetailModal Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:28.331Z",
+      "action": "plan review requested for Step 3 (Dashboard UI — Model Selector Tab)"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:53.035Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 follows established patterns from `SettingsModal.tsx` and `SteeringTab.tsx`. The component structure, API integration via `fetchModels()`, and testing approach are well-aligned with the codebase. The plan correctly identifies the need for two model selectors with \"Use default\" options and save/reset functionality."
+    },
+    {
+      "timestamp": "2026-03-30T02:31:05.373Z",
+      "action": "Step 3 (Dashboard UI — TaskDetailModal Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:31:06.925Z",
+      "action": "Step 4 (Engine — Use Per-Task Model Overrides in Executor) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:31:06.928Z",
+      "action": "plan review requested for Step 4 (TaskDetailModal Integration)"
+    },
+    {
+      "timestamp": "2026-03-30T02:31:27.532Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The plan's stated outcomes for Step 4 will not be fully achieved without addressing the `updateTask` type signature in `api.ts`. The plan incorrectly claims no API changes are needed, but the current `updateTask` function has a restrictive type that only allows `title`, `description`, `prompt`, and `dependencies`. The model fields (`modelProvider`, `modelId`, etc.) must be added to this type for the ModelSelectorTab to successfully persist changes."
+    },
+    {
+      "timestamp": "2026-03-30T02:32:31.244Z",
+      "action": "Step 4 (Engine — Use Per-Task Model Overrides in Executor) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:32:33.901Z",
+      "action": "Step 5 (Engine — Use Per-Task Validator Model Overrides in Reviewer) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:32:33.929Z",
+      "action": "plan review requested for Step 5 (Engine — Executor Model Overrides)"
+    },
+    {
+      "timestamp": "2026-03-30T02:32:53.684Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 is clear, correct, and achievable. The approach of reading per-task model fields and falling back to global settings before calling `createKbAgent()` is sound. The testing strategy follows established patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T02:33:28.182Z",
+      "action": "Step 5 (Engine — Use Per-Task Validator Model Overrides in Reviewer) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:33:30.342Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:33:30.344Z",
+      "action": "plan review requested for Step 6 (Engine — Reviewer Validator Model Overrides)"
+    },
+    {
+      "timestamp": "2026-03-30T02:33:51.741Z",
+      "action": "plan review Step 6: REVISE",
+      "outcome": "The plan identifies the correct files and functions to modify but has a critical gap: `createReviewStepTool()` doesn't have access to the Task object containing `validatorModelProvider`/`validatorModelId`. The method signature only receives `taskId`, `worktreePath`, and `promptContent` — the task itself is not passed in. This will cause the implementation to fail when trying to access per-task validator model overrides."
+    },
+    {
+      "timestamp": "2026-03-30T02:34:38.160Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:34:39.310Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:35:36.903Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:07.149Z",
+      "action": "Step 0 (Core Types and Store Updates) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:07.153Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:36:21.713Z",
+  "createdAt": "2026-03-30T01:16:22.693Z",
+  "updatedAt": "2026-03-30T02:36:21.713Z",
+  "size": "M",
+  "reviewLevel": 2
+}

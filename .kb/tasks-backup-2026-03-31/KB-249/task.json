@@ -1,0 +1,130 @@
+{
+  "id": "KB-249",
+  "title": "After the stuck task timer is changed we should",
+  "description": "After the stuck task timer is changed, we should check for in progress tasks that are stuck over the timer and fix",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Immediate Check Method to StuckTaskDetector",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests for checkNow Method",
+      "status": "done"
+    },
+    {
+      "name": "Wire Up Settings Change Handler in Dashboard Command",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:26:09.271Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:30:24.312Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:30:40.145Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate, well-scoped, and actionable. The referenced files and patterns exist as described. Steps have concrete outcomes and real test requirements. Minor documentation nits exist around line number precision and log level clarity, but nothing blocks implementation."
+    },
+    {
+      "timestamp": "2026-03-31T06:32:36.448Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gentle-delta"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:36.448Z",
+      "action": "Step 0 (Add Immediate Check Method to StuckTaskDetector) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:39.883Z",
+      "action": "Step 0 (Add Immediate Check Method to StuckTaskDetector) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:45.869Z",
+      "action": "Step 0 (Add Immediate Check Method to StuckTaskDetector) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:45.872Z",
+      "action": "Step 1 (Add Tests for checkNow Method) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:32:47.102Z",
+      "action": "plan review requested for Step 1 (Add Immediate Check Method to StuckTaskDetector)"
+    },
+    {
+      "timestamp": "2026-03-31T06:33:00.678Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and straightforward. The `StuckTaskDetector` class already has the core detection logic in the private `checkStuckTasks()` method (lines 157-181 in `stuck-task-detector.ts`). Exposing this as a public `checkNow()` method requires minimal changes — essentially just making the method public and adding appropriate logging to distinguish manual vs. polling triggers."
+    },
+    {
+      "timestamp": "2026-03-31T06:33:30.170Z",
+      "action": "Step 1 (Add Tests for checkNow Method) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:33:30.170Z",
+      "action": "Step 2 (Wire Up Settings Change Handler in Dashboard Command) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:33:32.080Z",
+      "action": "plan review requested for Step 2 (Add Tests for checkNow Method)"
+    },
+    {
+      "timestamp": "2026-03-31T06:33:42.009Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The test plan for Step 2 is well-structured and covers the necessary scenarios for the `checkNow()` method. The test cases align with existing test patterns in `stuck-task-detector.test.ts` and appropriately validate both happy paths and edge cases."
+    },
+    {
+      "timestamp": "2026-03-31T06:34:00.312Z",
+      "action": "Step 2 (Wire Up Settings Change Handler in Dashboard Command) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:34:00.312Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:34:01.257Z",
+      "action": "plan review requested for Step 3 (Wire Up Settings Change Handler in Dashboard Command)"
+    },
+    {
+      "timestamp": "2026-03-31T06:34:13.818Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is sound and follows established patterns in the codebase. The approach correctly identifies where to add the `settings:updated` handler, how to detect the specific setting change, and follows the existing pattern used for `globalPause` and `enginePaused` transitions. The step's checkboxes will achieve the stated outcome."
+    },
+    {
+      "timestamp": "2026-03-31T06:34:30.736Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:34:30.736Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:34:59.485Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:35:05.519Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T06:39:09.703Z",
+  "createdAt": "2026-03-31T02:26:09.271Z",
+  "updatedAt": "2026-03-31T06:39:09.703Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Implemented KB-249: When taskStuckTimeoutMs is changed, the system now immediately checks for stuck tasks under the new timer value rather than waiting for the next 30-second poll cycle. Added a public checkNow() method to StuckTaskDetector that runs the same detection logic as the polling check. Wired up a settings:updated event handler in dashboard.ts that calls checkNow() when taskStuckTimeoutMs changes. Added 5 comprehensive tests for the new method. Updated AGENTS.md documentation to note this behavior."
+}

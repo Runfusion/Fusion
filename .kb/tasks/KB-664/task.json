@@ -1,0 +1,17 @@
+{
+  "id": "KB-664",
+  "description": "The dashboard model dropdowns should:\n1. Show models from all authenticated providers configured in pi (currently only showing one set)\n2. Allow users to favorite providers via global settings, with favorites appearing at the top of dropdowns\n\n**Current behavior:**\n- The `/api/models` endpoint uses `modelRegistry.getAvailable()` which returns only authenticated models\n- The CustomModelDropdown component groups models by provider\n\n**Required changes:**\n1. Backend: Add `favoriteProviders?: string[]` to GlobalSettings\n2. Backend: Update `/api/models` to also return provider metadata (not just models)\n3. Frontend: Update CustomModelDropdown to accept provider favorites and sort providers accordingly\n4. Frontend: Add ability to toggle favorites in the dropdown (click star icon on provider groups)\n5. Frontend: Persist favorites via global settings API",
+  "column": "triage",
+  "dependencies": [],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-04-02T03:28:00.578Z",
+      "action": "Task created"
+    }
+  ],
+  "columnMovedAt": "2026-04-02T03:28:00.578Z",
+  "createdAt": "2026-04-02T03:28:00.578Z",
+  "updatedAt": "2026-04-02T03:28:00.578Z"
+}

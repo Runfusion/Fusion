@@ -1,0 +1,202 @@
+{
+  "id": "KB-012",
+  "description": "add cli option to start dashboard but with execution paused",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add paused option to runDashboard function",
+      "status": "done"
+    },
+    {
+      "name": "Add --paused flag to CLI argument parsing",
+      "status": "skipped"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "skipped"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T00:38:11.481Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T00:40:08.655Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T00:40:18.166Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is clear, well-structured, and technically accurate. The task correctly identifies the existing `enginePaused` setting in the codebase and wires a CLI flag through to it. Steps are concrete with verifiable outcomes, file references are accurate, and testing requirements demand real assertions."
+    },
+    {
+      "timestamp": "2026-03-30T00:44:39.982Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/sandy-eagle"
+    },
+    {
+      "timestamp": "2026-03-30T00:44:39.983Z",
+      "action": "Step 0 (Add paused option to runDashboard function) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T00:44:42.813Z",
+      "action": "Step 0 (Add paused option to runDashboard function) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:44:45.793Z",
+      "action": "Step 0 (Add paused option to runDashboard function) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:44:45.795Z",
+      "action": "Step 1 (Add --paused flag to CLI argument parsing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:44:45.798Z",
+      "action": "plan review requested for Step 1 (Add paused option to runDashboard function)"
+    },
+    {
+      "timestamp": "2026-03-30T00:44:46.326Z",
+      "action": "Step 0 (Add paused option to runDashboard function) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:44:46.328Z",
+      "action": "plan review requested for Step 1 (Add paused option to runDashboard function)"
+    },
+    {
+      "timestamp": "2026-03-30T00:44:56.244Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan for Step 1 is straightforward and correctly identifies the functional changes needed. However, there's a critical timing issue: the check for `paused` and call to `store.updateSettings({ enginePaused: true })` must happen **before** the engine components (triage, scheduler) are started, not just after store initialization. The current plan checkboxes don't explicitly call out this sequencing requirement, which could lead to a race condition where the engine starts dispatching work befor"
+    },
+    {
+      "timestamp": "2026-03-30T00:44:58.598Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is clear, achievable, and correctly identifies the minimal changes needed. The approach of adding `paused?: boolean` to the function options, calling `store.updateSettings({ enginePaused: true })` after store initialization but before engine startup, and logging a diagnostic message is the correct sequence. The existing codebase already supports `enginePaused` in the Settings interface (`packages/core/src/types.ts:48-56`) and the TaskStore has an `updateSettings` method (`pac"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:01.525Z",
+      "action": "Step 1 (Add --paused flag to CLI argument parsing) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:17.677Z",
+      "action": "Step 1 (Add --paused flag to CLI argument parsing) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:17.688Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:17.700Z",
+      "action": "plan review requested for Step 2 (Add --paused flag to CLI argument parsing)"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:29.452Z",
+      "action": "Step 1 (Add --paused flag to CLI argument parsing) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:30.485Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is straightforward and achievable. The `dashboard` command in `bin.ts` (lines 90-95) already follows a clear pattern for flag handling with `--port`/`-p` and `--no-open`. The `runDashboard` function already supports the `paused` option from Step 1 (line 27 in `dashboard.ts`). The only work required is adding `--paused` detection, passing it to `runDashboard()`, updating HELP text, and running tests."
+    },
+    {
+      "timestamp": "2026-03-30T00:45:35.765Z",
+      "action": "plan review requested for Step 2 (Add --paused flag to CLI argument parsing)"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:47.478Z",
+      "action": "plan review Step 2: RETHINK",
+      "outcome": "The current codebase already contains a complete implementation of the `--paused` flag in `bin.ts`, including flag detection, passing to `runDashboard()`, and HELP text documentation. The worker is being asked to implement changes that already exist. This suggests either: (a) the step was already completed by a previous worker, or (b) there's a mismatch between the task specification and actual codebase state."
+    },
+    {
+      "timestamp": "2026-03-30T00:45:47.482Z",
+      "action": "Step 2 (Testing & Verification) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:47.484Z",
+      "action": "RETHINK: Step 2 plan rewound — session checkpoint N/A",
+      "outcome": "The current codebase already contains a complete implementation of the `--paused` flag in `bin.ts`, including flag detection, passing to `runDashboard()`, and HELP text documentation. The worker is being asked to implement changes that already exist. This suggests either: (a) the step was already completed by a previous worker, or (b) there's a mismatch between the task specification and actual codebase state."
+    },
+    {
+      "timestamp": "2026-03-30T00:45:51.971Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:51.972Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:51.972Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:52.065Z",
+      "action": "Step 1 (Add --paused flag to CLI argument parsing) → skipped"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:52.067Z",
+      "action": "Step 2 (Testing & Verification) → skipped"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:52.069Z",
+      "action": "Steps 1 and 2 already implemented in codebase. Skipping to Step 3 for testing.",
+      "outcome": "Moving directly to Step 3 - Testing & Verification"
+    },
+    {
+      "timestamp": "2026-03-30T00:45:52.072Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T00:46:03.713Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan has a critical gap: the mock store in `dashboard.test.ts` does not include an `updateSettings` mock, which is required to test the new paused functionality. The tests will fail because the function being tested calls `store.updateSettings()`, but this method isn't mocked. Additionally, the existing test suite at line 30 needs the mock added before the new tests can be written."
+    },
+    {
+      "timestamp": "2026-03-30T00:46:09.883Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The Step 3 plan correctly identifies the required test coverage for the `--paused` flag functionality. The checkboxes will achieve the stated outcomes of verifying that `store.updateSettings({ enginePaused: true })` is called appropriately when the flag is passed and not called when absent. The plan follows existing test patterns in the codebase and includes proper quality gates (full test suite + build)."
+    },
+    {
+      "timestamp": "2026-03-30T00:46:11.617Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T00:46:46.456Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:46:50.480Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T00:46:55.067Z",
+      "action": "plan review requested for Step 4 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-30T00:47:11.237Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "Step 4 is a straightforward documentation and delivery step. The checkboxes are appropriate and achievable. The changeset file already exists with correct content, and documentation was proactively updated in earlier steps (STANDALONE.md and bin.ts HELP text both already document the `--paused` flag)."
+    },
+    {
+      "timestamp": "2026-03-30T00:47:13.312Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T00:47:19.358Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T00:47:23.881Z",
+      "action": "Execution failed: Invalid transition: 'in-review' → 'in-review'. Valid targets: done, in-progress"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T00:48:20.820Z",
+  "createdAt": "2026-03-30T00:38:11.481Z",
+  "updatedAt": "2026-03-30T00:48:20.820Z",
+  "size": "S",
+  "reviewLevel": 1
+}

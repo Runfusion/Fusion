@@ -1,0 +1,73 @@
+{
+  "id": "KB-189",
+  "description": "Don’t zoom in on mobile when doing quick task entry on the card or list view on the dashboard",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Extend Mobile Font Size Fix to All Quick Entry Inputs",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:05:10.180Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:06:15.390Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:06:23.964Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. All file references verified correctly: the mobile media query exists at line 2423 in `styles.css`, the CSS class names (`.inline-create-input`, `.card-edit-title-input`, `.card-edit-desc-textarea`) are correctly identified in their respective components, and the viewport meta tag is properly configured in `index.html`. The mission is clear, steps have verifiable outcomes, and the S sizing with Review Level 0 is appropriate for this CSS-only mobile UX "
+    },
+    {
+      "timestamp": "2026-03-30T22:52:37.054Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/cool-robin"
+    },
+    {
+      "timestamp": "2026-03-30T22:52:37.055Z",
+      "action": "Step 0 (Extend Mobile Font Size Fix to All Quick Entry Inputs) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T22:52:42.316Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:52:47.868Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:55:27.361Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:55:30.799Z",
+      "action": "Step 0 (Extend Mobile Font Size Fix to All Quick Entry Inputs) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:55:30.800Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:55:30.801Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T22:55:42.971Z",
+  "createdAt": "2026-03-30T18:05:10.180Z",
+  "updatedAt": "2026-03-30T22:55:42.971Z",
+  "size": "S",
+  "reviewLevel": 0
+}

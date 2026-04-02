@@ -1,0 +1,146 @@
+{
+  "id": "KB-084",
+  "description": "fix the card glowing gradient on dashboard to also be set via the theme (right now its still purple)",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add RGB CSS Variables for Glow Support",
+      "status": "done"
+    },
+    {
+      "name": "Update Card Agent-Active Glow to Use CSS Variables",
+      "status": "done"
+    },
+    {
+      "name": "Update List View Agent-Active Glow",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:38:42.057Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:39:35.830Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:39:59.313Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-specified CSS-only task to fix hardcoded RGBA values in the card glow animation. The spec accurately references the correct files and locations, provides concrete RGB values for all themes, and correctly scopes the work to `styles.css` only. The approach using CSS custom properties with RGB components is appropriate and widely supported."
+    },
+    {
+      "timestamp": "2026-03-30T04:40:17.086Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:40:37.705Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification correctly identifies the issue and provides a workable solution. The mission is clear, dependencies are accurate (none), file scope is correct, and the approach using CSS custom properties is appropriate. However, the line number references are inaccurate, and there's a more complex light theme animation override that wasn't accounted for."
+    },
+    {
+      "timestamp": "2026-03-30T05:54:18.394Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/noble-olive"
+    },
+    {
+      "timestamp": "2026-03-30T05:54:18.394Z",
+      "action": "Step 0 (Add RGB CSS Variables for Glow Support) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T05:54:20.196Z",
+      "action": "Step 0 (Add RGB CSS Variables for Glow Support) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:54:27.406Z",
+      "action": "Step 0 (Add RGB CSS Variables for Glow Support) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:54:27.408Z",
+      "action": "Step 1 (Update Card Agent-Active Glow to Use CSS Variables) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:54:28.679Z",
+      "action": "plan review requested for Step 1 (Add RGB CSS Variables for Glow Support)"
+    },
+    {
+      "timestamp": "2026-03-30T05:54:41.998Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the need for RGB CSS variables to enable dynamic alpha blending in box-shadow animations. The approach is sound: adding `--in-progress-rgb` alongside existing `--in-progress` variables in all theme definitions, using comma-separated RGB values that can be interpolated into `rgba()`."
+    },
+    {
+      "timestamp": "2026-03-30T05:55:18.285Z",
+      "action": "Step 1 (Update Card Agent-Active Glow to Use CSS Variables) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:55:18.290Z",
+      "action": "Step 2 (Update List View Agent-Active Glow) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:55:18.294Z",
+      "action": "plan review requested for Step 2 (Update Card Agent-Active Glow to Use CSS Variables)"
+    },
+    {
+      "timestamp": "2026-03-30T05:55:30.506Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 correctly identifies all the necessary changes to replace hardcoded purple RGBA values with theme-aware CSS variables. The step addresses both the base `.card.agent-active` rule and the `@keyframes agent-glow` animation. The plan also correctly notes the need to simplify the duplicate light theme override once variables are in use."
+    },
+    {
+      "timestamp": "2026-03-30T05:55:42.830Z",
+      "action": "Step 2 (Update List View Agent-Active Glow) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:55:42.834Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:55:42.837Z",
+      "action": "plan review requested for Step 3 (Update List View Agent-Active Glow)"
+    },
+    {
+      "timestamp": "2026-03-30T05:55:56.765Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is clear, accurate, and will achieve the stated outcome. The worker needs to update the list row's `agent-active` animation to use theme-aware CSS variables instead of hardcoded purple RGBA values, matching the pattern already established for cards in Step 2."
+    },
+    {
+      "timestamp": "2026-03-30T05:56:04.145Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:56:04.148Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T05:56:35.146Z",
+      "action": "CSS-only fix complete - all RGB variables added and glow effects updated to use CSS variables",
+      "outcome": "All 16 --in-progress-rgb variables added across all themes. Card and list view glow now use rgba(var(--in-progress-rgb), ...) instead of hardcoded purple. Build passes. Visual verification in dashboard is recommended to confirm all 8 color themes display correct glow colors."
+    },
+    {
+      "timestamp": "2026-03-30T05:56:36.163Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T05:56:37.333Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T06:07:45.595Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T06:07:45.595Z",
+  "createdAt": "2026-03-30T04:38:42.057Z",
+  "updatedAt": "2026-03-30T06:07:45.595Z",
+  "size": "S",
+  "reviewLevel": 1
+}

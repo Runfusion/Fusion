@@ -1,0 +1,39 @@
+{
+  "id": "KB-341",
+  "description": "We just need one type of comments on task. All should be steering",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 0,
+  "blockedBy": "KB-618",
+  "createdAt": "2026-03-31T20:54:26.274Z",
+  "updatedAt": "2026-04-01T03:17:36.667Z",
+  "columnMovedAt": "2026-03-31T20:56:09.228Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:54:26.274Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:55:05.166Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:55:27.111Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is well-structured and mostly accurate, but contains a **critical error** regarding `ArchivedTaskEntry`. The spec incorrectly states that `ArchivedTaskEntry` needs to be updated to use `comments` instead of `steeringComments`, but this interface intentionally **excludes** `steeringComments` (they're explicitly NOT restored from archive per line 2156 in store.ts). This misidentification would lead to unnecessary work and confusion."
+    },
+    {
+      "timestamp": "2026-03-31T20:55:43.471Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:56:05.554Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately describes a focused refactoring task. The mission is clear: rename `SteeringComment` → `Comment`, `steeringComments` → `comments`, and update UI labels. File scope is accurate—all referenced files exist and contain the expected patterns. The step breakdown is logical with verifiable outcomes."
+    }
+  ]
+}

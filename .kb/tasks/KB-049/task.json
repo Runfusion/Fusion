@@ -1,0 +1,98 @@
+{
+  "id": "KB-049",
+  "description": "add ability to hide done tasks in list view",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Hide Done Tasks Toggle UI",
+      "status": "done"
+    },
+    {
+      "name": "Implement Filtering Logic",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T02:39:59.723Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:39.085Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:55.430Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurately reflects the existing codebase patterns. It correctly identifies the column visibility toggle implementation in `ListView.tsx` (lines 64-95, 142-177) as the reference pattern, specifies appropriate localStorage persistence, and includes comprehensive test requirements. The file scope is accurate and the sizing (Small, Review Level 0) is appropriate for this isolated UI enhancement."
+    },
+    {
+      "timestamp": "2026-03-30T02:42:24.988Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/ivory-breeze"
+    },
+    {
+      "timestamp": "2026-03-30T02:42:24.989Z",
+      "action": "Step 0 (Add Hide Done Tasks Toggle UI) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:42:38.558Z",
+      "action": "Step 0 (Add Hide Done Tasks Toggle UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:10.684Z",
+      "action": "Step 0 (Add Hide Done Tasks Toggle UI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:10.687Z",
+      "action": "Step 1 (Implement Filtering Logic) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:10.689Z",
+      "action": "Preflight complete. Build passes. 722 tests pass. Ready to implement."
+    },
+    {
+      "timestamp": "2026-03-30T02:43:30.418Z",
+      "action": "Step 1 (Implement Filtering Logic) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:30.420Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:54.500Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:43:54.504Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:44:28.562Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:44:51.353Z",
+      "action": "Task implementation complete. Verified:\n- Hide done tasks toggle appears in toolbar with EyeOff/Eye icons\n- Toggle state persists in localStorage (kb-dashboard-hide-done)\n- Done tasks are filtered from view when toggle is active\n- Done column section header is hidden when toggle is active\n- Stats text shows \"X of Y tasks (Z done hidden)\" when done tasks are hidden\n- Done drop zone shows \"X of Y\" count format when done tasks are hidden\n- All 732 tests pass including 8 new tests for hide done tasks feature\n- Build passes\n- Changeset file created",
+      "outcome": "All completion criteria met. Feature implemented successfully."
+    },
+    {
+      "timestamp": "2026-03-30T02:44:52.231Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:45:59.626Z",
+  "createdAt": "2026-03-30T02:39:59.723Z",
+  "updatedAt": "2026-03-30T02:45:59.626Z",
+  "size": "S",
+  "reviewLevel": 0
+}

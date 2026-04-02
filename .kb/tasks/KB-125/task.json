@@ -1,0 +1,188 @@
+{
+  "id": "KB-125",
+  "description": "The \"enable planning mode\" checkbox on the new task dialog doesn't actually ask the user questions to refine",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add Planning Mode Callback Prop to NewTaskModal",
+      "status": "done"
+    },
+    {
+      "name": "Wire Up Planning Mode Flow in App.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Auto-Start Planning in PlanningModeModal",
+      "status": "done"
+    },
+    {
+      "name": "Write Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:14:48.332Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T06:17:44.001Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T06:17:59.651Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes the current gap where the \"Enable planning mode\" checkbox in NewTaskModal is UI-only (state tracked at line 141, TODO at line 461) and doesn't trigger the PlanningModeModal flow. The mission is clear: when checked, submission should skip direct creation and instead open PlanningModeModal with the description as the initial plan."
+    },
+    {
+      "timestamp": "2026-03-30T14:43:36.608Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/crisp-olive"
+    },
+    {
+      "timestamp": "2026-03-30T14:43:36.609Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T14:43:38.438Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:45:13.558Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:45:14.915Z",
+      "action": "Step 1 (Add Planning Mode Callback Prop to NewTaskModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:45:14.917Z",
+      "action": "plan review requested for Step 1 (Add Planning Mode Callback Prop to NewTaskModal)"
+    },
+    {
+      "timestamp": "2026-03-30T14:45:25.512Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes to `NewTaskModal.tsx`. The approach of adding an `onPlanningMode` callback prop and conditionally branching in `handleSubmit` based on `enablePlanningMode` is sound. The checkbox already has `disabled={isSubmitting}` which satisfies the race condition prevention requirement."
+    },
+    {
+      "timestamp": "2026-03-30T14:45:42.026Z",
+      "action": "code review requested for Step 1 (Add Planning Mode Callback Prop to NewTaskModal)"
+    },
+    {
+      "timestamp": "2026-03-30T14:45:59.695Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds the `onPlanningMode` callback prop to `NewTaskModal` and integrates the planning mode flow into `handleSubmit`. When the checkbox is enabled, the modal now closes and calls `onPlanningMode(description)` instead of creating the task directly. Form state is properly cleared and the checkbox is disabled during submission. The code follows existing patterns and the dependency array is correctly updated."
+    },
+    {
+      "timestamp": "2026-03-30T14:46:01.297Z",
+      "action": "Step 1 (Add Planning Mode Callback Prop to NewTaskModal) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:01.299Z",
+      "action": "Step 2 (Wire Up Planning Mode Flow in App.tsx) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:01.301Z",
+      "action": "plan review requested for Step 2 (Wire Up Planning Mode Flow in App.tsx)"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:12.542Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the integration points needed in App.tsx to bridge NewTaskModal's planning mode trigger with PlanningModeModal. The approach uses a state-driven pattern (`planningInitialPlan`) passed as a prop to PlanningModeModal, which is idiomatic React. However, there's scope overlap with Step 3 that could create confusion."
+    },
+    {
+      "timestamp": "2026-03-30T14:46:23.500Z",
+      "action": "code review requested for Step 2 (Wire Up Planning Mode Flow in App.tsx)"
+    },
+    {
+      "timestamp": "2026-03-30T14:46:42.649Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The App.tsx wiring is implemented correctly with proper state management and callback flow. However, there's a critical gap: **PlanningModeModal.tsx was not modified to accept the `initialPlan` prop**, even though this is explicitly required by Step 2. The App.tsx passes `initialPlan={planningInitialPlan ?? undefined}` to PlanningModeModal, but the component doesn't define this prop in its interface. This will cause TypeScript errors and the feature won't work."
+    },
+    {
+      "timestamp": "2026-03-30T14:46:58.952Z",
+      "action": "code review requested for Step 2 (Wire Up Planning Mode Flow in App.tsx)"
+    },
+    {
+      "timestamp": "2026-03-30T14:47:20.629Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Step 2 implementation correctly wires up the planning mode flow in App.tsx. The changes properly connect NewTaskModal's planning mode trigger to PlanningModeModal with the initial plan. The state management follows React best practices with proper callback memoization and cleanup."
+    },
+    {
+      "timestamp": "2026-03-30T14:47:22.201Z",
+      "action": "Step 2 (Wire Up Planning Mode Flow in App.tsx) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:47:22.204Z",
+      "action": "Step 3 (Auto-Start Planning in PlanningModeModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:48:02.701Z",
+      "action": "Step 3 (Auto-Start Planning in PlanningModeModal) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:48:02.701Z",
+      "action": "Step 4 (Write Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:48:02.702Z",
+      "action": "plan review requested for Step 4 (Write Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T14:48:20.022Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The test plan adequately covers the critical behavioral changes introduced by Steps 1-3. The seven test cases map directly to the implementation requirements and will verify the planning mode checkbox flow works correctly. The plan correctly identifies both test files that need modification."
+    },
+    {
+      "timestamp": "2026-03-30T14:56:45.798Z",
+      "action": "code review requested for Step 4 (Write Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T14:57:28.892Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The test implementation for Step 4 is well-structured and covers the critical paths for the planning mode checkbox flow. The tests in `NewTaskModal.test.tsx` correctly verify the integration between the checkbox state and the planning mode callback, while `PlanningModeModal.test.tsx` validates the auto-start behavior with the `initialPlan` prop. The test patterns follow the existing conventions in the codebase and properly mock external dependencies."
+    },
+    {
+      "timestamp": "2026-03-30T14:57:30.466Z",
+      "action": "Step 4 (Write Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:57:30.467Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:57:36.916Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:57:36.916Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T14:57:40.302Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T14:57:41.825Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T14:57:58.945Z",
+  "createdAt": "2026-03-30T06:14:48.332Z",
+  "updatedAt": "2026-03-30T14:57:58.945Z",
+  "size": "M",
+  "reviewLevel": 2
+}

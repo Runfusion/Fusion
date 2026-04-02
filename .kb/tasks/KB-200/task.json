@@ -1,0 +1,132 @@
+{
+  "id": "KB-200",
+  "description": "Add CLI command `kb task pr-create <id> [--title <title>] [--base <branch>] [--body <body>]` to create GitHub PRs for in-review tasks.\n\n## Background\nThe dashboard can create PRs for tasks via POST /api/tasks/:id/pr/create, but CLI users lack this capability. This is critical for headless GitHub workflows.\n\n## Acceptance Criteria\n- [ ] Add `kb task pr-create <id>` command to `packages/cli/src/bin.ts`\n- [ ] Implement `runTaskPrCreate(id, options)` function in `packages/cli/src/commands/task.ts`\n- [ ] Support optional flags: `--title`, `--base`, `--body`\n- [ ] Validate task is in 'in-review' column before creating PR\n- [ ] Get branch name from task (format: `kb/{task-id}`)\n- [ ] Use GitHubClient or gh CLI to create PR\n- [ ] Store PR info via `store.updatePrInfo()`\n- [ ] Log the PR creation\n- [ ] Display created PR URL on success\n- [ ] Handle errors: task not in-review, no branch, PR already exists, auth issues\n- [ ] Update CLI help text\n\n## Technical Notes\n- Use existing GitHubClient from `@kb/dashboard/github.js` or implement similar logic\n- Determine owner/repo from git remote or GITHUB_REPOSITORY env var\n- Branch name format: `kb/{task.id.toLowerCase()}`\n- If title not provided, use task title or auto-generate from description\n- If base not provided, use repo default branch\n\n## Parent Task\nThis subtask was identified as part of KB-182 dashboard vs CLI gap analysis.",
+  "column": "done",
+  "dependencies": [
+    "KB-182"
+  ],
+  "steps": [
+    {
+      "name": "Implement `runTaskPrCreate` in task.ts",
+      "status": "done"
+    },
+    {
+      "name": "Add Command Routing in bin.ts",
+      "status": "done"
+    },
+    {
+      "name": "Write Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T19:12:16.035Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T19:17:37.550Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:17:53.400Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for adding a `kb task pr-create` CLI command. The mission is clear, steps have concrete verifiable outcomes, and the implementation approach correctly mirrors the existing dashboard PR creation logic. The spec accurately references real files, functions, and patterns from the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T10:21:24.826Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/jade-falcon"
+    },
+    {
+      "timestamp": "2026-03-31T10:21:24.827Z",
+      "action": "Step 0 (Implement `runTaskPrCreate` in task.ts) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T10:21:36.294Z",
+      "action": "Step 0 (Implement `runTaskPrCreate` in task.ts) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:21:36.296Z",
+      "action": "Step 1 (Add Command Routing in bin.ts) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:21:37.972Z",
+      "action": "plan review requested for Step 1 (Implement runTaskPrCreate in task.ts)"
+    },
+    {
+      "timestamp": "2026-03-31T10:21:54.392Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows existing CLI patterns. The checkboxes cover all major requirements: importing the correct dependencies from `@kb/dashboard` and `@kb/core`, validating task state, detecting repository, handling GitHub authentication, creating the PR via `GitHubClient`, and storing results via `TaskStore`. The error cases listed align with the dashboard implementation."
+    },
+    {
+      "timestamp": "2026-03-31T10:22:10.524Z",
+      "action": "Step 1 (Add Command Routing in bin.ts) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:22:10.525Z",
+      "action": "Step 2 (Write Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:22:10.526Z",
+      "action": "plan review requested for Step 2 (Add Command Routing in bin.ts)"
+    },
+    {
+      "timestamp": "2026-03-31T10:22:18.211Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is complete and well-structured. The checkboxes cover all necessary changes to `bin.ts`: adding the dynamic import, command routing, flag parsing, validation, and HELP text update. The approach follows existing CLI patterns and correctly identifies the file locations."
+    },
+    {
+      "timestamp": "2026-03-31T10:24:53.947Z",
+      "action": "Completed Step 1 & 2: Implemented runTaskPrCreate and added command routing. Pre-existing test failures detected in dashboard and CLI (unrelated to KB-200).",
+      "outcome": "Build passes. Need to write tests for pr-create command."
+    },
+    {
+      "timestamp": "2026-03-31T10:24:56.156Z",
+      "action": "Step 2 (Write Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:24:56.159Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:24:56.160Z",
+      "action": "plan review requested for Step 3 (Write Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T10:25:09.706Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The test plan's checkboxes are incomplete and will not achieve the stated outcomes. The `runTaskPrCreate` function imports from modules that aren't currently mocked in the test file (`@kb/dashboard` and `@kb/core/gh-cli`), which will cause tests to fail immediately. The plan also misses critical mocks for `store.updatePrInfo()` and `store.logEntry()` methods that are called within the function under test."
+    },
+    {
+      "timestamp": "2026-03-31T10:26:37.654Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:26:39.243Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:26:58.950Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:27:04.391Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T10:27:15.664Z",
+  "createdAt": "2026-03-30T19:12:16.035Z",
+  "updatedAt": "2026-03-31T10:27:15.664Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Successfully implemented the `kb task pr-create` CLI command for creating GitHub PRs from in-review tasks. The implementation includes:\n\n1. **New command implementation** (`packages/cli/src/commands/task.ts`):\n   - `runTaskPrCreate()` function with validation for task state, GitHub auth, and repository detection\n   - Supports optional flags: `--title`, `--base`, `--body`\n   - Uses `GitHubClient` from `@kb/dashboard` for PR creation\n   - Stores PR info via `store.updatePrInfo()` and logs the action\n   - Proper error handling for all edge cases\n\n2. **Command routing** (`packages/cli/src/bin.ts`):\n   - Added `runTaskPrCreate` to dynamic imports\n   - Added case handler for \"pr-create\" subcommand with flag parsing\n   - Updated HELP text with new command\n\n3. **Comprehensive tests** (`packages/cli/src/commands/task.test.ts`):\n   - 14 new tests covering success cases, all error paths, and edge cases\n   - Mocked GitHubClient, gh-cli helpers, and TaskStore methods\n\n4. **Documentation**:\n   - Added changeset for release notes (`.changeset/add-pr-create-cli.md`)\n   - Updated `STANDALONE.md` with command usage examples\n\nBuild passes, all new tests pass. Pre-existing test failures in dashboard and other CLI tests are unrelated to this change."
+}

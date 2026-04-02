@@ -1,0 +1,300 @@
+{
+  "id": "KB-060",
+  "description": "Add a way to see the models during new task creation (small disclosure button to pop up modal selections) on the dashboard both board and list view",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Extend Core Types and Store",
+      "status": "done"
+    },
+    {
+      "name": "Update API Layer",
+      "status": "done"
+    },
+    {
+      "name": "Build Model Selection UI Component",
+      "status": "done"
+    },
+    {
+      "name": "Propagate Props Through Component Tree",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-30T03:09:05.198Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T03:09:50.632Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T03:10:07.873Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification that correctly identifies the existing patterns to leverage (dependency selector in InlineCreateCard, model selection in ModelSelectorTab) and provides concrete, verifiable steps. The file scope is accurate, dependencies are correctly listed as none, and the testing requirements are appropriately rigorous with real automated test assertions required."
+    },
+    {
+      "timestamp": "2026-03-30T11:03:35.668Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gentle-otter"
+    },
+    {
+      "timestamp": "2026-03-30T11:03:35.668Z",
+      "action": "Step 0 (Extend Core Types and Store) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T11:03:43.912Z",
+      "action": "Step 0 (Extend Core Types and Store) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T11:04:42.533Z",
+      "action": "Completed preflight context review for KB-060 and identified affected frontend, API, and core task-creation paths.",
+      "outcome": "Ready to implement Step 1 with baseline SHA 0322f50907251cc5be5bcfb4634dfcab79031355."
+    },
+    {
+      "timestamp": "2026-03-30T11:04:44.698Z",
+      "action": "plan review requested for Step 0 (Extend Core Types and Store)"
+    },
+    {
+      "timestamp": "2026-03-30T11:06:39.934Z",
+      "action": "plan review Step 0: REVISE",
+      "outcome": "The implementation direction is correct: `Task` already supports executor/validator model overrides in `packages/core/src/types.ts:142-154`, and `TaskStore.createTask()` is the right place to persist them when tasks are first created (`packages/core/src/store.ts:183-205`). However, the step is missing any new automated test coverage for this new create-time persistence path, so it does not satisfy the project’s “tests are required” standard and could regress silently."
+    },
+    {
+      "timestamp": "2026-03-30T11:07:36.420Z",
+      "action": "Core test run failed because the worktree has no installed dependencies (`vitest: command not found`, node_modules missing).",
+      "outcome": "Need to bootstrap workspace dependencies before continuing with required test and build verification."
+    },
+    {
+      "timestamp": "2026-03-30T11:08:01.619Z",
+      "action": "code review requested for Step 0 (Extend Core Types and Store)"
+    },
+    {
+      "timestamp": "2026-03-30T11:09:26.943Z",
+      "action": "code review Step 0: APPROVE",
+      "outcome": "The step’s core requirements are met. `TaskCreateInput` now accepts the four optional model override fields in `packages/core/src/types.ts:175-191`, and `TaskStore.createTask()` persists those fields onto newly created tasks in `packages/core/src/store.ts:186-209`. The added coverage in `packages/core/src/store.test.ts:657-735` verifies both returned and persisted values, and the implementation matches the existing model-override pattern already used by `updateTask()`."
+    },
+    {
+      "timestamp": "2026-03-30T11:09:29.503Z",
+      "action": "Step 0 (Extend Core Types and Store) → done"
+    },
+    {
+      "timestamp": "2026-03-30T11:09:31.306Z",
+      "action": "Step 1 (Update API Layer) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T11:09:37.580Z",
+      "action": "plan review requested for Step 1 (Update API Layer)"
+    },
+    {
+      "timestamp": "2026-03-30T11:12:03.769Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "This step is close, and most of the backend plumbing is already in place: `TaskCreateInput` already includes the four model fields in `packages/core/src/types.ts:170-191`, and `TaskStore.createTask()` already persists them in `packages/core/src/store.ts:183-200`. The remaining API work is mainly in `packages/dashboard/src/routes.ts:578-592` and `packages/dashboard/app/api.ts:34-44`, but the current step plan misses validation/normalization needed to preserve the model-field contract and relies o"
+    },
+    {
+      "timestamp": "2026-03-30T11:15:03.801Z",
+      "action": "Updated task creation API plumbing and added route tests for model override forwarding, partial-payload normalization, and invalid model-field rejection.",
+      "outcome": "Dashboard route tests pass. Workspace `pnpm typecheck` remains blocked by pre-existing unrelated dashboard type errors outside this task's file scope."
+    },
+    {
+      "timestamp": "2026-03-30T11:15:14.628Z",
+      "action": "code review requested for Step 1 (Update API Layer)"
+    },
+    {
+      "timestamp": "2026-03-30T11:17:03.845Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The API layer changes meet the step’s requirements: `POST /api/tasks` now accepts the four model override fields, validates them, normalizes partial pairs back to defaults, and forwards the resolved values to `store.createTask` in `packages/dashboard/src/routes.ts:595-634`. The dashboard client also forwards the new fields in `packages/dashboard/app/api.ts:34-59`, and the route tests cover the important success and validation cases in `packages/dashboard/src/routes.test.ts:197-282`."
+    },
+    {
+      "timestamp": "2026-03-30T11:17:08.916Z",
+      "action": "Step 1 (Update API Layer) → done"
+    },
+    {
+      "timestamp": "2026-03-30T11:17:10.908Z",
+      "action": "Step 2 (Build Model Selection UI Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T11:23:38.855Z",
+      "action": "plan review requested for Step 2 (Build Model Selection UI Component)"
+    },
+    {
+      "timestamp": "2026-03-30T11:27:40.628Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The proposed step covers the core InlineCreateCard work, but it does not fully line up with the actual task-creation surfaces in the current dashboard. As written, it risks missing the “works in both Board and List views” outcome and has two important interaction gaps around blur-cancel behavior and native `<select>` handling."
+    },
+    {
+      "timestamp": "2026-03-30T11:27:54.028Z",
+      "action": "Implemented InlineCreateCard model disclosure UI with executor/validator selectors, local model loading fallback, dirty-state preservation, and dropdown focus handling.",
+      "outcome": "Component behavior is in place and existing dashboard tests continue to pass; next step is wiring the create flow so list-view creation actually exposes it in the app."
+    },
+    {
+      "timestamp": "2026-03-30T11:28:17.750Z",
+      "action": "code review requested for Step 2 (Build Model Selection UI Component)"
+    },
+    {
+      "timestamp": "2026-03-30T11:36:51.832Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The InlineCreateCard changes satisfy the core behavior for this step: models are loaded, executor/validator selections can be made inline, the dependency/model popovers are mutually exclusive, blur-to-cancel now accounts for the model dropdown, and the selected overrides are included in the submit payload only when both provider and model ID are set. The implementation is also reasonably aligned with existing patterns in the file and preserves current create-card behavior."
+    },
+    {
+      "timestamp": "2026-03-30T11:37:02.109Z",
+      "action": "Step 2 (Build Model Selection UI Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T11:37:07.541Z",
+      "action": "Step 3 (Propagate Props Through Component Tree) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T11:37:26.673Z",
+      "action": "plan review requested for Step 3 (Propagate Props Through Component Tree)"
+    },
+    {
+      "timestamp": "2026-03-30T11:41:08.602Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "This step is aimed at the wrong component path for the current app. In the live UI, both Board and List \"New Task\" actions open `NewTaskModal` from `App.tsx`, while `InlineCreateCard` is only conditionally rendered inside `ListView` and is not currently wired up by `App`. As written, the step would add prop plumbing that does not make the feature work in the actual board flow and may still leave duplicate/stale model-loading behavior."
+    },
+    {
+      "timestamp": "2026-03-30T11:43:37.695Z",
+      "action": "Chose to keep board creation on the existing NewTaskModal and wire list-view '+ New Task' into InlineCreateCard, since board already exposes model selection and list view was the missing create surface.",
+      "outcome": "List view now exposes the inline model selector through App-level create-state wiring without adding stale shared model caches."
+    },
+    {
+      "timestamp": "2026-03-30T11:43:56.744Z",
+      "action": "code review requested for Step 3 (Propagate Props Through Component Tree)"
+    },
+    {
+      "timestamp": "2026-03-30T11:47:01.857Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation takes the prompt’s allowed alternative path: `InlineCreateCard` now accepts an optional `availableModels` prop but remains self-sufficient by fetching models internally when that prop is omitted. That avoids unnecessary prop drilling through `Board`, `Column`, and `ListView`, and I don’t see a blocking correctness issue in the current wiring."
+    },
+    {
+      "timestamp": "2026-03-30T11:47:10.614Z",
+      "action": "Step 3 (Propagate Props Through Component Tree) → done"
+    },
+    {
+      "timestamp": "2026-03-30T11:47:15.260Z",
+      "action": "Step 4 (Add CSS Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T11:47:36.118Z",
+      "action": "plan review requested for Step 4 (Add CSS Styles)"
+    },
+    {
+      "timestamp": "2026-03-30T11:51:25.002Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The CSS step is close, but the current checkbox list misses a few styles that are required for the new model popover to render correctly in the existing `InlineCreateCard` structure. In particular, the plan does not account for the wrapper and footer layout classes already present in the component, and the proposed “wider min-width” approach risks clipping in Board view."
+    },
+    {
+      "timestamp": "2026-03-30T11:52:26.729Z",
+      "action": "code review requested for Step 4 (Add CSS Styles)"
+    },
+    {
+      "timestamp": "2026-03-30T11:54:37.809Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The new model-selector styles are mostly aligned with the existing dependency dropdown patterns, and the trigger/dropdown/row/label/select classes are all present. However, the dropdown sizing rules currently tie the panel width to the trigger wrapper instead of the viewport, which will cause the model panel to collapse to roughly button width and make the selects unusable."
+    },
+    {
+      "timestamp": "2026-03-30T11:55:25.915Z",
+      "action": "code review requested for Step 4 (Add CSS Styles)"
+    },
+    {
+      "timestamp": "2026-03-30T11:57:23.211Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The new model selector styles generally match the existing inline-create/dependency dropdown patterns and cover the expected classes, sizing, and z-index. However, the mobile positioning rule for the model dropdown is incorrect: on narrow screens it can push the panel off the left edge of the viewport, which means the responsive requirement is not reliably met."
+    },
+    {
+      "timestamp": "2026-03-30T11:58:01.851Z",
+      "action": "code review requested for Step 4 (Add CSS Styles)"
+    },
+    {
+      "timestamp": "2026-03-30T12:00:57.881Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The new inline model selector styles in `packages/dashboard/app/styles.css` line up with the JSX hooks in `packages/dashboard/app/components/InlineCreateCard.tsx` and satisfy the step’s stated UI requirements. The trigger shares the existing dependency-button treatment, the dropdown gets its own container/row/label/select styling, and the mobile override keeps the panel within the viewport with the required z-index."
+    },
+    {
+      "timestamp": "2026-03-30T12:01:03.080Z",
+      "action": "Step 4 (Add CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-30T12:01:15.268Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T12:01:33.473Z",
+      "action": "plan review requested for Step 5 (Testing and Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T12:07:40.191Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The testing step is pointed in the right direction: extending `packages/dashboard/app/components/__tests__/InlineCreateCard.test.tsx` is the correct frontend test target, and backend create/persistence behavior is already covered in `packages/core/src/store.test.ts:657-677` and `packages/dashboard/src/routes.test.ts:197-265`. However, the step as written does not fully verify the stated outcome that creation works in both Board and List views, and one proposed focus-retention assertion does not "
+    },
+    {
+      "timestamp": "2026-03-30T12:12:55.969Z",
+      "action": "Full `pnpm test` initially failed in the CLI package because build-artifact tests expect dashboard/CLI dist outputs to exist before running.",
+      "outcome": "Need to run the workspace build first, then rerun the full test suite against the generated artifacts."
+    },
+    {
+      "timestamp": "2026-03-30T12:16:17.083Z",
+      "action": "Expanded InlineCreateCard test coverage for model selection behavior and added an App-level list-view test for opening the inline create flow.",
+      "outcome": "Dashboard tests pass and workspace build succeeds. Full workspace tests are still blocked by unrelated CLI build-exe failures caused by missing bundled `node-pty` native assets in generated binaries."
+    },
+    {
+      "timestamp": "2026-03-30T12:16:32.797Z",
+      "action": "code review requested for Step 5 (Testing and Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T12:19:08.453Z",
+      "action": "code review Step 5: REVISE",
+      "outcome": "The new `InlineCreateCard` tests cover most of the required model-selector behaviors: open/close, selection updates, clearing back to defaults, submit payload wiring, and basic blur-to-cancel protection. However, the step still misses one explicit requirement from the task: verifying and implementing the `onMouseDown={(e) => e.preventDefault()}` focus-retention pattern for the model controls."
+    },
+    {
+      "timestamp": "2026-03-30T12:24:15.589Z",
+      "action": "code review requested for Step 5 (Testing and Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T12:27:25.299Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The new `InlineCreateCard` tests cover the model-selector behavior well at the component level: disclosure open/close, executor/validator selection, clearing back to defaults, submit payload serialization, focus/blur protection, and model-loading fallback states. Combined with the existing store and route tests already present in `packages/core/src/store.test.ts` and `packages/dashboard/src/routes.test.ts`, this step gives solid coverage for the end-to-end feature behavior without any blocking g"
+    },
+    {
+      "timestamp": "2026-03-30T12:27:32.843Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T12:27:35.743Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T12:28:29.287Z",
+      "action": "Prepared delivery artifacts for KB-060, including the npm changeset and dashboard feature documentation update.",
+      "outcome": "Created follow-up task KB-140 for the unrelated CLI build-executable `node-pty` native asset failures that still block full workspace test green status."
+    },
+    {
+      "timestamp": "2026-03-30T12:28:58.286Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T12:29:43.749Z",
+      "action": "Agent finished without calling task_done — moved to in-review for inspection"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T12:41:50.964Z",
+  "createdAt": "2026-03-30T03:09:05.198Z",
+  "updatedAt": "2026-03-30T12:41:50.964Z",
+  "size": "M",
+  "reviewLevel": 2
+}

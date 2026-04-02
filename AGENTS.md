@@ -70,6 +70,41 @@ On first run, if legacy file-based data exists (`.fusion/tasks/`, `.fusion/confi
 4. Individual `task.json` files are renamed to `task.json.bak`
 5. Migration is idempotent — re-running with an existing database is a no-op
 
+### Multi-Project Migration
+
+When upgrading to multi-project mode, existing single-project users are automatically migrated:
+
+**Auto-Migration Behavior:**
+- On first run after upgrade, the system detects existing `.fusion/fusion.db` files
+- Projects are automatically registered in the central database at `~/.pi/fusion/fusion-central.db`
+- Project names are derived from git remote URL (fallback: directory name)
+- Existing single-project workflows continue working without `--project` flags
+
+**First-Run States:**
+- `fresh-install` — No central DB, no existing projects (show setup wizard)
+- `needs-migration` — Central DB missing, but `.fusion/fusion.db` found (auto-migrate)
+- `setup-wizard` — Central DB exists but empty (show setup wizard)
+- `normal-operation` — Central DB with projects (show overview)
+
+**Backward Compatibility:**
+- Single project: Commands work without `--project` flag
+- Multiple projects: `--project` flag required for explicit selection
+- Legacy mode: Falls back to single-project behavior if central DB unavailable
+
+**Rollback from Multi-Project Migration:**
+
+If the central database causes issues:
+1. Delete `~/.pi/fusion/fusion-central.db` (this only removes the project registry)
+2. Your per-project `.fusion/fusion.db` files remain intact with all data
+3. kb will fall back to single-project legacy mode
+4. Re-run `fn init` in your project to re-register if needed
+
+**Safety Features:**
+- Auto-migration runs once; no repeated scanning
+- Only valid projects with `.fusion/fusion.db` are registered
+- Path validation prevents path traversal attacks
+- Idempotent: safe to re-run without side effects
+
 ### Recovery
 
 If something goes wrong after migration:

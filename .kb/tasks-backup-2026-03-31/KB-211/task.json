@@ -1,0 +1,91 @@
+{
+  "id": "KB-211",
+  "description": "Fix dashboard TaskCard memoization test - 1 test failing: 'does not re-render when parent re-renders with an equivalent task object'. Expected spy to be called 1 time but got 2 times. May be React StrictMode double-render related. Location: packages/dashboard/app/components/__tests__/TaskCard.test.tsx",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze and Fix the Failing Test",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T21:07:34.465Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T21:10:40.520Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T21:11:00.721Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification correctly identifies a React StrictMode double-render issue in a TaskCard memoization test. The proposed fix options are appropriate, and the scope is correctly constrained to test-only changes. Minor adjustments needed to the recommended import approach in Option A."
+    },
+    {
+      "timestamp": "2026-03-30T23:18:08.040Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/cool-creek"
+    },
+    {
+      "timestamp": "2026-03-30T23:18:08.041Z",
+      "action": "Step 0 (Analyze and Fix the Failing Test) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:18:09.071Z",
+      "action": "Step 0 (Analyze and Fix the Failing Test) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:18:32.402Z",
+      "action": "Step 0 (Analyze and Fix the Failing Test) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:18:33.321Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:18:34.855Z",
+      "action": "plan review requested for Step 1 (Analyze and Fix the Failing Test)"
+    },
+    {
+      "timestamp": "2026-03-30T23:18:48.851Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the root cause: React StrictMode's intentional double-render combined with the test's `React.memo(MemoProbe)` using shallow comparison. When the test spreads `{ ...task }`, it creates new object references that trigger re-renders. The plan provides two valid fix approaches and correctly scopes the work to test-only changes."
+    },
+    {
+      "timestamp": "2026-03-30T23:19:04.079Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:19:05.029Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:19:15.511Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:19:21.158Z",
+      "action": "Fixed TaskCard memoization test for React StrictMode",
+      "outcome": "Test now passes by using a custom comparator that performs deep equality comparison on task objects, matching the behavior of TaskCard's areTaskCardPropsEqual. Change is minimal: 1 file, 6 insertions, 1 deletion."
+    },
+    {
+      "timestamp": "2026-03-30T23:19:21.903Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:19:35.161Z",
+  "createdAt": "2026-03-30T21:07:34.465Z",
+  "updatedAt": "2026-03-30T23:19:35.161Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,129 @@
+{
+  "id": "KB-328",
+  "description": "Ensure ai agents can interface with fusion properly via skills. See https://paperclip.ing/ for example",
+  "column": "todo",
+  "dependencies": [],
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "steps": [
+    {
+      "name": "Research and Analyze Skill Patterns",
+      "status": "in-progress"
+    },
+    {
+      "name": "Design Fusion Skill Structure",
+      "status": "pending"
+    },
+    {
+      "name": "Implement Core SKILL.md",
+      "status": "pending"
+    },
+    {
+      "name": "Create Task Management Workflows",
+      "status": "pending"
+    },
+    {
+      "name": "Create Technical Workflows",
+      "status": "pending"
+    },
+    {
+      "name": "Create Reference Documentation",
+      "status": "pending"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:04:36.613Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:05:34.061Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:05:52.654Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification has solid structural foundations following the router pattern from `create-skill`, with appropriate scope and clear mission. However, there are blocking issues: references to external/unavailable resources (paperclip.ing), testing steps that depend on external publication before they can pass, and oversized steps that should be split for better reviewability."
+    },
+    {
+      "timestamp": "2026-03-31T20:06:10.096Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:06:30.980Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for creating a Fusion skill. The mission is clear, steps have concrete artifacts, and the skill router pattern is correctly understood from the reference examples. The file paths are verified (`~/.agents/skills/` is correct for this system). Testing requirements appropriately combine local validation with the full test suite."
+    },
+    {
+      "timestamp": "2026-03-31T20:10:17.201Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/green-sage"
+    },
+    {
+      "timestamp": "2026-03-31T20:10:17.202Z",
+      "action": "Step 0 (Research and Analyze Skill Patterns) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T20:12:01.957Z",
+      "action": "Step 0 (Research and Analyze Skill Patterns) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:12:34.334Z",
+      "action": "Step 0 (Research and Analyze Skill Patterns) → done"
+    },
+    {
+      "timestamp": "2026-03-31T20:12:37.702Z",
+      "action": "Step 0 (Research and Analyze Skill Patterns) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T20:12:40.588Z",
+      "action": "plan review requested for Step 0 (Research and Analyze Skill Patterns)"
+    },
+    {
+      "timestamp": "2026-03-31T20:12:58.100Z",
+      "action": "plan review Step 0: APPROVE",
+      "outcome": "The plan for Step 0 appropriately identifies the need to study existing skill patterns and catalog Fusion capabilities. The artifacts (`skill-patterns.md` and `fusion-capabilities.md`) will provide a solid foundation for designing the skill structure in subsequent steps. The three research checkboxes cover the essential areas needed before implementation."
+    },
+    {
+      "timestamp": "2026-03-31T20:13:04.738Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T20:13:10.070Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T20:18:14.550Z",
+      "action": "Execution paused — agent terminated, moved to todo"
+    },
+    {
+      "timestamp": "2026-03-31T20:19:47.184Z",
+      "action": "Execution failed: Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/swift-spark\" \"kb/kb-328\"\nPreparing worktree (checking out 'kb/kb-328')\nfatal: 'kb/kb-328' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/green-sage'\n"
+    },
+    {
+      "timestamp": "2026-03-31T20:53:05.433Z",
+      "action": "Retry requested from dashboard"
+    },
+    {
+      "timestamp": "2026-03-31T20:53:19.950Z",
+      "action": "Execution failed: Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/sharp-heron\" \"kb/kb-328\"\nPreparing worktree (checking out 'kb/kb-328')\nfatal: 'kb/kb-328' is already used by worktree at '/Users/eclipxe/Projects/kb/.worktrees/green-sage'\n"
+    },
+    {
+      "timestamp": "2026-03-31T21:02:33.440Z",
+      "action": "Retry requested from dashboard"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T21:02:33.442Z",
+  "createdAt": "2026-03-31T20:04:36.613Z",
+  "updatedAt": "2026-03-31T21:02:33.442Z",
+  "size": "L",
+  "reviewLevel": 2
+}

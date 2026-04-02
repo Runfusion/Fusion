@@ -1,0 +1,196 @@
+{
+  "id": "KB-304",
+  "description": "It seems like some tasks are being lost",
+  "column": "done",
+  "dependencies": [],
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-20250514",
+  "steps": [
+    {
+      "name": "Diagnostics — Detect Orphaned Task Directories",
+      "status": "done"
+    },
+    {
+      "name": "Recovery — Restore Lost Tasks from Available Data",
+      "status": "done"
+    },
+    {
+      "name": "Hardening — Improve Write Resilience",
+      "status": "done"
+    },
+    {
+      "name": "Verification — Validate Against Real Data",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-31T17:20:17.955Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T17:24:27.984Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T17:24:49.768Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a high-quality specification for a data integrity investigation. The spec correctly identifies a real problem (KB-091 exists with PROMPT.md and agent.log but no task.json), proposes concrete diagnostic and recovery mechanisms, and follows the project's established patterns for file I/O, testing, and API design."
+    },
+    {
+      "timestamp": "2026-03-31T18:29:12.397Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gilt-quail"
+    },
+    {
+      "timestamp": "2026-03-31T18:29:12.399Z",
+      "action": "Step 0 (Diagnostics — Detect Orphaned Task Directories) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T18:29:16.215Z",
+      "action": "Step 0 (Diagnostics — Detect Orphaned Task Directories) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:30:02.953Z",
+      "action": "Confirmed the lost task issue: KB-091 directory exists with PROMPT.md and agent.log but missing task.json. The listTasks() method silently skips such directories. Need to implement diagnostics, recovery, and hardening."
+    },
+    {
+      "timestamp": "2026-03-31T18:30:07.713Z",
+      "action": "Step 0 (Diagnostics — Detect Orphaned Task Directories) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:30:10.912Z",
+      "action": "Step 1 (Recovery — Restore Lost Tasks from Available Data) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:30:14.618Z",
+      "action": "plan review requested for Step 1 (Diagnostics — Detect Orphaned Task Directories)"
+    },
+    {
+      "timestamp": "2026-03-31T18:30:48.750Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "I'll review the plan for Step 1 of KB-304. Let me first read the relevant source files to understand the current codebase state.Let me continue reading the store.ts file to see the archive-related functions and check the existing dashboard routes and CLI structure.Let me check the existing test patt"
+    },
+    {
+      "timestamp": "2026-03-31T18:34:15.693Z",
+      "action": "code review requested for Step 1 (Diagnostics — Detect Orphaned Task Directories)"
+    },
+    {
+      "timestamp": "2026-03-31T18:34:41.761Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation of Step 1 (Diagnostics — Detect Orphaned Task Directories) is well-structured and follows established patterns in the codebase. All four required components are implemented: `detectOrphanedTasks()` and `getOrphanedTaskInfo()` methods in TaskStore, the `GET /api/tasks/diagnostics/orphaned` API endpoint, and the `kb task doctor` CLI command. The tests cover the critical scenarios with good assertions on the recovery data structure."
+    },
+    {
+      "timestamp": "2026-03-31T18:34:45.133Z",
+      "action": "Step 1 (Recovery — Restore Lost Tasks from Available Data) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:34:47.844Z",
+      "action": "Step 2 (Hardening — Improve Write Resilience) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:34:51.686Z",
+      "action": "plan review requested for Step 2 (Recovery — Restore Lost Tasks from Available Data)"
+    },
+    {
+      "timestamp": "2026-03-31T18:35:15.883Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and achievable. The Step 1 diagnostics infrastructure (`detectOrphanedTasks`, `getOrphanedTaskInfo`, `kb task doctor`, and the API endpoint) is already implemented and tested, providing a solid foundation. The Step 2 checkboxes correctly identify the remaining work: implementing `recoverTask()` and `parsePromptForRecovery()` methods, adding the dashboard API endpoint, creating the CLI command, and writing comprehensive tests."
+    },
+    {
+      "timestamp": "2026-03-31T18:37:25.795Z",
+      "action": "code review requested for Step 2 (Recovery — Restore Lost Tasks from Available Data)"
+    },
+    {
+      "timestamp": "2026-03-31T18:38:23.064Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The implementation is generally well-structured and follows project patterns, with comprehensive tests for the core recovery functionality. However, there is a **critical runtime bug** in the dashboard routes where `join` from `node:path` is used but not imported. Additionally, the `parsePromptForRecovery` helper is implemented but not actually used in the `recoverTask` method, creating code duplication and potential maintenance issues."
+    },
+    {
+      "timestamp": "2026-03-31T18:40:01.262Z",
+      "action": "code review requested for Step 2 (Recovery — Restore Lost Tasks from Available Data)"
+    },
+    {
+      "timestamp": "2026-03-31T18:40:43.246Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation successfully adds task recovery functionality to the TaskStore, dashboard API, and CLI. The code is well-structured with comprehensive test coverage (10 test cases covering happy paths, edge cases, and failure modes). The recovery mechanism correctly parses PROMPT.md to extract metadata, preserves attachments, and creates valid task.json files with appropriate \"recovered\" status and log entries."
+    },
+    {
+      "timestamp": "2026-03-31T18:40:47.097Z",
+      "action": "Step 2 (Hardening — Improve Write Resilience) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:40:50.547Z",
+      "action": "Step 3 (Verification — Validate Against Real Data) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:40:54.821Z",
+      "action": "plan review requested for Step 3 (Hardening — Improve Write Resilience)"
+    },
+    {
+      "timestamp": "2026-03-31T18:41:26.528Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The Step 3 plan correctly identifies key hardening needs for `atomicWriteTaskJson()`, but has critical gaps in implementation strategy: it doesn't address how to test a private method, lacks clarity on Node.js fsync patterns, and doesn't specify how to inject write failures for testing. The checkboxes need refinement to ensure the outcome is verifiable."
+    },
+    {
+      "timestamp": "2026-03-31T18:41:32.732Z",
+      "action": "Plan review for Step 3 identified important gaps: need proper fsync implementation with FileHandle API, clarify testing approach for private methods, and add startup cleanup. Will implement with refined approach."
+    },
+    {
+      "timestamp": "2026-03-31T18:44:03.863Z",
+      "action": "code review requested for Step 3 (Hardening — Improve Write Resilience)"
+    },
+    {
+      "timestamp": "2026-03-31T18:44:47.622Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation successfully hardens the write resilience of `TaskStore` with atomic write verification, fsync durability, startup cleanup of stale temp files, and defensive logging for orphaned directories. The code follows the existing patterns in the codebase and includes comprehensive tests for the new functionality."
+    },
+    {
+      "timestamp": "2026-03-31T18:44:51.004Z",
+      "action": "Step 3 (Verification — Validate Against Real Data) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:44:55.214Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:46:55.248Z",
+      "action": "Step 4 verification complete: Found and recovered 1 orphaned task (KB-091). All 297 task directories now have valid task.json files.",
+      "outcome": "KB-091 recovered successfully with status='recovered', placed in 'triage' column for re-processing"
+    },
+    {
+      "timestamp": "2026-03-31T18:46:58.561Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:47:02.905Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T18:47:52.317Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T18:48:01.529Z",
+      "action": "Updating documentation for new CLI commands and creating changeset for the fix"
+    },
+    {
+      "timestamp": "2026-03-31T18:49:22.851Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T18:49:29.577Z",
+  "createdAt": "2026-03-31T17:20:17.955Z",
+  "updatedAt": "2026-03-31T18:49:29.577Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Fixed the lost tasks issue where KB-091 had a missing task.json. Implemented diagnostics (kb task doctor) and recovery (kb task recover) commands, hardened atomic writes with fsync and verification, and successfully recovered the orphaned task. All 297 tasks now have valid task.json files."
+}

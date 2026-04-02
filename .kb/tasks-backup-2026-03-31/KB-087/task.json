@@ -1,0 +1,130 @@
+{
+  "id": "KB-087",
+  "description": "remove created and updated from the list view",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove createdAt and updatedAt columns from ListView",
+      "status": "done"
+    },
+    {
+      "name": "Update tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:40:58.070Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:20.774Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:27.688Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:29.195Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, precise specification for a simple UI cleanup task. All file references are accurate, line-specific changes are clearly identified, and the testing requirements appropriately demand real test updates with assertions."
+    },
+    {
+      "timestamp": "2026-03-30T04:41:37.877Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. All referenced files, functions, and patterns exist in the codebase as described. Steps have concrete, verifiable outcomes with specific line-level changes identified. The testing strategy appropriately requires real automated tests with zero failures as the quality gate."
+    },
+    {
+      "timestamp": "2026-03-30T04:41:38.036Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/bright-plume"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:38.037Z",
+      "action": "Step 0 (Remove createdAt and updatedAt columns from ListView) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:41.521Z",
+      "action": "Step 1 (Update tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:42.438Z",
+      "action": "Step 1 (Update tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:44.038Z",
+      "action": "Step 0 (Remove createdAt and updatedAt columns from ListView) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:03.458Z",
+      "action": "Step 1 (Update tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:03.460Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:12.609Z",
+      "action": "Step 1 (Update tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:13.564Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:26.878Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:30.668Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:31.603Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:17.069Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:19.793Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:34.366Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:34.367Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:53.085Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:56.981Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:01.022Z",
+      "action": "Execution failed: Invalid transition: 'in-review' → 'in-review'. Valid targets: done, in-progress"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T04:44:05.796Z",
+  "createdAt": "2026-03-30T04:40:58.070Z",
+  "updatedAt": "2026-03-30T04:44:05.796Z",
+  "size": "S",
+  "reviewLevel": 0
+}

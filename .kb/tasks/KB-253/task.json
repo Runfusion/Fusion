@@ -1,0 +1,83 @@
+{
+  "id": "KB-253",
+  "title": "The sizing icon should be in the far right of",
+  "description": "The sizing icon should be in the far right of cards in the done column",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Reorder Size Badge in Done Column",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T03:06:07.594Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:00.750Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:11.750Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is accurate and complete. The mission is clear, steps are concrete and verifiable, file scope is correct, and testing requirements demand real automated tests. The review level (0 - None) is appropriate for this simple UI reordering change."
+    },
+    {
+      "timestamp": "2026-03-31T03:07:28.601Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/ivory-petal"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:28.609Z",
+      "action": "Step 0 (Reorder Size Badge in Done Column) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:30.018Z",
+      "action": "Step 0 (Reorder Size Badge in Done Column) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:36.725Z",
+      "action": "Step 0 (Reorder Size Badge in Done Column) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:07:37.539Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:17:00.765Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:17:03.181Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T03:17:06.026Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T03:17:07.685Z",
+      "action": "Completed KB-253: Size badge moved to far right in done column cards",
+      "outcome": "The size badge now appears after the Archive button in done column cards. For other columns, the size badge remains at the rightmost position in the header actions. Added test verification for the element ordering in done column cards. All TaskCard tests pass (1778/1780 total tests pass, 2 pre-existing failures unrelated to this change)."
+    },
+    {
+      "timestamp": "2026-03-31T03:17:08.517Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T03:17:18.375Z",
+  "createdAt": "2026-03-31T03:06:07.594Z",
+  "updatedAt": "2026-03-31T03:17:18.375Z",
+  "size": "S",
+  "reviewLevel": 0
+}

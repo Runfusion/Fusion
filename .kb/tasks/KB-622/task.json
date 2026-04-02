@@ -1,0 +1,30 @@
+{
+  "id": "KB-622",
+  "description": "Merge steering and comments into a single field just called comments. Agents and humans can post comments and these should be injected into the context",
+  "column": "todo",
+  "status": "queued",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "blockedBy": "KB-618",
+  "createdAt": "2026-03-31T23:28:36.515Z",
+  "updatedAt": "2026-04-01T03:17:36.830Z",
+  "columnMovedAt": "2026-03-31T23:35:26.160Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:28:36.515Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:34:58.141Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:35:23.200Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for merging two comment systems. The spec correctly identifies the affected interfaces (`SteeringComment` vs `TaskComment`), database schema changes needed, store method consolidation, execution context injection, and UI/API updates. The migration strategy is sound and the file scope is accurate."
+    }
+  ]
+}

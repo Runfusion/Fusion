@@ -1,0 +1,104 @@
+{
+  "id": "KB-256",
+  "title": "On list view add add a task quick entry right",
+  "description": "On list view add add a task quick entry right above list heads",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Move QuickEntryBox in ListView Component",
+      "status": "done"
+    },
+    {
+      "name": "Add/Update CSS for New Positioning",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests for New Positioning",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T06:12:09.127Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T06:12:44.840Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T06:12:59.854Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a simple UI repositioning task. The file references are correct, the current QuickEntryBox placement (lines 267-277 in ListView.tsx) is between `.list-toolbar` and `.list-drop-zones`, and the proposed new position above the table headers is clearly specified. Steps have concrete outcomes with verifiable test requirements."
+    },
+    {
+      "timestamp": "2026-03-31T06:13:03.648Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/eager-eagle"
+    },
+    {
+      "timestamp": "2026-03-31T06:13:03.716Z",
+      "action": "Step 0 (Move QuickEntryBox in ListView Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T06:13:12.878Z",
+      "action": "Step 0 (Move QuickEntryBox in ListView Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:13:12.881Z",
+      "action": "Step 1 (Add/Update CSS for New Positioning) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:13:12.884Z",
+      "action": "plan review requested for Step 1 (Move QuickEntryBox in ListView Component)"
+    },
+    {
+      "timestamp": "2026-03-31T06:13:24.047Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The step's checkboxes correctly identify the required changes. The current QuickEntryBox is at lines 267-277 inside `.list-create-area`, positioned between the toolbar (line 232) and drop zones (line 279). The plan correctly specifies moving it inside `.list-table-container` (which starts at line 294), wrapping it in a new `list-quick-entry-above-table` container, and preserving all props. The test updates in Step 3 will handle the DOM location assertions."
+    },
+    {
+      "timestamp": "2026-03-31T06:15:09.990Z",
+      "action": "Step 1 (Add/Update CSS for New Positioning) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:15:09.991Z",
+      "action": "Step 2 (Update Tests for New Positioning) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:18:06.140Z",
+      "action": "Step 2 (Update Tests for New Positioning) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:18:06.143Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:18:06.145Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:18:21.275Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:18:23.538Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T06:19:05.535Z",
+  "createdAt": "2026-03-31T06:12:09.127Z",
+  "updatedAt": "2026-03-31T06:19:05.535Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully repositioned the QuickEntryBox component in ListView to appear directly above the table headers. Changes include:\n\n1. **ListView.tsx**: Moved QuickEntryBox from `.list-create-area` (between toolbar and drop zones) to inside `.list-table-container`, wrapped in a new `.list-quick-entry-above-table` div, positioned directly before the `<table>` element.\n\n2. **styles.css**: Added CSS for `.list-quick-entry-above-table` with consistent styling (padding, background, border-bottom) and centered the QuickEntryBox with max-width of 800px.\n\n3. **ListView.test.tsx**: Updated the positioning test to check for the new `.list-quick-entry-above-table` location instead of the old `.list-create-area`.\n\n4. **Changeset**: Created `.changeset/fix-list-view-quick-entry-position.md` documenting the UI change.\n\nAll 86 ListView tests pass, dashboard builds successfully, and the new visual flow is: toolbar → filters → drop zones → quick entry → table headers → task rows."
+}

@@ -1,0 +1,98 @@
+{
+  "id": "KB-210",
+  "description": "Fix dashboard Header component mobile viewport tests - 2 tests failing due to mobile overflow menu not containing expected 'View usage' text. Tests for terminal/usage button visibility in mobile header are failing. Location: packages/dashboard/app/components/__tests__/Header.test.tsx",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Analyze Component Behavior",
+      "status": "done"
+    },
+    {
+      "name": "Fix Terminal Button Test",
+      "status": "done"
+    },
+    {
+      "name": "Fix Usage Button Test",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T21:07:34.464Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T21:09:41.474Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T21:09:50.237Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies two failing mobile viewport tests in Header.test.tsx and correctly maps them to actual component behavior in Header.tsx. The proposed fixes align test expectations with the implemented component logic. The task is appropriately scoped, sized, and requires no component changes."
+    },
+    {
+      "timestamp": "2026-03-30T23:15:23.033Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/keen-trail"
+    },
+    {
+      "timestamp": "2026-03-30T23:15:23.034Z",
+      "action": "Step 0 (Analyze Component Behavior) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:15:28.242Z",
+      "action": "Step 1 (Fix Terminal Button Test) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:15:30.798Z",
+      "action": "Step 1 (Fix Terminal Button Test) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:15:30.799Z",
+      "action": "Step 2 (Fix Usage Button Test) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:15:38.367Z",
+      "action": "Step 2 (Fix Usage Button Test) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:15:38.368Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:15:40.026Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:17:45.559Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:17:48.953Z",
+      "action": "Fixed 2 failing mobile viewport tests in Header component",
+      "outcome": "All 46 Header tests now pass. Terminal button test now correctly checks overflow menu on mobile. Usage button test now correctly checks inline rendering."
+    },
+    {
+      "timestamp": "2026-03-30T23:17:48.954Z",
+      "action": "Step 0 (Analyze Component Behavior) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:17:48.954Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:18:01.370Z",
+  "createdAt": "2026-03-30T21:07:34.464Z",
+  "updatedAt": "2026-03-30T23:18:01.370Z",
+  "size": "S",
+  "reviewLevel": 0
+}

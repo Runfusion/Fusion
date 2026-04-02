@@ -1,0 +1,178 @@
+{
+  "id": "KB-133",
+  "description": "On mobile add an overflow menu for header icons that don’t fit and also collapse the search into just an icon that opens up the text entry when you click it. Only mobile view",
+  "column": "done",
+  "dependencies": [
+    "KB-134"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add mobile-only header interaction states",
+      "status": "done"
+    },
+    {
+      "name": "Lock the responsive layout in CSS",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T06:41:01.750Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T08:19:40.198Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T08:22:46.990Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The spec is mostly strong: the mission is clear, the referenced files and patterns are real, and the implementation/test expectations are concrete and verifiable. In particular, the current header/search surface exists in `packages/dashboard/app/components/Header.tsx:33-126`, the problematic mobile wrap fallback exists in `packages/dashboard/app/styles.css:219-299`, and the cited reference patterns are present in `packages/dashboard/app/components/CustomModelDropdown.tsx:119-127,182-185`, `packa"
+    },
+    {
+      "timestamp": "2026-03-30T08:23:39.739Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T08:28:42.922Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The spec is mostly strong: the mission is clear, the file references are real, and the implementation/testing plan is concrete. I verified the key code paths it cites — `Header.tsx` has the current search/action layout (`packages/dashboard/app/components/Header.tsx:33-125`), `styles.css` has the current small-screen wrap fallback at `packages/dashboard/app/styles.css:277-299` plus the broader `768px` mobile block at `packages/dashboard/app/styles.css:2198-2229`, and the referenced dismissal/list"
+    },
+    {
+      "timestamp": "2026-03-30T08:30:07.373Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T08:32:57.229Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a strong spec: the mission is clear, the implementation is tightly scoped to the dashboard header, and the steps are concrete enough to verify in code and tests. It is well-grounded in the current codebase — the existing header/search behavior in `packages/dashboard/app/components/Header.tsx:34-121`, the mobile wrap fallback in `packages/dashboard/app/styles.css:277-298`, and the existing mobile `768px` layout block in `packages/dashboard/app/styles.css:2198-2229` all line up with the re"
+    },
+    {
+      "timestamp": "2026-03-30T15:24:23.665Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/plush-wren"
+    },
+    {
+      "timestamp": "2026-03-30T15:24:23.666Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T15:25:59.607Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:25:59.608Z",
+      "action": "Preflight complete. KB-134 dependency tests passing. Files confirmed: Header.tsx, styles.css, Header tests exist. App.tsx confirms HeaderProps callback surface.",
+      "outcome": "All required files exist, KB-134 dependencies satisfied (Header.test.tsx, useTerminal.test.ts, terminal-service.test.ts, typecheck.test.ts all passing)"
+    },
+    {
+      "timestamp": "2026-03-30T15:26:01.630Z",
+      "action": "plan review requested for Step 1 (Add mobile-only header interaction states)"
+    },
+    {
+      "timestamp": "2026-03-30T15:26:17.215Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and addresses the core requirements: mobile viewport detection via `matchMedia`, collapsible search with keyboard/ARIA accessibility, and an overflow menu for lower-priority actions. The approach correctly identifies patterns to follow from existing components and maintains backward compatibility with desktop behavior."
+    },
+    {
+      "timestamp": "2026-03-30T15:26:18.636Z",
+      "action": "Step 1 (Add mobile-only header interaction states) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:27:10.884Z",
+      "action": "code review requested for Step 1 (Add mobile-only header interaction states)"
+    },
+    {
+      "timestamp": "2026-03-30T15:27:54.564Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation successfully adds mobile-only header interaction states with a clean viewport-driven rendering approach. The `useIsMobile` hook follows the same pattern as `useTheme.ts` with proper listener cleanup, the mobile search collapse/expand behavior correctly preserves active search queries, and the overflow menu implements the required accessibility features including click-outside and Escape dismissal. Test coverage is comprehensive with 18 new mobile-specific tests all passing."
+    },
+    {
+      "timestamp": "2026-03-30T15:27:56.417Z",
+      "action": "Step 1 (Add mobile-only header interaction states) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:27:56.417Z",
+      "action": "Step 1 complete: Added mobile-only header interaction states",
+      "outcome": "Header.tsx now has useIsMobile hook, collapsible mobile search with ARIA attributes, overflow menu with keyboard/click-outside dismissal, and 18 new mobile tests. All 72 tests passing."
+    },
+    {
+      "timestamp": "2026-03-30T15:27:57.905Z",
+      "action": "plan review requested for Step 2 (Lock the responsive layout in CSS)"
+    },
+    {
+      "timestamp": "2026-03-30T15:28:16.659Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan for Step 2 has a fundamental structural issue: the stylesheet already contains **ten separate `@media (max-width: 768px)` blocks** scattered throughout (lines 1315, 2448, 3621, 4271, 5392, 5900, 6180, 6789, 7189, 7372), but the step description and the regression test pattern both assume there's a single coherent mobile media block to target. Additionally, Step 1 added CSS classes (`.mobile-search-trigger`, `.mobile-overflow-menu`, etc.) to Header.tsx that currently have **zero styling*"
+    },
+    {
+      "timestamp": "2026-03-30T15:28:17.955Z",
+      "action": "Step 2 (Lock the responsive layout in CSS) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:29:08.227Z",
+      "action": "code review requested for Step 2 (Lock the responsive layout in CSS)"
+    },
+    {
+      "timestamp": "2026-03-30T15:29:40.939Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Step 2 implementation correctly locks the mobile header layout in CSS. All required mobile selectors are present within the `@media (max-width: 768px)` block, the desktop layout is preserved, and the stylesheet regression test comprehensively validates the CSS structure. The absolutely-positioned mobile search panel and overflow menu enable the header to stay on a single row without wrapping."
+    },
+    {
+      "timestamp": "2026-03-30T15:29:42.503Z",
+      "action": "Step 2 (Lock the responsive layout in CSS) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:29:42.505Z",
+      "action": "Step 2 complete: CSS responsive layout locked",
+      "outcome": "Added mobile header CSS styles, removed obsolete 640px/480px header search rules, added position:relative to header-actions, and created 8-test CSS regression suite. All 80 tests passing."
+    },
+    {
+      "timestamp": "2026-03-30T15:29:44.110Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:57.731Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:30:57.735Z",
+      "action": "Step 3 complete: Testing & Verification done",
+      "outcome": "Build passes. KB-134 dependency tests all passing (Header.test.tsx, useTerminal.test.ts, terminal-service.test.ts, typecheck.test.ts). Pre-existing failures in PlanningModeModal and TaskDetailModal are NOT part of KB-134 scope; created KB-161 and KB-162 to track them separately."
+    },
+    {
+      "timestamp": "2026-03-30T15:30:59.116Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T15:31:15.228Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T15:31:15.231Z",
+      "action": "Step 4 complete: Documentation updated",
+      "outcome": "Added 'Responsive Header' section to packages/dashboard/README.md documenting mobile overflow menu and collapsible search behavior. No changeset needed (private @kb/dashboard package). All 80 relevant tests passing."
+    },
+    {
+      "timestamp": "2026-03-30T15:31:16.049Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T15:31:34.653Z",
+  "createdAt": "2026-03-30T06:41:01.750Z",
+  "updatedAt": "2026-03-30T15:31:34.653Z",
+  "size": "M",
+  "reviewLevel": 2
+}

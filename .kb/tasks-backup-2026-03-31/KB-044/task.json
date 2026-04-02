@@ -1,0 +1,193 @@
+{
+  "id": "KB-044",
+  "description": "Check test coverage",
+  "column": "done",
+  "dependencies": [
+    "KB-043"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Install Coverage Dependencies",
+      "status": "done"
+    },
+    {
+      "name": "Configure Coverage in Vitest Configs",
+      "status": "done"
+    },
+    {
+      "name": "Run Coverage Reports",
+      "status": "done"
+    },
+    {
+      "name": "Analyze and Document Coverage",
+      "status": "done"
+    },
+    {
+      "name": "Optional - Add Coverage Script",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-30T02:29:27.058Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T02:30:14.106Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:30:38.389Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. All referenced files exist or are correctly identified as needing creation. The mission is clear, steps have concrete verifiable outcomes, and the approach correctly focuses on measurement without attempting to write new tests. Minor gaps exist around gitignore handling for coverage directories."
+    },
+    {
+      "timestamp": "2026-03-30T02:36:25.966Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/glad-creek (based on kb/kb-043)"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:25.968Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:34.013Z",
+      "action": "Step 0 Preflight: node_modules missing, need to install dependencies first"
+    },
+    {
+      "timestamp": "2026-03-30T02:36:52.021Z",
+      "action": "Step 0 Preflight: Tests and typecheck failing due to missing build artifacts. Need to build packages first to resolve @kb/core imports.",
+      "outcome": "Running pnpm build to create necessary dist files for workspace dependencies"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:17.714Z",
+      "action": "Step 0 Preflight complete - Typecheck passes, tests mostly pass (1 environmental failure in dashboard due to git branch setup)",
+      "outcome": "Core: 115 tests passing, Engine: 460 tests passing, Dashboard: 671/672 tests passing (1 git-related environmental failure)"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:19.239Z",
+      "action": "Step 1 (Install Coverage Dependencies) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:19.240Z",
+      "action": "plan review requested for Step 1 (Install Coverage Dependencies)"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:30.627Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and will achieve its stated outcomes. The step correctly identifies the need to install `@vitest/coverage-v8` in all four packages. I've verified that all packages currently use Vitest (versions 3.1.0 or 4.1.1) and none have coverage dependencies installed yet. The worker will need to handle the missing `packages/engine/vitest.config.ts` file as a prerequisite before coverage configuration can be added in Step 2."
+    },
+    {
+      "timestamp": "2026-03-30T02:37:39.529Z",
+      "action": "Step 1 (Install Coverage Dependencies) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:41.000Z",
+      "action": "Step 2 (Configure Coverage in Vitest Configs) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:37:41.001Z",
+      "action": "plan review requested for Step 2 (Configure Coverage in Vitest Configs)"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:24.846Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:31.469Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:31.470Z",
+      "action": "Step 1 (Install Coverage Dependencies) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:31.471Z",
+      "action": "Step 2 (Configure Coverage in Vitest Configs) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:33.249Z",
+      "action": "plan review requested for Step 2 (Configure Coverage in Vitest Configs)"
+    },
+    {
+      "timestamp": "2026-03-30T02:38:57.454Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan's stated outcomes for Step 2 are achievable, but there are **critical gaps** that need addressing before implementation. The engine package lacks a vitest.config.ts file entirely (it needs creation, not just modification), coverage directories aren't gitignored, and there's a Vitest version mismatch between packages that could break coverage functionality. These issues would cause runtime failures or incorrect coverage reporting."
+    },
+    {
+      "timestamp": "2026-03-30T02:39:08.970Z",
+      "action": "Step 2 (Configure Coverage in Vitest Configs) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:39:08.971Z",
+      "action": "Step 3 (Run Coverage Reports) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:40:41.840Z",
+      "action": "Step 3 (Run Coverage Reports) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:40:41.842Z",
+      "action": "Step 4 (Analyze and Document Coverage) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:12.493Z",
+      "action": "Step 4 (Analyze and Document Coverage) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:12.496Z",
+      "action": "Step 5 (Optional - Add Coverage Script) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:18.907Z",
+      "action": "Step 5 (Optional - Add Coverage Script) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:18.909Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:49.671Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:49.673Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:53.396Z",
+      "action": "Step 7: No changeset needed — coverage configuration is internal tooling, not user-facing feature",
+      "outcome": "Coverage reporting is a development/testing infrastructure change that doesn't affect the published CLI behavior"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:53.399Z",
+      "action": "Step 7: Documentation complete — COVERAGE_REPORT.md created with comprehensive analysis"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:54.697Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:57.371Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:42:35.721Z",
+  "createdAt": "2026-03-30T02:29:27.058Z",
+  "updatedAt": "2026-03-30T02:42:35.721Z",
+  "size": "M",
+  "reviewLevel": 1,
+  "baseBranch": "kb/kb-043"
+}

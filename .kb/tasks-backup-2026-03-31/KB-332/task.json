@@ -1,0 +1,46 @@
+{
+  "id": "KB-332",
+  "description": "Execute subtask KB-330: rename internal packages from @kb/* to @fusion/* per .fusion/tasks/KB-330/PROMPT.md",
+  "column": "todo",
+  "dependencies": [
+    "KB-330"
+  ],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:20:34.273Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:22:22.194Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:22:40.205Z",
+      "action": "Spec review: RETHINK",
+      "outcome": "The KB-332 specification is fundamentally incorrect. The task is labeled \"DUPLICATE: KB-330\" in its PROMPT.md, but according to the parent epic (KB-329), KB-332 should be **\"Rename task ID prefix and branch naming (KB-XXX → FN-XXX, kb/ → fusion/)\"** — a completely different scope from KB-330 (which is about package renaming)."
+    },
+    {
+      "timestamp": "2026-03-31T20:22:40.207Z",
+      "action": "RETHINK: spec rewound — session checkpoint d42f10f1",
+      "outcome": "The KB-332 specification is fundamentally incorrect. The task is labeled \"DUPLICATE: KB-330\" in its PROMPT.md, but according to the parent epic (KB-329), KB-332 should be **\"Rename task ID prefix and branch naming (KB-XXX → FN-XXX, kb/ → fusion/)\"** — a completely different scope from KB-330 (which is about package renaming)."
+    },
+    {
+      "timestamp": "2026-03-31T20:23:29.103Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:23:51.554Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, mechanically precise specification for renaming task ID prefixes and branch naming patterns. All file references and line numbers have been verified against the actual codebase. The spec correctly identifies 6 source locations requiring changes, documents all affected test files with specific line references, and maintains backward compatibility constraints. The dependency on KB-330 is appropriately stated given the changeset references."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:23:53.637Z",
+  "createdAt": "2026-03-31T20:20:34.273Z",
+  "updatedAt": "2026-03-31T21:01:04.962Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued",
+  "blockedBy": "KB-313"
+}

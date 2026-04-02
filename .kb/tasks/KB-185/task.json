@@ -1,0 +1,325 @@
+{
+  "id": "KB-185",
+  "description": "Determine which settings should be project specific and which should be global - store global settings in the users ~/.pi directory properly and read from there for global settijngs",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Design Settings Types",
+      "status": "done"
+    },
+    {
+      "name": "Implement Global Settings Store",
+      "status": "done"
+    },
+    {
+      "name": "Update TaskStore to Merge Settings",
+      "status": "done"
+    },
+    {
+      "name": "Update Dashboard API Routes",
+      "status": "done"
+    },
+    {
+      "name": "Update Dashboard Frontend API",
+      "status": "done"
+    },
+    {
+      "name": "Update Settings Modal UI",
+      "status": "done"
+    },
+    {
+      "name": "Update Engine to Respect Global Settings",
+      "status": "done"
+    },
+    {
+      "name": "Migration and Backward Compatibility",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 10,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:01:36.191Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:03:34.091Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:03:57.617Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, appropriately-sized specification that addresses a legitimate architectural need: separating user preferences (global settings) from project workflow configuration. The file references are accurate, the settings classification is logical, and the step sequence is sensible. The spec correctly identifies the need for backward compatibility and provides clear testing requirements."
+    },
+    {
+      "timestamp": "2026-03-31T09:04:54.257Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/lemon-stone"
+    },
+    {
+      "timestamp": "2026-03-31T09:04:54.257Z",
+      "action": "Step 0 (Design Settings Types) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T09:04:57.886Z",
+      "action": "Step 0 (Design Settings Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T09:06:30.969Z",
+      "action": "Step 0 (Design Settings Types) → done"
+    },
+    {
+      "timestamp": "2026-03-31T09:06:33.873Z",
+      "action": "Step 1 (Implement Global Settings Store) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T09:06:36.255Z",
+      "action": "plan review requested for Step 1 (Design Settings Types)"
+    },
+    {
+      "timestamp": "2026-03-31T09:07:43.142Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The step checkboxes will create the necessary type structure to split global and project settings, but there are critical gaps in the design approach. The plan proposes keeping `Settings` as \"the merged view\" for backward compatibility, but this creates ambiguity about which settings methods accept which types. The step also lacks clarity on handling runtime state fields (`globalPause`, `enginePaused`) and computed fields (`githubTokenConfigured`)."
+    },
+    {
+      "timestamp": "2026-03-31T09:07:48.685Z",
+      "action": "Plan review for Step 1 returned REVISE. Key feedback: 1) Need clear distinction between read (Settings) and write types (Partial<ProjectSettings> vs Partial<GlobalSettings>), 2) Runtime state fields (globalPause, enginePaused) stay project-level as documented, 3) githubTokenConfigured is server-only/computed, 4) Keep DEFAULT_SETTINGS as merged for backward compat, 5) Preserve JSDoc comments. Incorporating all feedback into implementation."
+    },
+    {
+      "timestamp": "2026-03-31T09:10:12.234Z",
+      "action": "code review requested for Step 1 (Design Settings Types)"
+    },
+    {
+      "timestamp": "2026-03-31T09:13:37.998Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation successfully splits the monolithic `Settings` interface into a clean two-tier hierarchy (`GlobalSettings` + `ProjectSettings`) with proper JSDoc documentation, scope discriminators, and backward-compatible merged types. The design correctly classifies all settings according to the PROMPT.md specification, provides runtime-safe key arrays for validation, and maintains full backward compatibility through the merged `Settings` type and `DEFAULT_SETTINGS` constant."
+    },
+    {
+      "timestamp": "2026-03-31T09:13:40.842Z",
+      "action": "Step 1 (Implement Global Settings Store) → done"
+    },
+    {
+      "timestamp": "2026-03-31T09:13:43.747Z",
+      "action": "Step 2 (Update TaskStore to Merge Settings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T09:13:46.083Z",
+      "action": "plan review requested for Step 2 (Implement Global Settings Store)"
+    },
+    {
+      "timestamp": "2026-03-31T09:15:03.290Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows established patterns from the TaskStore implementation. The checkboxes cover all essential implementation requirements including proper file system operations, atomic writes with locking, error handling, and comprehensive testing. The approach correctly uses `~/.pi/kb/settings.json` as the storage location and follows the existing codebase patterns for file operations."
+    },
+    {
+      "timestamp": "2026-03-31T09:16:12.905Z",
+      "action": "code review requested for Step 2 (Implement Global Settings Store)"
+    },
+    {
+      "timestamp": "2026-03-31T09:19:02.465Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "Step 2 implementation is solid and complete. The `GlobalSettingsStore` correctly implements all required functionality: atomic writes via temp-file-then-rename, promise-chain serialization for concurrent access, proper error handling with graceful defaults, and comprehensive test coverage. The code follows established patterns from TaskStore and includes all specified methods."
+    },
+    {
+      "timestamp": "2026-03-31T09:19:05.816Z",
+      "action": "Step 2 (Update TaskStore to Merge Settings) → done"
+    },
+    {
+      "timestamp": "2026-03-31T09:19:09.753Z",
+      "action": "Step 3 (Update Dashboard API Routes) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T09:19:13.174Z",
+      "action": "plan review requested for Step 3 (Update TaskStore to Merge Settings)"
+    },
+    {
+      "timestamp": "2026-03-31T09:20:01.382Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan correctly identifies the need to merge global and project settings in TaskStore, but it has several critical gaps and issues: (1) doesn't specify how to handle the filtering of global-only fields in `updateSettings()`, (2) the \"reject with 400\" approach conflicts with the design since `updateSettings()` is called internally by the engine, (3) lacks specification for how to initialize the GlobalSettingsStore instance in TaskStore, and (4) missing details about handling backward compatibi"
+    },
+    {
+      "timestamp": "2026-03-31T09:20:10.287Z",
+      "action": "Step 3 plan REVISE feedback: 1) TaskStore.updateSettings should silently filter global fields (not throw), 2) GlobalSettingsStore should be created internally in constructor with default path, 3) Need explicit backward compat handling when global settings file doesn't exist, 4) updateGlobalSettings should be public. Will implement accordingly."
+    },
+    {
+      "timestamp": "2026-03-31T09:24:14.866Z",
+      "action": "code review requested for Step 3 (Update TaskStore to Merge Settings)"
+    },
+    {
+      "timestamp": "2026-03-31T09:25:49.972Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "Step 3 has been implemented correctly. The TaskStore now properly merges global and project settings, with appropriate separation of concerns. The implementation includes comprehensive test coverage for all merge scenarios, backward compatibility, and proper event emission. The code follows the existing patterns in the codebase with proper locking, atomic writes, and error handling."
+    },
+    {
+      "timestamp": "2026-03-31T09:25:52.555Z",
+      "action": "Step 3 (Update Dashboard API Routes) → done"
+    },
+    {
+      "timestamp": "2026-03-31T09:25:56.022Z",
+      "action": "Step 4 (Update Dashboard Frontend API) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T09:25:58.193Z",
+      "action": "plan review requested for Step 4 (Update Dashboard API Routes)"
+    },
+    {
+      "timestamp": "2026-03-31T09:26:59.190Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The plan correctly identifies the need to add global settings endpoints and modify existing settings routes. However, it has critical omissions around scope validation, error handling patterns, and test coverage. The plan's approach to rejecting global-only fields with a 400 error could break existing clients that send the merged settings object from GET /settings to PUT /settings."
+    },
+    {
+      "timestamp": "2026-03-31T09:27:04.040Z",
+      "action": "Step 4 plan REVISE: Key feedback: 1) Don't reject global fields in PUT /settings — rely on store's silent filtering (backward compat), 2) GET /settings continues returning merged view, 3) GET /settings/global returns pure GlobalSettings without computed fields, 4) Update mock store to include new methods. Will implement accordingly."
+    },
+    {
+      "timestamp": "2026-03-31T09:33:06.028Z",
+      "action": "code review requested for Step 4 (Update Dashboard API Routes)"
+    },
+    {
+      "timestamp": "2026-03-31T09:34:55.295Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "Step 4 adds three new API endpoints (GET/PUT `/settings/global` and GET `/settings/scopes`) with proper test coverage. However, it fails to implement a critical requirement: PUT `/settings` does NOT reject global-only fields with a 400 error as explicitly required. The current implementation silently filters global-only fields in `store.updateSettings()` rather than returning an explicit error to guide users toward the correct endpoint."
+    },
+    {
+      "timestamp": "2026-03-31T09:36:07.969Z",
+      "action": "code review requested for Step 4 (Update Dashboard API Routes)"
+    },
+    {
+      "timestamp": "2026-03-31T09:38:51.153Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation correctly adds all required API endpoints (GET/PUT /settings/global, GET /settings/scopes) with proper error handling and test coverage. The PUT /settings endpoint correctly rejects global-only fields with helpful error messages. All test scenarios pass and the implementation follows existing patterns. One minor suggestion for symmetry, but not blocking."
+    },
+    {
+      "timestamp": "2026-03-31T09:38:54.071Z",
+      "action": "Step 4 (Update Dashboard Frontend API) → done"
+    },
+    {
+      "timestamp": "2026-03-31T09:38:56.473Z",
+      "action": "Step 5 (Update Settings Modal UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T09:39:02.585Z",
+      "action": "plan review requested for Step 5 (Update Dashboard Frontend API)"
+    },
+    {
+      "timestamp": "2026-03-31T09:40:13.219Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The step's checkboxes correctly identify the three new API functions needed (`fetchGlobalSettings`, `updateGlobalSettings`, `fetchSettingsByScope`) and the type import requirement. The backend routes have already been implemented in previous steps (GET/PUT `/settings/global` and GET `/settings/scopes`), so this step is straightforward wrapper creation. The plan is complete and will achieve the stated outcomes."
+    },
+    {
+      "timestamp": "2026-03-31T09:40:49.577Z",
+      "action": "code review requested for Step 5 (Update Dashboard Frontend API)"
+    },
+    {
+      "timestamp": "2026-03-31T09:43:51.729Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "Step 5 has been correctly implemented. All three required API functions (`fetchGlobalSettings`, `updateGlobalSettings`, `fetchSettingsByScope`) have been added to `packages/dashboard/app/api.ts` with proper TypeScript types, JSDoc documentation, and correct endpoint routing. The type imports (`GlobalSettings`, `ProjectSettings`) were already added in the initial imports section. The implementation correctly aligns with the backend API endpoints tested in `routes.test.ts`."
+    },
+    {
+      "timestamp": "2026-03-31T09:43:56.027Z",
+      "action": "Step 5 (Update Settings Modal UI) → done"
+    },
+    {
+      "timestamp": "2026-03-31T09:43:58.771Z",
+      "action": "Step 6 (Update Engine to Respect Global Settings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T09:44:01.219Z",
+      "action": "plan review requested for Step 6 (Update Settings Modal UI)"
+    },
+    {
+      "timestamp": "2026-03-31T09:46:03.488Z",
+      "action": "plan review Step 6: REVISE",
+      "outcome": "The plan for Step 6 has several critical gaps and implementation risks. While the backend infrastructure is already in place (API endpoints, `fetchSettingsByScope()`, scope-aware save methods), the UI plan lacks concrete implementation details for critical features: it doesn't specify how to visually distinguish setting scopes, how to handle the save flow when settings span multiple scopes, or how to show inline scope indicators. The plan also doesn't address backward compatibility (users with e"
+    },
+    {
+      "timestamp": "2026-03-31T09:46:09.344Z",
+      "action": "Step 6 plan REVISE: Key feedback: 1) Partition form state into global/project patches using GLOBAL_SETTINGS_KEYS, 2) Call both APIs sequentially on save with error handling, 3) Add emoji scope indicators to sidebar (🌍 global, 📁 project), 4) Auth section is independent of both scopes, 5) Keep existing fetchSettings for form population, 6) Add warning banner for global sections."
+    },
+    {
+      "timestamp": "2026-03-31T09:53:39.473Z",
+      "action": "code review requested for Step 6 (Update Settings Modal UI)"
+    },
+    {
+      "timestamp": "2026-03-31T09:55:25.761Z",
+      "action": "code review Step 6: REVISE",
+      "outcome": "The implementation successfully adds visual scope indicators (emoji icons and banners) to distinguish global vs project settings in the sidebar and section content. However, there's a **critical issue with the save behavior**: the code splits settings based on `GLOBAL_SETTINGS_KEYS`, but it saves **all** global settings on every save operation, not just the ones the user modified in the active section. This creates incorrect behavior where changing a project setting like `taskPrefix` triggers un"
+    },
+    {
+      "timestamp": "2026-03-31T09:55:30.392Z",
+      "action": "Step 6 code REVISE: Critical issue — save should only update the scope matching the active section, not both scopes every time. Also need to import PROJECT_SETTINGS_KEYS and add tests for scope-based save routing."
+    },
+    {
+      "timestamp": "2026-03-31T09:57:07.600Z",
+      "action": "code review requested for Step 6 (Update Settings Modal UI)"
+    },
+    {
+      "timestamp": "2026-03-31T10:00:56.241Z",
+      "action": "code review Step 6: REVISE",
+      "outcome": "The UI implementation correctly adds scope indicators (banners and icons) and splits the save logic to route updates to the correct API endpoint. However, there is a **critical bug**: theme settings (`themeMode` and `colorTheme`) are not being saved to global settings when the user clicks Save in the Appearance section. The ThemeSelector callbacks update localStorage via useTheme hook, but these changes are never captured in the form state and therefore never sent to `updateGlobalSettings()`."
+    },
+    {
+      "timestamp": "2026-03-31T10:01:02.295Z",
+      "action": "Step 6 code REVISE #2: Theme changes via ThemeSelector not captured in form state. Need to update callbacks to set form state + add tests for theme saving."
+    },
+    {
+      "timestamp": "2026-03-31T10:01:58.827Z",
+      "action": "code review requested for Step 6 (Update Settings Modal UI)"
+    },
+    {
+      "timestamp": "2026-03-31T10:04:27.566Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "The implementation successfully updates the Settings Modal UI to distinguish between global and project-scoped settings. The code properly shows scope indicators in the sidebar (🌐 for global, 📁 for project), displays scope banners at the top of each section explaining where settings are stored, and implements scope-aware saving that routes updates to the correct API endpoint based on the active section. Test coverage is comprehensive with tests verifying scope banners, scoped save behavior, an"
+    },
+    {
+      "timestamp": "2026-03-31T10:04:32.093Z",
+      "action": "Step 6 (Update Engine to Respect Global Settings) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:04:35.855Z",
+      "action": "Step 7 (Migration and Backward Compatibility) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:05:33.490Z",
+      "action": "Step 7 (Migration and Backward Compatibility) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:05:39.546Z",
+      "action": "Step 8 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:05:59.752Z",
+      "action": "Step 8 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:06:03.919Z",
+      "action": "Step 9 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T10:10:34.451Z",
+      "action": "Step 9 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T10:12:23.679Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T10:12:38.280Z",
+  "createdAt": "2026-03-30T18:01:36.191Z",
+  "updatedAt": "2026-03-31T10:12:38.280Z",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "validatorModelProvider": "anthropic",
+  "validatorModelId": "claude-sonnet-4-5",
+  "size": "L",
+  "reviewLevel": 3,
+  "summary": "Implemented a two-tier settings hierarchy separating user-specific global settings (~/.pi/kb/settings.json) from project-specific settings (.fusion/config.json). Created GlobalSettingsStore class, updated TaskStore to merge both scopes (project overrides global), added API endpoints (GET/PUT /settings/global, GET /settings/scopes), and updated the SettingsModal with scope indicators (🌐/📁) and scope-aware save routing. All 619 relevant tests pass across core (308), dashboard routes (231), and settings modal (80) packages."
+}

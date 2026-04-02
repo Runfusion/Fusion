@@ -1,0 +1,138 @@
+{
+  "id": "KB-195",
+  "description": "For themes,make sure the new task and board selector type (list/card) is also styled with the theme colors",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Usage Indicator Toggle Styling",
+      "status": "done"
+    },
+    {
+      "name": "Verify Header Toggle Consistency",
+      "status": "done"
+    },
+    {
+      "name": "Test Theme Compatibility",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:29:54.629Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:32:50.072Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:33:01.351Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, focused specification for a CSS theming fix. The mission is clear, file references are accurate, steps have concrete verifiable outcomes, and testing requirements demand real automated tests. The review level (1 - Plan Only) and size (S) are appropriate for this focused styling fix."
+    },
+    {
+      "timestamp": "2026-03-30T22:55:52.070Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/eager-stone-2"
+    },
+    {
+      "timestamp": "2026-03-30T22:55:52.070Z",
+      "action": "Step 0 (Update Usage Indicator Toggle Styling) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T22:55:54.086Z",
+      "action": "Step 0 (Update Usage Indicator Toggle Styling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:55:59.531Z",
+      "action": "Step 0 (Update Usage Indicator Toggle Styling) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:55:59.533Z",
+      "action": "Preflight complete. Identified the inconsistency: Header toggle uses var(--todo) for active state, while UsageIndicator toggle uses var(--bg). Need to standardize UsageIndicator to use var(--todo) for theme consistency."
+    },
+    {
+      "timestamp": "2026-03-30T22:56:00.728Z",
+      "action": "plan review requested for Step 1 (Update Usage Indicator Toggle Styling)"
+    },
+    {
+      "timestamp": "2026-03-30T22:56:11.879Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the CSS changes needed to standardize the UsageIndicator toggle styling with the Header toggle. The current `.usage-view-toggle-btn.active` uses `var(--bg)` for background and `var(--text)` for color (lines 6986-6987), which provides inconsistent contrast across themes. The plan's proposed changes align this with the Header toggle's correct theming approach."
+    },
+    {
+      "timestamp": "2026-03-30T22:56:13.266Z",
+      "action": "Step 1 (Verify Header Toggle Consistency) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:56:20.740Z",
+      "action": "Step 1 (Verify Header Toggle Consistency) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:56:20.743Z",
+      "action": "Step 1 complete. Updated .usage-view-toggle-btn.active to use var(--todo) for background and var(--bg) for text color, matching the Header toggle styling. Also added .usage-view-toggle-btn.active:hover for consistency.",
+      "outcome": "CSS changes committed. UsageIndicator toggle now uses theme-aware colors consistently with Header toggle."
+    },
+    {
+      "timestamp": "2026-03-30T22:56:21.736Z",
+      "action": "Step 2 (Test Theme Compatibility) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:56:24.456Z",
+      "action": "Step 2 (Test Theme Compatibility) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:56:24.458Z",
+      "action": "Step 2 complete. Header toggle verified: uses var(--todo) for active background and var(--bg) for text color. Hover states consistent. No changes required."
+    },
+    {
+      "timestamp": "2026-03-30T22:56:25.700Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:56:33.842Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:56:33.844Z",
+      "action": "Step 3 complete. Verified theme compatibility by inspecting CSS variables across all color themes. The var(--todo)/var(--bg) combination provides proper contrast in default, light, high-contrast, ocean, forest, and sunset themes.",
+      "outcome": "Theme analysis confirms consistent styling will display correctly across all themes."
+    },
+    {
+      "timestamp": "2026-03-30T22:56:34.663Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T22:57:05.273Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T22:57:05.274Z",
+      "action": "Step 4 complete. All relevant tests pass. Build successful. CSS-only change produces no regressions.",
+      "outcome": "UsageIndicator (32 tests) and Header (44 tests) component tests pass. Build completes successfully."
+    },
+    {
+      "timestamp": "2026-03-30T22:57:18.411Z",
+      "action": "Step 5 complete. Created changeset file for patch release. Verified no other toggle components need fixes - theme-mode-toggle already uses correct colors, auto-merge-toggle uses semantically correct in-review color.",
+      "outcome": "All acceptance criteria met: toggle styling standardized, tests pass, build successful, changeset included."
+    },
+    {
+      "timestamp": "2026-03-30T22:57:23.750Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T22:57:37.018Z",
+  "createdAt": "2026-03-30T18:29:54.629Z",
+  "updatedAt": "2026-03-30T22:57:37.018Z",
+  "size": "S",
+  "reviewLevel": 1
+}

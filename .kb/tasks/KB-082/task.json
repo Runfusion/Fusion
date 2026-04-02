@@ -1,0 +1,301 @@
+{
+  "id": "KB-082",
+  "description": "When something is failed and in done, you should be able to retry - now it doesn't let you. Also for a failed task, add details on the failure in the task card details",
+  "column": "archived",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add error field to Task type and store",
+      "status": "done"
+    },
+    {
+      "name": "Record failure error in executor",
+      "status": "done"
+    },
+    {
+      "name": "Clear error on retry",
+      "status": "done"
+    },
+    {
+      "name": "Display failure in TaskCard",
+      "status": "done"
+    },
+    {
+      "name": "Display failure prominently in TaskDetailModal",
+      "status": "done"
+    },
+    {
+      "name": "Add/update tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:37:26.159Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:38:21.779Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:38:47.252Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured with a clear mission and concrete steps. File references are accurate, the technical approach is sound, and the testing requirements are appropriate. Minor gaps exist in test case specificity and the step ordering could be clarified, but nothing blocks approval."
+    },
+    {
+      "timestamp": "2026-03-30T04:39:30.385Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:39:48.100Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, actionable specification that correctly identifies the touchpoints across types, engine, store, and UI layers. The file references are accurate, line numbers match the actual source code, and the testing strategy follows established patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T04:40:46.036Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fast-oak"
+    },
+    {
+      "timestamp": "2026-03-30T04:40:46.039Z",
+      "action": "Step 0 (Add error field to Task type and store) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:04.154Z",
+      "action": "Step 0 (Add error field to Task type and store) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:05.234Z",
+      "action": "Step 1 (Record failure error in executor) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:08.253Z",
+      "action": "plan review requested for Step 1 (Add error field to Task type and store)"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:08.282Z",
+      "action": "Step 0 (Add error field to Task type and store) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:17.306Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The step's intent is correct, but the plan contains misleading guidance about the store changes. The `updateTask` method uses an explicit field list pattern, not spread handling, so the store will definitely need modification to support the `error` field. Additionally, the step should explicitly call out adding `error` to the `updateTask` signature and handling logic."
+    },
+    {
+      "timestamp": "2026-03-30T04:41:25.560Z",
+      "action": "Step 0 (Add error field to Task type and store) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:27.252Z",
+      "action": "Step 1 (Record failure error in executor) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:28.739Z",
+      "action": "plan review requested for Step 1 (Add error field to Task type and store)"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:29.907Z",
+      "action": "Step 1 (Record failure error in executor) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:30.979Z",
+      "action": "Step 2 (Clear error on retry) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:32.811Z",
+      "action": "plan review requested for Step 2 (Record failure error in executor)"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:41.301Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is straightforward and correct. The step checkboxes appropriately cover adding the `error` field to the Task interface and ensuring the store can handle it. Notably, the field already exists in both `types.ts` (lines 170-171) and `store.ts` (`updateTask` method at lines 424 and 516-520), so this step will primarily be verification that the infrastructure is in place."
+    },
+    {
+      "timestamp": "2026-03-30T04:41:47.264Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is straightforward and correct. The executor's catch block at line ~536 already captures the error message via `err.message`, and the change to pass it to `updateTask()` follows the pattern established in Step 1. The store's `updateTask` signature already supports the `error` field."
+    },
+    {
+      "timestamp": "2026-03-30T04:41:52.402Z",
+      "action": "Step 2 (Clear error on retry) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:53.371Z",
+      "action": "Step 3 (Display failure in TaskCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:41:54.550Z",
+      "action": "plan review requested for Step 3 (Clear error on retry)"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:01.596Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "Step 3 correctly identifies the need to clear the `error` field when a failed task is retried. The planned change is minimal, targeted, and necessary to prevent stale error messages from persisting after a retry. The location (routes.ts retry endpoint) is appropriate for this logic."
+    },
+    {
+      "timestamp": "2026-03-30T04:42:10.055Z",
+      "action": "Step 1: The error field already exists in Task interface - was previously added. Proceeding to Step 2.",
+      "outcome": "No changes needed for types.ts - error field already present"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:10.056Z",
+      "action": "Step 1 (Record failure error in executor) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:11.338Z",
+      "action": "Step 3 (Display failure in TaskCard) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:11.629Z",
+      "action": "Step 2 (Clear error on retry) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:12.645Z",
+      "action": "plan review requested for Step 2 (Record failure error in executor)"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:12.998Z",
+      "action": "Step 4 (Display failure prominently in TaskDetailModal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:14.230Z",
+      "action": "plan review requested for Step 4 (Display failure in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:22.289Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is clear and correct. The implementation location is accurate (executor.ts catch block at lines 514-525), and the approach of capturing `err.message` before any async operations is sound. I verified that the `error` field is already defined in types.ts and the store's `updateTask` method already handles it."
+    },
+    {
+      "timestamp": "2026-03-30T04:42:36.004Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step's approach will achieve its stated outcomes. The `isFailed` variable already exists at line 168, and the Task type already includes the optional `error?: string` field. The current TaskCard already has visual indicators for failed status (red left border via `.card.failed` class and a red status badge). The step requires adding the error message display below the status badge, which is the key remaining work."
+    },
+    {
+      "timestamp": "2026-03-30T04:42:55.412Z",
+      "action": "Step 4 (Display failure prominently in TaskDetailModal) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:56.637Z",
+      "action": "Step 5 (Add/update tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:42:58.608Z",
+      "action": "plan review requested for Step 5 (Display failure prominently in TaskDetailModal)"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:07.112Z",
+      "action": "code review requested for Step 2 (Record failure error in executor)"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:11.393Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The step's approach will achieve the stated outcomes. The retry button logic already works correctly for failed tasks in any column (line 540 shows the condition `{task.status === \"failed\" && onRetryTask && (...)}`). Adding a prominent failure section near the top of the modal is appropriate given the current modal structure, and including the error in the Definition tab ensures visibility regardless of which tab the user is viewing."
+    },
+    {
+      "timestamp": "2026-03-30T04:43:26.951Z",
+      "action": "Step 5 (Add/update tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:28.125Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:29.765Z",
+      "action": "plan review requested for Step 6 (Add/update tests)"
+    },
+    {
+      "timestamp": "2026-03-30T04:43:50.622Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The implementation in `executor.ts` correctly records the error message when a task fails. However, the existing test was **not updated** to verify the new `error` field behavior as required by Step 6 of the task specification. The test at line 178 only asserts `{ status: \"failed\" }` but should also verify the `error` field is set with the error message."
+    },
+    {
+      "timestamp": "2026-03-30T04:44:00.629Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The step's checkboxes identify the correct test files and outline appropriate test coverage for the new error field feature. The test requirements align with the implementation changes from Steps 1-5. There are some existing tests that will need updating (not just new tests added), but the step's outcomes are achievable as stated."
+    },
+    {
+      "timestamp": "2026-03-30T04:44:34.337Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:45.232Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:47.523Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:44:52.628Z",
+      "action": "Step 2 (Clear error on retry) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:10.001Z",
+      "action": "Step 2 (Clear error on retry) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:45:10.002Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:47:39.829Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:50:03.159Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:50:03.162Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:51:21.519Z",
+      "action": "Encountered working directory issue - directory no longer exists at /Users/eclipxe/Projects/kb/.worktrees/fast-oak"
+    },
+    {
+      "timestamp": "2026-03-30T04:51:32.961Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:51:32.964Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T04:51:35.506Z",
+      "action": "Created changeset file for failed task retry and error display feature",
+      "outcome": "Changeset created at .changeset/failed-task-retry-and-error-display.md"
+    },
+    {
+      "timestamp": "2026-03-30T04:51:42.573Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T04:51:42.576Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-30T04:51:46.158Z",
+      "action": "Execution failed: Invalid transition: 'done' → 'in-review'. Valid targets: archived"
+    },
+    {
+      "timestamp": "2026-03-30T04:52:40.988Z",
+      "action": "Task archived"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T04:52:40.988Z",
+  "createdAt": "2026-03-30T04:37:26.159Z",
+  "updatedAt": "2026-03-30T04:53:36.800Z",
+  "size": "M",
+  "reviewLevel": 2
+}

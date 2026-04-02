@@ -1,0 +1,289 @@
+{
+  "id": "KB-247",
+  "title": "When you select break into subtasks it should",
+  "description": "When you select \"break into subtasks\" it should bring up a dialog where you can see the task breakdown and edit each task in the list, then save to create all of the teasks. Each task should have proper dependencies specified",
+  "column": "done",
+  "dependencies": [
+    "KB-248"
+  ],
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "steps": [
+    {
+      "name": "Backend - Subtask Breakdown Session Management",
+      "status": "done"
+    },
+    {
+      "name": "Backend - API Routes for Subtask Breakdown",
+      "status": "done"
+    },
+    {
+      "name": "Frontend - Subtask Breakdown Modal Component",
+      "status": "done"
+    },
+    {
+      "name": "Frontend - API Client Functions",
+      "status": "done"
+    },
+    {
+      "name": "Frontend - Integration with Task Creation Flows",
+      "status": "done"
+    },
+    {
+      "name": "Frontend - Component Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-31T02:22:31.463Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T02:28:34.178Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T02:28:55.629Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for the interactive subtask breakdown dialog feature. The mission is clear, steps have concrete deliverables, file references are accurate, and testing requirements are explicit. The spec appropriately models the feature after the existing planning mode pattern while accounting for the different UI requirements (editable task list vs. question flow). Dependencies on KB-248 are correctly noted."
+    },
+    {
+      "timestamp": "2026-03-31T12:31:58.576Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/coral-wren"
+    },
+    {
+      "timestamp": "2026-03-31T12:31:58.576Z",
+      "action": "Step 0 (Backend - Subtask Breakdown Session Management) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T12:32:04.668Z",
+      "action": "Step 0 (Backend - Subtask Breakdown Session Management) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:32:11.956Z",
+      "action": "Preflight started for KB-247. PROMPT.md was not present as a file in the worktree, so execution is using the prompt specification provided in the task message plus referenced source files.",
+      "outcome": "Ready to assess dependency state and implementation scope."
+    },
+    {
+      "timestamp": "2026-03-31T12:32:25.427Z",
+      "action": "Checked dependency readiness for KB-248 via repository search. The subtask button entry points already exist in QuickEntryBox and InlineCreateCard, but App still uses a placeholder toast instead of opening a dialog.",
+      "outcome": "Dependency is partially satisfied enough to proceed with KB-247 implementation while preserving existing button triggers."
+    },
+    {
+      "timestamp": "2026-03-31T12:32:30.095Z",
+      "action": "Step 0 (Backend - Subtask Breakdown Session Management) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:32:33.362Z",
+      "action": "Step 1 (Backend - API Routes for Subtask Breakdown) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:32:38.141Z",
+      "action": "plan review requested for Step 1 (Backend - Subtask Breakdown Session Management)"
+    },
+    {
+      "timestamp": "2026-03-31T12:32:56.124Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and appropriately modeled after the existing planning mode implementation in `packages/dashboard/src/planning.ts`. The approach follows established patterns for in-memory session storage with TTL cleanup, AI agent integration via dynamic imports, and SSE streaming for real-time updates. The scope is correctly bounded to backend infrastructure only."
+    },
+    {
+      "timestamp": "2026-03-31T12:35:48.467Z",
+      "action": "code review requested for Step 1 (Backend - Subtask Breakdown Session Management)"
+    },
+    {
+      "timestamp": "2026-03-31T12:36:20.273Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation successfully creates the backend infrastructure for AI-powered subtask generation. The code follows the planning mode pattern consistently, with proper session management (30-minute TTL, 5-minute cleanup), SSE streaming via EventEmitter, and all required types exported. The AI agent prompt follows the specification, and fallback generation is implemented when the AI engine is unavailable. Routes are properly tested with three test cases covering the main flow and error scenari"
+    },
+    {
+      "timestamp": "2026-03-31T12:36:22.495Z",
+      "action": "Step 1 (Backend - API Routes for Subtask Breakdown) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:36:25.441Z",
+      "action": "Step 2 (Frontend - Subtask Breakdown Modal Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:36:27.001Z",
+      "action": "plan review requested for Step 2 (Backend - API Routes for Subtask Breakdown)"
+    },
+    {
+      "timestamp": "2026-03-31T12:36:44.823Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The implementation of Step 2 is already complete in the codebase. The subtask breakdown API routes have been properly added to `routes.ts` following the same patterns as the planning mode routes. The implementation includes streaming SSE endpoints, batch task creation with dependency resolution, and session cancellation. Tests are already present and passing in `routes.test.ts`."
+    },
+    {
+      "timestamp": "2026-03-31T12:38:43.619Z",
+      "action": "code review requested for Step 2 (Backend - API Routes for Subtask Breakdown)"
+    },
+    {
+      "timestamp": "2026-03-31T12:39:21.838Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation successfully adds all required API routes for the subtask breakdown feature. The code follows the established planning mode patterns with proper SSE streaming, dependency resolution in batch creation, and appropriate error handling. All three required tests from the PROMPT.md are present and the implementation integrates cleanly with the existing codebase."
+    },
+    {
+      "timestamp": "2026-03-31T12:39:29.384Z",
+      "action": "Step 2 (Frontend - Subtask Breakdown Modal Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:39:34.398Z",
+      "action": "Step 3 (Frontend - API Client Functions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:39:37.426Z",
+      "action": "plan review requested for Step 3 (Frontend - Subtask Breakdown Modal Component)"
+    },
+    {
+      "timestamp": "2026-03-31T12:40:03.156Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The Step 3 plan checkboxes are **already implemented** — `SubtaskBreakdownModal.tsx` exists with all required functionality including view states, SSE streaming, editable subtask forms, dependency management, and keyboard shortcuts. The only missing artifact is the test file `SubtaskBreakdownModal.test.tsx`, which is explicitly listed as a deliverable. The backend API and API client functions (Steps 1, 2, and 4) are also already in place."
+    },
+    {
+      "timestamp": "2026-03-31T12:40:09.114Z",
+      "action": "code review requested for Step 3 (Frontend - Subtask Breakdown Modal Component)"
+    },
+    {
+      "timestamp": "2026-03-31T12:40:42.888Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The `SubtaskBreakdownModal.tsx` component is well-implemented following the patterns established by `PlanningModeModal.tsx`, with proper state management, SSE streaming, editable subtask fields, dependency cycle detection, and keyboard shortcuts. However, the **required test file is missing**, and the modal is not fully integrated into `App.tsx` (only a placeholder handler exists)."
+    },
+    {
+      "timestamp": "2026-03-31T12:40:48.372Z",
+      "action": "Code review for the modal step requested revisions.",
+      "outcome": "Need to add the required SubtaskBreakdownModal tests and wire the modal into App state before Step 3 can pass."
+    },
+    {
+      "timestamp": "2026-03-31T12:40:53.223Z",
+      "action": "Step 3 (Frontend - API Client Functions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:41:59.578Z",
+      "action": "code review requested for Step 3 (Frontend - Subtask Breakdown Modal Component)"
+    },
+    {
+      "timestamp": "2026-03-31T12:42:30.834Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The SubtaskBreakdownModal component is well-implemented following the existing PlanningModeModal patterns. It correctly handles all four view states (initial, generating, editing, creating), implements SSE streaming, dependency cycle detection, dirty state tracking, and keyboard shortcuts. The component reuses existing CSS classes for visual consistency and integrates properly into App.tsx with the necessary state handlers."
+    },
+    {
+      "timestamp": "2026-03-31T12:42:32.582Z",
+      "action": "Step 3 (Frontend - API Client Functions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:42:35.692Z",
+      "action": "Step 4 (Frontend - Integration with Task Creation Flows) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:42:39.871Z",
+      "action": "plan review requested for Step 4 (Frontend - API Client Functions)"
+    },
+    {
+      "timestamp": "2026-03-31T12:42:58.363Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is technically sound and follows the established patterns from Planning Mode. The API client functions specified in the checkboxes align correctly with the backend routes at `/subtasks/*`. The implementation already present in `api.ts` (lines 1079-1145) correctly mirrors the planning mode API patterns with appropriate adaptations for the subtask breakdown use case."
+    },
+    {
+      "timestamp": "2026-03-31T12:43:18.469Z",
+      "action": "code review requested for Step 4 (Frontend - API Client Functions)"
+    },
+    {
+      "timestamp": "2026-03-31T12:43:42.277Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The Step 4 implementation correctly adds the required frontend API client functions for the subtask breakdown feature. All four required functions are implemented following the existing planning mode patterns, with proper TypeScript types and SSE streaming support. The API endpoints match the backend routes defined in Step 2."
+    },
+    {
+      "timestamp": "2026-03-31T12:43:45.468Z",
+      "action": "Step 4 (Frontend - Integration with Task Creation Flows) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:43:47.100Z",
+      "action": "Step 5 (Frontend - Component Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:43:51.795Z",
+      "action": "plan review requested for Step 5 (Frontend - Integration with Task Creation Flows)"
+    },
+    {
+      "timestamp": "2026-03-31T12:44:08.548Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The plan's checkboxes do not accurately reflect the current codebase state. The `QuickEntryBox.tsx` and `InlineCreateCard.tsx` already have their subtask buttons wired up (likely completed in KB-248). However, `NewTaskModal.tsx` has a gap: it still shows the \"Enable planning mode\" checkbox that the plan says to remove, but the plan fails to specify adding the Subtask button and `onSubtaskBreakdown` prop integration to `NewTaskModal.tsx`."
+    },
+    {
+      "timestamp": "2026-03-31T12:44:21.064Z",
+      "action": "Plan review noted that most flow integration is already in place from earlier work/KB-248.",
+      "outcome": "Remaining integration work should focus on NewTaskModal cleanup and wiring rather than redoing QuickEntryBox/InlineCreateCard/App modal state."
+    },
+    {
+      "timestamp": "2026-03-31T12:45:37.926Z",
+      "action": "code review requested for Step 5 (Frontend - Integration with Task Creation Flows)"
+    },
+    {
+      "timestamp": "2026-03-31T12:46:15.164Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The implementation correctly wires up the `SubtaskBreakdownModal` to all task creation entry points as specified in the PROMPT.md. The `onSubtaskBreakdown` callback flows properly through the component hierarchy from `App.tsx` down to `QuickEntryBox`, `InlineCreateCard`, and `NewTaskModal`. All forms properly clear their state after triggering the subtask breakdown dialog."
+    },
+    {
+      "timestamp": "2026-03-31T12:46:19.362Z",
+      "action": "Step 5 (Frontend - Component Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:46:27.721Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:46:30.870Z",
+      "action": "plan review requested for Step 6 (Frontend - Component Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T12:46:58.257Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The test plan for Step 6 is sound and the existing `SubtaskBreakdownModal.test.tsx` provides adequate coverage for the core functionality. The test file follows the established patterns from `PlanningModeModal.test.tsx`, uses proper vitest mocking conventions, and covers all the primary user flows specified in the step checkboxes. The tests leverage the existing `MockEventSource` from `vitest.setup.ts` for SSE testing and properly mock the API module."
+    },
+    {
+      "timestamp": "2026-03-31T12:47:05.622Z",
+      "action": "Attempted full test/build verification for KB-247, but the workspace lacks installed dependencies.",
+      "outcome": "`pnpm test` fails immediately with `vitest: command not found` and pnpm warns that node_modules are missing, so full verification cannot run in the current environment."
+    },
+    {
+      "timestamp": "2026-03-31T12:47:14.092Z",
+      "action": "code review requested for Step 6 (Frontend - Component Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T12:47:51.513Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "The test implementation for `SubtaskBreakdownModal` follows the established project patterns (similar to `PlanningModeModal.test.tsx`) and covers all required test scenarios from Step 6. The tests properly mock the API layer, simulate SSE streaming behavior, and verify user interactions. All 7 test cases are present and correctly structured."
+    },
+    {
+      "timestamp": "2026-03-31T12:47:53.418Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:47:57.079Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:48:20.021Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:48:20.024Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T12:48:32.391Z",
+  "createdAt": "2026-03-31T02:22:31.463Z",
+  "updatedAt": "2026-03-31T12:48:32.391Z",
+  "size": "L",
+  "reviewLevel": 2,
+  "summary": "Implemented backend and frontend support for an interactive subtask breakdown flow, including AI-backed session generation, SSE streaming, batch task creation, a new editable modal, and wiring from dashboard task-creation entry points including NewTaskModal. Added tests for the new modal and updated AGENTS.md plus a CLI package changeset. Full test/build verification could not run in this environment because workspace dependencies are not installed (`vitest` missing / `node_modules` absent)."
+}

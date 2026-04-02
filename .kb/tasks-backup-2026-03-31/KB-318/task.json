@@ -1,0 +1,75 @@
+{
+  "id": "KB-318",
+  "description": "Fix @kb/core package build - missing agent-store.ts module. The packages/core/src/index.ts exports from './agent-store.js' but the file doesn't exist. This breaks the build and prevents engine tests from running that depend on @kb/core.",
+  "column": "in-progress",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Missing Fields to ProjectSettings",
+      "status": "done"
+    },
+    {
+      "name": "Verify Build",
+      "status": "in-progress"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "pending"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "pending"
+    }
+  ],
+  "currentStep": 1,
+  "log": [
+    {
+      "timestamp": "2026-03-31T18:41:20.295Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T18:45:33.953Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T18:45:43.097Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately identifies missing `autoUpdatePrStatus` and `autoCreatePr` fields that are referenced in `packages/engine/src/cron-runner.test.ts` (lines 30-31) but absent from the `ProjectSettings` interface. The mission is clear, file scope is correct, and the review level (1 — Plan Only) is appropriate for this simple type addition with zero blast radius."
+    },
+    {
+      "timestamp": "2026-03-31T21:13:50.162Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-crane"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:50.163Z",
+      "action": "Step 0 (Add Missing Fields to ProjectSettings) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:52.213Z",
+      "action": "Step 0 (Add Missing Fields to ProjectSettings) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:56.136Z",
+      "action": "Step 0 (Add Missing Fields to ProjectSettings) → done"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:56.138Z",
+      "action": "Step 1 (Verify Build) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:57.664Z",
+      "action": "plan review requested for Step 1 (Add Missing Fields to ProjectSettings)"
+    },
+    {
+      "timestamp": "2026-03-31T21:14:22.602Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the necessary changes to `packages/core/src/types.ts`. The approach is sound: adding two boolean fields (`autoUpdatePrStatus` and `autoCreatePr`) to the `ProjectSettings` interface with JSDoc documentation and default values of `false` in `DEFAULT_PROJECT_SETTINGS`. This is a straightforward type-only change that will unblock engine package TypeScript errors."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T21:13:50.043Z",
+  "createdAt": "2026-03-31T18:41:20.295Z",
+  "updatedAt": "2026-03-31T21:14:22.602Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "worktree": "/Users/eclipxe/Projects/kb/.worktrees/misty-crane"
+}

@@ -1,0 +1,138 @@
+{
+  "id": "KB-194",
+  "description": "add a way to collapse sections in the list view",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Collapse State Management",
+      "status": "done"
+    },
+    {
+      "name": "Update Section Header Rendering",
+      "status": "done"
+    },
+    {
+      "name": "Conditionally Render Task Rows",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:20:47.776Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:26:36.825Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:26:53.974Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, accurate specification for adding collapsible sections to the dashboard list view. The spec correctly identifies existing patterns to follow (localStorage persistence from lines 68-90, ChevronDown toggle pattern from TaskCard.tsx) and references real CSS classes that already exist in the codebase (`list-section-chevron`, `list-section-header--collapsed` at styles.css:3570-3591)."
+    },
+    {
+      "timestamp": "2026-03-30T19:49:31.580Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/clear-crane"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:31.580Z",
+      "action": "Step 0 (Add Collapse State Management) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:41.389Z",
+      "action": "Step 0 (Add Collapse State Management) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:41.392Z",
+      "action": "Step 1 (Update Section Header Rendering) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:43.072Z",
+      "action": "plan review requested for Step 1 (Add Collapse State Management)"
+    },
+    {
+      "timestamp": "2026-03-30T19:49:54.429Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-specified and follows established patterns in the codebase. The `visibleColumns` state management pattern (lines 68-90 in ListView.tsx) is a solid reference — it properly handles localStorage initialization with validation, SSR-safe `typeof window` checks, and persistence via useEffect. The step's checkboxes will achieve the stated outcomes."
+    },
+    {
+      "timestamp": "2026-03-30T19:50:03.422Z",
+      "action": "Step 1 (Update Section Header Rendering) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:50:03.424Z",
+      "action": "Step 2 (Conditionally Render Task Rows) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:50:04.369Z",
+      "action": "plan review requested for Step 2 (Update Section Header Rendering)"
+    },
+    {
+      "timestamp": "2026-03-30T19:50:17.234Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan has a **critical error** in the import instruction that will cause the chevron to point in the wrong direction. The CSS is designed for `ChevronRight` rotated 90° to point down when expanded, but the plan needs to be explicit about this behavior. Additionally, the plan misses an important interaction detail: the section header currently does nothing on click, but adding a click handler for collapse without `stopPropagation` would trigger the column filter functionality."
+    },
+    {
+      "timestamp": "2026-03-30T19:50:27.196Z",
+      "action": "Step 2 (Conditionally Render Task Rows) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:50:27.197Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:50:28.501Z",
+      "action": "plan review requested for Step 3 (Conditionally Render Task Rows)"
+    },
+    {
+      "timestamp": "2026-03-30T19:50:39.800Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 correctly identifies the remaining work needed to complete the collapsible sections feature. The current ListView.tsx already has state management (Step 1) and section header rendering (Step 2) implemented — only the conditional rendering of task rows remains."
+    },
+    {
+      "timestamp": "2026-03-30T19:50:52.338Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:50:52.339Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:50:53.303Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T19:51:07.051Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The Step 4 testing plan is comprehensive and covers all critical functionality for the collapsible sections feature. The plan appropriately tests toggle behavior, localStorage persistence, multiple section independence, and integration with existing features. All six test cases are verifiable and necessary for this feature."
+    },
+    {
+      "timestamp": "2026-03-30T20:15:32.199Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T20:15:37.382Z",
+      "action": "Completed all steps for KB-194 - Add Collapsible Sections to List View",
+      "outcome": "Feature implemented with: 1) Collapse state management with localStorage persistence, 2) Section headers with ChevronRight icon and click handlers, 3) Conditional rendering of task rows based on collapsed state, 4) Comprehensive tests covering collapse/expand, localStorage persistence, multiple sections, and accessibility. Build passes successfully."
+    },
+    {
+      "timestamp": "2026-03-30T20:15:39.604Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T20:16:05.858Z",
+  "createdAt": "2026-03-30T18:20:47.776Z",
+  "updatedAt": "2026-03-30T20:16:05.858Z",
+  "size": "S",
+  "reviewLevel": 1
+}

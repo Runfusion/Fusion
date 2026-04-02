@@ -1,0 +1,78 @@
+{
+  "id": "KB-192",
+  "description": "in the task model, move the progress bars to the top of definition",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Relocate Progress Section in Definition Tab",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:15:14.510Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:19:32.489Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:19:56.722Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and clear for a straightforward UI reordering task. The mission is unambiguous, steps have verifiable outcomes, and the testing strategy references real existing tests. One line number reference needs correction, but the qualitative location descriptions are accurate enough to guide implementation."
+    },
+    {
+      "timestamp": "2026-03-30T19:39:45.468Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fast-grove"
+    },
+    {
+      "timestamp": "2026-03-30T19:39:45.468Z",
+      "action": "Step 0 (Relocate Progress Section in Definition Tab) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:39:59.289Z",
+      "action": "Step 0 (Relocate Progress Section in Definition Tab) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:40:00.949Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:40:13.540Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:40:13.541Z",
+      "action": "Moved progress section from bottom (after dependencies) to top of Definition tab (before markdown prompt)",
+      "outcome": "Step 1 complete — progress bar now appears first in Definition tab content"
+    },
+    {
+      "timestamp": "2026-03-30T19:42:36.218Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:42:39.334Z",
+      "action": "Step 0 (Relocate Progress Section in Definition Tab) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:42:39.337Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:42:49.731Z",
+  "createdAt": "2026-03-30T18:15:14.510Z",
+  "updatedAt": "2026-03-30T19:42:49.731Z",
+  "size": "S",
+  "reviewLevel": 0
+}

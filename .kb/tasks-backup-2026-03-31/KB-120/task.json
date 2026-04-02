@@ -1,0 +1,104 @@
+{
+  "id": "KB-120",
+  "description": "add a search feature on dashboard card view board (duplicated from KB-089) - tests only",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Search Tests to Header.test.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Add Search Tests to Board.test.tsx",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T23:15:00.000Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T06:16:21.390Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T06:16:31.182Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, accurate specification for adding test coverage to an existing search feature. The spec correctly identifies the real implementation details, existing test patterns, and specific test cases needed. The scope is appropriately limited to test-only changes, and the steps have concrete, verifiable outcomes."
+    },
+    {
+      "timestamp": "2026-03-30T16:13:10.458Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-lark"
+    },
+    {
+      "timestamp": "2026-03-30T16:13:21.675Z",
+      "action": "Step 1 (Add Search Tests to Board.test.tsx) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:13:21.676Z",
+      "action": "plan review requested for Step 1 (Add Search Tests to Header.test.tsx)"
+    },
+    {
+      "timestamp": "2026-03-30T16:13:36.470Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan covers all necessary test cases for the Header search functionality. The test descriptions align correctly with the implementation in Header.tsx (lines 104-144), where search only renders when `onSearchChange` is provided and `view === \"board\"`. The plan appropriately tests the conditional rendering, interaction handlers, and clear button functionality. There is one minor discrepancy noted below regarding the logo test fix."
+    },
+    {
+      "timestamp": "2026-03-30T16:14:50.368Z",
+      "action": "Step 1 (Add Search Tests to Board.test.tsx) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:14:50.368Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:14:50.369Z",
+      "action": "plan review requested for Step 2 (Add Search Tests to Board.test.tsx)"
+    },
+    {
+      "timestamp": "2026-03-30T16:15:07.361Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The test plan correctly identifies the filtering behaviors to verify (ID, title, description, case-insensitivity, empty query, no matches, sorting). However, the current `Column` mock in Board.test.tsx doesn't accept or expose the `tasks` prop, making it impossible to verify filtered task results. The plan needs to address this mock limitation before implementation can succeed."
+    },
+    {
+      "timestamp": "2026-03-30T16:16:22.894Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:16:22.896Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:17:15.996Z",
+      "action": "Step 3 complete: Full test suite and build verified",
+      "outcome": "1137 tests passing, build successful. Pre-existing typecheck failure in ListView.tsx is unrelated to search test changes."
+    },
+    {
+      "timestamp": "2026-03-30T16:17:15.998Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:17:19.524Z",
+      "action": "Step 0 (Add Search Tests to Header.test.tsx) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:17:19.525Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "createdAt": "2026-03-30T23:15:00.000Z",
+  "updatedAt": "2026-03-30T16:17:36.583Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "columnMovedAt": "2026-03-30T16:17:36.583Z"
+}

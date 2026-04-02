@@ -1,0 +1,191 @@
+{
+  "id": "KB-267",
+  "title": "The add test model selector interface is bad Move",
+  "description": "The add test model selector interface is bad. Move it from a sub menu to a quick modal popup",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Create Model Selector Modal Component",
+      "status": "done"
+    },
+    {
+      "name": "Update QuickEntryBox",
+      "status": "done"
+    },
+    {
+      "name": "Update InlineCreateCard",
+      "status": "done"
+    },
+    {
+      "name": "Clean Up Unused Styles (Optional)",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-31T07:00:29.917Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T07:01:24.935Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T07:01:48.317Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted specification for a focused UI refactor. The mission is clear, steps have concrete verifiable outcomes, file references are accurate, and the testing requirements are comprehensive. The review level (1 - Plan Only) and size (S) are appropriately calibrated for the limited blast radius."
+    },
+    {
+      "timestamp": "2026-03-31T07:05:38.571Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/coral-badger"
+    },
+    {
+      "timestamp": "2026-03-31T07:05:38.571Z",
+      "action": "Step 0 (Create Model Selector Modal Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T07:05:40.462Z",
+      "action": "Step 0 (Create Model Selector Modal Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T07:05:47.238Z",
+      "action": "Step 0 (Create Model Selector Modal Component) → done"
+    },
+    {
+      "timestamp": "2026-03-31T07:05:47.239Z",
+      "action": "Step 0 Preflight complete. Understood the current implementation: QuickEntryBox and InlineCreateCard use an inline dropdown (inline-create-model-dropdown) for model selection. Need to convert this to a modal pattern similar to NewTaskModal.",
+      "outcome": "Ready to proceed with Step 1"
+    },
+    {
+      "timestamp": "2026-03-31T07:05:49.349Z",
+      "action": "plan review requested for Step 1 (Create Model Selector Modal Component)"
+    },
+    {
+      "timestamp": "2026-03-31T07:06:04.310Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows established patterns in the codebase. The component API is appropriately designed, the modal structure matches existing conventions from `NewTaskModal.tsx`, and the test ID attributes are comprehensive. The step correctly identifies the necessary props and leaves the dropdown removal to subsequent steps."
+    },
+    {
+      "timestamp": "2026-03-31T07:06:13.323Z",
+      "action": "Step 1 (Update QuickEntryBox) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T07:06:20.000Z",
+      "action": "Step 1 (Update QuickEntryBox) → done"
+    },
+    {
+      "timestamp": "2026-03-31T07:06:21.494Z",
+      "action": "plan review requested for Step 2 (Update QuickEntryBox)"
+    },
+    {
+      "timestamp": "2026-03-31T07:06:52.863Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the key changes needed to replace the inline dropdown with the modal pattern. The approach aligns with the existing codebase patterns. However, there's a critical gap: the blur timeout handler must be updated to check `isModelModalOpen` to prevent the quick entry from collapsing when the modal opens (since the modal is portalled outside the component DOM tree, clicking the Models button triggers a blur event)."
+    },
+    {
+      "timestamp": "2026-03-31T07:06:55.988Z",
+      "action": "Step 2 (Update InlineCreateCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T07:07:30.223Z",
+      "action": "Step 2 (Update InlineCreateCard) → done"
+    },
+    {
+      "timestamp": "2026-03-31T07:07:31.468Z",
+      "action": "plan review requested for Step 3 (Update InlineCreateCard)"
+    },
+    {
+      "timestamp": "2026-03-31T07:08:00.693Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is sound and follows the established pattern from Step 2 (QuickEntryBox). The checkboxes cover all necessary code changes to convert InlineCreateCard from a dropdown-based model selector to the modal-based pattern. The focus-out behavior update is correctly identified as a critical requirement to prevent the card from auto-canceling when the modal is open."
+    },
+    {
+      "timestamp": "2026-03-31T07:08:04.701Z",
+      "action": "Step 3 (Clean Up Unused Styles (Optional)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T07:08:34.610Z",
+      "action": "Step 3 (Clean Up Unused Styles (Optional)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T07:08:38.196Z",
+      "action": "plan review requested for Step 4 (Clean Up Unused Styles (Optional))"
+    },
+    {
+      "timestamp": "2026-03-31T07:09:04.276Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan correctly identifies the need to clean up CSS styles that were used by the old inline model dropdown. However, the plan should be clarified to distinguish between **button styles** (which should be kept) and **dropdown styles** (which should be removed). The `.inline-create-model-wrap` and `.inline-create-model-trigger` classes are still actively used as the button that opens the modal in both `QuickEntryBox.tsx` and `InlineCreateCard.tsx`, while the dropdown-specific styles are truly u"
+    },
+    {
+      "timestamp": "2026-03-31T07:09:06.093Z",
+      "action": "Step 4 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T07:09:18.735Z",
+      "action": "Step 4 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-31T07:09:19.838Z",
+      "action": "plan review requested for Step 5 (Update Tests)"
+    },
+    {
+      "timestamp": "2026-03-31T07:09:42.233Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The plan for Step 5 is directionally correct but has critical gaps. The plan doesn't account for a **runtime error** in `InlineCreateCard.tsx` (references to non-existent `setShowModels` function) and misses **focus management edge cases** that are currently tested but will break with the modal pattern. Additionally, the InlineCreateCard tests need more specific updates than acknowledged."
+    },
+    {
+      "timestamp": "2026-03-31T07:09:49.930Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T07:10:46.048Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T07:10:48.948Z",
+      "action": "plan review requested for Step 6 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T07:11:23.557Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The step's verification approach is sound and comprehensive. The test files have been properly updated in previous steps to reflect the modal pattern, with appropriate test IDs (`model-selector-modal`, `model-selector-done`, etc.) and test cases covering modal open/close behavior, model selection persistence, and focus management. Running the full test suite plus build verification is the correct quality gate for this refactor."
+    },
+    {
+      "timestamp": "2026-03-31T07:11:25.183Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T07:13:02.947Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T07:13:02.949Z",
+      "action": "Step 6 Testing & Verification complete",
+      "outcome": "All 68 QuickEntryBox and InlineCreateCard tests pass. Build succeeds with no TypeScript errors."
+    },
+    {
+      "timestamp": "2026-03-31T07:13:05.423Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T07:13:08.037Z",
+  "createdAt": "2026-03-31T07:00:29.917Z",
+  "updatedAt": "2026-03-31T07:13:08.037Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully converted the model selector interface from a dropdown to a modal popup in both QuickEntryBox and InlineCreateCard components. Created a new reusable ModelSelectorModal component with proper modal behavior (Escape key close, overlay click close, Done/Cancel buttons). Updated all tests to work with the new modal pattern and added tests for modal-specific behaviors (overlay click, Escape key handling, model persistence). Removed unused dropdown styles from styles.css. All 68 related tests pass and the build succeeds with no errors."
+}

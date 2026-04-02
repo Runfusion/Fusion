@@ -1,0 +1,113 @@
+{
+  "id": "KB-614",
+  "description": "We don’t need to log every tool call in the cli",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 1,
+  "currentStep": 4,
+  "summary": "Removed verbose tool call logging from CLI merge operations. Deleted the `onAgentTool` callbacks from both `packages/cli/src/commands/dashboard.ts` (rawMerge function) and `packages/cli/src/commands/task.ts` (runTaskMerge function). The `onAgentText` callbacks remain unchanged as specified. Build passes successfully. Created changeset file for the @gsxdsm/fusion package.",
+  "createdAt": "2026-03-31T22:13:07.435Z",
+  "updatedAt": "2026-04-01T00:47:50.753Z",
+  "columnMovedAt": "2026-04-01T00:47:50.753Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Remove tool call logging from dashboard.ts",
+      "status": "done"
+    },
+    {
+      "name": "Remove tool call logging from task.ts",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T22:13:07.435Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T22:54:24.791Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T22:54:35.266Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted, accurate, and appropriately scoped. It correctly identifies the two locations with verbose tool call logging in the CLI merge operations and provides concrete, verifiable steps for their removal. The review level (1 - Plan Only) is appropriate for this low-risk cleanup task."
+    },
+    {
+      "timestamp": "2026-04-01T00:37:41.198Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/opal-trail"
+    },
+    {
+      "timestamp": "2026-04-01T00:37:41.199Z",
+      "action": "Step 0 (Remove tool call logging from dashboard.ts) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T00:37:42.610Z",
+      "action": "Step 0 (Remove tool call logging from dashboard.ts) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:37:47.099Z",
+      "action": "Step 0 (Remove tool call logging from dashboard.ts) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:37:48.913Z",
+      "action": "plan review requested for Step 1 (Remove tool call logging from dashboard.ts)"
+    },
+    {
+      "timestamp": "2026-04-01T00:38:02.606Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The step is straightforward and correctly identified. The `onAgentTool` callback in `packages/cli/src/commands/dashboard.ts` at line 177 logs every tool invocation during AI merge operations, creating unnecessary console noise. Removing this optional callback (confirmed optional in `MergerOptions` interface at `packages/engine/src/merger.ts:40`) will eliminate the verbose output without affecting functionality. The plan correctly identifies the exact line to remove and includes appropriate test "
+    },
+    {
+      "timestamp": "2026-04-01T00:38:04.438Z",
+      "action": "Step 1 (Remove tool call logging from task.ts) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:40:54.631Z",
+      "action": "Step 1 (Remove tool call logging from task.ts) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:40:55.707Z",
+      "action": "plan review requested for Step 2 (Remove tool call logging from task.ts)"
+    },
+    {
+      "timestamp": "2026-04-01T00:41:03.205Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan correctly identifies the target code in `packages/cli/src/commands/task.ts` and the action to take. The `onAgentTool` callback is indeed optional in the `MergerOptions` interface, and removing it will reduce console noise during AI merge operations without affecting functionality. The testing strategy (running task-specific tests) is appropriate."
+    },
+    {
+      "timestamp": "2026-04-01T00:41:04.097Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:41:30.446Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:41:31.609Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:47:27.905Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:47:36.479Z",
+      "action": "Completed all steps",
+      "outcome": "Removed onAgentTool callbacks from dashboard.ts and task.ts. Build passes. Changeset created."
+    },
+    {
+      "timestamp": "2026-04-01T00:47:40.119Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

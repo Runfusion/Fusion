@@ -1,0 +1,211 @@
+{
+  "id": "KB-140",
+  "description": "Investigate failing CLI build-executable tests caused by bundled binaries not finding node-pty prebuilds (`pty.node`) after `pnpm build`; fix native asset packaging so `packages/cli` build-exe tests pass.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Fix runtime loading and stage native terminal assets",
+      "status": "done"
+    },
+    {
+      "name": "Align tests and packaging metadata with the new executable payload",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T12:15:05.564Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T12:37:50.533Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T12:41:56.928Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The mission is clear, scoped, and grounded in the current codebase: `packages/cli/build.ts:25,97-107,152` only stages `dist/client/`, `packages/cli/src/bin.ts:41-42` eagerly imports both dashboard and task commands before argument parsing, and `packages/dashboard/src/terminal-service.ts:8` imports `node-pty` at module load. The step structure is mostly concrete and verifiable, but the spec still leaves one core failure mode under-tested and omits one likely-affected file from its read/scope list"
+    },
+    {
+      "timestamp": "2026-03-30T12:47:10.817Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T12:53:07.592Z",
+      "action": "Spec review: REVISE",
+      "outcome": "This is a strong, well-grounded spec overall: it points at the real breakpoints in the current codebase, including eager dashboard loading in `packages/cli/src/bin.ts:41-42`, eager terminal initialization in `packages/dashboard/src/server.ts:45`, top-level native loading in `packages/dashboard/src/terminal-service.ts:8`, and the PTY session route at `packages/dashboard/src/routes.ts:1976`. The mission, testing bar, and documentation requirements are all concrete and appropriately strict for a pu"
+    },
+    {
+      "timestamp": "2026-03-30T12:54:31.182Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T12:59:00.096Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a strong specification overall. It correctly points at the real failure surface in the current codebase: the CLI bootstrap eagerly imports dashboard code (`packages/cli/src/bin.ts:41-42`), the standalone builder only stages `dist/client/` (`packages/cli/build.ts:97-108`, `packages/cli/build.ts:152-183`), and the dashboard terminal service statically loads `node-pty` (`packages/dashboard/src/terminal-service.ts:8`, `packages/dashboard/src/terminal-service.ts:303`). The steps are concrete,"
+    },
+    {
+      "timestamp": "2026-03-31T01:49:03.633Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/amber-petal"
+    },
+    {
+      "timestamp": "2026-03-31T01:49:03.634Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:49:24.853Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:49:24.853Z",
+      "action": "Step 0 Preflight: Analyzing node-pty native asset requirements",
+      "outcome": "node-pty requires prebuilt .node files and platform-specific helpers (spawn-helper on Unix, winpty-agent.exe and conpty.dll on Windows). Currently build.ts only stages dist/client/ but not these runtime assets. When Bun compiles the binary, node-pty tries to resolve from /$bunfs/root/kb which doesn't have the prebuilds directory."
+    },
+    {
+      "timestamp": "2026-03-31T02:25:17.001Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T02:25:37.749Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T04:34:04.296Z",
+      "action": "Task paused"
+    },
+    {
+      "timestamp": "2026-03-31T04:34:06.664Z",
+      "action": "Task unpaused"
+    },
+    {
+      "timestamp": "2026-03-31T06:09:46.447Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T06:09:48.274Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:10:09.410Z",
+      "action": "Step 0 Preflight complete: Found node-pty in packages/dashboard/node_modules with prebuilds for darwin-arm64, darwin-x64, win32-arm64, win32-x64. Each contains pty.node and spawn-helper (Unix) or conpty.node/conpty_console_list.node (Windows).",
+      "outcome": "Ready to proceed with Step 1 - Fix runtime loading and stage native terminal assets"
+    },
+    {
+      "timestamp": "2026-03-31T06:10:09.413Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:10:09.416Z",
+      "action": "Step 1 (Fix runtime loading and stage native terminal assets) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:10:10.487Z",
+      "action": "plan review requested for Step 1 (Fix runtime loading and stage native terminal assets)"
+    },
+    {
+      "timestamp": "2026-03-31T06:10:48.508Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T06:12:54.798Z",
+      "action": "Step 1 (Fix runtime loading and stage native terminal assets) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:12:54.800Z",
+      "action": "plan review requested for Step 1 (Fix runtime loading and stage native terminal assets)"
+    },
+    {
+      "timestamp": "2026-03-31T06:13:15.191Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the core issues: eager terminal service initialization in `server.ts:56` causes node-pty to be required even for non-dashboard commands, and the Bun-compiled binary lacks the native sidecars (pty.node, spawn-helper) that node-pty needs at runtime. The step's checkboxes cover the necessary fixes: lazy-loading, asset staging to a target-scoped layout, runtime path resolution, and regression testing including PTY session creation."
+    },
+    {
+      "timestamp": "2026-03-31T06:24:13.360Z",
+      "action": "Step 1 (Fix runtime loading and stage native terminal assets) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:24:13.363Z",
+      "action": "code review requested for Step 1 (Fix runtime loading and stage native terminal assets)"
+    },
+    {
+      "timestamp": "2026-03-31T06:25:00.934Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The implementation addresses the core problem of eager node-pty loading causing crashes in standalone binaries. The lazy-loading approach in `terminal-service.ts` is correct, and the native asset staging logic in `build.ts` is well-structured. However, there are critical gaps in test coverage and documentation that violate the step's stated outcomes, and a potential issue with unused runtime modules."
+    },
+    {
+      "timestamp": "2026-03-31T06:26:09.548Z",
+      "action": "code review requested for Step 1 (Fix runtime loading and stage native terminal assets)"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:17.192Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation successfully addresses the core issue: node-pty native assets are now staged alongside the compiled binary, and lazy loading prevents non-dashboard commands from crashing. The runtime patch (`native-patch.ts`) creates a temporary filesystem structure that helps the Bun-compiled binary resolve native modules from the staged `dist/runtime/<platform-arch>/` directory. A comprehensive integration test verifies that the dashboard can start and create PTY sessions from isolated outp"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:19.932Z",
+      "action": "Step 2 (Align tests and packaging metadata with the new executable payload) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:19.935Z",
+      "action": "plan review requested for Step 2 (Align tests and packaging metadata with the new executable payload)"
+    },
+    {
+      "timestamp": "2026-03-31T06:27:56.834Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The Step 2 plan identifies the right files to update but misses a critical gap: **CI/release workflow artifacts don't include the `runtime/` directory**, which would break standalone binary distribution. The plan also under-specifies test assertions for the runtime asset layout and lacks explicit verification that npm packaging excludes runtime assets (which is correct behavior, but needs testing to prevent regression)."
+    },
+    {
+      "timestamp": "2026-03-31T06:29:07.417Z",
+      "action": "Step 2 (Align tests and packaging metadata with the new executable payload) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:29:07.418Z",
+      "action": "code review requested for Step 2 (Align tests and packaging metadata with the new executable payload)"
+    },
+    {
+      "timestamp": "2026-03-31T06:29:54.972Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation successfully aligns tests and packaging metadata with the new executable payload structure. The runtime native assets are properly staged, tested in isolation, excluded from npm packages, and included in release artifacts. The PTY session integration test validates end-to-end functionality."
+    },
+    {
+      "timestamp": "2026-03-31T06:29:56.536Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T06:31:55.587Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:31:55.588Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:31:55.590Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T06:31:55.592Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T06:32:36.327Z",
+  "createdAt": "2026-03-30T12:15:05.564Z",
+  "updatedAt": "2026-03-31T06:32:36.327Z",
+  "size": "M",
+  "reviewLevel": 3,
+  "summary": "Fixed CLI build-exe node-pty native asset packaging (KB-140). Staged native assets (pty.node, spawn-helper) in dist/runtime/<platform-arch>/ alongside the binary. Updated build.ts to stage runtime assets, created native-patch.ts for runtime resolution, modified terminal-service.ts for lazy loading. Fixed task list hanging issue with process.exit(0). Updated all tests to verify runtime assets, CI workflows to include runtime directory in artifacts, and documentation in STANDALONE.md. Created changeset documenting the fix. All 85 required tests pass; standalone binary smoke-tests successfully with --help, task list, and dashboard startup."
+}

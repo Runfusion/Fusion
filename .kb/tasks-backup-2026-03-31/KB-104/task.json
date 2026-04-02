@@ -1,0 +1,297 @@
+{
+  "id": "KB-104",
+  "description": "files shouldn't be on a task card - it should be a top level item on the dashboard tool bar that shows the current filesystem",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Backend API - Add Project File Routes",
+      "status": "done"
+    },
+    {
+      "name": "Frontend API - Add Project File Client Functions",
+      "status": "done"
+    },
+    {
+      "name": "Frontend Hooks - Create Project File Hooks",
+      "status": "done"
+    },
+    {
+      "name": "Update FileBrowserModal for Dual Mode",
+      "status": "done"
+    },
+    {
+      "name": "Add Files Button to Header Toolbar",
+      "status": "done"
+    },
+    {
+      "name": "Integrate Project File Browser into App",
+      "status": "done"
+    },
+    {
+      "name": "Remove Files Tab from Task Detail Modal",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 9,
+  "log": [
+    {
+      "timestamp": "2026-03-30T05:03:28.668Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T05:04:20.058Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:04:23.650Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T05:04:40.807Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, comprehensive, and accurately reflects the current codebase. All referenced files exist with the expected functions and patterns. The steps are concrete and verifiable, with clear artifacts and completion criteria. The task is appropriately sized as a Medium with Review Level 2."
+    },
+    {
+      "timestamp": "2026-03-30T05:04:41.579Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for moving the Files feature from task-specific to project-global. The mission is clear, the approach is sound (creating new project-scoped components rather than modifying existing ones), and the step breakdown follows logical backend→frontend→integration→cleanup sequencing. Testing requirements are comprehensive."
+    },
+    {
+      "timestamp": "2026-03-30T23:54:13.561Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/brave-hawk"
+    },
+    {
+      "timestamp": "2026-03-30T23:54:13.562Z",
+      "action": "Step 0 (Backend API - Add Project File Routes) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:54:21.153Z",
+      "action": "Step 0 (Backend API - Add Project File Routes) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:54:22.478Z",
+      "action": "Step 0 (Backend API - Add Project File Routes) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:54:22.480Z",
+      "action": "Preflight complete - read all context files and understand the codebase structure"
+    },
+    {
+      "timestamp": "2026-03-30T23:54:25.101Z",
+      "action": "Step 1 (Frontend API - Add Project File Client Functions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:54:26.219Z",
+      "action": "plan review requested for Step 1 (Backend API - Add Project File Routes)"
+    },
+    {
+      "timestamp": "2026-03-30T23:54:37.804Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and achievable. The step correctly identifies the need for project-scoped file service functions and new API routes that mirror the existing task-scoped functionality. The approach leverages existing security infrastructure (`validatePath`, path traversal protection, hidden file filtering) and properly scopes the work to the backend layer only."
+    },
+    {
+      "timestamp": "2026-03-30T23:55:43.674Z",
+      "action": "code review requested for Step 1 (Backend API - Add Project File Routes)"
+    },
+    {
+      "timestamp": "2026-03-30T23:56:27.367Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds the three required project file service functions and corresponding API routes. The code reuses existing security patterns (`validatePath`), maintains consistent error handling via `FileServiceError`, and properly filters hidden files. TypeScript typechecking passes."
+    },
+    {
+      "timestamp": "2026-03-30T23:56:28.497Z",
+      "action": "Step 1 (Frontend API - Add Project File Client Functions) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:56:28.497Z",
+      "action": "Step 2 (Frontend Hooks - Create Project File Hooks) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:56:29.887Z",
+      "action": "plan review requested for Step 2 (Frontend API - Add Project File Client Functions)"
+    },
+    {
+      "timestamp": "2026-03-30T23:56:43.353Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The step is clearly defined and achievable. The plan correctly identifies the need for three new API client functions that mirror the existing task-based file functions but target the new `/api/files` endpoints. The existing types (`FileNode`, `FileListResponse`, `FileContentResponse`, `SaveFileResponse`) are already exported and can be reused."
+    },
+    {
+      "timestamp": "2026-03-30T23:56:53.567Z",
+      "action": "code review requested for Step 2 (Frontend API - Add Project File Client Functions)"
+    },
+    {
+      "timestamp": "2026-03-30T23:57:11.420Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds three new project file API functions to `api.ts` that mirror the existing task-based file functions. The functions call the `/api/files` endpoints as specified, properly reuse existing type definitions, and follow the established patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T23:57:12.890Z",
+      "action": "Step 2 (Frontend Hooks - Create Project File Hooks) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:57:12.891Z",
+      "action": "Step 3 (Update FileBrowserModal for Dual Mode) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:57:12.891Z",
+      "action": "plan review requested for Step 3 (Frontend Hooks - Create Project File Hooks)"
+    },
+    {
+      "timestamp": "2026-03-30T23:57:35.472Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The step's approach is sound: create two new hooks modeled after the existing task-scoped hooks, removing the `taskId` parameter and using the project-scoped API functions already defined in `api.ts`. The existing hooks are well-structured and straightforward to adapt. However, the step checkboxes omit an explicit testing requirement that is mandated by Step 8 (\"Do NOT: Skip writing tests for new hooks and API functions\")."
+    },
+    {
+      "timestamp": "2026-03-30T23:57:48.895Z",
+      "action": "code review requested for Step 3 (Frontend Hooks - Create Project File Hooks)"
+    },
+    {
+      "timestamp": "2026-03-30T23:58:14.718Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The two new hooks (`useProjectFileBrowser` and `useProjectFileEditor`) are functionally correct and properly modeled after the existing task-scoped hooks. They correctly integrate with the new project file API and handle loading states, errors, and cancellation properly. However, the implementation deviates from the step requirements by omitting the `rootPath` parameter, which will likely cause integration issues in Steps 4-6 when components attempt to pass the project root directory to these ho"
+    },
+    {
+      "timestamp": "2026-03-30T23:59:02.044Z",
+      "action": "code review requested for Step 3 (Frontend Hooks - Create Project File Hooks)"
+    },
+    {
+      "timestamp": "2026-03-30T23:59:17.754Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly creates two new hooks (`useProjectFileBrowser` and `useProjectFileEditor`) modeled after their task-scoped counterparts. Both hooks accept the required `rootPath` parameter and use the new project file API functions. Comprehensive test coverage is provided for both hooks with 9 tests each, covering initialization, data fetching, navigation, error handling, saves, and cleanup."
+    },
+    {
+      "timestamp": "2026-03-30T23:59:19.082Z",
+      "action": "Step 3 (Update FileBrowserModal for Dual Mode) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:59:19.085Z",
+      "action": "Step 4 (Add Files Button to Header Toolbar) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:59:19.086Z",
+      "action": "plan review requested for Step 4 (Update FileBrowserModal for Dual Mode)"
+    },
+    {
+      "timestamp": "2026-03-30T23:59:39.342Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan correctly identifies the need to modify `FileBrowserModal` to support both task and project modes through props, with conditional hook selection and title updates. The approach is sound and will achieve the stated outcomes with proper implementation details."
+    },
+    {
+      "timestamp": "2026-03-30T23:59:56.116Z",
+      "action": "code review requested for Step 4 (Update FileBrowserModal for Dual Mode)"
+    },
+    {
+      "timestamp": "2026-03-31T00:00:28.248Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation correctly adds dual-mode support to `FileBrowserModal`, enabling it to browse both task worktrees (via `taskId`) and project roots (via `projectRoot`). The TypeScript discriminated union pattern is well-executed, ensuring type safety at compile time. Both new hooks (`useProjectFileBrowser` and `useProjectFileEditor`) are clean mirrors of their task-scoped counterparts with comprehensive test coverage."
+    },
+    {
+      "timestamp": "2026-03-31T00:00:29.711Z",
+      "action": "Step 4 (Add Files Button to Header Toolbar) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:00:29.713Z",
+      "action": "Step 5 (Integrate Project File Browser into App) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:00:29.715Z",
+      "action": "plan review requested for Step 5 (Add Files Button to Header Toolbar)"
+    },
+    {
+      "timestamp": "2026-03-31T00:00:43.686Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 is clear and achievable. All prerequisite work (Steps 1-4) appears complete: the project file API exists in `api.ts` (lines 716-732), the project file hooks exist (`useProjectFileBrowser.ts`, `useProjectFileEditor.ts`), and `FileBrowserModal.tsx` already supports dual mode with proper discriminated union types (`TaskModeProps | ProjectModeProps`). The Header modifications are straightforward: add the `Folder` icon import, add the `onToggleFiles` prop, and insert a button betw"
+    },
+    {
+      "timestamp": "2026-03-31T00:01:10.206Z",
+      "action": "code review requested for Step 5 (Add Files Button to Header Toolbar)"
+    },
+    {
+      "timestamp": "2026-03-31T00:01:27.341Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The implementation correctly adds the Files button to the Header toolbar as specified. The `Folder` icon is imported from lucide-react, the `onToggleFiles` and `filesOpen` props are properly added to the interface, and the button is positioned between the Terminal and Pause buttons with appropriate active state styling. Mobile overflow menu support is also included."
+    },
+    {
+      "timestamp": "2026-03-31T00:01:28.739Z",
+      "action": "Step 5 (Integrate Project File Browser into App) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:01:28.740Z",
+      "action": "Step 6 (Remove Files Tab from Task Detail Modal) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:01:28.740Z",
+      "action": "plan review requested for Step 6 (Integrate Project File Browser into App)"
+    },
+    {
+      "timestamp": "2026-03-31T00:01:59.878Z",
+      "action": "plan review Step 6: REVISE",
+      "outcome": "The plan for Step 6 has a critical factual error: it assumes `rootDir` is available from `fetchConfig()`, but the `/config` endpoint currently only returns `{ maxConcurrent, maxWorktrees }`. The endpoint does not include `rootDir`. This will cause the implementation to fail at runtime because the code will try to access `cfg.rootDir` which will be `undefined`."
+    },
+    {
+      "timestamp": "2026-03-31T00:02:35.316Z",
+      "action": "code review requested for Step 6 (Integrate Project File Browser into App)"
+    },
+    {
+      "timestamp": "2026-03-31T00:02:59.316Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "The Step 6 implementation correctly integrates the project file browser into the App component. The state management, callbacks, and modal rendering are properly implemented. The `FileBrowserModal` is conditionally rendered in project mode using `rootDir` from the fetched config. The Header component receives the toggle callback and active state, rendering the Files button in both desktop and mobile views."
+    },
+    {
+      "timestamp": "2026-03-31T00:03:01.031Z",
+      "action": "Step 6 (Remove Files Tab from Task Detail Modal) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:03:01.032Z",
+      "action": "Step 7 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:03:01.032Z",
+      "action": "plan review requested for Step 7 (Remove Files Tab from Task Detail Modal)"
+    },
+    {
+      "timestamp": "2026-03-31T00:03:10.501Z",
+      "action": "plan review Step 7: APPROVE",
+      "outcome": "The plan for Step 7 is complete and correct. The checkboxes accurately capture all necessary cleanup work in `TaskDetailModal.tsx`: removing the \"files\" tab option from the type, removing the tab button conditional, removing the FileBrowserModal render block, and cleaning up the unused import. The project file browser is already integrated into App.tsx (from Step 6), so this cleanup step is ready to execute."
+    },
+    {
+      "timestamp": "2026-03-31T00:04:32.294Z",
+      "action": "code review requested for Step 7 (Remove Files Tab from Task Detail Modal)"
+    },
+    {
+      "timestamp": "2026-03-31T00:05:11.456Z",
+      "action": "code review Step 7: APPROVE",
+      "outcome": "The implementation correctly removes the Files tab from the TaskDetailModal while preserving all other functionality. The `activeTab` state type no longer includes \"files\", the tab button has been removed from the tab bar, and the conditional render block is gone. FileBrowserModal import is cleanly removed. The new project-scoped file browser (implemented in previous steps) is fully integrated via the Header toolbar and App.tsx."
+    },
+    {
+      "timestamp": "2026-03-31T00:05:13.021Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:05:13.023Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:05:21.957Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:05:26.750Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:06:56.874Z",
+  "createdAt": "2026-03-30T05:03:28.668Z",
+  "updatedAt": "2026-03-31T00:06:56.874Z",
+  "size": "M",
+  "reviewLevel": 2
+}

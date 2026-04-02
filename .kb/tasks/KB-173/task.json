@@ -1,0 +1,149 @@
+{
+  "id": "KB-173",
+  "description": "Add a super clean theme that is mostly mono with slight color accent, but really tones down glows and extra bits - it should be super clean and minimal",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Core Types",
+      "status": "done"
+    },
+    {
+      "name": "Add Zen Theme CSS Styles",
+      "status": "done"
+    },
+    {
+      "name": "Update ThemeSelector Component",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests for New Theme",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 6,
+  "log": [
+    {
+      "timestamp": "2026-03-30T17:44:12.426Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T17:44:50.983Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T17:45:05.809Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, comprehensive specification for adding a new \"zen\" color theme. The task follows established patterns from the existing 11 themes, with clear steps, concrete color values, and explicit testing requirements. File references are accurate and line number approximations are reasonable."
+    },
+    {
+      "timestamp": "2026-03-30T23:27:39.978Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/misty-cedar"
+    },
+    {
+      "timestamp": "2026-03-30T23:27:39.978Z",
+      "action": "Step 0 (Update Core Types) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:27:41.773Z",
+      "action": "Step 0 (Update Core Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:27:50.787Z",
+      "action": "Step 0 (Update Core Types) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:27:51.704Z",
+      "action": "plan review requested for Step 1 (Update Core Types)"
+    },
+    {
+      "timestamp": "2026-03-30T23:28:03.248Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is correct and follows established patterns in the codebase. Adding \"zen\" to the `COLOR_THEMES` array in `packages/core/src/types.ts` is straightforward and will automatically extend the `ColorTheme` type through the existing `typeof COLOR_THEMES` pattern. The instruction to place \"zen\" after \"sunset\" is consistent with the rough alphabetical ordering in the current array."
+    },
+    {
+      "timestamp": "2026-03-30T23:28:04.172Z",
+      "action": "Step 1 (Add Zen Theme CSS Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:28:18.528Z",
+      "action": "Step 1 (Add Zen Theme CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:28:19.749Z",
+      "action": "plan review requested for Step 2 (Add Zen Theme CSS Styles)"
+    },
+    {
+      "timestamp": "2026-03-30T23:28:38.445Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows established theme patterns in the codebase. The specification provides clear color values, properly identifies the need to override glow tokens for the minimal aesthetic, and includes both dark and light variants. The line number references are slightly imprecise but directionally correct."
+    },
+    {
+      "timestamp": "2026-03-30T23:28:39.321Z",
+      "action": "Step 2 (Update ThemeSelector Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:28:56.023Z",
+      "action": "Step 2 (Update ThemeSelector Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:28:56.827Z",
+      "action": "plan review requested for Step 3 (Update ThemeSelector Component)"
+    },
+    {
+      "timestamp": "2026-03-30T23:29:05.693Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "Step 3 is a straightforward, low-risk component update. The plan correctly identifies adding a single entry to the local `COLOR_THEMES` array in `ThemeSelector.tsx`. The alphabetical placement instruction (after \"sunset\") aligns with the existing core types definition where \"zen\" is already present."
+    },
+    {
+      "timestamp": "2026-03-30T23:29:06.506Z",
+      "action": "Step 3 (Add Tests for New Theme) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:29:12.892Z",
+      "action": "Step 3 (Add Tests for New Theme) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:29:13.825Z",
+      "action": "plan review requested for Step 4 (Add Tests for New Theme)"
+    },
+    {
+      "timestamp": "2026-03-30T23:29:24.685Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is sound and follows the established testing patterns in the codebase. The worker needs to add \"Zen theme\" to the existing \"renders all color theme options\" test and optionally add a handler verification test. The approach aligns with how other themes are tested."
+    },
+    {
+      "timestamp": "2026-03-30T23:29:25.516Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:34:16.547Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:34:17.639Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:34:31.239Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:34:37.400Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T23:34:53.739Z",
+  "createdAt": "2026-03-30T17:44:12.426Z",
+  "updatedAt": "2026-03-30T23:34:53.739Z",
+  "size": "M",
+  "reviewLevel": 1
+}

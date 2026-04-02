@@ -1,0 +1,102 @@
+{
+  "id": "KB-287",
+  "title": "Don t allow a task to depend on itself",
+  "description": "Don’t allow a task to depend on itself",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Self-Dependency Validation to Store",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:10:08.321Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T16:10:59.430Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:14.960Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted, accurate, and actionable. The mission is clear, file references are correct, and testing requirements are specific. The approach to centralize validation at the store level is architecturally sound and matches the existing codebase patterns."
+    },
+    {
+      "timestamp": "2026-03-31T16:11:17.734Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/brave-stone"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:17.734Z",
+      "action": "Step 0 (Add Self-Dependency Validation to Store) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:40.510Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:42.948Z",
+      "action": "Step 0 (Add Self-Dependency Validation to Store) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:49.948Z",
+      "action": "Step 0 (Add Self-Dependency Validation to Store) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:49.950Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:49.951Z",
+      "action": "Preflight complete - understood createTask and updateTask structure, existing self-dependency check in executor",
+      "outcome": "Ready to implement validation in store methods"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:51.017Z",
+      "action": "plan review requested for Step 1 (Add Self-Dependency Validation to Store)"
+    },
+    {
+      "timestamp": "2026-03-31T16:12:14.110Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and will achieve the stated outcomes. It correctly identifies the need to add validation to both `createTask()` and `updateTask()` in the store layer, ensuring all entry points (CLI, dashboard API, executor tools) are protected consistently. The validation placement and error message format are clearly specified."
+    },
+    {
+      "timestamp": "2026-03-31T16:13:05.787Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:13:05.789Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:13:05.790Z",
+      "action": "Step 1 complete - added self-dependency validation to createTask and updateTask in store.ts",
+      "outcome": "All dependency-related tests pass; pre-existing flaky test unrelated to changes"
+    },
+    {
+      "timestamp": "2026-03-31T16:13:56.348Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:14:17.009Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T16:14:35.046Z",
+  "createdAt": "2026-03-31T16:10:08.321Z",
+  "updatedAt": "2026-03-31T16:14:35.046Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Added validation to prevent tasks from depending on themselves in the core TaskStore. Modified createTask() and updateTask() in packages/core/src/store.ts to throw Error: Task ${id} cannot depend on itself when self-dependency is detected. Fixed 6 existing tests that were using self-references in dependency lists, and added 3 new comprehensive tests for the self-dependency validation. This ensures consistent protection across all entry points (CLI, dashboard API, executor tools) since the validation is at the store level."
+}

@@ -1,0 +1,74 @@
+{
+  "id": "KB-626",
+  "description": "I can’t scroll to the bottom of model lists on mobile",
+  "column": "done",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 3,
+  "summary": "Fixed mobile scrolling in model dropdown lists by adding responsive CSS media queries. Added `@media (max-width: 768px)` with `max-height: 70dvh` for tablets and `@media (max-width: 640px)` with `max-height: 60dvh` plus horizontal centering for mobile devices. Verified the CSS compiles correctly into the production bundle and all 501 existing tests pass. The dropdown now fits within mobile viewports while remaining scrollable to access all model options.",
+  "createdAt": "2026-03-31T23:32:00.829Z",
+  "updatedAt": "2026-04-01T01:05:16.210Z",
+  "columnMovedAt": "2026-04-01T01:05:16.210Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Mobile Responsive Styles for Model Dropdown",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:32:00.829Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:36:55.743Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:37:07.649Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate for a CSS-only mobile viewport fix. File references are correct—`.model-combobox-dropdown` styles exist at lines 5180-5335 in `styles.css` as stated, and the model-combobox section ends at line 5335 before the Theme System block begins. The mission is clearly scoped, steps have verifiable outcomes with specific breakpoints (640px/768px), and the review level (0) is appropriate for this low-risk UI fix."
+    },
+    {
+      "timestamp": "2026-04-01T01:01:12.771Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rusty-delta"
+    },
+    {
+      "timestamp": "2026-04-01T01:01:12.773Z",
+      "action": "Step 0 (Add Mobile Responsive Styles for Model Dropdown) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T01:01:17.548Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:01:22.291Z",
+      "action": "Step 2 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:04:57.653Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:05:01.540Z",
+      "action": "Step 0 (Add Mobile Responsive Styles for Model Dropdown) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:05:01.542Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:05:01.543Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

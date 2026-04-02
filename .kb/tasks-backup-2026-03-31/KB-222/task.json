@@ -1,0 +1,177 @@
+{
+  "id": "KB-222",
+  "title": "Adjust documentation and other files to change from",
+  "description": "Adjust documentation and other files to change from \"kb\" to fusion",
+  "column": "done",
+  "dependencies": [
+    "KB-221"
+  ],
+  "steps": [
+    {
+      "name": "Update Root README.md",
+      "status": "done"
+    },
+    {
+      "name": "Update CLI Package README.md",
+      "status": "done"
+    },
+    {
+      "name": "Update STANDALONE.md",
+      "status": "done"
+    },
+    {
+      "name": "Update CLI Help Text (bin.ts)",
+      "status": "done"
+    },
+    {
+      "name": "Update Pi Extension (extension.ts)",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:13:36.466Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:19:19.624Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:19:31.198Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, comprehensive, and actionable. It correctly identifies all files needing text changes, preserves internal identifiers as required, and has concrete verification steps. The dependency on KB-221 (binary rename) is correctly noted, and the \"Do NOT\" section clearly guards against over-reach."
+    },
+    {
+      "timestamp": "2026-03-31T01:17:30.413Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pearl-shore"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:30.413Z",
+      "action": "Step 0 (Update Root README.md) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:32.520Z",
+      "action": "Step 0 (Update Root README.md) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:34.286Z",
+      "action": "Step 0 (Update Root README.md) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:36.341Z",
+      "action": "Step 1 (Update CLI Package README.md) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:36.343Z",
+      "action": "plan review requested for Step 1 (Update Root README.md)"
+    },
+    {
+      "timestamp": "2026-03-31T01:17:44.516Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is comprehensive and well-structured. It correctly identifies all user-facing `kb` references in `README.md` that need to change to `fn`/`Fusion`, while explicitly preserving internal identifiers (package name `@dustinbyrne/kb`, directory `.fusion/`, branches `kb/{task-id}`). The key replacements list is thorough and matches the actual content of the file."
+    },
+    {
+      "timestamp": "2026-03-31T01:18:11.680Z",
+      "action": "Step 1 (Update CLI Package README.md) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:13.047Z",
+      "action": "Step 2 (Update STANDALONE.md) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:13.048Z",
+      "action": "plan review requested for Step 2 (Update CLI Package README.md)"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:24.340Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan's Step 2 checkboxes are too vague and could lead to incorrect changes. The instruction \"Update heading and all 'kb' references to 'Fusion'\" is overly broad and contradicts the explicit requirement to \"Keep references to `@dustinbyrne/kb` package name.\" Without specific guidance, the worker may incorrectly modify the package name in the heading or other protected references."
+    },
+    {
+      "timestamp": "2026-03-31T01:18:34.960Z",
+      "action": "Step 2 (Update STANDALONE.md) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:36.824Z",
+      "action": "Step 3 (Update CLI Help Text (bin.ts)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:36.827Z",
+      "action": "plan review requested for Step 3 (Update STANDALONE.md)"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:45.632Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is clear and achievable. The checkboxes correctly identify the scope: replacing `kb` command examples with `fn` and updating product references from \"kb\" to \"Fusion\". The current STANDALONE.md contains ~30 instances of `kb` command examples that need updating, plus 2 product name references (\"kb works\", \"kb uses\")."
+    },
+    {
+      "timestamp": "2026-03-31T01:18:57.839Z",
+      "action": "Step 3 (Update CLI Help Text (bin.ts)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:59.495Z",
+      "action": "Step 4 (Update Pi Extension (extension.ts)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:59.495Z",
+      "action": "plan review requested for Step 4 (Update CLI Help Text (bin.ts))"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:11.389Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step correctly identifies the HELP constant as the primary target for rebranding. The approach of changing `kb — AI-orchestrated task board` to `Fusion — AI-orchestrated task board` and updating all command examples from `kb` to `fn` is appropriate. The plan acknowledges that internal logic should remain unchanged."
+    },
+    {
+      "timestamp": "2026-03-31T01:19:42.336Z",
+      "action": "Step 4 (Update Pi Extension (extension.ts)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:43.368Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:43.370Z",
+      "action": "plan review requested for Step 5 (Update Pi Extension (extension.ts))"
+    },
+    {
+      "timestamp": "2026-03-31T01:20:00.265Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 correctly identifies all user-facing \"kb\" references in `extension.ts` that need rebranding to \"Fusion\". The checkboxes appropriately distinguish between user-visible text (descriptions, promptSnippets, command descriptions, status messages) that must change versus internal identifiers (tool names, function names) that must remain unchanged."
+    },
+    {
+      "timestamp": "2026-03-31T01:20:40.990Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:20:42.741Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:22:31.077Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:22:33.187Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:22:34.126Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:22:48.368Z",
+  "createdAt": "2026-03-31T00:13:36.466Z",
+  "updatedAt": "2026-03-31T01:22:48.368Z",
+  "size": "M",
+  "reviewLevel": 1
+}

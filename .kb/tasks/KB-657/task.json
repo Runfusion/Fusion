@@ -1,0 +1,31 @@
+{
+  "id": "KB-657",
+  "description": "Have a button to expand the quick add view to show additional options. Keep it in expanded until button is pressed . Both board and list vkdes",
+  "column": "todo",
+  "status": "queued",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 0,
+  "createdAt": "2026-04-01T02:38:43.252Z",
+  "updatedAt": "2026-04-01T03:17:36.849Z",
+  "columnMovedAt": "2026-04-01T02:46:36.886Z",
+  "dependencies": [
+    "KB-656"
+  ],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:38:43.252Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:46:21.639Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:46:34.520Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, verifiable, and correctly identifies the affected files and behavior changes needed. The steps have concrete outcomes with clear test requirements. The dependency on KB-656 is appropriately noted, and the file scope accurately matches the codebase."
+    }
+  ]
+}

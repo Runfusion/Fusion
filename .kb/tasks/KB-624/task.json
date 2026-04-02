@@ -1,0 +1,194 @@
+{
+  "id": "KB-624",
+  "description": "Add a settings backup and import and export",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 6,
+  "summary": "Successfully implemented settings import/export functionality for kb (KB-624). Added core module with exportSettings(), importSettings(), and validation functions in packages/core/src/settings-export.ts. Created CLI commands `kb settings export` and `kb settings import` with --scope and --merge options. Added REST API endpoints GET /api/settings/export and POST /api/settings/import. Implemented dashboard UI with Export/Import buttons in the Settings modal, including file download/upload, preview dialog, and scope selection. All tests pass (530 core tests), build succeeds, and changeset created for @gsxdsm/fusion minor release.",
+  "createdAt": "2026-03-31T23:29:22.770Z",
+  "updatedAt": "2026-04-01T01:04:54.409Z",
+  "columnMovedAt": "2026-04-01T01:04:54.409Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Settings Export/Import Module",
+      "status": "done"
+    },
+    {
+      "name": "CLI Commands",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard API Endpoints",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard UI",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:29:22.770Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:36:21.443Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:36:46.124Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for adding settings import/export functionality. The mission is clear, the step breakdown is logical, and the file scope accurately reflects the codebase. The spec correctly follows established patterns from `backup.ts` and `settings.ts`, and appropriately distinguishes between global settings (`~/.pi/kb/settings.json`) and project settings (`.fusion/config.json`). Testing requirements demand real automated tests, and the changeset documentation is properly sp"
+    },
+    {
+      "timestamp": "2026-04-01T00:51:56.315Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/fleet-daisy"
+    },
+    {
+      "timestamp": "2026-04-01T00:51:56.316Z",
+      "action": "Step 0 (Core Settings Export/Import Module) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T00:51:58.526Z",
+      "action": "Step 0 (Core Settings Export/Import Module) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:52:16.621Z",
+      "action": "Step 0 (Core Settings Export/Import Module) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:52:16.622Z",
+      "action": "Step 1 (CLI Commands) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:52:16.622Z",
+      "action": "Step 0 complete - reviewed all context files",
+      "outcome": "Understood the codebase structure for settings export/import"
+    },
+    {
+      "timestamp": "2026-04-01T00:52:19.107Z",
+      "action": "plan review requested for Step 1 (Core Settings Export/Import Module)"
+    },
+    {
+      "timestamp": "2026-04-01T00:52:32.241Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and follows established codebase patterns. The approach correctly leverages existing `TaskStore` methods (`getSettingsByScope`, `updateSettings`, `updateGlobalSettings`) and mirrors the `BackupManager` pattern for file operations. The validation strategy and error handling approach are appropriate for the feature requirements."
+    },
+    {
+      "timestamp": "2026-04-01T00:54:26.095Z",
+      "action": "code review requested for Step 1 (Core Settings Export/Import Module)"
+    },
+    {
+      "timestamp": "2026-04-01T00:54:52.482Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation is well-structured and follows the established patterns in the codebase. The `settings-export.ts` module provides clean separation of concerns with validation, export/import logic, and file I/O utilities. Test coverage is comprehensive with 18 test cases covering happy paths, error cases, and edge cases. All new types and functions are properly exported from `index.ts`."
+    },
+    {
+      "timestamp": "2026-04-01T00:54:53.877Z",
+      "action": "Step 1 (CLI Commands) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:54:53.878Z",
+      "action": "Step 2 (Dashboard API Endpoints) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:54:54.798Z",
+      "action": "plan review requested for Step 2 (CLI Commands)"
+    },
+    {
+      "timestamp": "2026-04-01T00:55:23.916Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows established patterns from the codebase. The core settings-export module (Step 1) is already implemented with proper tests. The CLI plan correctly mirrors the `backup.ts` and `settings.ts` command patterns, and the required modifications to `bin.ts` align with the existing switch-based command structure."
+    },
+    {
+      "timestamp": "2026-04-01T00:56:32.723Z",
+      "action": "code review requested for Step 2 (CLI Commands)"
+    },
+    {
+      "timestamp": "2026-04-01T00:58:12.796Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-04-01T00:58:22.380Z",
+      "action": "Step 2 (Dashboard API Endpoints) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:58:30.944Z",
+      "action": "plan review requested for Step 2 (Dashboard API Endpoints)"
+    },
+    {
+      "timestamp": "2026-04-01T00:58:49.320Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The Step 2 plan for adding CLI commands (`kb settings export` and `kb settings import`) is well-structured and will achieve the stated outcomes. The core `settings-export.ts` module already exists with all necessary functions (`exportSettings`, `importSettings`, `validateImportData`, `generateExportFilename`), so the CLI layer can build on a solid foundation. The command specifications follow established patterns from the codebase."
+    },
+    {
+      "timestamp": "2026-04-01T01:01:02.196Z",
+      "action": "code review requested for Step 2 (Dashboard API Endpoints)"
+    },
+    {
+      "timestamp": "2026-04-01T01:01:24.830Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds the REST API endpoints for settings export/import as specified in the task. Both `GET /api/settings/export` and `POST /api/settings/import` endpoints are properly implemented with scope support, validation, and appropriate HTTP status codes. The core `settings-export.ts` module is comprehensive with good test coverage."
+    },
+    {
+      "timestamp": "2026-04-01T01:01:26.802Z",
+      "action": "Step 2 (Dashboard API Endpoints) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:01:26.807Z",
+      "action": "Step 3 (Dashboard UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:01:36.375Z",
+      "action": "plan review requested for Step 3 (Dashboard UI)"
+    },
+    {
+      "timestamp": "2026-04-01T01:02:04.835Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 (Dashboard UI) is well-structured and will achieve its stated outcomes. The core infrastructure (`settings-export.ts` module and API routes) already exists from previous steps. The plan correctly identifies the need for API functions in `api.ts`, export/import buttons in `SettingsModal.tsx`, and proper scope-aware behavior."
+    },
+    {
+      "timestamp": "2026-04-01T01:02:48.124Z",
+      "action": "code review requested for Step 3 (Dashboard UI)"
+    },
+    {
+      "timestamp": "2026-04-01T01:03:30.716Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Dashboard API endpoints and UI for settings import/export are correctly implemented and follow existing codebase patterns. The export endpoint supports scope selection, the import endpoint validates data before applying, and the SettingsModal UI provides a complete user experience with file download/upload, preview dialogs, and toast notifications."
+    },
+    {
+      "timestamp": "2026-04-01T01:03:31.833Z",
+      "action": "Step 3 (Dashboard UI) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:03:31.835Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:04:31.154Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:04:31.156Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:04:38.832Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:04:41.861Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

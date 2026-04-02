@@ -1,0 +1,124 @@
+{
+  "id": "KB-059",
+  "description": "Make sure views on mobile don’t zoom - keep the view locked so it feels like a mobile app",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Update Viewport Meta Tag",
+      "status": "done"
+    },
+    {
+      "name": "Add Touch-Action CSS (if needed)",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T03:07:57.987Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T03:08:27.125Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T03:08:36.616Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted with clear, concrete steps and verifiable outcomes. It correctly identifies the existing viewport meta tag at `packages/dashboard/app/index.html:4` and the mobile responsive CSS at `packages/dashboard/app/styles.css`. The mission is focused, testing requirements demand real automated tests with assertions, and the review level (1 - Plan Only) is appropriate for this small, low-risk change."
+    },
+    {
+      "timestamp": "2026-03-30T03:22:23.099Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/solar-peach"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:23.100Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:31.493Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:31.494Z",
+      "action": "plan review requested for Step 1 (Update Viewport Meta Tag)"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:45.284Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is straightforward and correctly identifies the required changes to `packages/dashboard/app/index.html`. The step will successfully update the viewport meta tag to prevent mobile zoom as specified. The approach is minimal and reversible, matching the task's \"small blast radius\" assessment."
+    },
+    {
+      "timestamp": "2026-03-30T03:22:48.881Z",
+      "action": "Step 1 (Update Viewport Meta Tag) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:50.521Z",
+      "action": "Step 1 (Update Viewport Meta Tag) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:22:50.521Z",
+      "action": "plan review requested for Step 2 (Add Touch-Action CSS)"
+    },
+    {
+      "timestamp": "2026-03-30T03:23:02.729Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and well-structured. The conditional approach (\"if needed\") is appropriate given that iOS Safari has known issues ignoring `user-scalable=no`. The specific CSS properties suggested (`touch-action: pan-x pan-y` and `-webkit-touch-callout: none`) are the correct technical choices for preventing zoom while maintaining scrollability. The requirement to verify form inputs still work is a critical accessibility safeguard."
+    },
+    {
+      "timestamp": "2026-03-30T03:23:06.002Z",
+      "action": "Step 2 (Add Touch-Action CSS (if needed)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:23:07.395Z",
+      "action": "Step 2 (Add Touch-Action CSS (if needed)) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:23:07.396Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:23:50.819Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:23:52.521Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:23:56.457Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:23:56.459Z",
+      "action": "Completed KB-059 - Locked mobile viewport to prevent zoom",
+      "outcome": "Viewport meta tag updated with maximum-scale=1.0, user-scalable=no, and viewport-fit=cover. Added touch-action CSS as backup for iOS Safari. All 8 new mobile-viewport tests passing. Build successful."
+    },
+    {
+      "timestamp": "2026-03-30T03:23:56.462Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:23:56.463Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T03:24:10.007Z",
+  "createdAt": "2026-03-30T03:07:57.987Z",
+  "updatedAt": "2026-03-30T03:24:10.007Z",
+  "size": "S",
+  "reviewLevel": 1
+}

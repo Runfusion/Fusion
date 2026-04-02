@@ -1,0 +1,134 @@
+{
+  "id": "KB-047",
+  "description": "the colum filters on list view don't do anything",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Column Filter State and Logic",
+      "status": "done"
+    },
+    {
+      "name": "Add Visual Feedback and Clear Filter UI",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T02:39:38.851Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T02:40:49.713Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:41:02.974Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This specification accurately describes a localized UI enhancement to add click-to-filter functionality on the ListView's column drop zones. The spec correctly identifies existing files, patterns, and styling, with concrete, verifiable outcomes for each step and comprehensive testing requirements."
+    },
+    {
+      "timestamp": "2026-03-30T02:42:54.092Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/quiet-fern"
+    },
+    {
+      "timestamp": "2026-03-30T02:42:54.093Z",
+      "action": "Step 0 (Add Column Filter State and Logic) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:44:59.128Z",
+      "action": "Step 0 (Add Column Filter State and Logic) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:06.096Z",
+      "action": "Step 0 (Add Column Filter State and Logic) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:06.098Z",
+      "action": "Preflight complete - read ListView.tsx, ListView.test.tsx, and styles.css. Understood the structure: drop zones have cursor:pointer but no click handler, COLUMNS array from @kb/core, groupedTasks useMemo handles filtering/sorting/grouping."
+    },
+    {
+      "timestamp": "2026-03-30T02:45:07.271Z",
+      "action": "plan review requested for Step 1 (Add Column Filter State and Logic)"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:19.681Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the key state and logic changes needed for column filtering. The approach follows existing patterns in the codebase (similar to the text filter already implemented). The modifications to `groupedTasks` useMemo and conditional section rendering will achieve the stated outcomes."
+    },
+    {
+      "timestamp": "2026-03-30T02:45:23.411Z",
+      "action": "Step 1 (Add Visual Feedback and Clear Filter UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:42.823Z",
+      "action": "Step 1 (Add Visual Feedback and Clear Filter UI) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:44.283Z",
+      "action": "plan review requested for Step 2 (Add Visual Feedback and Clear Filter UI)"
+    },
+    {
+      "timestamp": "2026-03-30T02:45:59.651Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The Step 2 plan appropriately captures the remaining work needed. Most of the React logic (state management, click handlers, clear button) was already implemented in Step 1, leaving only the CSS styling for the active filter state as the primary technical gap. The plan correctly identifies the need for accessible markup (already present) and visual feedback (needs CSS)."
+    },
+    {
+      "timestamp": "2026-03-30T02:46:02.327Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:46:03.666Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:46:04.972Z",
+      "action": "plan review requested for Step 3 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T02:46:19.414Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The testing plan for Step 3 covers all the essential behaviors introduced in Steps 1-2. The test cases align well with the existing test patterns in `ListView.test.tsx`, and the quality gates (full test suite + build) are appropriate. The plan correctly identifies the need to test both standalone column filtering and its interaction with the existing text filter."
+    },
+    {
+      "timestamp": "2026-03-30T02:46:32.140Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:48:20.968Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:48:22.956Z",
+      "action": "plan review requested for Step 4 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-30T02:48:34.092Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "Step 4 is appropriately scoped for a documentation and delivery step. The implementation from previous steps is complete and self-contained. The \"no documentation updates required\" assertion is accurate since this is a self-documenting UI behavior change (clickable filters with clear visual feedback). The drag-and-drop out-of-scope check is a prudent safeguard that aligns with the task's scope constraints."
+    },
+    {
+      "timestamp": "2026-03-30T02:48:45.574Z",
+      "action": "Task KB-047 complete. Implemented column filter functionality for ListView:",
+      "outcome": "- Added selectedColumn state and handleColumnFilter callback\n- Modified groupedTasks to filter by selected column\n- Added active visual state to drop zones with CSS\n- Added clear filter button with accessible aria-label\n- Added 7 new tests (filters by column, clears on second click, switches columns, clear button, filtered stats, text+column filter combo, active class)\n- All 55 ListView tests pass\n- Build passes\n- 4 pre-existing test failures in other components unrelated to this change"
+    },
+    {
+      "timestamp": "2026-03-30T02:48:45.575Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:49:38.531Z",
+  "createdAt": "2026-03-30T02:39:38.851Z",
+  "updatedAt": "2026-03-30T02:49:38.531Z",
+  "size": "S",
+  "reviewLevel": 1
+}

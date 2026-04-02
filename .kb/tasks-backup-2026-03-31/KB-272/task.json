@@ -1,0 +1,242 @@
+{
+  "id": "KB-272",
+  "title": "Add model selector for plan mode at the start Then",
+  "description": "Add model selector for plan mode at the start. Then at the end of plan mode you can select the executor and validator model",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Backend Session Storage Updates",
+      "status": "done"
+    },
+    {
+      "name": "Backend API Updates",
+      "status": "done"
+    },
+    {
+      "name": "Frontend API Updates",
+      "status": "done"
+    },
+    {
+      "name": "Planning Mode Initial View - Model Selector",
+      "status": "done"
+    },
+    {
+      "name": "Planning Mode Summary View - Executor/Validator Selectors",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-31T13:48:29.500Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T13:49:22.465Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T13:49:46.401Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and technically sound. The file references are accurate, the step breakdown is logical, and the implementation patterns align with existing code. The spec correctly identifies the `CustomModelDropdown` reuse pattern and the validation helper `assertConsistentOptionalPair`. Minor suggestions are provided to clarify the backend session storage approach and ensure the planning model is actually wired through to the AI agent."
+    },
+    {
+      "timestamp": "2026-03-31T13:49:59.020Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/gentle-hawk"
+    },
+    {
+      "timestamp": "2026-03-31T13:49:59.021Z",
+      "action": "Step 0 (Backend Session Storage Updates) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T13:50:00.743Z",
+      "action": "Step 0 (Backend Session Storage Updates) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:50:15.533Z",
+      "action": "Step 0 (Backend Session Storage Updates) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:50:16.763Z",
+      "action": "Step 1 (Backend API Updates) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:50:16.765Z",
+      "action": "plan review requested for Step 1 (Backend Session Storage Updates)"
+    },
+    {
+      "timestamp": "2026-03-31T13:50:35.291Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 correctly identifies the key backend changes needed to support model selection in Planning Mode. The worker will add `planningModel` storage to sessions and create the infrastructure for storing executor/validator models. However, there's an architectural ambiguity about where executor/validator models should be stored that could lead to confusion during implementation."
+    },
+    {
+      "timestamp": "2026-03-31T13:51:13.284Z",
+      "action": "code review requested for Step 1 (Backend Session Storage Updates)"
+    },
+    {
+      "timestamp": "2026-03-31T13:51:45.896Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds model selection capabilities to the planning session storage. The `Session` interface now includes `planningModel`, `executorModel`, and `validatorModel` fields, with proper support in `createSession`, `createSessionWithAgent`, and the new exported `setSessionModels` function. The code follows established patterns and maintains backward compatibility."
+    },
+    {
+      "timestamp": "2026-03-31T13:51:47.011Z",
+      "action": "Step 1 (Backend API Updates) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:51:47.013Z",
+      "action": "Step 2 (Frontend API Updates) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:51:47.015Z",
+      "action": "plan review requested for Step 2 (Backend API Updates)"
+    },
+    {
+      "timestamp": "2026-03-31T13:52:28.665Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The plan has a fundamental mismatch between the validation approach and the data storage format. The `assertConsistentOptionalPair` helper expects separate `provider` and `modelId` fields, but the Session interface (completed in Step 1) stores models as combined strings (\"provider/modelId\" format). This will cause the implementation to fail or require ad-hoc workarounds that deviate from the plan."
+    },
+    {
+      "timestamp": "2026-03-31T13:53:05.997Z",
+      "action": "code review requested for Step 2 (Backend API Updates)"
+    },
+    {
+      "timestamp": "2026-03-31T13:54:04.228Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The Step 2 implementation correctly updates the backend API endpoints to support model selection in Planning Mode. Both `/planning/start-streaming` and `/planning/create-task` endpoints have been properly modified to accept and validate model parameters, with appropriate fallback logic to session-stored models. The implementation follows the established patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-31T13:54:05.468Z",
+      "action": "Step 2 (Frontend API Updates) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:54:05.469Z",
+      "action": "Step 3 (Planning Mode Initial View - Model Selector) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:54:05.470Z",
+      "action": "plan review requested for Step 3 (Frontend API Updates)"
+    },
+    {
+      "timestamp": "2026-03-31T13:54:27.541Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The step plan is well-defined and will achieve the stated outcomes. The backend API endpoints (`/planning/start-streaming` and `/planning/create-task`) already support the model parameters based on my review of `routes.ts`. The frontend API functions need to be updated to pass these optional parameters through."
+    },
+    {
+      "timestamp": "2026-03-31T13:54:37.564Z",
+      "action": "code review requested for Step 3 (Frontend API Updates)"
+    },
+    {
+      "timestamp": "2026-03-31T13:55:13.975Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly updates the frontend API functions to accept optional model parameters. Both `startPlanningStreaming` and `createTaskFromPlanning` have been properly modified to accept and pass through the new parameters, following the established pattern of using \"provider/modelId\" string format."
+    },
+    {
+      "timestamp": "2026-03-31T13:55:15.264Z",
+      "action": "Step 3 (Planning Mode Initial View - Model Selector) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:55:15.266Z",
+      "action": "Step 4 (Planning Mode Summary View - Executor/Validator Selectors) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:55:15.267Z",
+      "action": "plan review requested for Step 4 (Planning Mode Initial View - Model Selector)"
+    },
+    {
+      "timestamp": "2026-03-31T13:55:44.226Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step outlines a clear implementation path for adding a planning model selector to the Planning Mode initial view. The approach correctly identifies the necessary state management, reuses the established `CustomModelDropdown` component, follows the existing pattern from `NewTaskModal` for fetching models, and properly positions the UI element. The step aligns with the overall task mission and maintains consistency with existing codebase patterns."
+    },
+    {
+      "timestamp": "2026-03-31T13:56:17.894Z",
+      "action": "code review requested for Step 4 (Planning Mode Initial View - Model Selector)"
+    },
+    {
+      "timestamp": "2026-03-31T13:56:57.239Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The implementation correctly adds the planning model selector to the initial view of the Planning Mode modal. The UI placement, state management, and API integration all follow the established patterns. However, there's a critical issue: `fetchModels` is not mocked in the test file, which will cause tests to fail or make real network requests when the component attempts to fetch models on mount."
+    },
+    {
+      "timestamp": "2026-03-31T13:57:41.816Z",
+      "action": "code review requested for Step 4 (Planning Mode Initial View - Model Selector)"
+    },
+    {
+      "timestamp": "2026-03-31T13:58:05.891Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation correctly adds the Planning Model selector to the initial view of the Planning Mode modal. All required UI elements are present, state management is properly implemented, and the API integration follows the established patterns from `NewTaskModal`. The code is functional and follows project conventions."
+    },
+    {
+      "timestamp": "2026-03-31T13:58:07.145Z",
+      "action": "Step 4 (Planning Mode Summary View - Executor/Validator Selectors) → done"
+    },
+    {
+      "timestamp": "2026-03-31T13:58:07.148Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:58:07.150Z",
+      "action": "plan review requested for Step 5 (Planning Mode Summary View - Executor/Validator Selectors)"
+    },
+    {
+      "timestamp": "2026-03-31T13:58:22.838Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The step plan is sound and follows established patterns. The backend API (`/planning/create-task`) and frontend API function (`createTaskFromPlanning`) already support `executorModel` and `validatorModel` parameters. The `CustomModelDropdown` component is already imported and available. The step correctly identifies the placement and defaults. However, there's a critical implementation detail regarding where state should live that the worker should be aware of."
+    },
+    {
+      "timestamp": "2026-03-31T13:59:07.409Z",
+      "action": "code review requested for Step 5 (Planning Mode Summary View - Executor/Validator Selectors)"
+    },
+    {
+      "timestamp": "2026-03-31T13:59:33.544Z",
+      "action": "Resumed after engine restart"
+    },
+    {
+      "timestamp": "2026-03-31T13:59:42.533Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T13:59:42.534Z",
+      "action": "Starting Step 5 - Testing & Verification. Current tests pass but need to add coverage for new model selection features."
+    },
+    {
+      "timestamp": "2026-03-31T14:03:16.828Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:03:16.831Z",
+      "action": "Completed Step 5 - Testing & Verification. Added 7 new tests for model selection features in Planning Mode. All 24 PlanningModeModal tests pass, 21 planning.ts tests pass, 253 routes tests pass, and build succeeds."
+    },
+    {
+      "timestamp": "2026-03-31T14:03:17.886Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T14:03:32.328Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T14:03:32.331Z",
+      "action": "Completed Step 6 - Documentation & Delivery. Updated AGENTS.md to clarify the distinction between triage planning models and Planning Mode model selection. Created changeset file for the patch-level feature.",
+      "outcome": "All 7 steps completed successfully. Planning Mode now supports model selection at start (planning model) and in summary view (executor/validator models). Tests added and passing, build succeeds, documentation updated."
+    },
+    {
+      "timestamp": "2026-03-31T14:03:34.183Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T14:03:42.333Z",
+  "createdAt": "2026-03-31T13:48:29.500Z",
+  "updatedAt": "2026-03-31T14:03:42.333Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Successfully added model selection capabilities to the Planning Mode workflow. Users can now select a planning model at the start of the session and choose executor/validator models in the summary view before creating the task. The implementation includes backend session storage updates (planning.ts), API endpoint updates (routes.ts), frontend API updates (api.ts), UI components (PlanningModeModal.tsx with CustomModelDropdown), and comprehensive tests (7 new tests added, all 24 PlanningModeModal tests passing). Documentation updated in AGENTS.md and changeset created for the patch release."
+}

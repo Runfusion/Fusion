@@ -1,0 +1,108 @@
+{
+  "id": "KB-017",
+  "description": "add an indicator on a card in the top right (small) that shows the sizing (s, m, l, etc)",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Implement Size Badge in TaskCard",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styling",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T00:53:45.578Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T00:57:55.062Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T00:58:07.311Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and accurate. All file references are verified, the `Task` interface correctly includes `size?: \"S\" | \"M\" | \"L\"`, and the existing badge patterns in both the component and CSS are properly identified. Steps have concrete, verifiable outcomes with appropriate testing requirements."
+    },
+    {
+      "timestamp": "2026-03-30T01:30:55.106Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/deft-tiger"
+    },
+    {
+      "timestamp": "2026-03-30T01:30:55.107Z",
+      "action": "Step 0 (Implement Size Badge in TaskCard) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T01:31:00.856Z",
+      "action": "plan review requested for Step 1 (Implement Size Badge in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T01:31:14.343Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is clear, achievable, and correctly scoped. The checkboxes cover all necessary implementation points: adding the size badge element to the card-header, conditional rendering, proper positioning, and targeted test verification. The approach follows existing badge patterns in the codebase."
+    },
+    {
+      "timestamp": "2026-03-30T01:31:15.745Z",
+      "action": "Step 1 (Add CSS Styling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:32:07.961Z",
+      "action": "Step 1 (Add CSS Styling) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:32:09.087Z",
+      "action": "plan review requested for Step 2 (Add CSS Styling)"
+    },
+    {
+      "timestamp": "2026-03-30T01:32:21.913Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is sound and will achieve the stated outcomes. The checkboxes correctly identify the need to add `.card-size-badge` styles with size-specific colors (S=green, M=neutral, L=amber), match existing badge dimensions (10px font, 2px 8px padding, 10px border-radius), and verify the build passes."
+    },
+    {
+      "timestamp": "2026-03-30T01:32:22.812Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:32:39.006Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:32:40.246Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T01:33:27.156Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:33:42.350Z",
+      "action": "Size badge implementation complete",
+      "outcome": "Added size indicator (S, M, L) to task cards in dashboard. Badge renders in card-header with distinct colors: green for S, neutral for M, amber for L. 5 new tests added, all 1,247 tests pass across all packages. Build successful."
+    },
+    {
+      "timestamp": "2026-03-30T01:33:43.568Z",
+      "action": "Step 0 (Implement Size Badge in TaskCard) → done"
+    },
+    {
+      "timestamp": "2026-03-30T01:33:43.569Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T01:34:01.294Z",
+  "createdAt": "2026-03-30T00:53:45.578Z",
+  "updatedAt": "2026-03-30T01:34:01.294Z",
+  "size": "S",
+  "reviewLevel": 1
+}

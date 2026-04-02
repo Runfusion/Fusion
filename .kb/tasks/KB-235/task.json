@@ -1,0 +1,114 @@
+{
+  "id": "KB-235",
+  "title": "Fix duplicate delay function in packages dashboard src",
+  "description": "Fix duplicate `delay` function in packages/dashboard/src/github.ts (lines 15 and 1920) causing build and test failures",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Fix Duplicate Function",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:43:49.285Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:44:36.183Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:44:51.831Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The spec describes a duplicate `delay` function at line 1920 in `packages/dashboard/src/github.ts`, but my investigation shows **only one `delay` function exists** in the file (at line 15). The claimed duplicate at line 1920 is not present. The spec's Step 0 is also logically confusing—it asks to verify the duplicate exists in the committed version while simultaneously assuming the working directory already has the fix applied."
+    },
+    {
+      "timestamp": "2026-03-31T00:45:03.363Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:45:19.612Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification accurately describes a straightforward bug fix: removing a duplicate `delay` function that causes TypeScript compilation errors. The spec provides clear verification steps, appropriate testing requirements, and correctly scopes the work to a single file with minimal blast radius. Review Level 0 (None) is appropriate for this simple, reversible change."
+    },
+    {
+      "timestamp": "2026-03-31T01:45:48.601Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/grand-tiger"
+    },
+    {
+      "timestamp": "2026-03-31T01:45:48.601Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T01:45:49.573Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:46:28.268Z",
+      "action": "Preflight check complete",
+      "outcome": "Only ONE delay function found at line 15 in both HEAD and working directory. No duplicate at line 1920. TypeScript typecheck passes, build passes. The fix appears to already be applied or the duplicate was never present in this branch."
+    },
+    {
+      "timestamp": "2026-03-31T01:46:29.562Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:46:30.431Z",
+      "action": "Step 1 (Fix Duplicate Function) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:46:32.066Z",
+      "action": "Step 1 (Fix Duplicate Function) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:46:32.721Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:48:02.302Z",
+      "action": "Testing & Verification complete",
+      "outcome": "TypeScript typecheck: PASSED, Build: PASSED, delay function count: 1 (at line 15). 2 pre-existing test failures in Board.test.tsx unrelated to delay function."
+    },
+    {
+      "timestamp": "2026-03-31T01:48:03.111Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:48:05.069Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T01:48:09.131Z",
+      "action": "Documentation & Delivery step",
+      "outcome": "Working tree is clean - the duplicate delay function was already removed or never existed in this branch. The file currently has exactly one delay function at line 15, which is the desired end state. TypeScript typecheck and build both pass. No commit needed as the fix is already in place."
+    },
+    {
+      "timestamp": "2026-03-31T01:48:10.690Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T01:48:11.575Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T01:48:17.171Z",
+  "createdAt": "2026-03-31T00:43:49.285Z",
+  "updatedAt": "2026-03-31T01:48:17.171Z",
+  "size": "S",
+  "reviewLevel": 0
+}

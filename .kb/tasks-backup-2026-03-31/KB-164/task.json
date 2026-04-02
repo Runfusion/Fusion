@@ -1,0 +1,163 @@
+{
+  "id": "KB-164",
+  "description": "on the list view the quick entry box should always be visible like on board view, and the new task button should bring up the same dialog that is on board view",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update ListView Component",
+      "status": "done"
+    },
+    {
+      "name": "Update App Component",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T15:31:56.819Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T15:33:37.374Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T15:33:53.356Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-written, accurate specification for unifying the list view's task creation experience with the board view. The spec correctly identifies all affected files, accurately describes the current conditional rendering patterns in `ListView.tsx` (lines 30-39 for props, 348-354 for QuickEntryBox, 413-422 for button rendering, and 455-466 for InlineCreateCard), and provides concrete, verifiable outcomes for each step. The sizing (S) and review level (1) are appropriate for this UI alignmen"
+    },
+    {
+      "timestamp": "2026-03-30T16:06:55.435Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/cool-lark"
+    },
+    {
+      "timestamp": "2026-03-30T16:06:55.436Z",
+      "action": "Step 0 (Update ListView Component) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T16:07:10.331Z",
+      "action": "Step 0 (Update ListView Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:14.016Z",
+      "action": "Step 0 (Update ListView Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:14.017Z",
+      "action": "Preflight complete - all 106 tests in ListView.test.tsx and App.test.tsx are passing",
+      "outcome": "Ready to proceed with Step 1"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:16.348Z",
+      "action": "plan review requested for Step 1 (Update ListView Component)"
+    },
+    {
+      "timestamp": "2026-03-30T16:08:41.990Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies all necessary changes to align the list view's task creation flow with the board view. The approach removes the conditional `QuickEntryBox` rendering, eliminates the `InlineCreateCard` section, and cleans up the now-unused props from the interface. The code change instructions are specific and map accurately to the current file structure."
+    },
+    {
+      "timestamp": "2026-03-30T16:08:44.727Z",
+      "action": "Step 1 (Update App Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:09:19.325Z",
+      "action": "Step 1 (Update App Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:09:19.326Z",
+      "action": "Step 1 complete - ListView.tsx updated",
+      "outcome": "Removed InlineCreateCard usage, made QuickEntryBox always visible, removed isCreating/onCancelCreate/onCreateTask props, simplified New Task button rendering"
+    },
+    {
+      "timestamp": "2026-03-30T16:09:20.734Z",
+      "action": "plan review requested for Step 2 (Update App Component)"
+    },
+    {
+      "timestamp": "2026-03-30T16:09:39.881Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is clear, accurate, and complete. The identified changes correctly align with the task mission to unify list view with board view's modal-based creation flow. The code changes match the actual state of `App.tsx` and properly account for all state, handlers, and props that need removal."
+    },
+    {
+      "timestamp": "2026-03-30T16:09:40.885Z",
+      "action": "Step 2 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:10:10.164Z",
+      "action": "Step 2 (Update Tests) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:10:10.166Z",
+      "action": "Step 2 complete - App.tsx updated",
+      "outcome": "Removed isListInlineCreating state and related handlers, wired list view onNewTask to handleNewTaskOpen, removed unused props from ListView"
+    },
+    {
+      "timestamp": "2026-03-30T16:10:11.487Z",
+      "action": "plan review requested for Step 3 (Update Tests)"
+    },
+    {
+      "timestamp": "2026-03-30T16:10:51.213Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan correctly identifies the main test updates needed for `ListView.test.tsx`, but it **misses critical test updates required in `App.test.tsx`** and doesn't fully account for all the `InlineCreateCard`-related tests that need removal. Additionally, the suggested test addition for `QuickEntryBox` needs clarification."
+    },
+    {
+      "timestamp": "2026-03-30T16:10:54.245Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:10:54.245Z",
+      "action": "Revising Step 3 based on review feedback",
+      "outcome": "Need to also update App.test.tsx and ensure all InlineCreateCard tests are removed"
+    },
+    {
+      "timestamp": "2026-03-30T16:11:39.425Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:11:39.426Z",
+      "action": "Step 3 complete - Tests updated",
+      "outcome": "Removed 8 tests (7 InlineCreateCard tests + 1 QuickEntryBox negative test), updated App.test.tsx to verify NewTaskModal opens instead of inline card, all 97 tests passing"
+    },
+    {
+      "timestamp": "2026-03-30T16:11:40.768Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T16:11:55.422Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T16:11:55.423Z",
+      "action": "Step 4 complete - Testing and verification done",
+      "outcome": "All 97 tests pass, build successful"
+    },
+    {
+      "timestamp": "2026-03-30T16:12:08.410Z",
+      "action": "Step 5 complete - Documentation checked",
+      "outcome": "No README updates needed - documentation already describes the unified flow using QuickEntryBox and NewTaskModal. InlineCreateCard component file intentionally kept per task requirements (may be used elsewhere or as future design option)"
+    },
+    {
+      "timestamp": "2026-03-30T16:12:15.365Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T16:12:29.486Z",
+  "createdAt": "2026-03-30T15:31:56.819Z",
+  "updatedAt": "2026-03-30T16:12:29.486Z",
+  "size": "S",
+  "reviewLevel": 1
+}

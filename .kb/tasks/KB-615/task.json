@@ -1,0 +1,123 @@
+{
+  "id": "KB-615",
+  "description": "Multi-Project Core Infrastructure: Create central database (`~/.pi/kb/kb-central.db`) with SQLite schema for the multi-project system. Implement:\n\n1. **Central Database Schema** — New SQLite database at `~/.pi/kb/kb-central.db` with tables:\n   - `projects` — project registry (id, name, workingDirectory, status: active/paused/errored, isolationMode: in-process/child-process, createdAt, updatedAt, lastActivityAt)\n   - `activityFeed` — unified activity feed aggregating task events across all projects with project attribution (projectId, eventType, taskId, message, timestamp)\n   - `globalConfig` — system-wide settings (maxConcurrentAgents, etc.)\n   - `projectHealth` — project health tracking (projectId, inFlightTasks, lastActivity, cpuUsage, memoryUsage)\n   - `__meta` — schema version tracking\n\n2. **CentralCore class** (`packages/core/src/central-core.ts`) — Main API for the central database:\n   - `registerProject(name, workingDir, options)` — add project to registry\n   - `unregisterProject(id)` — remove project\n   - `listProjects()` — list all registered projects\n   - `getProject(id)` — get project details\n   - `updateProjectStatus(id, status)` — update project status\n   - `recordActivity(projectId, event)` — record activity to unified feed\n   - `getActivityFeed(options)` — query activity feed with filters\n   - `getGlobalConcurrencyLimit()` / `setGlobalConcurrencyLimit(n)` — manage global limits\n   - `getProjectHealth(id)` — get project health snapshot\n\n3. **Project Registry API** — CRUD operations for managing projects with validation (unique names, valid directories with `.fusion/` subdirectories)\n\n4. **Export types** — Export CentralCore, ProjectInfo, ActivityFeedEntry types from `packages/core/src/index.ts`\n\n5. **Tests** — Unit tests for CentralCore class covering registration, activity feed, concurrency limits, and project health\n\n**File scope:**\n- `packages/core/src/central-core.ts` (new)\n- `packages/core/src/central-db.ts` (new — database helper for central DB)\n- `packages/core/src/types.ts` (add new types)\n- `packages/core/src/index.ts` (export new types)\n- `packages/core/test/central-core.test.ts` (new)\n\n**Context:** Read `packages/core/src/db.ts` for existing SQLite patterns, `packages/core/src/store.ts` for TaskStore architecture.",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 7,
+  "summary": "Multi-Project Central Infrastructure (KB-615) is already fully implemented and tested. All 720 tests pass including 56 CentralCore tests and 21 CentralDatabase tests. The infrastructure includes: types (ProjectStatus, IsolationMode, RegisteredProject, ProjectHealth, CentralActivityLogEntry, GlobalConcurrencyState), CentralDatabase class with full SQLite schema at ~/.pi/kb/kb-central.db, CentralCore class with project registry, health tracking, unified activity feed, and global concurrency management APIs. All exports are in place and documentation is complete in AGENTS.md. No changeset needed as @fusion/core is an internal unpublished package.",
+  "createdAt": "2026-03-31T23:25:46.583Z",
+  "updatedAt": "2026-04-01T03:01:44.415Z",
+  "columnMovedAt": "2026-04-01T03:01:44.415Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Extend Types for Central Infrastructure",
+      "status": "done"
+    },
+    {
+      "name": "Create Central Database Module",
+      "status": "done"
+    },
+    {
+      "name": "Implement CentralCore API Class",
+      "status": "done"
+    },
+    {
+      "name": "Export New Public API",
+      "status": "done"
+    },
+    {
+      "name": "Write Unit Tests",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:25:46.583Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:31:13.010Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-31T23:36:26.700Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-31T23:37:21.542Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-31T23:37:49.028Z",
+      "action": "Spec review not approved (review_spec was never called) — specification not approved"
+    },
+    {
+      "timestamp": "2026-03-31T23:39:01.253Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:39:19.928Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for foundational multi-project infrastructure. The spec correctly identifies existing patterns from `db.ts` (WAL mode, nested transactions via savepoints, `__meta` table), `store.ts` (EventEmitter, async lifecycle), and `global-settings.ts` (`~/.pi/kb/` directory pattern). The new types (`RegisteredProject`, `ProjectHealth`, `ActivityFeedEntry`) are appropriately scoped, and the CentralCore API design aligns with existing TaskStore patterns."
+    },
+    {
+      "timestamp": "2026-04-01T03:00:06.778Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/grand-frost"
+    },
+    {
+      "timestamp": "2026-04-01T03:00:06.786Z",
+      "action": "Step 0 (Extend Types for Central Infrastructure) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T03:00:09.609Z",
+      "action": "Step 0 (Extend Types for Central Infrastructure) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:18.139Z",
+      "action": "Step 0 (Extend Types for Central Infrastructure) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:18.141Z",
+      "action": "Step 1 (Create Central Database Module) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:18.141Z",
+      "action": "Step 2 (Implement CentralCore API Class) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:18.142Z",
+      "action": "Step 3 (Export New Public API) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:18.143Z",
+      "action": "Step 4 (Write Unit Tests) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:18.143Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:18.144Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:26.096Z",
+      "action": "Multi-Project Central Infrastructure already fully implemented",
+      "outcome": "All components verified: types.ts has ProjectStatus, IsolationMode, RegisteredProject, ProjectHealth, CentralActivityLogEntry, GlobalConcurrencyState; central-db.ts has CentralDatabase class with full schema; central-core.ts has CentralCore class with all APIs; central-core.test.ts has 56 passing tests; index.ts exports all new types and classes; AGENTS.md documents the central infrastructure"
+    },
+    {
+      "timestamp": "2026-04-01T03:01:29.338Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

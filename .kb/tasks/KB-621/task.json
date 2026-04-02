@@ -1,0 +1,294 @@
+{
+  "id": "KB-621",
+  "description": "Summarize (using ai) descriptions longer than 140 characters and set it as the title. Add a setting for this and let use choose the model to use to summarize.",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 9,
+  "summary": "Successfully implemented AI-powered title summarization feature (KB-621). Added 3 new project settings (autoSummarizeTitles, titleSummarizerProvider, titleSummarizerModelId), created core AI summarization service with rate limiting, modified task store with callback pattern for summarization, added POST /ai/summarize-title API endpoint with model fallback hierarchy, created dashboard API client, and added AI Summarization section to Settings UI. All 635 core tests pass, builds complete without errors, and documentation is updated with changeset.",
+  "createdAt": "2026-03-31T23:27:04.793Z",
+  "updatedAt": "2026-04-01T01:59:08.200Z",
+  "columnMovedAt": "2026-04-01T01:59:08.200Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Settings Types",
+      "status": "done"
+    },
+    {
+      "name": "Create Core AI Summarization Service",
+      "status": "done"
+    },
+    {
+      "name": "Modify Task Store for Summarization",
+      "status": "done"
+    },
+    {
+      "name": "Add Dashboard API Endpoint",
+      "status": "done"
+    },
+    {
+      "name": "Wire Up Summarization in Dashboard Routes",
+      "status": "done"
+    },
+    {
+      "name": "Add Dashboard API Client",
+      "status": "done"
+    },
+    {
+      "name": "Add Settings UI",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T23:27:04.793Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T23:34:29.061Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:34:56.110Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification has a solid foundation with clear mission definition and generally good step breakdown. However, there are critical issues that need addressing before implementation: a cross-package dependency violation between core and dashboard, an endpoint path inconsistency with existing patterns, and a missing type definition update. These would cause build failures or architectural violations."
+    },
+    {
+      "timestamp": "2026-03-31T23:35:25.702Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T23:35:47.983Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for implementing AI-powered title summarization. The spec correctly identifies existing patterns in the codebase (ai-refine.ts for the AI service pattern, createKbAgent from engine, SETTINGS_SECTIONS from SettingsModal), defines concrete implementation steps with verifiable outcomes, and maintains proper architectural boundaries (core package independence from engine/dashboard). The file scope is accurate and the testing strategy is comprehensive."
+    },
+    {
+      "timestamp": "2026-04-01T01:39:14.208Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/happy-eagle"
+    },
+    {
+      "timestamp": "2026-04-01T01:39:14.209Z",
+      "action": "Step 0 (Add Settings Types) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T01:39:27.976Z",
+      "action": "Step 0 (Add Settings Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:39:39.461Z",
+      "action": "Step 0 (Add Settings Types) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:39:39.462Z",
+      "action": "Step 1 (Create Core AI Summarization Service) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:39:39.463Z",
+      "action": "plan review requested for Step 1 (Add Settings Types)"
+    },
+    {
+      "timestamp": "2026-04-01T01:39:53.114Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is clear, accurate, and follows established patterns in the codebase. It correctly identifies all modification points in `packages/core/src/types.ts` and properly categorizes the new settings as project-level (workflow-related) rather than global (user preference)."
+    },
+    {
+      "timestamp": "2026-04-01T01:40:41.311Z",
+      "action": "code review requested for Step 1 (Add Settings Types)"
+    },
+    {
+      "timestamp": "2026-04-01T01:41:12.159Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds all required settings types for the AI title summarization feature. The changes follow existing code patterns, include proper JSDoc documentation, and the TypeScript compilation has succeeded (evidenced by the presence of compiled `.d.ts` files with the new fields)."
+    },
+    {
+      "timestamp": "2026-04-01T01:41:14.311Z",
+      "action": "Step 1 (Create Core AI Summarization Service) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:41:14.312Z",
+      "action": "Step 2 (Modify Task Store for Summarization) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:41:14.313Z",
+      "action": "plan review requested for Step 2 (Create Core AI Summarization Service)"
+    },
+    {
+      "timestamp": "2026-04-01T01:42:02.300Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The step's implementation approach will technically function, but placing the AI summarization service in `packages/core` creates an architectural violation where the foundational core package would dynamically depend on the higher-level engine package. This introduces circular dependency risks and blurs the clean layered architecture where core should remain dependency-free. The service should be placed in the dashboard package following the established `ai-refine.ts` pattern."
+    },
+    {
+      "timestamp": "2026-04-01T01:43:13.576Z",
+      "action": "code review requested for Step 2 (Create Core AI Summarization Service)"
+    },
+    {
+      "timestamp": "2026-04-01T01:43:54.334Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation of the AI summarization service in `packages/core/src/ai-summarize.ts` correctly follows the established pattern from `ai-refine.ts` in the dashboard. The code includes all required functionality: the system prompt, `summarizeTitle()` function with dynamic engine import, rate limiting (10 requests/hour per IP), validation for 141-2000 character range, custom error classes, and comprehensive unit tests. The exports are properly wired through `packages/core/src/index.ts`."
+    },
+    {
+      "timestamp": "2026-04-01T01:43:55.550Z",
+      "action": "Step 2 (Modify Task Store for Summarization) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:43:55.551Z",
+      "action": "Step 3 (Add Dashboard API Endpoint) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:43:55.552Z",
+      "action": "plan review requested for Step 3 (Modify Task Store for Summarization)"
+    },
+    {
+      "timestamp": "2026-04-01T01:44:22.871Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The plan's callback-based approach to avoid core→engine dependencies is architecturally sound. However, there's a **logical sequencing issue** with error handling: the plan suggests logging warnings to the task log when summarization fails, but the task doesn't exist yet at the point where summarization would run. This needs clarification. Additionally, there's a gap around how the store should access settings within `createTask()` since it's not currently async-settings-ready."
+    },
+    {
+      "timestamp": "2026-04-01T01:45:26.910Z",
+      "action": "code review requested for Step 3 (Modify Task Store for Summarization)"
+    },
+    {
+      "timestamp": "2026-04-01T01:45:56.642Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly modifies the Task Store to support AI title summarization. The `createTask()` method now accepts an optional `onSummarize` callback and `settings` parameter, with proper conditional logic to trigger summarization only when appropriate. The test coverage is comprehensive with 12 test cases covering all edge cases and boundary conditions."
+    },
+    {
+      "timestamp": "2026-04-01T01:45:57.884Z",
+      "action": "Step 3 (Add Dashboard API Endpoint) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:45:57.885Z",
+      "action": "Step 4 (Wire Up Summarization in Dashboard Routes) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:45:57.886Z",
+      "action": "plan review requested for Step 4 (Add Dashboard API Endpoint)"
+    },
+    {
+      "timestamp": "2026-04-01T01:46:28.156Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is sound and will achieve its stated outcomes. The route structure follows the established pattern from `/ai/refine-text` at line 4852, and the necessary exports (`summarizeTitle`, `checkRateLimit`, error classes) are all available from `@fusion/core`. The model selection hierarchy is clearly specified and aligns with the existing settings structure."
+    },
+    {
+      "timestamp": "2026-04-01T01:48:40.321Z",
+      "action": "code review requested for Step 4 (Add Dashboard API Endpoint)"
+    },
+    {
+      "timestamp": "2026-04-01T01:49:15.759Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The Step 4 implementation is well-structured and follows the established patterns in the codebase. The POST `/api/ai/summarize-title` endpoint is correctly implemented with proper validation, rate limiting, model selection hierarchy, and error handling. All required exports from `@fusion/core` are in place, and the implementation aligns with the existing `ai-refine.ts` pattern."
+    },
+    {
+      "timestamp": "2026-04-01T01:49:17.840Z",
+      "action": "Step 4 (Wire Up Summarization in Dashboard Routes) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:49:17.841Z",
+      "action": "Step 5 (Add Dashboard API Client) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:49:17.842Z",
+      "action": "plan review requested for Step 5 (Wire Up Summarization in Dashboard Routes)"
+    },
+    {
+      "timestamp": "2026-04-01T01:49:51.927Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan correctly identifies the work needed to integrate the AI summarization service into the dashboard's task creation flow. Steps 1-4 have already been completed (types, AI service, store modifications, and API endpoint), and Step 5's approach to wire up the `onSummarize` callback in the main task creation route is sound. The callback pattern properly maintains separation between core and dashboard packages."
+    },
+    {
+      "timestamp": "2026-04-01T01:50:13.950Z",
+      "action": "code review requested for Step 5 (Wire Up Summarization in Dashboard Routes)"
+    },
+    {
+      "timestamp": "2026-04-01T01:51:01.281Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The implementation correctly wires up the AI title summarization feature in the dashboard routes. The `onSummarize` callback is properly implemented with dynamic imports, model fallback hierarchy, and graceful error handling. The store tests demonstrate comprehensive coverage of all summarization scenarios."
+    },
+    {
+      "timestamp": "2026-04-01T01:51:03.084Z",
+      "action": "Step 5 (Add Dashboard API Client) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:51:03.086Z",
+      "action": "Step 6 (Add Settings UI) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:51:03.087Z",
+      "action": "plan review requested for Step 6 (Add Dashboard API Client)"
+    },
+    {
+      "timestamp": "2026-04-01T01:51:18.639Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The plan for Step 6 is well-structured and follows existing codebase patterns. It correctly identifies the need for a `summarizeTitle()` function in `api.ts` with proper error handling for 429 (rate limit) and 503 (service unavailable) responses, plus comprehensive test coverage in `api.test.ts`."
+    },
+    {
+      "timestamp": "2026-04-01T01:53:46.212Z",
+      "action": "code review requested for Step 6 (Add Dashboard API Client)"
+    },
+    {
+      "timestamp": "2026-04-01T01:54:12.271Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "The implementation of the Dashboard API Client for AI title summarization is complete and well-executed. The `summarizeTitle()` function follows the established patterns in the codebase, includes comprehensive error handling for all specified HTTP status codes (400, 429, 503), and has thorough test coverage with 8 test cases covering success scenarios, error conditions, and edge cases."
+    },
+    {
+      "timestamp": "2026-04-01T01:54:13.418Z",
+      "action": "Step 6 (Add Settings UI) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:54:13.419Z",
+      "action": "Step 7 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:54:13.420Z",
+      "action": "plan review requested for Step 7 (Add Settings UI)"
+    },
+    {
+      "timestamp": "2026-04-01T01:54:39.698Z",
+      "action": "plan review Step 7: APPROVE",
+      "outcome": "The plan provides a clear, actionable approach for adding the \"AI Summarization\" settings section. The scope, positioning, and UI components are well-specified. The plan correctly leverages existing patterns (`CustomModelDropdown`, `SETTINGS_SECTIONS`, scope banners) and aligns with the already-implemented types and API endpoints. Minor suggestions for enhancement are noted below but don't block progress."
+    },
+    {
+      "timestamp": "2026-04-01T01:55:03.160Z",
+      "action": "code review requested for Step 7 (Add Settings UI)"
+    },
+    {
+      "timestamp": "2026-04-01T01:55:46.283Z",
+      "action": "code review Step 7: APPROVE",
+      "outcome": "The Settings UI for AI title summarization is correctly implemented. The new \"AI Summarization\" section is properly inserted between \"Model Presets\" and \"Appearance\" with the correct project scope. The implementation follows existing patterns from other settings sections, includes the checkbox for enabling the feature, the model selector with proper fallback display, and quick-action buttons for inheriting planning/default models."
+    },
+    {
+      "timestamp": "2026-04-01T01:55:48.176Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:55:48.177Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T01:55:48.178Z",
+      "action": "plan review requested for Step 8 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-04-01T01:56:16.524Z",
+      "action": "plan review Step 8: APPROVE",
+      "outcome": "The implementation is comprehensive and well-structured. All code changes from Steps 1-7 are in place across the stack: settings types, AI service, store modifications, API endpoints, and UI. The test coverage is thorough with unit tests for the ai-summarize service (validation, rate limiting, error handling), store integration tests (9 test cases covering all summarization scenarios), and API client tests (6 test cases for success and error paths). The Step 8 checklist appropriately captures th"
+    },
+    {
+      "timestamp": "2026-04-01T01:57:59.553Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T01:58:52.668Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

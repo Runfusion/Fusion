@@ -1,0 +1,343 @@
+{
+  "id": "KB-184",
+  "description": "In settings have a model preset section - for different model profiles - the user can configure profiles - \"Budget\", \"Normal\", \"Complex\" and they can select an executor and validator for each profile - then individual tasks can be assigned a profile to use that model - or overridden. Have a checkbox in settings, when checked it tries to auto select the right model based on the task sizing.",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Types and Data Model",
+      "status": "done"
+    },
+    {
+      "name": "Backend Settings Validation",
+      "status": "done"
+    },
+    {
+      "name": "Preset Utilities",
+      "status": "done"
+    },
+    {
+      "name": "Settings UI — Model Presets Section",
+      "status": "done"
+    },
+    {
+      "name": "Task Creation — NewTaskModal Preset Integration",
+      "status": "done"
+    },
+    {
+      "name": "Task Creation — InlineCreateCard Preset Integration",
+      "status": "done"
+    },
+    {
+      "name": "Core Task Types — Store Selected Preset",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 9,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:00:47.120Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:03:22.707Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:03:40.252Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for the Model Presets feature. The mission is clear, steps are concrete with verifiable outcomes, and file references are accurate. The spec appropriately scopes the work to the UI/settings layer without overreaching into engine internals. Review level 3 (Full) is justified given the multi-package type changes and UI coordination required."
+    },
+    {
+      "timestamp": "2026-03-31T08:38:54.084Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rapid-plume"
+    },
+    {
+      "timestamp": "2026-03-31T08:38:54.085Z",
+      "action": "Step 0 (Core Types and Data Model) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T08:38:57.669Z",
+      "action": "Step 0 (Core Types and Data Model) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T08:39:07.878Z",
+      "action": "Completed preflight context read and repository inspection.",
+      "outcome": "Confirmed task files and current HEAD; PROMPT.md is not present in worktree root, so execution will proceed from user-provided specification and referenced source files."
+    },
+    {
+      "timestamp": "2026-03-31T08:39:12.451Z",
+      "action": "Step 0 (Core Types and Data Model) → done"
+    },
+    {
+      "timestamp": "2026-03-31T08:39:16.109Z",
+      "action": "Step 1 (Backend Settings Validation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T08:39:19.743Z",
+      "action": "plan review requested for Step 1 (Core Types and Data Model)"
+    },
+    {
+      "timestamp": "2026-03-31T08:39:34.634Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-structured and correctly identifies all necessary type changes. The `ModelPreset` interface design is consistent with existing patterns in the codebase (provider/modelId pairs are both optional, requiring both to be set together). The placement of new settings fields follows the established conventions in `types.ts`."
+    },
+    {
+      "timestamp": "2026-03-31T08:40:32.569Z",
+      "action": "Implemented core type additions for model presets and preset references.",
+      "outcome": "Added ModelPreset, Settings fields/defaults, and task/task-create/archive preset fields. Typecheck is currently blocked by missing workspace dependencies (node/vitest types not installed in this worktree)."
+    },
+    {
+      "timestamp": "2026-03-31T08:40:40.042Z",
+      "action": "code review requested for Step 1 (Core Types and Data Model)"
+    },
+    {
+      "timestamp": "2026-03-31T08:41:12.550Z",
+      "action": "code review Step 1: REVISE",
+      "outcome": "The core type definitions are correctly implemented with proper JSDoc documentation, but the `ModelPreset` type is not exported from the package index, which will block all subsequent steps that need to import it. Additionally, the worker implemented changes from Step 7 (adding `modelPresetId` to Task interfaces) within Step 1, which is scope creep."
+    },
+    {
+      "timestamp": "2026-03-31T08:41:28.310Z",
+      "action": "code review requested for Step 1 (Core Types and Data Model)"
+    },
+    {
+      "timestamp": "2026-03-31T08:41:58.811Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The core type definitions for the Model Presets feature are correctly implemented. All required types from the specification are present: `ModelPreset` interface, Settings extensions (`modelPresets`, `autoSelectModelPreset`, `defaultPresetBySize`), and DEFAULT_SETTINGS defaults. The worker also proactively included `modelPresetId` on Task, TaskCreateInput, and ArchivedTaskEntry (planned for Step 7), which is acceptable and shows good forward-thinking."
+    },
+    {
+      "timestamp": "2026-03-31T08:42:01.457Z",
+      "action": "Step 1 (Backend Settings Validation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T08:42:03.025Z",
+      "action": "Step 2 (Preset Utilities) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T08:42:08.907Z",
+      "action": "plan review requested for Step 2 (Backend Settings Validation)"
+    },
+    {
+      "timestamp": "2026-03-31T08:42:27.567Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is well-structured and follows existing patterns in the codebase. It correctly identifies the need for validation logic in the PUT `/settings` endpoint before data reaches the store, mirroring how other endpoints (like POST `/tasks`) handle model field validation. The validation requirements (required fields, provider/modelId consistency, unique IDs) are appropriate and sufficient to maintain data integrity."
+    },
+    {
+      "timestamp": "2026-03-31T08:43:12.454Z",
+      "action": "code review requested for Step 2 (Backend Settings Validation)"
+    },
+    {
+      "timestamp": "2026-03-31T08:43:42.742Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds backend validation for the `modelPresets` field in the PUT `/settings` endpoint. The validation logic properly checks all required constraints: preset objects have valid `id` and `name` fields, model provider/modelId pairs are consistent (both set or both undefined), and preset IDs are unique within the array. The error handling returns appropriate 400 status codes with descriptive error messages."
+    },
+    {
+      "timestamp": "2026-03-31T08:43:45.446Z",
+      "action": "Step 2 (Preset Utilities) → done"
+    },
+    {
+      "timestamp": "2026-03-31T08:43:47.015Z",
+      "action": "Step 3 (Settings UI — Model Presets Section) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T08:43:48.501Z",
+      "action": "plan review requested for Step 3 (Preset Utilities)"
+    },
+    {
+      "timestamp": "2026-03-31T08:44:36.617Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is well-structured and covers the essential utility functions needed for the Model Presets feature. The proposed functions address lookup, application, recommendation, and validation use cases. The test coverage requirement is appropriate. Minor naming and typing issues should be addressed during implementation."
+    },
+    {
+      "timestamp": "2026-03-31T08:45:09.687Z",
+      "action": "code review requested for Step 3 (Preset Utilities)"
+    },
+    {
+      "timestamp": "2026-03-31T08:45:37.820Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly provides all five required utility functions with clean, well-typed code and comprehensive test coverage. The functions handle edge cases appropriately and follow the project's established patterns for utility modules."
+    },
+    {
+      "timestamp": "2026-03-31T08:45:40.454Z",
+      "action": "Step 3 (Settings UI — Model Presets Section) → done"
+    },
+    {
+      "timestamp": "2026-03-31T08:45:41.992Z",
+      "action": "Step 4 (Task Creation — NewTaskModal Preset Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T08:45:44.031Z",
+      "action": "plan review requested for Step 4 (Settings UI — Model Presets Section)"
+    },
+    {
+      "timestamp": "2026-03-31T08:46:12.811Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan's checkboxes will achieve the stated outcomes for the core Model Presets UI. Steps 1-3 are already complete (types, validation, utilities with tests). The Step 4 plan correctly identifies the need to add a new settings section with preset CRUD, auto-selection configuration, and integration with the existing `updateSettings()` API. However, there are several gaps around edge case handling, testing specifics, and preset usage tracking that should be addressed."
+    },
+    {
+      "timestamp": "2026-03-31T08:48:13.937Z",
+      "action": "code review requested for Step 4 (Settings UI — Model Presets Section)"
+    },
+    {
+      "timestamp": "2026-03-31T08:48:34.912Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation successfully adds the Model Presets section to SettingsModal.tsx with all required functionality: preset CRUD operations, auto-selection configuration by task size, proper form validation, and integration with the existing settings API. The code follows established patterns in the codebase and uses the utility functions from Step 3 correctly. Tests cover the main preset creation and auto-selection flows."
+    },
+    {
+      "timestamp": "2026-03-31T08:48:36.532Z",
+      "action": "Step 4 (Task Creation — NewTaskModal Preset Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T08:48:41.167Z",
+      "action": "Step 5 (Task Creation — InlineCreateCard Preset Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T08:48:43.466Z",
+      "action": "plan review requested for Step 5 (Task Creation — NewTaskModal Preset Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T08:49:02.054Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The plan for Step 5 has a critical gap: it specifies adding a preset selector UI to `NewTaskModal.tsx`, but fails to account for the API layer changes needed to persist `modelPresetId`. The `createTask` API function in `packages/dashboard/app/api.ts` currently does not pass `modelPresetId` to the backend, and the POST `/tasks` endpoint in `packages/dashboard/src/routes.ts` doesn't extract it from the request body. Without these API changes, the selected preset will be lost at task creation."
+    },
+    {
+      "timestamp": "2026-03-31T08:49:05.628Z",
+      "action": "Plan review for NewTaskModal integration identified required API persistence work.",
+      "outcome": "Will include modelPresetId propagation through frontend API and POST /tasks backend handler while implementing preset-aware task creation flow."
+    },
+    {
+      "timestamp": "2026-03-31T08:51:07.324Z",
+      "action": "code review requested for Step 5 (Task Creation — NewTaskModal Preset Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T08:51:44.199Z",
+      "action": "code review Step 5: REVISE",
+      "outcome": "The NewTaskModal integration correctly implements the preset selector dropdown with \"Use default\", preset list, and \"Custom\" options. The component properly handles preset selection by auto-populating executor/validator models, disabling dropdowns in preset mode, and including `modelPresetId` in task creation when appropriate. However, the test file is missing a required mock for `fetchSettings`, which means the preset functionality is not actually being tested."
+    },
+    {
+      "timestamp": "2026-03-31T08:52:32.253Z",
+      "action": "code review requested for Step 5 (Task Creation — NewTaskModal Preset Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T08:53:04.266Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The implementation successfully integrates model presets into the NewTaskModal component. The preset selector dropdown is properly positioned above the Executor/Validator model dropdowns, with correct behavior for \"Use default\", preset selection, and \"Custom\" modes. The `modelPresetId` is correctly included in the task creation payload along with resolved model overrides. Tests cover the core preset selection and override flows."
+    },
+    {
+      "timestamp": "2026-03-31T08:53:06.595Z",
+      "action": "Step 5 (Task Creation — InlineCreateCard Preset Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T08:53:08.616Z",
+      "action": "Step 6 (Core Task Types — Store Selected Preset) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T08:53:12.033Z",
+      "action": "plan review requested for Step 6 (Task Creation — InlineCreateCard Preset Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T08:53:33.858Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "The plan for Step 6 is well-structured and achievable. It correctly identifies the need to add a compact preset selector to `InlineCreateCard.tsx` that follows the existing UI patterns (similar to the \"Models\" button with Brain icon). The approach aligns with the already-implemented preset integration in `NewTaskModal.tsx` and leverages the existing utility functions from `modelPresets.ts`."
+    },
+    {
+      "timestamp": "2026-03-31T08:55:18.889Z",
+      "action": "code review requested for Step 6 (Task Creation — InlineCreateCard Preset Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T08:56:03.372Z",
+      "action": "code review Step 6: REVISE",
+      "outcome": "The InlineCreateCard preset integration implementation is functionally complete but has **critical bugs** in the blur-to-cancel logic that will cause unexpected card dismissal when the preset dropdown is open. Additionally, the test coverage is insufficient — no tests were added for the new preset functionality despite it being a requirement of this step."
+    },
+    {
+      "timestamp": "2026-03-31T08:57:13.455Z",
+      "action": "code review requested for Step 6 (Task Creation — InlineCreateCard Preset Integration)"
+    },
+    {
+      "timestamp": "2026-03-31T08:58:15.341Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "The implementation successfully adds preset integration to InlineCreateCard with a compact ⚡ preset selector button, dropdown with \"Use default\", preset list, and \"Custom\" options. The preset indicator displays next to the model count badge (e.g., \"⚡ Budget · 2 models\"). Tests verify the preset is included in the submit payload with resolved model overrides."
+    },
+    {
+      "timestamp": "2026-03-31T08:58:17.466Z",
+      "action": "Step 6 (Core Task Types — Store Selected Preset) → done"
+    },
+    {
+      "timestamp": "2026-03-31T08:58:22.647Z",
+      "action": "Step 7 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T08:58:24.774Z",
+      "action": "plan review requested for Step 7 (Core Task Types — Store Selected Preset)"
+    },
+    {
+      "timestamp": "2026-03-31T08:58:31.358Z",
+      "action": "plan review Step 7: APPROVE",
+      "outcome": "Step 7's outcomes are already achieved. The `modelPresetId` field has been added to all required interfaces (`Task`, `TaskCreateInput`, `ArchivedTaskEntry`) in `packages/core/src/types.ts`. The only remaining checkbox is running `pnpm typecheck`, which is appropriate as a validation step."
+    },
+    {
+      "timestamp": "2026-03-31T08:58:34.493Z",
+      "action": "Step 7 already satisfied by earlier core type updates.",
+      "outcome": "Task, TaskCreateInput, and ArchivedTaskEntry already include modelPresetId from Step 1 work; no additional code changes required."
+    },
+    {
+      "timestamp": "2026-03-31T08:58:37.516Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T08:58:44.172Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T08:58:54.222Z",
+      "action": "code review requested for Step 8 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T08:59:51.067Z",
+      "action": "code review Step 8: REVISE",
+      "outcome": "The test infrastructure is well-implemented with comprehensive coverage for model preset utilities, SettingsModal CRUD operations, NewTaskModal preset integration, and InlineCreateCard preset selection. However, a critical bug was identified where `modelPresetId` is not being persisted to the task during creation, which would cause the feature to fail at runtime despite passing tests."
+    },
+    {
+      "timestamp": "2026-03-31T09:00:37.662Z",
+      "action": "code review requested for Step 8 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T09:02:00.456Z",
+      "action": "code review Step 8: REVISE",
+      "outcome": "The implementation includes comprehensive tests for utility functions and UI components, but **critical data loss bugs** were found in the archive/unarchive flow where `modelPresetId` is not preserved. Additionally, server-side validation tests and the required changeset are missing."
+    },
+    {
+      "timestamp": "2026-03-31T09:02:56.402Z",
+      "action": "code review requested for Step 8 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T09:03:55.635Z",
+      "action": "code review Step 8: APPROVE",
+      "outcome": "The Step 8 implementation is comprehensive and well-executed. All test files have been properly updated with model preset defaults, new test cases cover the preset functionality across all UI surfaces (SettingsModal, NewTaskModal, InlineCreateCard), backend validation tests are in place, and utility functions have full unit test coverage. The changeset for the feature has been correctly created as a minor release."
+    },
+    {
+      "timestamp": "2026-03-31T09:04:00.143Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T09:04:29.369Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T09:04:49.436Z",
+  "createdAt": "2026-03-30T18:00:47.120Z",
+  "updatedAt": "2026-03-31T09:04:49.436Z",
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "size": "L",
+  "reviewLevel": 3,
+  "summary": "Implemented shared model preset types, dashboard settings validation, preset utilities, and preset-aware task creation flows in both NewTaskModal and InlineCreateCard. Added settings UI for managing presets and size-based auto-selection, plus persistence of modelPresetId through task creation, duplication, archive, and restore flows. Added targeted tests across utilities, UI components, routes, and store behavior. Full test/build execution is currently blocked in this worktree because workspace dependencies are not installed (vitest/types missing)."
+}

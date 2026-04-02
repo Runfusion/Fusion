@@ -1,0 +1,227 @@
+{
+  "id": "KB-070",
+  "description": "add even more themes - like https://github.com/dempfi/ayu and also one dark https://plugins.jetbrains.com/plugin/11938-one-dark-theme",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Theme Types to Core",
+      "status": "done"
+    },
+    {
+      "name": "Update Theme Hook Validation",
+      "status": "done"
+    },
+    {
+      "name": "Add Theme Selector UI Entries",
+      "status": "done"
+    },
+    {
+      "name": "Implement CSS Theme Variables",
+      "status": "done"
+    },
+    {
+      "name": "Add Light Mode Button Overrides (if needed)",
+      "status": "done"
+    },
+    {
+      "name": "Update Tests",
+      "status": "skipped"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-30T04:26:36.933Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T04:27:15.457Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:27:17.275Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T04:27:30.620Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is comprehensive, accurate, and follows established patterns. All referenced files exist at the specified paths, the CSS structure matches the existing theme system, and the testing requirements are appropriately rigorous. The work is correctly sized as Small with Review Level 1 (Plan Only)."
+    },
+    {
+      "timestamp": "2026-03-30T04:27:31.488Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, accurate, and ready for implementation. All file references are correct, the CSS theme patterns match existing conventions, and the testing requirements are clear with concrete assertions required. The mission is focused and the step breakdown follows the established theme implementation pattern."
+    },
+    {
+      "timestamp": "2026-03-30T06:18:45.373Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/keen-pine"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:45.373Z",
+      "action": "Step 0 (Add Theme Types to Core) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:52.389Z",
+      "action": "Step 0 (Add Theme Types to Core) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:52.392Z",
+      "action": "Step 0 (Add Theme Types to Core) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:52.395Z",
+      "action": "Step 1 (Update Theme Hook Validation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:52.397Z",
+      "action": "plan review requested for Step 1 (Add Theme Types to Core)"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:03.004Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is straightforward, correct, and follows the established codebase patterns. Adding \"ayu\" and \"one-dark\" to the `COLOR_THEMES` array in `packages/core/src/types.ts` will automatically propagate the new types via the `typeof COLOR_THEMES[number]` pattern. The build verification step ensures type safety."
+    },
+    {
+      "timestamp": "2026-03-30T06:19:19.365Z",
+      "action": "code review requested for Step 1 (Add Theme Types to Core)"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:35.191Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds \"ayu\" and \"one-dark\" to the `COLOR_THEMES` array in `packages/core/src/types.ts`. The build has been run successfully, and the generated type definitions in `dist/types.d.ts` properly reflect the new themes. The `ColorTheme` type is automatically derived via `typeof COLOR_THEMES[number]`, ensuring full type safety."
+    },
+    {
+      "timestamp": "2026-03-30T06:19:36.439Z",
+      "action": "Step 1 (Update Theme Hook Validation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:36.439Z",
+      "action": "Step 2 (Add Theme Selector UI Entries) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:36.439Z",
+      "action": "plan review requested for Step 2 (Update Theme Hook Validation)"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:45.423Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is straightforward and correct. It requires adding \"ayu\" and \"one-dark\" to the `validThemes` array in `useTheme.ts` and matching the order defined in the core `COLOR_THEMES` array. This aligns the hook's validation logic with the type system and ensures the new themes can be persisted and loaded from localStorage."
+    },
+    {
+      "timestamp": "2026-03-30T06:19:50.864Z",
+      "action": "code review requested for Step 2 (Update Theme Hook Validation)"
+    },
+    {
+      "timestamp": "2026-03-30T06:20:15.710Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds \"ayu\" and \"one-dark\" to the `validThemes` validation array in `useTheme.ts`. The order matches the `COLOR_THEMES` array in core types, and both the core build and dashboard typecheck pass successfully. The test updates are appropriately deferred to Step 6 as specified in the task plan."
+    },
+    {
+      "timestamp": "2026-03-30T06:20:16.845Z",
+      "action": "Step 2 (Add Theme Selector UI Entries) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:20:16.846Z",
+      "action": "Step 3 (Implement CSS Theme Variables) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:20:16.846Z",
+      "action": "plan review requested for Step 3 (Add Theme Selector UI Entries)"
+    },
+    {
+      "timestamp": "2026-03-30T06:20:29.264Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for Step 3 is clear, correct, and follows the established codebase patterns. Adding the two theme entries to the `COLOR_THEMES` array in `ThemeSelector.tsx` with the specified `value`, `label`, and `className` properties will correctly expose the new themes in the UI. The positioning instruction (Ayu between solarized and one-dark, with one-dark last) is sensible for alphabetical ordering."
+    },
+    {
+      "timestamp": "2026-03-30T06:20:36.706Z",
+      "action": "code review requested for Step 3 (Add Theme Selector UI Entries)"
+    },
+    {
+      "timestamp": "2026-03-30T06:20:56.422Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The Step 3 implementation correctly adds the Ayu and One Dark theme entries to the ThemeSelector component's `COLOR_THEMES` array. Both entries follow the established pattern with proper `value`, `label`, and `className` properties. Positioning is correct: Ayu is placed after \"solarized\" and One Dark is positioned as the final entry. The test file has not been modified yet, which is appropriate since test updates are scheduled for Step 6."
+    },
+    {
+      "timestamp": "2026-03-30T06:20:57.739Z",
+      "action": "Step 3 (Implement CSS Theme Variables) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:20:57.743Z",
+      "action": "Step 4 (Add Light Mode Button Overrides (if needed)) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:20:57.746Z",
+      "action": "plan review requested for Step 4 (Implement CSS Theme Variables)"
+    },
+    {
+      "timestamp": "2026-03-30T06:21:25.648Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The plan for Step 4 is well-structured and follows the established patterns in the codebase. The step correctly identifies the need for full palette overrides (backgrounds, surfaces, text, accents) for both Ayu (dark/light) and One Dark (dark-only) themes, plus the swatch classes. The approach aligns with how high-contrast and solarized themes are implemented."
+    },
+    {
+      "timestamp": "2026-03-30T06:21:41.967Z",
+      "action": "code review requested for Step 4 (Implement CSS Theme Variables)"
+    },
+    {
+      "timestamp": "2026-03-30T06:22:18.818Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The CSS theme variables for Ayu and One Dark themes are implemented correctly according to the specification. However, the tests have not been updated to reflect the new themes, causing test failures that violate the task's \"ZERO test failures allowed\" quality gate."
+    },
+    {
+      "timestamp": "2026-03-30T06:23:51.384Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:23:53.738Z",
+      "action": "code review requested for Step 4 (Implement CSS Theme Variables)"
+    },
+    {
+      "timestamp": "2026-03-30T06:24:53.020Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The CSS theme variable implementation for Ayu and One Dark themes is complete and correct. All color values match the specification exactly, both dark and light variants are properly defined, and the swatch classes follow the established pattern. The implementation properly includes the `--in-progress-rgb` variable used by the agent glow animation effects."
+    },
+    {
+      "timestamp": "2026-03-30T06:24:54.869Z",
+      "action": "Step 4 (Add Light Mode Button Overrides (if needed)) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:24:54.870Z",
+      "action": "Step 5 (Update Tests) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:24:59.776Z",
+      "action": "Step 5 (Update Tests) → skipped"
+    },
+    {
+      "timestamp": "2026-03-30T06:25:02.021Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:25:02.022Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:25:18.694Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:26:06.352Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T06:26:22.364Z",
+  "createdAt": "2026-03-30T04:26:36.933Z",
+  "updatedAt": "2026-03-30T06:26:22.364Z",
+  "size": "M",
+  "reviewLevel": 2
+}

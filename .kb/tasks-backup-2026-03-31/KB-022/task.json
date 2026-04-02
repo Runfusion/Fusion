@@ -1,0 +1,244 @@
+{
+  "id": "KB-022",
+  "description": "show a badge on a card with the github issue or pr number on the dashboard if it was imported from github or linked to a PR. clicking either opens the link on github in a new window. the badges should be colored based on the state of the issue/pr",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Extend Core Types for Issue Tracking",
+      "status": "done"
+    },
+    {
+      "name": "Add TaskStore Method for Issue Info",
+      "status": "done"
+    },
+    {
+      "name": "Add Server-Side Issue Status Endpoint",
+      "status": "done"
+    },
+    {
+      "name": "Add API Client Functions",
+      "status": "done"
+    },
+    {
+      "name": "Create GitHubBadge Component",
+      "status": "done"
+    },
+    {
+      "name": "Update TaskCard to Show Badges",
+      "status": "done"
+    },
+    {
+      "name": "Add CSS Styles",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 9,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:08:18.082Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:11:07.272Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:11:28.333Z",
+      "action": "Spec review: REVISE",
+      "outcome": "The specification is well-structured and mostly accurate, but contains a file scope inconsistency and references a non-existent README file. The component architecture needs clarification between `GitHubBadge.tsx` (unified) and `GitHubIssueBadge.tsx` (separate). All referenced source files, functions, and patterns exist and match the spec descriptions."
+    },
+    {
+      "timestamp": "2026-03-30T01:11:53.187Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:12:13.829Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and follows established patterns from the codebase. It correctly references real files, functions, and patterns (PrInfo type, updatePrInfo method, GitHubClient class, existing badge styles). The mission is clear, steps have concrete outcomes, and testing requirements are appropriately rigorous. Minor clarifications are noted below but do not block approval."
+    },
+    {
+      "timestamp": "2026-03-30T03:04:07.316Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/pale-flame"
+    },
+    {
+      "timestamp": "2026-03-30T03:04:07.317Z",
+      "action": "Step 0 (Extend Core Types for Issue Tracking) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T03:04:09.123Z",
+      "action": "Step 0 (Extend Core Types for Issue Tracking) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:04:16.808Z",
+      "action": "Step 0 (Extend Core Types for Issue Tracking) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:04:16.812Z",
+      "action": "Step 1 (Add TaskStore Method for Issue Info) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:04:18.802Z",
+      "action": "plan review requested for Step 1 (Extend Core Types for Issue Tracking)"
+    },
+    {
+      "timestamp": "2026-03-30T03:04:34.865Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is sound and follows the established `PrInfo` pattern correctly. The `IssueInfo` interface mirrors the structure of `PrInfo` while appropriately adapting to GitHub's issue-specific fields (`state` vs `status`, `stateReason` for closed categorization). The step is well-scoped with a clear verification step (build check)."
+    },
+    {
+      "timestamp": "2026-03-30T03:04:51.512Z",
+      "action": "Step 1 (Add TaskStore Method for Issue Info) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:04:51.515Z",
+      "action": "plan review requested for Step 2 (Add TaskStore Method for Issue Info)"
+    },
+    {
+      "timestamp": "2026-03-30T03:05:03.664Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 correctly identifies the pattern to follow from `updatePrInfo` and specifies all required behaviors: `withTaskLock` for atomicity, `task:updated` event emission, and logging for link/unlink actions. The IssueInfo type and Task.issueInfo field already exist from Step 1, so the implementation should proceed smoothly."
+    },
+    {
+      "timestamp": "2026-03-30T03:05:04.986Z",
+      "action": "Step 2 (Add Server-Side Issue Status Endpoint) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:05:16.447Z",
+      "action": "Step 2 (Add Server-Side Issue Status Endpoint) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:05:16.450Z",
+      "action": "plan review requested for Step 3 (Add Server-Side Issue Status Endpoint)"
+    },
+    {
+      "timestamp": "2026-03-30T03:05:35.375Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The step's approach has a critical architectural gap: it specifies parsing owner/repo from the current git remote (`getCurrentGitHubRepo`), but imported GitHub issues can reference **any** repository, not just the current one. The step also lacks clarity on how issue URLs are extracted from task descriptions, creating a risk of inconsistent logic between server and client. Additionally, the GitHub Issues API returns both issues and PRs, so the implementation needs to filter out PRs."
+    },
+    {
+      "timestamp": "2026-03-30T03:05:37.517Z",
+      "action": "Step 3 (Add API Client Functions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:06:13.383Z",
+      "action": "Step 3 (Add API Client Functions) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:06:13.385Z",
+      "action": "plan review requested for Step 4 (Add API Client Functions)"
+    },
+    {
+      "timestamp": "2026-03-30T03:06:31.243Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "Step 4 is well-defined and achievable. The checkboxes correctly specify adding two API client functions (`fetchIssueStatus` and `refreshIssueStatus`) to `packages/dashboard/app/api.ts` following the established pattern from PR functions. The server-side endpoints were already implemented in Step 3 (routes.ts lines 1676-1846), and the `IssueInfo` type exists in `@kb/core` (types.ts lines 28-35)."
+    },
+    {
+      "timestamp": "2026-03-30T03:06:32.606Z",
+      "action": "Step 4 (Create GitHubBadge Component) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:06:55.385Z",
+      "action": "Step 4 (Create GitHubBadge Component) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:06:55.387Z",
+      "action": "plan review requested for Step 5 (Create GitHubBadge Component)"
+    },
+    {
+      "timestamp": "2026-03-30T03:07:09.644Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan for Step 5 is clear, well-scoped, and follows established codebase patterns. The unified GitHubBadge component design correctly abstracts both PR and Issue badges into a single presentational component that receives data via props. Color schemes align with existing PrSection.tsx patterns and GitHub's standard colors."
+    },
+    {
+      "timestamp": "2026-03-30T03:07:10.587Z",
+      "action": "Step 5 (Update TaskCard to Show Badges) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:07:25.148Z",
+      "action": "Step 5 (Update TaskCard to Show Badges) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:07:25.150Z",
+      "action": "plan review requested for Step 6 (Update TaskCard to Show Badges)"
+    },
+    {
+      "timestamp": "2026-03-30T03:07:53.643Z",
+      "action": "plan review Step 6: REVISE",
+      "outcome": "The plan will partially work but has a critical omission: it doesn't pass `issueInfo` to the GitHubBadge component, which means issue badges won't display even though the server-side infrastructure from Steps 1-4 already populates this data. Additionally, the client-side fetching logic with `useEffect` is duplicative of the server-side caching already implemented."
+    },
+    {
+      "timestamp": "2026-03-30T03:07:55.898Z",
+      "action": "Step 6 (Add CSS Styles) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:08:09.211Z",
+      "action": "Step 6 (Add CSS Styles) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:08:09.211Z",
+      "action": "plan review requested for Step 7 (Add CSS Styles)"
+    },
+    {
+      "timestamp": "2026-03-30T03:08:34.168Z",
+      "action": "plan review Step 7: APPROVE",
+      "outcome": "The step correctly identifies the need to add CSS styles for the GitHub badges that will be rendered by the GitHubBadge component. The base styling specifications (font size 11px, padding 2px 6px, border radius 10px, inline-flex) are appropriate for a compact card header badge. The modifier classes align with the component's implementation in Step 5, which applies classes like `card-github-badge--${prInfo.status}` and `card-github-badge--completed`."
+    },
+    {
+      "timestamp": "2026-03-30T03:08:35.126Z",
+      "action": "Step 7 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:08:50.597Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:08:50.597Z",
+      "action": "plan review requested for Step 8 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T03:09:19.435Z",
+      "action": "plan review Step 8: REVISE",
+      "outcome": "The test plan for Step 8 is mostly sound but contains a significant mismatch with the actual implementation. The plan calls for testing an `extractIssueUrl` helper function in TaskCard.test.tsx, but this function doesn't exist in TaskCard.tsx—issue URL extraction is handled server-side in `routes.ts` via `parseGitHubIssueUrl`. The frontend simply displays cached `task.issueInfo` passed from the backend. This will cause confusion and test failures when the worker tries to test a non-existent func"
+    },
+    {
+      "timestamp": "2026-03-30T03:09:21.397Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T03:10:38.509Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T03:10:38.512Z",
+      "action": "plan review requested for Step 9 (Documentation & Delivery)"
+    },
+    {
+      "timestamp": "2026-03-30T03:11:07.906Z",
+      "action": "plan review Step 9: APPROVE",
+      "outcome": "Step 9 is a straightforward documentation and delivery step. The implementation is complete across all prior steps (1-8), with all components properly integrated: IssueInfo type in core, updateIssueInfo in TaskStore, server endpoints in routes.ts, GitHubClient.getIssueStatus method, API client functions, GitHubBadge component with proper styling, and comprehensive tests. The only remaining task is to create the changeset file."
+    },
+    {
+      "timestamp": "2026-03-30T03:12:05.998Z",
+      "action": "Completed KB-022 - GitHub Badges on Task Cards",
+      "outcome": "Successfully implemented GitHub badges on task cards:\n\n1. Added IssueInfo type to @kb/core with state, stateReason, and lastCheckedAt fields\n2. Added updateIssueInfo method to TaskStore following PR pattern\n3. Created server-side endpoints GET /tasks/:id/issue/status and POST /tasks/:id/issue/refresh with background refresh\n4. Added getIssueStatus method to GitHubClient with PR filtering\n5. Added API client functions fetchIssueStatus and refreshIssueStatus\n6. Created GitHubBadge component supporting both PR and Issue badges with correct colors\n7. Updated TaskCard to use GitHubBadge component, removing old in-review-only PR badge\n8. Added CSS styles for badges with hover effects\n9. Created comprehensive tests (21 GitHubBadge tests + 7 new TaskCard tests)\n10. Created changeset for minor version bump\n\nOut-of-scope work captured as KB-063 (WebSocket real-time updates) and KB-064 (batch fetching)."
+    },
+    {
+      "timestamp": "2026-03-30T03:12:06.844Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T03:12:20.519Z",
+  "createdAt": "2026-03-30T01:08:18.082Z",
+  "updatedAt": "2026-03-30T03:12:20.519Z",
+  "size": "M",
+  "reviewLevel": 2
+}

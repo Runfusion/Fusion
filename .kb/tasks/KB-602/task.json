@@ -1,0 +1,244 @@
+{
+  "id": "KB-602",
+  "description": "Several task operations are failing because they are still referencing file paths rather than database. Audit and make sure features work with the database backed task system.",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 6,
+  "modelProvider": "openai-codex",
+  "modelId": "gpt-5.4",
+  "summary": "Hardened TaskStore hybrid-storage file operations so task directories are recreated on demand before writing task.json, PROMPT.md, and agent.log, and documented the SQLite-first/blob-on-disk contract in store.ts. Added regression coverage for missing-directory and missing-file scenarios across pause/update/comment/log/attachment/updateTask flows plus SQLite-first getTask behavior. Verified with passing core tests and a successful workspace build; a changeset was added for the published CLI package.",
+  "createdAt": "2026-03-31T21:39:12.310Z",
+  "updatedAt": "2026-04-01T00:30:40.417Z",
+  "columnMovedAt": "2026-04-01T00:30:40.417Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Audit All File-Based Operations",
+      "status": "done"
+    },
+    {
+      "name": "Add Defensive Directory Creation to Write Operations",
+      "status": "done"
+    },
+    {
+      "name": "Ensure Graceful Handling of Missing Files in Read Operations",
+      "status": "done"
+    },
+    {
+      "name": "Add Comprehensive Tests for Missing Directory Scenarios",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:39:12.310Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:45:43.149Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:46:06.914Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a defensive fix task. The mission is clear: audit and harden file-based operations to work correctly when task directories are missing in the hybrid SQLite+filesystem storage model. The step breakdown is logical, moving from audit → write fixes → read handling → comprehensive tests. Testing requirements properly demand real assertions, not just typechecks."
+    },
+    {
+      "timestamp": "2026-03-31T23:38:24.207Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/rosy-marsh"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:24.208Z",
+      "action": "Step 0 (Audit All File-Based Operations) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:28.987Z",
+      "action": "Step 0 (Audit All File-Based Operations) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:38.799Z",
+      "action": "Started KB-602 preflight audit",
+      "outcome": "Located TaskStore file operations and confirmed task prompt spec is embedded in user message; repository PROMPT.md file is not present in worktree root."
+    },
+    {
+      "timestamp": "2026-03-31T23:38:50.672Z",
+      "action": "Step 0 (Audit All File-Based Operations) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:52.701Z",
+      "action": "Step 1 (Add Defensive Directory Creation to Write Operations) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:38:54.962Z",
+      "action": "plan review requested for Step 1 (Add Defensive Directory Creation to Write Operations)"
+    },
+    {
+      "timestamp": "2026-03-31T23:39:33.499Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan's overall direction is correct—defensive directory creation is needed for robustness. However, there are several inaccuracies in the plan's analysis of the current codebase state. Notably, `atomicWriteTaskJson` already includes defensive `mkdir`, making many listed operations already protected. Only `appendAgentLog` and the PROMPT.md write in `updateTask` actually need fixes."
+    },
+    {
+      "timestamp": "2026-03-31T23:41:16.722Z",
+      "action": "code review requested for Step 1 (Add Defensive Directory Creation to Write Operations)"
+    },
+    {
+      "timestamp": "2026-03-31T23:41:50.608Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly adds defensive directory creation (`mkdir(dir, { recursive: true })`) to all file write operations in TaskStore. A comprehensive class-level documentation comment explains the hybrid storage architecture, and 7 new tests verify directory recreation across all affected operations. All write paths now ensure directories exist before writing, and read operations already handle missing files gracefully via `existsSync` checks."
+    },
+    {
+      "timestamp": "2026-03-31T23:41:53.641Z",
+      "action": "Completed Step 1 write-path hardening",
+      "outcome": "Added hybrid-storage guidance comment, ensured PROMPT.md and agent.log writes recreate missing task directories, and added regression tests covering missing-directory recovery for write-heavy operations."
+    },
+    {
+      "timestamp": "2026-03-31T23:41:55.379Z",
+      "action": "Step 1 (Add Defensive Directory Creation to Write Operations) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:41:57.071Z",
+      "action": "Step 2 (Ensure Graceful Handling of Missing Files in Read Operations) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:41:59.447Z",
+      "action": "plan review requested for Step 2 (Ensure Graceful Handling of Missing Files in Read Operations)"
+    },
+    {
+      "timestamp": "2026-03-31T23:42:25.037Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The plan for Step 2 is accurate and well-defined. All the file read operations mentioned in the checkboxes already have proper graceful handling implemented in `packages/core/src/store.ts`. The step correctly identifies that verification is the primary goal since the code already uses `existsSync` guards before reading optional blob files. The only gap is missing explicit test coverage for these graceful handling scenarios, which should be added in Step 4."
+    },
+    {
+      "timestamp": "2026-03-31T23:43:14.864Z",
+      "action": "code review requested for Step 2 (Ensure Graceful Handling of Missing Files in Read Operations)"
+    },
+    {
+      "timestamp": "2026-03-31T23:43:55.635Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The read operations in `store.ts` already implement proper graceful handling for missing files. All six identified read operations correctly use `existsSync` checks before attempting file reads and return appropriate default values when files are missing. The test suite includes comprehensive coverage for missing directory scenarios across `parseDependenciesFromPrompt`, `parseFileScopeFromPrompt`, and `getAgentLogs`."
+    },
+    {
+      "timestamp": "2026-03-31T23:43:58.044Z",
+      "action": "Step 2 (Ensure Graceful Handling of Missing Files in Read Operations) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:44:00.282Z",
+      "action": "Step 3 (Add Comprehensive Tests for Missing Directory Scenarios) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:44:08.312Z",
+      "action": "plan review requested for Step 3 (Add Comprehensive Tests for Missing Directory Scenarios)"
+    },
+    {
+      "timestamp": "2026-03-31T23:44:54.799Z",
+      "action": "plan review Step 3: RETHINK",
+      "outcome": "The plan's Step 3 is fundamentally misaligned with the actual codebase state. The step lists \"verification\" checkboxes for graceful handling of missing files, but **all the listed behaviors are already implemented and already tested**. The step appears to have been written based on an outdated understanding of the codebase and references non-existent methods (`readPrompt`, `specifyTask`, `rewriteTask`, `respecifyTask`)."
+    },
+    {
+      "timestamp": "2026-03-31T23:44:54.800Z",
+      "action": "Step 3 (Add Comprehensive Tests for Missing Directory Scenarios) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T23:44:54.801Z",
+      "action": "RETHINK: Step 3 plan rewound — session checkpoint c0a85b84",
+      "outcome": "The plan's Step 3 is fundamentally misaligned with the actual codebase state. The step lists \"verification\" checkboxes for graceful handling of missing files, but **all the listed behaviors are already implemented and already tested**. The step appears to have been written based on an outdated understanding of the codebase and references non-existent methods (`readPrompt`, `specifyTask`, `rewriteTask`, `respecifyTask`)."
+    },
+    {
+      "timestamp": "2026-03-31T23:44:57.111Z",
+      "action": "Step 3 plan review required replanning",
+      "outcome": "Reviewer identified the prompt references outdated/nonexistent methods. Reframed the step as validating actual remaining read-path gap instead of repeating already-covered checks."
+    },
+    {
+      "timestamp": "2026-03-31T23:45:00.050Z",
+      "action": "plan review requested for Step 3 (Verify remaining read-path gap by adding missing-directory coverage for parseStepsFromPrompt and confirming existing graceful-read behaviors)"
+    },
+    {
+      "timestamp": "2026-03-31T23:45:21.531Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "Step 3 involves verifying that all file READ operations handle missing files/directories gracefully. After reviewing the codebase, all read operations already have proper `existsSync` guards in place. The only test coverage gap is for `parseStepsFromPrompt`, which needs a missing-directory test added. The implementation is already correct, just needs verification testing."
+    },
+    {
+      "timestamp": "2026-03-31T23:45:35.164Z",
+      "action": "code review requested for Step 3 (Verify remaining read-path gap by adding missing-directory coverage for parseStepsFromPrompt and confirming existing graceful-read behaviors)"
+    },
+    {
+      "timestamp": "2026-03-31T23:46:16.285Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The worker has correctly implemented Step 3 by adding test coverage for missing directory scenarios in the three parse methods (`parseStepsFromPrompt`, `parseDependenciesFromPrompt`, `parseFileScopeFromPrompt`). All the read-path methods already had graceful handling for missing files/directories via `existsSync` checks, and the new tests confirm this behavior works correctly when entire task directories are missing."
+    },
+    {
+      "timestamp": "2026-03-31T23:46:19.156Z",
+      "action": "Step 3 (Add Comprehensive Tests for Missing Directory Scenarios) → done"
+    },
+    {
+      "timestamp": "2026-03-31T23:46:21.404Z",
+      "action": "Step 4 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T23:46:23.078Z",
+      "action": "plan review requested for Step 4 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-31T23:47:06.594Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The Step 4 plan lists tests for missing directory scenarios that are **already implemented** in `store.test.ts`. However, there's a critical discrepancy: the task PROMPT.md references methods (`specifyTask`, `rewriteTask`, `respecifyTask`) that **do not exist** in the codebase. The plan needs adjustment to reflect the actual implementation state and either add the missing `unpauseTask` test or document why it's not needed."
+    },
+    {
+      "timestamp": "2026-03-31T23:47:09.288Z",
+      "action": "Step 4 plan review requested revision",
+      "outcome": "Adjusted verification focus to actual codebase state: run suite/build, note outdated prompt references, and add one small missing regression for getTask returning SQLite data when prompt/blob directory is gone."
+    },
+    {
+      "timestamp": "2026-03-31T23:47:11.855Z",
+      "action": "plan review requested for Step 4 (Run tests and build, plus add a final regression proving getTask still returns SQLite-backed task data when the task directory is missing)"
+    },
+    {
+      "timestamp": "2026-03-31T23:47:44.885Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "The step is clear and achievable. The codebase already has comprehensive tests for missing directory scenarios in the `describe(\"directory recreation for file-backed blobs\")` block at line 813 of `store.test.ts`. The \"final regression\" test for `getTask` is the only missing piece—it should prove that `getTask` returns SQLite-backed metadata even when the task directory is entirely absent, demonstrating the hybrid storage model works correctly."
+    },
+    {
+      "timestamp": "2026-03-31T23:59:06.401Z",
+      "action": "Task terminated due to stuck agent session (no activity for ~10 minutes)"
+    },
+    {
+      "timestamp": "2026-04-01T00:29:08.771Z",
+      "action": "Verification results for KB-602",
+      "outcome": "Installed workspace dependencies, fixed two invalid new tests revealed by the suite, then reran tests and build successfully. Full `pnpm test` passed for core, but the top-level command exceeds tool timeout while engine test output continues; targeted verification plus successful `pnpm build` confirmed no regressions in changed areas."
+    },
+    {
+      "timestamp": "2026-04-01T00:29:17.241Z",
+      "action": "code review requested for Step 4 (Run tests and build, plus add a final regression proving getTask still returns SQLite-backed task data when the task directory is missing)"
+    },
+    {
+      "timestamp": "2026-04-01T00:29:56.093Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation successfully adds comprehensive test coverage for missing directory scenarios and includes a final regression test proving `getTask` returns SQLite-backed task data when the task directory is missing. All defensive `mkdir` calls were added in Step 2, and this step verifies they work correctly through rigorous testing."
+    },
+    {
+      "timestamp": "2026-04-01T00:29:58.961Z",
+      "action": "Step 4 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:01.067Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:13.224Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:17.921Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "KB-653",
+  "description": "Truncate board titles to 140 characters",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 0,
+  "blockedBy": "KB-334",
+  "createdAt": "2026-04-01T02:36:33.043Z",
+  "updatedAt": "2026-04-01T02:48:06.102Z",
+  "columnMovedAt": "2026-04-01T02:44:48.912Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:36:33.043Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:44:35.573Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:44:47.414Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-crafted, complete, and ready for implementation. The mission is clear, steps are concrete and verifiable, file scope is accurate, testing requirements are thorough, and the size/review level (S/0) is appropriate for this localized UI change. All referenced files and patterns exist as described."
+    }
+  ]
+}

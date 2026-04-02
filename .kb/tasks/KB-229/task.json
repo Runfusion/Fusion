@@ -1,0 +1,310 @@
+{
+  "id": "KB-229",
+  "title": "For scheduled tasks have the option to add a",
+  "description": "For scheduled tasks, have the option to add a series of steps - each step can either be a command that is run or an ai prompt (with the ability to select a model). you can add or remove steps and reorder them. Ensure all steps are run",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Core Data Model — Add Step Types",
+      "status": "done"
+    },
+    {
+      "name": "Core Store — Update CRUD for Steps",
+      "status": "done"
+    },
+    {
+      "name": "Engine — Refactor CronRunner for Step Execution",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard API — Update Routes for Steps",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard UI — Create Step Editor Components",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard UI — Update Schedule Display",
+      "status": "done"
+    },
+    {
+      "name": "Dashboard API Client — Update Types and Functions",
+      "status": "done"
+    },
+    {
+      "name": "Styling",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 10,
+  "log": [
+    {
+      "timestamp": "2026-03-31T00:20:46.841Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T00:22:25.711Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T00:22:46.901Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, comprehensive specification for extending the scheduled task system with multi-step workflows. The spec correctly identifies all affected files, maintains backward compatibility, and includes thorough testing requirements. The step breakdown is logical, with clear dependencies between data model → store → engine → API → UI layers."
+    },
+    {
+      "timestamp": "2026-03-31T11:20:43.039Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/cool-quail"
+    },
+    {
+      "timestamp": "2026-03-31T11:20:43.040Z",
+      "action": "Step 0 (Core Data Model — Add Step Types) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T11:20:47.208Z",
+      "action": "Step 0 (Core Data Model — Add Step Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T11:22:34.219Z",
+      "action": "Preflight complete. All existing tests pass. Build succeeds. Context files reviewed."
+    },
+    {
+      "timestamp": "2026-03-31T11:22:38.377Z",
+      "action": "Step 0 (Core Data Model — Add Step Types) → done"
+    },
+    {
+      "timestamp": "2026-03-31T11:22:41.640Z",
+      "action": "Step 1 (Core Store — Update CRUD for Steps) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T11:22:44.865Z",
+      "action": "plan review requested for Step 1 (Core Data Model — Add Step Types)"
+    },
+    {
+      "timestamp": "2026-03-31T11:23:29.466Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan is clear, well-scoped, and the additions are straightforward. The existing `automation.ts` file is compact, so the additions slot cleanly into an established pattern. The main thing to flag is a backward-compatibility tension in `ScheduledTaskCreateInput` where `command` is currently required but the plan says to add optional `steps?` — the plan handles this correctly by keeping `command` for backward compat, but the validator in `automation-store.ts` will need to be relaxed in Step 2 ("
+    },
+    {
+      "timestamp": "2026-03-31T11:24:19.610Z",
+      "action": "code review requested for Step 1 (Core Data Model — Add Step Types)"
+    },
+    {
+      "timestamp": "2026-03-31T11:25:51.322Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The implementation correctly delivers all required type definitions for Step 1. `AutomationStepType`, `AutomationStep`, `AutomationStepResult`, and `currentStepIndex` are all added with appropriate JSDoc comments, backward-compatible placement in `ScheduledTask`, and proper exports from `index.ts`. The scope is exactly what Step 1 describes — pure type changes, no logic changes needed."
+    },
+    {
+      "timestamp": "2026-03-31T11:25:53.811Z",
+      "action": "Step 1 (Core Store — Update CRUD for Steps) → done"
+    },
+    {
+      "timestamp": "2026-03-31T11:25:57.213Z",
+      "action": "Step 2 (Engine — Refactor CronRunner for Step Execution) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T11:25:59.980Z",
+      "action": "plan review requested for Step 2 (Core Store — Update CRUD for Steps)"
+    },
+    {
+      "timestamp": "2026-03-31T11:26:46.924Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "Step 1 is confirmed complete — all new types (`AutomationStep`, `AutomationStepType`, `AutomationStepResult`, updated `ScheduledTask`, `ScheduledTaskCreateInput`, `ScheduledTaskUpdateInput`) are already in `automation.ts` and exported from `index.ts`. The Step 2 plan is mostly sound but has one blocking correctness issue: `createSchedule` currently enforces `command` as unconditionally required (line 124–127 of `automation-store.ts`), but with multi-step support `command` must become optional wh"
+    },
+    {
+      "timestamp": "2026-03-31T11:28:09.305Z",
+      "action": "code review requested for Step 2 (Core Store — Update CRUD for Steps)"
+    },
+    {
+      "timestamp": "2026-03-31T11:30:11.298Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The implementation correctly adds step support to `AutomationStore` with `createSchedule`, `updateSchedule`, and the new `reorderSteps` method. All new behaviors are tested with good coverage (persistence round-trips, event emission, error paths). Two minor issues exist: a semantic inconsistency in `updateSchedule` when clearing a command while simultaneously setting steps, and a missing guard in `reorderSteps` for duplicate step IDs — but neither causes a regression in the currently exercised p"
+    },
+    {
+      "timestamp": "2026-03-31T11:30:14.166Z",
+      "action": "Step 2 (Engine — Refactor CronRunner for Step Execution) → done"
+    },
+    {
+      "timestamp": "2026-03-31T11:30:19.720Z",
+      "action": "Step 3 (Dashboard API — Update Routes for Steps) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T11:30:22.182Z",
+      "action": "plan review requested for Step 3 (Engine — Refactor CronRunner for Step Execution)"
+    },
+    {
+      "timestamp": "2026-03-31T11:31:18.972Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "Steps 1 and 2 are already complete — the data model (`AutomationStep`, `AutomationStepResult`, updated `AutomationRunResult` with `stepResults?`) and store (`reorderSteps`) are fully in place. The cron-runner is still on legacy-only mode and needs the multi-step execution layer added on top of a solid foundation. The plan as written is sound and achievable; the main gap to watch is the AI prompt step implementation, which requires careful design of the `cwd` and session lifecycle that the plan u"
+    },
+    {
+      "timestamp": "2026-03-31T11:32:59.422Z",
+      "action": "code review requested for Step 3 (Engine — Refactor CronRunner for Step Execution)"
+    },
+    {
+      "timestamp": "2026-03-31T11:35:23.883Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation fully covers all Step 3 checklist items. The `CronRunner` is cleanly refactored into legacy-mode and step-mode paths, the `executeSteps`/`executeStep`/`executeCommandStep`/`executeAiPromptStep` decomposition is clear and correct, and the test suite comprehensively exercises all required scenarios including timeouts, failure handling, `continueOnFailure`, AI prompt mocking, and output aggregation."
+    },
+    {
+      "timestamp": "2026-03-31T11:35:27.218Z",
+      "action": "Step 3 (Dashboard API — Update Routes for Steps) → done"
+    },
+    {
+      "timestamp": "2026-03-31T11:35:30.500Z",
+      "action": "Step 4 (Dashboard UI — Create Step Editor Components) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T11:35:34.046Z",
+      "action": "plan review requested for Step 4 (Dashboard API — Update Routes for Steps)"
+    },
+    {
+      "timestamp": "2026-03-31T11:36:23.180Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The prior steps (Steps 1–3) have already implemented the data model, store methods, and exported the new types. The plan for Step 4 correctly identifies the main work: update POST/PATCH `/api/automations` to accept `steps`, add the `/steps/reorder` endpoint, and verify GET already returns steps. However, there are two issues that will cause the step to miss its stated requirements and introduce a runtime bug."
+    },
+    {
+      "timestamp": "2026-03-31T11:39:01.780Z",
+      "action": "code review requested for Step 4 (Dashboard API — Update Routes for Steps)"
+    },
+    {
+      "timestamp": "2026-03-31T11:40:55.278Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation correctly satisfies all Step 4 requirements from the PROMPT.md. The `POST /api/automations` and `PATCH /api/automations/:id` routes accept and validate `steps`, the `POST /api/automations/:id/steps/reorder` endpoint is implemented, and `GET /api/automations/:id` naturally returns `steps` via the unchanged store passthrough. The `validateAutomationSteps` helper enforces all the validation rules specified (id, type, name required; command required for command steps; prompt requi"
+    },
+    {
+      "timestamp": "2026-03-31T11:40:58.224Z",
+      "action": "Step 4 (Dashboard UI — Create Step Editor Components) → done"
+    },
+    {
+      "timestamp": "2026-03-31T11:41:01.332Z",
+      "action": "Step 5 (Dashboard UI — Update Schedule Display) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T11:41:03.891Z",
+      "action": "plan review requested for Step 5 (Dashboard UI — Create Step Editor Components)"
+    },
+    {
+      "timestamp": "2026-03-31T11:43:07.886Z",
+      "action": "plan review Step 5: APPROVE",
+      "outcome": "The plan is well-scoped and builds cleanly on the solid foundations laid in Steps 1–4 (types, store, engine, routes are all in place). The three new components (`ScheduleStepsEditor`, `StepEditorModal`/inline editor, `StepTypeBadge`) plus modifications to `ScheduleForm` are all reasonable decompositions of the work. One actionable gap needs attention before submission: the `api.ts` `createAutomation`/`updateAutomation` functions **destructure `steps` out** of the input (Steps 1–4 already establi"
+    },
+    {
+      "timestamp": "2026-03-31T11:44:58.059Z",
+      "action": "code review requested for Step 5 (Dashboard UI — Create Step Editor Components)"
+    },
+    {
+      "timestamp": "2026-03-31T11:48:31.558Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "All three required new components (`ScheduleStepsEditor.tsx`, `StepTypeBadge.tsx`, and `ScheduleForm.tsx` update) are implemented. The inline step editor in `ScheduleStepsEditor.tsx` is acceptable per the PROMPT's \"or inline editor\" wording. The logic is solid: validation works, mode-switching initializes correctly from existing schedule data, empty command in advanced mode is handled correctly server-side, and the components integrate cleanly. Two notable gaps — the `ScheduleStepsEditor.test.ts"
+    },
+    {
+      "timestamp": "2026-03-31T11:48:36.255Z",
+      "action": "Step 5 (Dashboard UI — Update Schedule Display) → done"
+    },
+    {
+      "timestamp": "2026-03-31T11:48:39.562Z",
+      "action": "Step 6 (Dashboard API Client — Update Types and Functions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T11:48:42.161Z",
+      "action": "plan review requested for Step 6 (Dashboard UI — Update Schedule Display)"
+    },
+    {
+      "timestamp": "2026-03-31T11:50:19.543Z",
+      "action": "plan review Step 6: APPROVE",
+      "outcome": "Step 6 is narrowly scoped to `ScheduleCard.tsx` and its test file. The data model (`AutomationStepResult`, `stepResults` on `AutomationRunResult`, `steps` on `ScheduledTask`) is already complete from earlier steps, so the worker has everything they need to implement the three checkboxes. The existing `ScheduleCard.tsx` currently has zero step-awareness; the plan correctly identifies it as the only artifact. The approach is straightforward and there are no structural risks."
+    },
+    {
+      "timestamp": "2026-03-31T11:51:23.306Z",
+      "action": "code review requested for Step 6 (Dashboard UI — Update Schedule Display)"
+    },
+    {
+      "timestamp": "2026-03-31T11:54:12.753Z",
+      "action": "code review Step 6: REVISE",
+      "outcome": "The core logic in `ScheduleCard.tsx` correctly implements the step count badge, backward-compatible command preview, and per-step run history display. However, the implementation has two significant gaps: (1) all new CSS class names introduced in this step (`schedule-steps-badge`, `schedule-command-preview`, `schedule-meta-command-preview`, `step-results-indicator`, `step-result-dot`, `schedule-step-result`, `schedule-step-result-status`, `schedule-step-result-name`, `schedule-step-result-error`"
+    },
+    {
+      "timestamp": "2026-03-31T11:55:40.592Z",
+      "action": "code review requested for Step 6 (Dashboard UI — Update Schedule Display)"
+    },
+    {
+      "timestamp": "2026-03-31T11:57:23.232Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "The implementation fully satisfies the Step 6 requirements: `ScheduleCard.tsx` now shows a \"X steps\" badge (with `Layers` icon) for multi-step schedules, falls back to the legacy command preview for single-command schedules, renders `StepResultIndicator` dots in run history row headers, and expands to per-step detail on click. CSS for all new classes lands in `styles.css`. Tests in `ScheduleCard.test.tsx` cover every new behaviour listed in the spec. Backward compatibility with legacy single-com"
+    },
+    {
+      "timestamp": "2026-03-31T11:57:26.788Z",
+      "action": "Step 6 (Dashboard API Client — Update Types and Functions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T11:57:30.474Z",
+      "action": "Step 7 (Styling) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T11:57:33.567Z",
+      "action": "plan review requested for Step 7 (Dashboard API Client — Update Types and Functions)"
+    },
+    {
+      "timestamp": "2026-03-31T11:58:45.945Z",
+      "action": "plan review Step 7: REVISE",
+      "outcome": "Step 7 has two concrete gaps relative to its checklist. First, `createAutomation` and `updateAutomation` in `api.ts` still explicitly destructure and serialize only the legacy fields — `steps` is present in the `ScheduledTaskCreateInput` / `ScheduledTaskUpdateInput` types (already updated in Step 1) but is silently **dropped** when the body is serialized. Second, the `reorderAutomationSteps` function does not exist yet. The route is ready (`POST /api/automations/:id/steps/reorder`), but there is"
+    },
+    {
+      "timestamp": "2026-03-31T11:59:25.674Z",
+      "action": "code review requested for Step 7 (Dashboard API Client — Update Types and Functions)"
+    },
+    {
+      "timestamp": "2026-03-31T12:00:16.897Z",
+      "action": "code review Step 7: APPROVE",
+      "outcome": "The implementation correctly fulfills all three Step 7 requirements: `AutomationStep` is imported from `@kb/core`, `ScheduledTaskCreateInput` and `ScheduledTaskUpdateInput` are used as the typed parameter objects for `createAutomation` and `updateAutomation` (with `steps` now destructured and forwarded), and `reorderAutomationSteps` is implemented correctly targeting `POST /api/automations/:id/steps/reorder` with a `{ stepIds }` body — matching the server route exactly. The `AutomationStep` impo"
+    },
+    {
+      "timestamp": "2026-03-31T12:00:20.406Z",
+      "action": "Step 7 (Styling) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:00:23.991Z",
+      "action": "Step 8 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:00:35.463Z",
+      "action": "Step 8 (Styling) was already completed as part of Step 6 CSS revision. All step-related styles are in styles.css."
+    },
+    {
+      "timestamp": "2026-03-31T12:00:43.713Z",
+      "action": "Step 8 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:00:46.863Z",
+      "action": "Step 9 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T12:13:37.037Z",
+      "action": "Step 9 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T12:14:24.706Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T12:14:36.925Z",
+  "createdAt": "2026-03-31T00:20:46.841Z",
+  "updatedAt": "2026-03-31T12:14:36.925Z",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "validatorModelProvider": "anthropic",
+  "validatorModelId": "claude-sonnet-4-6",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Implemented multi-step scheduled tasks with command and AI prompt step types. Added `AutomationStep`, `AutomationStepType`, and `AutomationStepResult` types to core; updated `AutomationStore` CRUD with step persistence and `reorderSteps()`; refactored `CronRunner` for sequential step execution with per-step timeouts and `continueOnFailure` handling; updated all dashboard API routes including a new `/steps/reorder` endpoint; created `ScheduleStepsEditor` and `StepTypeBadge` UI components; updated `ScheduleForm` with Simple/Multi-Step mode toggle; updated `ScheduleCard` with step count badges and per-step run history display. Added 68 new tests across all packages (48 core, 32 engine, 24 card, 19 editor, 20 form) with zero test regressions. Build passes cleanly."
+}

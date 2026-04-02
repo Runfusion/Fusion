@@ -1,0 +1,78 @@
+{
+  "id": "KB-190",
+  "description": "Prevent zoom on the mobile view of dashboard",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Update Viewport Meta Tag to Disable Zoom",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 3,
+  "log": [
+    {
+      "timestamp": "2026-03-30T18:05:57.948Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T18:06:45.305Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T18:06:54.142Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, precise specification for a single-line viewport meta tag change. All file references are accurate, steps have concrete verifiable outcomes, and the scope is appropriately bounded. The review level of 0 is justified given the minimal blast radius and reversible nature of the change."
+    },
+    {
+      "timestamp": "2026-03-30T19:26:44.490Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/crisp-lark"
+    },
+    {
+      "timestamp": "2026-03-30T19:26:44.491Z",
+      "action": "Step 0 (Update Viewport Meta Tag to Disable Zoom) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T19:26:46.381Z",
+      "action": "Step 0 (Update Viewport Meta Tag to Disable Zoom) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:26:50.815Z",
+      "action": "Step 0 (Update Viewport Meta Tag to Disable Zoom) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:26:50.816Z",
+      "action": "Step 1 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T19:29:42.453Z",
+      "action": "Step 1 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:29:42.454Z",
+      "action": "Step 2 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T19:29:47.732Z",
+      "action": "Completed viewport meta tag update to prevent mobile zoom",
+      "outcome": "viewport meta tag now includes maximum-scale=1.0 and user-scalable=no. Core tests (224) and engine tests (536) pass. Dashboard builds successfully. Pre-existing dashboard test failures are unrelated to this change (EventSource mocking issues)."
+    },
+    {
+      "timestamp": "2026-03-30T19:29:48.947Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T19:30:00.313Z",
+  "createdAt": "2026-03-30T18:05:57.948Z",
+  "updatedAt": "2026-03-30T19:30:00.313Z",
+  "size": "S",
+  "reviewLevel": 0
+}

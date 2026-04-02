@@ -1,0 +1,112 @@
+{
+  "id": "KB-056",
+  "description": "Fix pre-existing test failure in dashboard routes.test.ts: GET /models returns 404 when registry has no available models, but test expects 200 with empty array",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Verify Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Verify Test Coverage",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 4,
+  "log": [
+    {
+      "timestamp": "2026-03-30T02:55:46.397Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T02:58:41.318Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T02:58:58.287Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured, focused specification for verifying the GET /models endpoint behavior. The mission is clear, steps have concrete verifiable outcomes, and testing requirements demand real automated tests. The file references are accurate (with one minor line number correction needed). The S-size and Review Level 1 are appropriate for this verification task."
+    },
+    {
+      "timestamp": "2026-03-30T06:18:45.257Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/crisp-panda"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:45.258Z",
+      "action": "Step 0 (Verify Implementation) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:46.481Z",
+      "action": "Step 0 (Verify Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:59.428Z",
+      "action": "Step 0 (Verify Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:18:59.431Z",
+      "action": "Step 1 (Verify Test Coverage) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:03.212Z",
+      "action": "plan review requested for Step 1 (Verify Implementation)"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:11.971Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan correctly identifies the verification scope for Step 1. The implementation in `routes.ts` already handles both empty-registry scenarios correctly (returns `[]` with status 200), and all four test cases in the test suite exist with correct expectations. No changes to behavior are required—this is purely a verification task as specified in the mission."
+    },
+    {
+      "timestamp": "2026-03-30T06:19:15.469Z",
+      "action": "Step 1 (Verify Test Coverage) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:15.472Z",
+      "action": "Step 2 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:15.474Z",
+      "action": "plan review requested for Step 2 (Verify Test Coverage)"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:26.519Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "Step 2's checkboxes correctly identify the three critical test cases that must exist and pass. The tests are already implemented in `routes.test.ts` and align perfectly with the implementation in `routes.ts`. The plan appropriately focuses on verification rather than modification."
+    },
+    {
+      "timestamp": "2026-03-30T06:19:28.639Z",
+      "action": "Step 2 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:19:28.654Z",
+      "action": "Step 3 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:21:38.522Z",
+      "action": "All GET /models tests pass (4/4)",
+      "outcome": "Implementation correctly returns 200 with empty array when registry has no models"
+    },
+    {
+      "timestamp": "2026-03-30T06:21:38.524Z",
+      "action": "Step 3 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:21:53.949Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T06:23:05.415Z",
+  "createdAt": "2026-03-30T02:55:46.397Z",
+  "updatedAt": "2026-03-30T06:23:05.415Z",
+  "size": "S",
+  "reviewLevel": 1
+}

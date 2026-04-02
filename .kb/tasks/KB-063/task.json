@@ -1,0 +1,433 @@
+{
+  "id": "KB-063",
+  "description": "Real-time badge updates via WebSocket for GitHub PR and issue badges. Currently the system uses polling-based background refresh (5-minute staleness check). Add WebSocket support to push updates immediately when PR/issue status changes on GitHub.",
+  "column": "done",
+  "dependencies": [
+    "KB-022"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add WebSocket Dependency",
+      "status": "done"
+    },
+    {
+      "name": "Create WebSocket Manager",
+      "status": "done"
+    },
+    {
+      "name": "Create Optimized GitHub Polling Service",
+      "status": "done"
+    },
+    {
+      "name": "Integrate WebSocket with Server",
+      "status": "done"
+    },
+    {
+      "name": "Add Frontend WebSocket Hook",
+      "status": "done"
+    },
+    {
+      "name": "Integrate Badge Updates in TaskCard",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 9,
+  "log": [
+    {
+      "timestamp": "2026-03-30T03:11:13.137Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:08.909Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T03:12:36.577Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, technically sound, and appropriately scoped. After reading the relevant source files, I verified that all referenced files, types, and patterns exist correctly. The spec builds upon the existing SSE pattern (`packages/dashboard/src/sse.ts`), leverages the established store event system (`task:updated` emissions in `packages/core/src/store.ts`), and correctly identifies the current 5-minute polling mechanism (`refreshPrInBackground` at `packages/dashboard/src"
+    },
+    {
+      "timestamp": "2026-03-30T06:36:30.318Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/crisp-breeze"
+    },
+    {
+      "timestamp": "2026-03-30T06:36:30.320Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T06:36:35.431Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:37:39.702Z",
+      "action": "Completed preflight for KB-063 by verifying KB-022 badge support is present in core/dashboard types, store methods, routes, and components. Ran pnpm install at workspace root to sync dependencies.",
+      "outcome": "Dependency task capabilities confirmed; workspace dependencies are installed and current."
+    },
+    {
+      "timestamp": "2026-03-30T06:37:43.314Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:37:48.439Z",
+      "action": "Step 1 (Add WebSocket Dependency) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:37:53.012Z",
+      "action": "plan review requested for Step 1 (Add WebSocket Dependency)"
+    },
+    {
+      "timestamp": "2026-03-30T06:39:02.525Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "This step is stale in the current codebase. `packages/dashboard/package.json` already includes both `ws` and `@types/ws`, and the dashboard server is already using `ws` for the terminal WebSocket endpoint, so \"adding the dependency\" will not produce the intended new change. The step also misses the pnpm workspace lockfile in its scope/artifacts."
+    },
+    {
+      "timestamp": "2026-03-30T06:39:08.497Z",
+      "action": "Step 1 was already satisfied in the current codebase: packages/dashboard already depends on ws/@types/ws and the workspace lockfile is current after pnpm install.",
+      "outcome": "No package.json or lockfile changes were required before proceeding to WebSocket implementation."
+    },
+    {
+      "timestamp": "2026-03-30T06:39:13.999Z",
+      "action": "Step 1 (Add WebSocket Dependency) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:40:46.932Z",
+      "action": "plan review requested for Step 2 (Create WebSocket Manager)"
+    },
+    {
+      "timestamp": "2026-03-30T06:43:29.540Z",
+      "action": "plan review Step 2: REVISE",
+      "outcome": "The overall direction is sound, but the Step 2 plan is missing a couple of integration details that the current codebase will need later. In particular, the manager API as written is too narrow for Steps 3–6, and the heartbeat section is ambiguous enough that it could easily copy the existing terminal WebSocket pattern in a way that won't work with the planned badge hook."
+    },
+    {
+      "timestamp": "2026-03-30T06:45:55.554Z",
+      "action": "code review requested for Step 2 (Create WebSocket Manager)"
+    },
+    {
+      "timestamp": "2026-03-30T06:48:22.244Z",
+      "action": "code review Step 2: REVISE",
+      "outcome": "The new `WebSocketManager` covers most of the Step 2 surface area: per-task subscriptions, badge broadcasts, message parsing, and heartbeat handling are all present. However, there are two correctness issues that should be fixed before moving on: disconnected/replaced sockets are not fully cleaned up, and the outbound badge message shape does not match the task spec’s optional-field protocol."
+    },
+    {
+      "timestamp": "2026-03-30T06:49:52.780Z",
+      "action": "code review requested for Step 2 (Create WebSocket Manager)"
+    },
+    {
+      "timestamp": "2026-03-30T06:53:05.659Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The new `WebSocketManager` covers the core Step 2 requirements: client registration, per-task badge subscriptions, JSON message routing, targeted badge broadcasts, heartbeat/ping handling, and subscription cleanup on close/error. The `ws` / `@types/ws` dependencies were also added correctly in `packages/dashboard/package.json`.\n\nI did not find a blocking correctness issue in the new manager. The only concern is a small cleanup edge case around replacing/disposal of still-open sockets, which is w"
+    },
+    {
+      "timestamp": "2026-03-30T06:53:09.102Z",
+      "action": "Step 2 (Create WebSocket Manager) → done"
+    },
+    {
+      "timestamp": "2026-03-30T06:54:04.281Z",
+      "action": "Step 3 (Create Optimized GitHub Polling Service) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T06:54:11.730Z",
+      "action": "plan review requested for Step 3 (Create Optimized GitHub Polling Service)"
+    },
+    {
+      "timestamp": "2026-03-30T06:58:39.399Z",
+      "action": "plan review Step 3: REVISE",
+      "outcome": "The overall direction is sound, but the current Step 3 plan has a few correctness gaps that will either break the intended scaling behavior or miss stated badge-update outcomes. In particular, the proposed 60s polling model does not fit the existing rate limiter, and the change-detection rules are too narrow for comment-driven updates and issue badge color changes."
+    },
+    {
+      "timestamp": "2026-03-30T07:03:02.685Z",
+      "action": "code review requested for Step 3 (Create Optimized GitHub Polling Service)"
+    },
+    {
+      "timestamp": "2026-03-30T07:06:46.809Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The new polling service has the right overall shape: it batches by repo, deduplicates repeated PR/issue lookups, and introduces a reusable rate limiter plus singleton poller. However, there are two important correctness gaps that will cause wasted polling and break the planned real-time badge flow unless they’re fixed now."
+    },
+    {
+      "timestamp": "2026-03-30T07:07:56.641Z",
+      "action": "code review requested for Step 3 (Create Optimized GitHub Polling Service)"
+    },
+    {
+      "timestamp": "2026-03-30T07:15:08.890Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The new poller is a solid start: it batches by repo, dedupes shared PR/issue watches, and separates watch management from fetch/apply logic cleanly. However, there are a few correctness issues that will keep it from meeting the step’s stated behavior around polling frequency, fallback interaction, and reuse of existing GitHub integration patterns."
+    },
+    {
+      "timestamp": "2026-03-30T07:20:46.382Z",
+      "action": "code review requested for Step 3 (Create Optimized GitHub Polling Service)"
+    },
+    {
+      "timestamp": "2026-03-30T07:24:33.807Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The new polling service has the right overall structure: it batches requests per repo, deduplicates repeated PR/issue lookups, and only writes back when badge-relevant fields actually change. However, the rate-limit enforcement is not centralized across the existing badge refresh paths, so this step does not yet satisfy the task’s “GitHub API rate limits respected” requirement."
+    },
+    {
+      "timestamp": "2026-03-30T07:26:26.999Z",
+      "action": "code review requested for Step 3 (Create Optimized GitHub Polling Service)"
+    },
+    {
+      "timestamp": "2026-03-30T07:30:35.076Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The new polling service is close to the intended design: it batches GitHub badge lookups by repo, deduplicates requests, and updates the store only when badge-relevant fields change. However, two implementation details currently undermine the step’s stated outcomes: freshness is only tracked in memory, so fallback polling becomes unnecessarily aggressive after unwatch/restart, and the service now depends on a custom `badge:updated` event because `TaskStore` still does not emit `task:updated` for"
+    },
+    {
+      "timestamp": "2026-03-30T07:32:53.017Z",
+      "action": "code review requested for Step 3 (Create Optimized GitHub Polling Service)"
+    },
+    {
+      "timestamp": "2026-03-30T07:36:41.432Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The new polling service has the right overall shape: it groups watches by repo, deduplicates per-resource requests, uses the new batch GitHub API method, and shares a rate limiter with the routes. However, it misses a key requirement from the step: it does not compare fetched badge state with the cached task state before writing, so every successful poll rewrites `task.json` and bumps `task.updatedAt` even when nothing changed. The step also lacks the required automated tests for the new service"
+    },
+    {
+      "timestamp": "2026-03-30T07:40:19.400Z",
+      "action": "code review requested for Step 3 (Create Optimized GitHub Polling Service)"
+    },
+    {
+      "timestamp": "2026-03-30T07:45:18.706Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The new polling service has a solid overall shape: it batches by repo, deduplicates shared resources, and updates the store only when badge fields actually change. However, there are two important failure-path bugs that can cause monitoring to stop permanently or badge associations to be cleared incorrectly, so this step is not safe to build on yet."
+    },
+    {
+      "timestamp": "2026-03-30T07:46:32.617Z",
+      "action": "code review requested for Step 3 (Create Optimized GitHub Polling Service)"
+    },
+    {
+      "timestamp": "2026-03-30T07:51:26.171Z",
+      "action": "code review Step 3: REVISE",
+      "outcome": "The new polling service is close to the intended design: batching is in place, per-task watch state is tracked, and the tests cover several important happy-path scenarios. However, two behaviors will produce incorrect runtime results: failed/ambiguous polls currently mark badge data as freshly checked, and the default rate-limit budget is fully consumed by the new 60s polling cadence, which will starve existing manual/fallback refresh flows."
+    },
+    {
+      "timestamp": "2026-03-30T07:52:49.682Z",
+      "action": "code review requested for Step 3 (Create Optimized GitHub Polling Service)"
+    },
+    {
+      "timestamp": "2026-03-30T07:56:31.029Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The polling service implementation in `packages/dashboard/src/github-poll.ts` meets the Step 3 requirements: it tracks watched PR/issue badges, batches requests per repo, deduplicates shared resources, compares fetched badge state against cached task state, and updates the store only when badge-relevant fields actually change. The accompanying tests in `packages/dashboard/src/__tests__/github-poll.test.ts` cover the core behavior well, including watch management, deduplication, rate limiting, un"
+    },
+    {
+      "timestamp": "2026-03-30T07:56:37.236Z",
+      "action": "Implemented the GitHub badge polling service with repo-batched requests, shared rate-limit coordination, in-memory freshness tracking for watched badges, and focused polling tests.",
+      "outcome": "Badge polling now batches by repo, avoids no-op writes, and has automated coverage for watch lifecycle, deduping, rate limiting, issue/PR updates, and failure paths."
+    },
+    {
+      "timestamp": "2026-03-30T07:56:39.780Z",
+      "action": "Step 3 (Create Optimized GitHub Polling Service) → done"
+    },
+    {
+      "timestamp": "2026-03-30T07:57:56.194Z",
+      "action": "Step 4 (Integrate WebSocket with Server) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T07:58:07.603Z",
+      "action": "plan review requested for Step 4 (Integrate WebSocket with Server)"
+    },
+    {
+      "timestamp": "2026-03-30T08:01:16.332Z",
+      "action": "plan review Step 4: REVISE",
+      "outcome": "The step is close, but it misses two pieces of integration that are required for the WebSocket path to actually deliver real-time badge updates: mounting the WebSocket server on the real HTTP server, and wiring subscriptions into `githubPoller` so watched tasks are actually polled. It also needs to configure the singleton poller with the `TaskStore` before starting it, otherwise polling is a no-op."
+    },
+    {
+      "timestamp": "2026-03-30T08:04:43.583Z",
+      "action": "code review requested for Step 4 (Integrate WebSocket with Server)"
+    },
+    {
+      "timestamp": "2026-03-30T08:10:05.823Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The server-side integration is close to the requested design: it mounts `/api/ws`, wires store badge changes into `WebSocketManager`, and starts/stops the GitHub poller based on active WebSocket clients. However, there are two correctness issues that should be fixed before moving on: shutdown does not actually close live badge sockets, and the message shape cannot reliably represent badge removal/unlink events."
+    },
+    {
+      "timestamp": "2026-03-30T08:11:29.797Z",
+      "action": "code review requested for Step 4 (Integrate WebSocket with Server)"
+    },
+    {
+      "timestamp": "2026-03-30T08:15:11.426Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The `/api/ws` server wiring and store-event bridge are in place, but the poller lifecycle has a blocking logic bug that can stop badge polling after the first resync for a single watched task. There is also leaked singleton state on shutdown, so server restarts/tests in the same process can inherit stale watches and poll the wrong tasks."
+    },
+    {
+      "timestamp": "2026-03-30T08:16:48.151Z",
+      "action": "code review requested for Step 4 (Integrate WebSocket with Server)"
+    },
+    {
+      "timestamp": "2026-03-30T08:20:48.047Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The WebSocket server integration generally follows the step requirements: `/api/ws` is mounted, connections are registered with `WebSocketManager`, store badge changes are bridged to WebSocket broadcasts, and the poller is started/stopped from client lifecycle events. However, the new `app.listen` monkey-patch never resets its attachment state on server shutdown, so re-listening on the same Express app skips WebSocket setup entirely and leaves closed WebSocket instances retained on the app objec"
+    },
+    {
+      "timestamp": "2026-03-30T08:21:20.970Z",
+      "action": "code review requested for Step 4 (Integrate WebSocket with Server)"
+    },
+    {
+      "timestamp": "2026-03-30T08:27:52.770Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The server-side WebSocket integration is wired up correctly: `/api/ws` is attached to the HTTP server, client lifecycle events are bridged into `WebSocketManager`, and badge-relevant `task:updated` events are filtered before broadcasting to subscribers. The added poller coordination in `packages/dashboard/src/server.ts` also fits the task goals well by starting/stopping with active clients and syncing watches only for subscribed tasks."
+    },
+    {
+      "timestamp": "2026-03-30T08:28:09.366Z",
+      "action": "Step 4 (Integrate WebSocket with Server) → done"
+    },
+    {
+      "timestamp": "2026-03-30T08:33:11.002Z",
+      "action": "Step 5 (Add Frontend WebSocket Hook) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T08:33:16.806Z",
+      "action": "plan review requested for Step 5 (Add Frontend WebSocket Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T08:36:09.660Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The hook idea is sound, but the step as written is missing a couple of requirements that matter in this codebase’s current architecture. In particular, `TaskCard` is rendered once per visible task, so a naïve hook implementation will open one WebSocket per card, and the planned `badgeUpdates` cache can incorrectly override fresher task data because the server only pushes deltas, not an initial snapshot."
+    },
+    {
+      "timestamp": "2026-03-30T08:36:16.563Z",
+      "action": "code review requested for Step 5 (Add Frontend WebSocket Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T08:39:06.271Z",
+      "action": "code review Step 5: REVISE",
+      "outcome": "The hook is structured reasonably and the tests cover the happy path for connect, reconnect, message receipt, and cleanup. However, there are two correctness problems in the state handling that will cause incorrect badge rendering once this hook is used the way the task describes."
+    },
+    {
+      "timestamp": "2026-03-30T08:41:01.454Z",
+      "action": "code review requested for Step 5 (Add Frontend WebSocket Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T08:44:16.854Z",
+      "action": "code review Step 5: REVISE",
+      "outcome": "The hook implementation is clean overall: it uses a shared store to avoid duplicate sockets, supports ref-counted subscriptions, and the tests cover the main happy paths plus reconnect behavior. However, the current cache lifecycle keeps stale badge snapshots alive after the socket drops, which will break the task’s required polling fallback once `TaskCard` starts preferring `badgeUpdates` over `task.prInfo` / `task.issueInfo`."
+    },
+    {
+      "timestamp": "2026-03-30T08:45:59.584Z",
+      "action": "code review requested for Step 5 (Add Frontend WebSocket Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T08:47:44.680Z",
+      "action": "code review Step 5: REVISE",
+      "outcome": "The hook is well structured overall: the shared store avoids duplicate sockets, subscriptions are ref-counted across hook instances, and the reconnect path is covered by tests. However, the current disconnect handling drops all cached badge state on socket close, which will make the UI revert to stale task badge data after transient connection loss and weakens the required graceful-fallback behavior."
+    },
+    {
+      "timestamp": "2026-03-30T08:49:11.967Z",
+      "action": "code review requested for Step 5 (Add Frontend WebSocket Hook)"
+    },
+    {
+      "timestamp": "2026-03-30T08:52:14.392Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "The new hook in `packages/dashboard/app/hooks/useBadgeWebSocket.ts` meets the Step 5 requirements: it connects lazily to `/api/ws`, shares a single socket across hook consumers, ref-counts task subscriptions, reconnects with exponential backoff capped at 5s, and cleans up subscriptions on unmount. The accompanying tests in `packages/dashboard/app/hooks/__tests__/useBadgeWebSocket.test.ts` cover the core behaviors needed for this step, including connection establishment, message handling, reconne"
+    },
+    {
+      "timestamp": "2026-03-30T08:52:18.140Z",
+      "action": "Step 5 (Add Frontend WebSocket Hook) → done"
+    },
+    {
+      "timestamp": "2026-03-30T09:09:45.882Z",
+      "action": "Step 6 (Integrate Badge Updates in TaskCard) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T09:10:07.386Z",
+      "action": "plan review requested for Step 6 (Integrate Badge Updates in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T09:12:19.263Z",
+      "action": "plan review Step 6: REVISE",
+      "outcome": "The step is close, but the proposed merge logic is too simplistic for the websocket payload shape already used in this codebase. If implemented as written, TaskCard can display stale badge data or fail to clear badges when the websocket sends an explicit removal/update."
+    },
+    {
+      "timestamp": "2026-03-30T09:12:34.788Z",
+      "action": "code review requested for Step 6 (Integrate Badge Updates in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T09:23:33.609Z",
+      "action": "code review Step 6: REVISE",
+      "outcome": "The TaskCard wiring is close: it subscribes/unsubscribes appropriately, merges live badge data into the rendered badge props, and adds useful coverage for mount/unmount behavior and newer-live-data precedence. However, the current integration is incorrect for the WebSocket protocol described in the task because a first partial badge update can erase the other badge in the UI even when that badge did not change."
+    },
+    {
+      "timestamp": "2026-03-30T09:27:01.944Z",
+      "action": "code review requested for Step 6 (Integrate Badge Updates in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T09:31:01.279Z",
+      "action": "code review Step 6: REVISE",
+      "outcome": "The TaskCard integration is close: it wires in `useBadgeWebSocket`, merges live badge payloads with task data, and has useful tests for live-vs-stored badge precedence. However, the visibility gating does not currently satisfy the step requirement, because GitHub-linked cards subscribe immediately on mount before the `IntersectionObserver` has determined whether they are actually visible."
+    },
+    {
+      "timestamp": "2026-03-30T09:32:30.575Z",
+      "action": "code review requested for Step 6 (Integrate Badge Updates in TaskCard)"
+    },
+    {
+      "timestamp": "2026-03-30T09:35:28.918Z",
+      "action": "code review Step 6: APPROVE",
+      "outcome": "This step meets the stated outcome: `TaskCard` now subscribes to badge updates when a card is in view, unsubscribes when it leaves/unmounts, and renders merged live badge state via `GitHubBadge`. The timestamp-based merge helper in `packages/dashboard/app/components/TaskCard.tsx:31-42` is a solid touch for handling partial WebSocket payloads without clobbering fresher task data, and the added `TaskCard` tests cover the main integration paths."
+    },
+    {
+      "timestamp": "2026-03-30T09:35:35.958Z",
+      "action": "Step 6 (Integrate Badge Updates in TaskCard) → done"
+    },
+    {
+      "timestamp": "2026-03-30T09:35:54.877Z",
+      "action": "Step 7 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T09:36:13.989Z",
+      "action": "plan review requested for Step 7 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T09:41:07.067Z",
+      "action": "plan review Step 7: REVISE",
+      "outcome": "The proposed Step 7 covers the main unit-level pieces (`WebSocketManager`, `useBadgeWebSocket`, `GitHubPollingService`) and includes the right quality gates (`pnpm test`, `pnpm build`). However, it does not yet verify some required end-to-end behaviors that live in the server wiring and UI fallback path, so it risks missing regressions in the actual `/api/ws` flow."
+    },
+    {
+      "timestamp": "2026-03-30T10:09:03.619Z",
+      "action": "code review requested for Step 7 (Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-03-30T10:11:47.416Z",
+      "action": "code review Step 7: APPROVE",
+      "outcome": "This step adds solid automated coverage for the new WebSocket badge flow across the main risk areas: server-side subscription routing, polling change detection, frontend connection/reconnect behavior, and end-to-end `/api/ws` integration. The tests align well with the PROMPT requirements for Step 7, and I did not find any blocking correctness problems in either the new tests or the small source changes added to support them."
+    },
+    {
+      "timestamp": "2026-03-30T10:11:52.755Z",
+      "action": "Completed package-level verification for dashboard WebSocket badge updates.",
+      "outcome": "Added websocket integration tests, polling tests, hook/card regression tests, and got `pnpm --filter @kb/dashboard exec vitest run` plus `pnpm --filter @kb/dashboard build` passing."
+    },
+    {
+      "timestamp": "2026-03-30T10:11:56.695Z",
+      "action": "Step 7 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T10:17:58.864Z",
+      "action": "Step 8 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T10:18:23.965Z",
+      "action": "Documented the new badge WebSocket flow, added issue status/refresh endpoints, created the published-package changeset, and recorded follow-up tasks for security, scaling, and webhook-based delivery.",
+      "outcome": "README and AGENTS now describe `/api/ws` and `useBadgeWebSocket`; KB-135/136/137 track deferred work."
+    },
+    {
+      "timestamp": "2026-03-30T10:18:32.096Z",
+      "action": "Step 8 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T10:18:44.537Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T10:20:05.886Z",
+  "createdAt": "2026-03-30T03:11:13.137Z",
+  "updatedAt": "2026-03-30T10:20:05.886Z",
+  "size": "M",
+  "reviewLevel": 2
+}

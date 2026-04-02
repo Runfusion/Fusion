@@ -1,0 +1,113 @@
+{
+  "id": "KB-037",
+  "description": "Add smartConflictResolution toggle to dashboard settings UI. Expose the new setting added in KB-023 in the dashboard settings panel, similar to how autoResolveConflicts is currently displayed. The setting should be a boolean toggle with a description explaining that it enables automatic resolution of lock files, generated files, and trivial whitespace conflicts without AI intervention.",
+  "column": "done",
+  "dependencies": [
+    "KB-023",
+    "KB-027"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Add smartConflictResolution Toggle to Merge Section",
+      "status": "done"
+    },
+    {
+      "name": "Add Tests for smartConflictResolution Toggle",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-30T01:45:57.086Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T01:47:40.671Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T01:47:50.371Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and complete for adding a UI toggle to control the existing `smartConflictResolution` setting. All source references have been verified and match the actual codebase. The steps are concrete, verifiable, and follow established patterns in the dashboard."
+    },
+    {
+      "timestamp": "2026-03-30T02:27:37.352Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/swift-cedar"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:37.353Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:39.100Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:44.045Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:44.050Z",
+      "action": "Step 1 (Add smartConflictResolution Toggle to Merge Section) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:27:46.926Z",
+      "action": "plan review requested for Step 1 (Add smartConflictResolution Toggle to Merge Section)"
+    },
+    {
+      "timestamp": "2026-03-30T02:28:02.203Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The step's approach is sound and follows the established pattern for boolean toggles in the Merge section. The core setting exists in `types.ts` (line 199-203) and `DEFAULT_SETTINGS` (line 207), and the UI already has the `autoResolveConflicts` toggle (KB-027 appears complete) which serves as a reference implementation. The placement, styling, and behavior specifications are consistent with existing code."
+    },
+    {
+      "timestamp": "2026-03-30T02:28:10.968Z",
+      "action": "Step 1 (Add smartConflictResolution Toggle to Merge Section) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:28:10.969Z",
+      "action": "Step 2 (Add Tests for smartConflictResolution Toggle) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:09.996Z",
+      "action": "Step 2 (Add Tests for smartConflictResolution Toggle) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:09.999Z",
+      "action": "Step 3 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:36.620Z",
+      "action": "Step 3 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:36.620Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:44.778Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-30T02:29:46.986Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-30T02:30:25.929Z",
+  "createdAt": "2026-03-30T01:45:57.086Z",
+  "updatedAt": "2026-03-30T02:30:25.929Z",
+  "size": "S",
+  "reviewLevel": 1
+}

@@ -1,0 +1,170 @@
+{
+  "id": "KB-608",
+  "description": "Terminal from dashboard doesn’t work.",
+  "column": "done",
+  "size": "M",
+  "reviewLevel": 2,
+  "currentStep": 6,
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "summary": "Fixed the broken terminal feature in the kb dashboard. The root cause was a race condition in TerminalModal.tsx: the xterm.js container div was conditionally rendered (replaced by a loading spinner during session creation), and the xterm initialization useEffect didn't include `isCreating` in its dependency array, so it never re-ran when the div became available. Additionally, the data subscription effect ran before async xterm initialization completed, since it depended on a ref rather than state. Fixed by: (1) always rendering the xterm container div (hidden during loading), (2) adding `isCreating` to the init effect dependencies, and (3) introducing an `xtermReady` state to properly trigger data subscriptions after xterm initializes. All 57 terminal tests pass (including 4 new tests), build succeeds, and changeset created.",
+  "createdAt": "2026-03-31T21:49:35.096Z",
+  "updatedAt": "2026-04-01T00:50:21.718Z",
+  "columnMovedAt": "2026-04-01T00:50:21.718Z",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Run Tests and Identify Failures",
+      "status": "done"
+    },
+    {
+      "name": "Diagnose WebSocket Connection",
+      "status": "done"
+    },
+    {
+      "name": "Diagnose PTY Session Creation",
+      "status": "done"
+    },
+    {
+      "name": "Diagnose Frontend Integration",
+      "status": "done"
+    },
+    {
+      "name": "Integration Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "log": [
+    {
+      "timestamp": "2026-03-31T21:49:35.096Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T21:54:02.531Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T21:54:19.834Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, actionable specification for diagnosing and fixing the non-functional terminal feature. The spec correctly identifies all architectural layers involved (frontend React components, WebSocket hook, node-pty backend service, and API routes), references real existing files, and provides concrete, verifiable outcomes for each step. Testing requirements are rigorous with a \"ZERO test failures allowed\" quality gate."
+    },
+    {
+      "timestamp": "2026-04-01T00:27:26.114Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/jade-grove"
+    },
+    {
+      "timestamp": "2026-04-01T00:27:26.115Z",
+      "action": "Step 0 (Run Tests and Identify Failures) → pending"
+    },
+    {
+      "timestamp": "2026-04-01T00:27:29.663Z",
+      "action": "Step 0 (Run Tests and Identify Failures) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:28:41.666Z",
+      "action": "All existing terminal tests pass (53/53). The bug isn't exposed by current tests. Need to trace through the full terminal flow to identify the issue."
+    },
+    {
+      "timestamp": "2026-04-01T00:30:07.276Z",
+      "action": "Identified root cause: The xterm.js initialization useEffect depends on [isOpen, sendInput, resize] but NOT on the `isCreating` state. When the modal opens, `isCreating=true` renders a loading spinner instead of the `terminalRef` div, so `terminalRef.current` is null. When `isCreating` becomes false and the div appears, the effect never re-runs because `isCreating` isn't in the dependency array. Result: xterm.js never initializes and the terminal appears blank.",
+      "outcome": "Terminal appears non-functional because xterm.js never attaches to the DOM"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:10.189Z",
+      "action": "Step 0 (Run Tests and Identify Failures) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:32.522Z",
+      "action": "Step 1 (Diagnose WebSocket Connection) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:35.695Z",
+      "action": "plan review requested for Step 1 (Diagnose WebSocket Connection)"
+    },
+    {
+      "timestamp": "2026-04-01T00:30:57.134Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan's checkboxes for Step 2 will effectively diagnose WebSocket connection issues. The codebase shows a properly structured terminal architecture with WebSocket handling in `setupTerminalWebSocket()` (server.ts:211-319), session validation, and heartbeat/ping-pong. The planned verification steps cover the critical integration points."
+    },
+    {
+      "timestamp": "2026-04-01T00:31:15.198Z",
+      "action": "Step 1 (Diagnose WebSocket Connection) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:31:18.537Z",
+      "action": "Step 2 (Diagnose PTY Session Creation) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:31:22.065Z",
+      "action": "plan review requested for Step 2 (Diagnose PTY Session Creation)"
+    },
+    {
+      "timestamp": "2026-04-01T00:31:50.482Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The Step 2 plan has appropriate checkboxes for diagnosing WebSocket connection issues in the terminal feature. The checkboxes cover the critical areas: WebSocket server attachment, pathname filtering, session validation, heartbeat handling, and test coverage. The plan is actionable and will achieve its stated outcomes."
+    },
+    {
+      "timestamp": "2026-04-01T00:31:55.001Z",
+      "action": "Step 2 (Diagnose PTY Session Creation) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:32:27.240Z",
+      "action": "Step 3 (Diagnose Frontend Integration) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:32:30.210Z",
+      "action": "plan review requested for Step 3 (Diagnose Frontend Integration)"
+    },
+    {
+      "timestamp": "2026-04-01T00:33:02.735Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The step's checkboxes cover the essential frontend integration verification points. The existing codebase already has a solid test foundation for `TerminalModal` and `useTerminal`, and the plan's approach to diagnose session creation flow, WebSocket connection, xterm initialization, bidirectional data flow, and resize handling is appropriate for identifying terminal frontend issues."
+    },
+    {
+      "timestamp": "2026-04-01T00:36:40.497Z",
+      "action": "code review requested for Step 3 (Diagnose Frontend Integration)"
+    },
+    {
+      "timestamp": "2026-04-01T00:37:11.689Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly diagnoses and fixes the frontend integration issues in the terminal feature. The key fix addresses a race condition where xterm.js was being initialized before the terminal container was visible in the DOM. The solution properly sequences session creation, DOM rendering, and xterm initialization. Tests cover the critical integration paths including WebSocket connection, session lifecycle, and data flow."
+    },
+    {
+      "timestamp": "2026-04-01T00:37:14.450Z",
+      "action": "Step 3 (Diagnose Frontend Integration) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:37:17.465Z",
+      "action": "Step 4 (Integration Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:48:51.511Z",
+      "action": "code review requested for Step 4 (Integration Testing & Verification)"
+    },
+    {
+      "timestamp": "2026-04-01T00:49:33.890Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The Step 4 implementation successfully completes the terminal fix with comprehensive test coverage for all layers of the terminal subsystem. The root cause was a race condition where xterm.js initialization failed because the container div was conditionally rendered during session creation. The fix ensures the div is always in the DOM (hidden during loading) and the initialization effect properly re-runs when `isCreating` changes from true to false."
+    },
+    {
+      "timestamp": "2026-04-01T00:49:37.071Z",
+      "action": "Step 4 (Integration Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:49:40.382Z",
+      "action": "Step 5 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-04-01T00:49:59.012Z",
+      "action": "Step 5 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-04-01T00:50:06.414Z",
+      "action": "Task marked done by agent"
+    }
+  ]
+}

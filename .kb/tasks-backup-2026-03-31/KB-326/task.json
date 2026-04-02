@@ -1,0 +1,33 @@
+{
+  "id": "KB-326",
+  "title": "Refinement: KB-323",
+  "description": "If an executor is already running will it pick up steering comments?\n\nRefines: KB-323",
+  "column": "todo",
+  "dependencies": [
+    "KB-323"
+  ],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T19:57:45.587Z",
+      "action": "Created as refinement of KB-323"
+    },
+    {
+      "timestamp": "2026-03-31T19:59:26.267Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T19:59:45.986Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, technically accurate, and appropriately scoped for a medium-sized investigation plus implementation task. All referenced source files exist at the specified paths with correct line number references (minor: `buildExecutionPrompt` runs to ~line 1380, not 1365). The mission is clear, steps have verifiable outcomes, and testing requirements appropriately demand real automated tests with the \"ZERO test failures allowed\" quality gate."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T19:59:49.353Z",
+  "createdAt": "2026-03-31T19:57:45.587Z",
+  "updatedAt": "2026-03-31T21:01:04.961Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued",
+  "blockedBy": "KB-313"
+}

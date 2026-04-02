@@ -1,0 +1,209 @@
+{
+  "id": "KB-286",
+  "title": "Refinement: Implement agent heartbeat system for runtime state tracking",
+  "description": "Confirm this was checked in\n\nRefines: KB-283",
+  "column": "done",
+  "dependencies": [
+    "KB-283"
+  ],
+  "steps": [
+    {
+      "name": "Preflight",
+      "status": "done"
+    },
+    {
+      "name": "Agent Type Definitions",
+      "status": "done"
+    },
+    {
+      "name": "AgentStore Implementation",
+      "status": "done"
+    },
+    {
+      "name": "HeartbeatMonitor Implementation",
+      "status": "done"
+    },
+    {
+      "name": "Export Integration",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 7,
+  "log": [
+    {
+      "timestamp": "2026-03-31T16:09:48.195Z",
+      "action": "Created as refinement of KB-283"
+    },
+    {
+      "timestamp": "2026-03-31T16:11:14.637Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:12:38.977Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T16:12:57.976Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted, technically sound specification for foundational agent infrastructure. The document accurately references existing patterns (StuckTaskDetector, TaskStore), correctly identifies missing types, and provides concrete implementation guidance. The scope is appropriately bounded to data model and monitoring without overreaching into execution (KB-284) or UI (KB-285)."
+    },
+    {
+      "timestamp": "2026-03-31T16:27:26.583Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/crisp-sage"
+    },
+    {
+      "timestamp": "2026-03-31T16:27:26.583Z",
+      "action": "Step 0 (Preflight) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T16:27:29.776Z",
+      "action": "Step 0 (Preflight) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:27:37.385Z",
+      "action": "Step 0 (Preflight) completed — verified KB-283 implementation is missing. No agent types in types.ts, no agent-store.ts, no agent-heartbeat.ts. All reference patterns reviewed."
+    },
+    {
+      "timestamp": "2026-03-31T16:27:37.386Z",
+      "action": "Step 0 (Preflight) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:27:40.927Z",
+      "action": "plan review requested for Step 1 (Agent Type Definitions)"
+    },
+    {
+      "timestamp": "2026-03-31T16:28:00.270Z",
+      "action": "plan review Step 1: APPROVE",
+      "outcome": "The plan for Step 1 is well-scoped and technically sound. The type definitions follow established patterns in the codebase (const array + derived union type, consistent naming conventions, proper optional fields). Preflight checks confirm the implementation is truly missing—no agent types exist yet, and the target files don't exist."
+    },
+    {
+      "timestamp": "2026-03-31T16:28:05.600Z",
+      "action": "Step 1 (Agent Type Definitions) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:28:34.211Z",
+      "action": "code review requested for Step 1 (Agent Type Definitions)"
+    },
+    {
+      "timestamp": "2026-03-31T16:28:56.133Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The agent type definitions have been correctly implemented in `packages/core/src/types.ts` following the specification. All required types (`AgentState`, `Agent`, `AgentHeartbeatEvent`, `AgentHeartbeatRun`, `AgentCreateInput`) are present with proper structure and JSDoc documentation. The types align with the expected storage patterns and will support the AgentStore and HeartbeatMonitor implementations in subsequent steps."
+    },
+    {
+      "timestamp": "2026-03-31T16:28:57.267Z",
+      "action": "Step 1 (Agent Type Definitions) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:28:57.270Z",
+      "action": "Step 1 complete — Agent type definitions added to types.ts and compiled successfully"
+    },
+    {
+      "timestamp": "2026-03-31T16:28:58.406Z",
+      "action": "plan review requested for Step 2 (AgentStore Implementation)"
+    },
+    {
+      "timestamp": "2026-03-31T16:29:26.262Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The Step 2 plan is comprehensive and follows established patterns from TaskStore and StuckTaskDetector. The checkboxes cover all necessary CRUD operations, heartbeat event logging, file locking, and state transition validation. The storage format (JSON files for agents, JSONL for heartbeats) is consistent with existing codebase patterns."
+    },
+    {
+      "timestamp": "2026-03-31T16:29:57.027Z",
+      "action": "Step 2 (AgentStore Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:31:17.628Z",
+      "action": "code review requested for Step 2 (AgentStore Implementation)"
+    },
+    {
+      "timestamp": "2026-03-31T16:31:48.477Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The AgentStore implementation is comprehensive and well-structured. It follows the established TaskStore patterns for file locking and atomic writes, implements all required CRUD operations, handles heartbeat event logging with JSONL append-only format, and includes thorough test coverage. The state transition validation correctly enforces the lifecycle rules, and JSDoc documentation is present throughout."
+    },
+    {
+      "timestamp": "2026-03-31T16:31:49.620Z",
+      "action": "Step 2 (AgentStore Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:31:49.621Z",
+      "action": "Step 2 complete — AgentStore implemented with 53 passing tests"
+    },
+    {
+      "timestamp": "2026-03-31T16:31:50.822Z",
+      "action": "plan review requested for Step 3 (HeartbeatMonitor Implementation)"
+    },
+    {
+      "timestamp": "2026-03-31T16:32:11.007Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan for HeartbeatMonitor implementation is well-structured and follows the StuckTaskDetector pattern appropriately. The checkboxes cover all necessary functionality including polling, tracking, heartbeat detection, recovery, and termination. The approach using callbacks (not EventEmitter) maintains consistency with existing code."
+    },
+    {
+      "timestamp": "2026-03-31T16:32:29.157Z",
+      "action": "Step 3 (HeartbeatMonitor Implementation) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:34:07.659Z",
+      "action": "code review requested for Step 3 (HeartbeatMonitor Implementation)"
+    },
+    {
+      "timestamp": "2026-03-31T16:34:32.445Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The HeartbeatMonitor implementation in `packages/engine/src/agent-heartbeat.ts` follows the StuckTaskDetector pattern closely and correctly implements all Step 3 requirements. The code uses callback-based event handling (not EventEmitter), provides comprehensive JSDoc documentation, and includes thorough test coverage for tracking, missed heartbeat detection, recovery, and termination flows."
+    },
+    {
+      "timestamp": "2026-03-31T16:34:33.801Z",
+      "action": "Step 3 (HeartbeatMonitor Implementation) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:34:33.802Z",
+      "action": "Step 3 complete — HeartbeatMonitor implemented with 635 passing tests"
+    },
+    {
+      "timestamp": "2026-03-31T16:34:46.045Z",
+      "action": "Step 4 (Export Integration) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:34:47.755Z",
+      "action": "Step 5 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:35:12.712Z",
+      "action": "Step 5 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:35:12.713Z",
+      "action": "Step 5 complete — Core: 375 passing tests, Engine: 635 passing tests, Build successful"
+    },
+    {
+      "timestamp": "2026-03-31T16:35:16.837Z",
+      "action": "Step 6 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T16:35:24.746Z",
+      "action": "Step 6 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T16:35:24.747Z",
+      "action": "Step 6 complete — All public APIs have JSDoc comments, file storage format documented in agent-store.ts header"
+    },
+    {
+      "timestamp": "2026-03-31T16:35:41.257Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T16:37:11.585Z",
+  "createdAt": "2026-03-31T16:09:48.195Z",
+  "updatedAt": "2026-03-31T16:37:11.585Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "summary": "Implemented agent heartbeat system for runtime state tracking (KB-286). Added AgentStore class with CRUD operations, heartbeat recording, and state transition validation. Added HeartbeatMonitor following StuckTaskDetector pattern with polling-based missed heartbeat detection and auto-termination. All tests pass: 53 AgentStore tests + HeartbeatMonitor tests. Exports added to core package. JSDoc comments on all public APIs.",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6"
+}

@@ -1,0 +1,30 @@
+{
+  "id": "KB-658",
+  "description": "Reduce size of id column so the title column takes up more space",
+  "column": "todo",
+  "status": "queued",
+  "size": "S",
+  "reviewLevel": 0,
+  "currentStep": 0,
+  "blockedBy": "KB-625",
+  "createdAt": "2026-04-01T02:39:26.901Z",
+  "updatedAt": "2026-04-01T03:01:51.781Z",
+  "columnMovedAt": "2026-04-01T02:46:42.115Z",
+  "dependencies": [],
+  "steps": [],
+  "log": [
+    {
+      "timestamp": "2026-04-01T02:39:26.901Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-04-01T02:46:28.649Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-04-01T02:46:40.748Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured, accurate, and ready for implementation. It correctly identifies the CSS-only nature of the change, references real files and line numbers that exist, and provides concrete, verifiable outcomes for each step. The review level (0 - None) and size (S) are appropriate for this pure CSS layout adjustment."
+    }
+  ]
+}

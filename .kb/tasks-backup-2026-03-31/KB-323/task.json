@@ -1,0 +1,136 @@
+{
+  "id": "KB-323",
+  "description": "Do steering comments actually get injected?",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Trace the Data Flow",
+      "status": "done"
+    },
+    {
+      "name": "Verify Test Coverage",
+      "status": "done"
+    },
+    {
+      "name": "Add End-to-End Verification Test",
+      "status": "done"
+    },
+    {
+      "name": "Manual Verification (Optional but Recommended)",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 5,
+  "log": [
+    {
+      "timestamp": "2026-03-31T19:45:52.333Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T19:46:37.683Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T19:46:57.382Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-crafted verification specification. The mission is clear (end-to-end verification of an existing feature), steps have concrete verifiable outcomes, all referenced files and functions exist as described, and testing requirements demand real automated tests. The S-sizing with Review Level 1 is appropriate for investigative work."
+    },
+    {
+      "timestamp": "2026-03-31T19:47:02.072Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/jade-raven"
+    },
+    {
+      "timestamp": "2026-03-31T19:47:02.072Z",
+      "action": "Step 0 (Trace the Data Flow) → pending"
+    },
+    {
+      "timestamp": "2026-03-31T19:47:04.258Z",
+      "action": "Step 0 (Trace the Data Flow) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:47:16.037Z",
+      "action": "Step 0 (Trace the Data Flow) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:47:16.038Z",
+      "action": "Step 1 (Verify Test Coverage) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:47:16.038Z",
+      "action": "Step 0 (Preflight) - Data flow traced and verified",
+      "outcome": "All components verified: store.addSteeringComment() creates proper structure, API endpoint POST /tasks/:id/steer exists, SteeringTab.tsx calls API correctly, buildExecutionPrompt() includes steering comments with last 10 limit and proper formatting"
+    },
+    {
+      "timestamp": "2026-03-31T19:47:28.926Z",
+      "action": "Step 1 (Verify Test Coverage) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:47:28.926Z",
+      "action": "Step 2 (Add End-to-End Verification Test) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:47:28.927Z",
+      "action": "Step 1 (Verify Test Coverage) - All existing steering comment tests pass",
+      "outcome": "Tests passed: 5 steering comment tests including 'includes Steering Comments section', 'formats multiple correctly', 'omits when empty/undefined', and 'includes only 10 most recent'"
+    },
+    {
+      "timestamp": "2026-03-31T19:48:01.416Z",
+      "action": "Step 2 (Add End-to-End Verification Test) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:48:01.419Z",
+      "action": "Step 2 (Add End-to-End Verification Test) - New comprehensive test added",
+      "outcome": "Added 'end-to-end: steering comments are fully injected into execution prompt with correct format' test that verifies: section header, explanatory text, author badges, quoted text format, timestamps, and correct section positioning"
+    },
+    {
+      "timestamp": "2026-03-31T19:48:13.999Z",
+      "action": "Step 3 (Manual Verification (Optional but Recommended)) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:48:13.999Z",
+      "action": "Step 4 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T19:48:14.000Z",
+      "action": "Step 3 (Manual Verification) - Verified real tasks have steering comments",
+      "outcome": "Found task KB-058 with valid steering comment structure: id, text, createdAt, author fields all present and correctly formatted"
+    },
+    {
+      "timestamp": "2026-03-31T19:50:25.340Z",
+      "action": "Steering comments injection verified: PASS",
+      "outcome": "Data flow verified end-to-end: Dashboard → API → Store → Executor. All 5 existing tests pass. New end-to-end test added. Real task KB-058 confirms format. All 574 engine tests pass."
+    },
+    {
+      "timestamp": "2026-03-31T19:50:25.341Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:51:00.490Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:51:00.493Z",
+      "action": "Step 4 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T19:51:00.498Z",
+      "action": "Task marked done by agent"
+    },
+    {
+      "timestamp": "2026-03-31T19:57:45.592Z",
+      "action": "Refinement requested",
+      "outcome": "If an executor is already running will it pick up steering comments?"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T19:51:08.761Z",
+  "createdAt": "2026-03-31T19:45:52.333Z",
+  "updatedAt": "2026-03-31T19:57:45.592Z",
+  "size": "S",
+  "reviewLevel": 1,
+  "summary": "Successfully verified steering comments feature works end-to-end. Data flow traced from dashboard (SteeringTab.tsx) → API (POST /tasks/:id/steer) → store (addSteeringComment()) → executor (buildExecutionPrompt()). All 5 existing steering comment tests pass. Added comprehensive end-to-end verification test that validates section header, explanatory text, author badges, quoted text format, timestamps, and section positioning. Verified real tasks (KB-058) have correctly formatted steering comments. All 574 engine tests pass. No issues found - feature works correctly."
+}

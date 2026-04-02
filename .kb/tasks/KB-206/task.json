@@ -1,0 +1,278 @@
+{
+  "id": "KB-206",
+  "description": "Have a way to detect stuck tasks and kill and retry from stuck point - maybe have a timeout setting - its okay if an overall task takes too long but if a task is stuck on a single call or agent state for a long long time, it should have a recovery",
+  "column": "done",
+  "dependencies": [],
+  "steps": [
+    {
+      "name": "Add Timeout Setting to Core Types",
+      "status": "done"
+    },
+    {
+      "name": "Create StuckTaskDetector Class",
+      "status": "done"
+    },
+    {
+      "name": "Write Tests for StuckTaskDetector",
+      "status": "done"
+    },
+    {
+      "name": "Integrate Heartbeat Tracking into Executor",
+      "status": "done"
+    },
+    {
+      "name": "Handle Stuck Task Recovery Flow",
+      "status": "done"
+    },
+    {
+      "name": "Export and Initialize in Dashboard Command",
+      "status": "done"
+    },
+    {
+      "name": "Testing & Verification",
+      "status": "done"
+    },
+    {
+      "name": "Documentation & Delivery",
+      "status": "done"
+    }
+  ],
+  "currentStep": 8,
+  "log": [
+    {
+      "timestamp": "2026-03-30T19:28:50.079Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-30T19:29:33.885Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-30T19:29:52.279Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "The specification is well-structured and implementable. It correctly identifies integration points in the executor, uses appropriate patterns from the codebase (NtfyNotifier as event listener reference), and defines concrete test scenarios. The file scope is accurate, and the mission is clearly stated."
+    },
+    {
+      "timestamp": "2026-03-30T23:41:09.950Z",
+      "action": "Worktree created at /Users/eclipxe/Projects/kb/.worktrees/calm-sage"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:09.951Z",
+      "action": "Step 0 (Add Timeout Setting to Core Types) → pending"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:15.465Z",
+      "action": "Step 0 (Add Timeout Setting to Core Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:45.921Z",
+      "action": "Step 0 (Add Timeout Setting to Core Types) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:48.979Z",
+      "action": "Step 0 (Add Timeout Setting to Core Types) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:41:52.129Z",
+      "action": "plan review requested for Step 0 (Add Timeout Setting to Core Types)"
+    },
+    {
+      "timestamp": "2026-03-30T23:42:21.110Z",
+      "action": "plan review Step 0: APPROVE",
+      "outcome": "Step 0 is a minimal, well-scoped change: add one optional field to the `Settings` interface and set it to `undefined` in `DEFAULT_SETTINGS`. The existing patterns in `packages/core/src/types.ts` are consistent with what the plan describes — other optional settings like `worktreeInitCommand`, `testCommand`, and `buildCommand` follow exactly this pattern. The change is trivially safe and has no behavioral impact until later steps wire it up."
+    },
+    {
+      "timestamp": "2026-03-30T23:42:55.590Z",
+      "action": "code review requested for Step 0 (Add Timeout Setting to Core Types)"
+    },
+    {
+      "timestamp": "2026-03-30T23:43:28.526Z",
+      "action": "code review Step 0: APPROVE",
+      "outcome": "The implementation is a minimal, correct addition to `packages/core/src/types.ts`. Both the `taskStuckTimeoutMs?: number` field in the `Settings` interface and the `taskStuckTimeoutMs: undefined` entry in `DEFAULT_SETTINGS` are present, correctly typed, and well-documented. The JSDoc comment matches the exact wording specified in the step requirements word-for-word."
+    },
+    {
+      "timestamp": "2026-03-30T23:43:31.175Z",
+      "action": "Step 0 (Add Timeout Setting to Core Types) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:43:34.154Z",
+      "action": "Step 1 (Create StuckTaskDetector Class) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:43:36.802Z",
+      "action": "plan review requested for Step 1 (Create StuckTaskDetector Class)"
+    },
+    {
+      "timestamp": "2026-03-30T23:45:22.824Z",
+      "action": "plan review Step 1: REVISE",
+      "outcome": "The plan's structure is sound and mostly mirrors patterns already in the codebase (NtfyNotifier is a great reference). However, there is a critical design gap: `killAndRetry()` is listed as the recovery action in Step 2, but the actual recovery logic — moving the task back to \"todo\" — is deferred to Step 5, which means the Step 2 class will emit an event (`stuck:retry`) with no listener and won't actually recover tasks. More importantly, the plan has a concrete conflict: `activeSessions` in `Tas"
+    },
+    {
+      "timestamp": "2026-03-30T23:45:27.617Z",
+      "action": "Plan review for Step 2 returned REVISE with important design feedback: 1) Use { dispose: () => void } for session type (consistent with executor). 2) Use callback pattern (onStuck) instead of EventEmitter. 3) getLastActivity return type should be number | undefined. 4) checkStuckTasks must handle async properly in setInterval. 5) Recovery logic (move to todo) will be implemented in Step 5."
+    },
+    {
+      "timestamp": "2026-03-30T23:46:13.063Z",
+      "action": "code review requested for Step 1 (Create StuckTaskDetector Class)"
+    },
+    {
+      "timestamp": "2026-03-30T23:47:54.476Z",
+      "action": "code review Step 1: APPROVE",
+      "outcome": "The `StuckTaskDetector` class is well-structured and fully implements all required behaviors from the Step 2 checklist. The code follows project patterns (createLogger, interface-based design, async error isolation) and is cleanly organized. Two minor deviations from the spec signatures exist but are improvements over the spec — the implementation is strictly more correct."
+    },
+    {
+      "timestamp": "2026-03-30T23:47:57.152Z",
+      "action": "Step 1 (Create StuckTaskDetector Class) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:48:00.092Z",
+      "action": "Step 2 (Write Tests for StuckTaskDetector) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:48:03.964Z",
+      "action": "plan review requested for Step 2 (Write Tests for StuckTaskDetector)"
+    },
+    {
+      "timestamp": "2026-03-30T23:49:08.600Z",
+      "action": "plan review Step 2: APPROVE",
+      "outcome": "The test plan is well-scoped and maps cleanly onto the actual `StuckTaskDetector` implementation produced in Step 2. Every checkbox corresponds to a real, testable method or behaviour that already exists in `stuck-task-detector.ts`. The project's Vitest ecosystem with `vi.useFakeTimers()` / `vi.advanceTimersByTimeAsync()` (used in `agent-logger.test.ts` and `pr-monitor.test.ts`) provides exactly the right tooling to satisfy the \"mock time progression\" checkbox without any new infrastructure."
+    },
+    {
+      "timestamp": "2026-03-30T23:50:19.851Z",
+      "action": "code review requested for Step 2 (Write Tests for StuckTaskDetector)"
+    },
+    {
+      "timestamp": "2026-03-30T23:52:32.857Z",
+      "action": "code review Step 2: APPROVE",
+      "outcome": "The test file is comprehensive, well-structured, and covers all nine requirements listed in the Step 3 checklist. The implementation (Step 2) used an `onStuck` callback instead of the spec's \"emits `stuck:retry` event\", and the tests correctly validate the actual contract rather than the letter of the spec — this is coherent and appropriate. Test isolation is solid: each test creates fresh detector instances, `afterEach` calls `stop()` to prevent interval leaks, and the logger is properly mocked"
+    },
+    {
+      "timestamp": "2026-03-30T23:52:35.968Z",
+      "action": "Step 2 (Write Tests for StuckTaskDetector) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:52:40.475Z",
+      "action": "Step 3 (Integrate Heartbeat Tracking into Executor) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:52:43.369Z",
+      "action": "plan review requested for Step 3 (Integrate Heartbeat Tracking into Executor)"
+    },
+    {
+      "timestamp": "2026-03-30T23:53:29.620Z",
+      "action": "plan review Step 3: APPROVE",
+      "outcome": "The plan is well-aligned with the existing codebase. The `StuckTaskDetector` class (from Step 2) is already implemented and its API (`trackTask`, `untrackTask`, `recordActivity`) maps cleanly onto the executor's `agentWork` function structure. The integration points are well-defined and the proposed changes are minimal and non-disruptive to existing execution flow."
+    },
+    {
+      "timestamp": "2026-03-30T23:55:20.813Z",
+      "action": "code review requested for Step 3 (Integrate Heartbeat Tracking into Executor)"
+    },
+    {
+      "timestamp": "2026-03-30T23:57:36.570Z",
+      "action": "code review Step 3: APPROVE",
+      "outcome": "The implementation correctly integrates heartbeat tracking into the executor and delivers comprehensive tests for `StuckTaskDetector`. All four heartbeat recording sites required by PROMPT.md Step 4 are present (text deltas, tool calls, step updates, initial prompt). The test file covers all nine required scenarios from PROMPT.md Step 3, plus adds valuable edge-case coverage. The code follows established project patterns cleanly."
+    },
+    {
+      "timestamp": "2026-03-30T23:57:39.667Z",
+      "action": "Step 3 (Integrate Heartbeat Tracking into Executor) → done"
+    },
+    {
+      "timestamp": "2026-03-30T23:57:42.535Z",
+      "action": "Step 4 (Handle Stuck Task Recovery Flow) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-30T23:57:45.542Z",
+      "action": "plan review requested for Step 4 (Handle Stuck Task Recovery Flow)"
+    },
+    {
+      "timestamp": "2026-03-30T23:59:03.526Z",
+      "action": "plan review Step 4: APPROVE",
+      "outcome": "Steps 1–3 of this task are already fully implemented. The `stuck-task-detector.ts` file already contains all of the Step 4 recovery logic that the PROMPT specifies — the \"stuck-killed\" transient status handling, the log entry, the `moveTask(\"todo\")` call, and the step-preservation guarantee. The executor already integrates the `stuckTaskDetector` via the `pausedAborted` pattern (untracking on pause/globalPause). The plan as written is coherent and achievable, with one important clarification nee"
+    },
+    {
+      "timestamp": "2026-03-30T23:59:40.913Z",
+      "action": "code review requested for Step 4 (Handle Stuck Task Recovery Flow)"
+    },
+    {
+      "timestamp": "2026-03-31T00:03:03.752Z",
+      "action": "code review Step 4: REVISE",
+      "outcome": "The `StuckTaskDetector` implementation correctly sets up the kill-and-retry recovery mechanism with proper status bookkeeping and good test coverage for the detector in isolation. However, there are two significant issues: a race condition where the executor's catch block fires `onError` (triggering false-positive ntfy failure notifications) for stuck-task kills, and a subtle but incorrect use of `updateTask({ status: undefined })` that is a no-op in the real store (but happens to work because `"
+    },
+    {
+      "timestamp": "2026-03-31T00:03:09.389Z",
+      "action": "Code review REVISE: Need to add stuckAborted set to executor (like pausedAborted) to prevent false failure notifications. Also fix updateTask({ status: undefined }) no-op — moveTask already clears status."
+    },
+    {
+      "timestamp": "2026-03-31T00:04:40.385Z",
+      "action": "code review requested for Step 4 (Handle Stuck Task Recovery Flow)"
+    },
+    {
+      "timestamp": "2026-03-31T00:07:58.990Z",
+      "action": "code review Step 4: APPROVE",
+      "outcome": "The implementation correctly implements the stuck task recovery flow: the `StuckTaskDetector.killAndRetry()` sets a transient `\"stuck-killed\"` status, logs the event, moves the task back to `\"todo\"` (preserving step progress), and the executor correctly suppresses the \"failed\" treatment via `stuckAborted`. The test coverage is comprehensive. There is one race condition in the `stuckAborted` sentinel mechanism, but the store's `moveTask` cleanup logic provides a functional safety net that keeps t"
+    },
+    {
+      "timestamp": "2026-03-31T00:08:02.614Z",
+      "action": "Step 4 (Handle Stuck Task Recovery Flow) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:08:06.104Z",
+      "action": "Step 5 (Export and Initialize in Dashboard Command) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:08:09.201Z",
+      "action": "plan review requested for Step 5 (Export and Initialize in Dashboard Command)"
+    },
+    {
+      "timestamp": "2026-03-31T00:09:15.408Z",
+      "action": "plan review Step 5: REVISE",
+      "outcome": "The step plan correctly identifies all six checkboxes needed to wire `StuckTaskDetector` into the dashboard command. However, there is one critical gap: the plan does not mention passing the `onStuck` callback that calls `executor.markStuckAborted(taskId)`. Without this callback, stuck tasks will be double-handled — the `killAndRetry` method disposes the session and moves the task to `todo`, but the executor's `execute()` catch-block doesn't know the session was killed intentionally. Without `st"
+    },
+    {
+      "timestamp": "2026-03-31T00:10:29.366Z",
+      "action": "code review requested for Step 5 (Export and Initialize in Dashboard Command)"
+    },
+    {
+      "timestamp": "2026-03-31T00:11:43.300Z",
+      "action": "code review Step 5: APPROVE",
+      "outcome": "All six checklist items from Step 6 (Export and Initialize) are correctly implemented: `StuckTaskDetector` and its types are exported from `packages/engine/src/index.ts`; it is imported, instantiated, and wired into the executor in `dashboard.ts`; `start()` is called after `scheduler.start()`; and `stop()` is called first in the SIGINT handler. The late-binding `executorRef` pattern cleanly resolves the circular dependency between the detector (needing the executor's `markStuckAborted`) and the "
+    },
+    {
+      "timestamp": "2026-03-31T00:11:46.996Z",
+      "action": "Step 5 (Export and Initialize in Dashboard Command) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:11:51.262Z",
+      "action": "Step 6 (Testing & Verification) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:13:35.672Z",
+      "action": "All tests pass except pre-existing failure in dashboard (mobile-planning-input-font-size.test.ts). Core: 261/261 pass. Engine: 581/581 pass. Build succeeds."
+    },
+    {
+      "timestamp": "2026-03-31T00:13:38.917Z",
+      "action": "Step 6 (Testing & Verification) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:13:41.807Z",
+      "action": "Step 7 (Documentation & Delivery) → in-progress"
+    },
+    {
+      "timestamp": "2026-03-31T00:14:30.174Z",
+      "action": "Step 7 (Documentation & Delivery) → done"
+    },
+    {
+      "timestamp": "2026-03-31T00:15:03.578Z",
+      "action": "Task marked done by agent"
+    }
+  ],
+  "columnMovedAt": "2026-03-31T00:16:42.754Z",
+  "createdAt": "2026-03-30T19:28:50.079Z",
+  "updatedAt": "2026-03-31T00:16:42.754Z",
+  "modelProvider": "anthropic",
+  "modelId": "claude-opus-4-6",
+  "validatorModelProvider": "anthropic",
+  "validatorModelId": "claude-sonnet-4-6",
+  "size": "M",
+  "reviewLevel": 2
+}

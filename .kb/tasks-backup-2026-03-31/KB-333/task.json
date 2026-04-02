@@ -1,0 +1,32 @@
+{
+  "id": "KB-333",
+  "description": "After KB-330 completes, execute KB-331: rename published package and CLI from @dustinbyrne/kb to @dustinbyrne/fusion",
+  "column": "todo",
+  "dependencies": [
+    "KB-330"
+  ],
+  "steps": [],
+  "currentStep": 0,
+  "log": [
+    {
+      "timestamp": "2026-03-31T20:20:34.273Z",
+      "action": "Task created"
+    },
+    {
+      "timestamp": "2026-03-31T20:21:21.381Z",
+      "action": "Spec review requested"
+    },
+    {
+      "timestamp": "2026-03-31T20:21:44.710Z",
+      "action": "Spec review: APPROVE",
+      "outcome": "This is a well-structured specification for a mechanical refactor with clear scope boundaries. The PROMPT.md correctly identifies all affected files, provides concrete verification commands for each step, and appropriately scopes the work to package metadata, documentation, and changeset files. The testing requirements demand real automated test execution with zero failures as a quality gate."
+    }
+  ],
+  "columnMovedAt": "2026-03-31T20:21:46.426Z",
+  "createdAt": "2026-03-31T20:20:34.273Z",
+  "updatedAt": "2026-03-31T21:01:04.963Z",
+  "size": "M",
+  "reviewLevel": 2,
+  "status": "queued",
+  "blockedBy": "KB-313"
+}
