@@ -15,7 +15,7 @@ function createTempDir(): string {
 function createFakeFusionProject(dir: string): void {
   const fusionDir = join(dir, ".fusion");
   mkdirSync(fusionDir, { recursive: true });
-  const db = new DatabaseSync(join(fusionDir, "fusion.db"));
+  const db = new DatabaseSync(join(fusionDir, "kb.db"));
   db.exec("CREATE TABLE IF NOT EXISTS sanity (id INTEGER PRIMARY KEY)");
   db.close();
 }
@@ -125,7 +125,7 @@ describe("TaskStore Backward Compatibility", () => {
       createFakeFusionProject(projectDir);
       process.chdir(projectDir);
 
-      const centralDb = join(tempDir, "fusion-central.db");
+      const centralDb = join(tempDir, "kb-central.db");
       await centralCore.close();
       rmSync(centralDb, { force: true });
       centralCore = new CentralCore(tempDir);
@@ -135,7 +135,7 @@ describe("TaskStore Backward Compatibility", () => {
       expect(store).toBeInstanceOf(TaskStore);
       const task = await store.createTask({ description: "legacy task" });
       expect(task.id).toBe("FN-001");
-      expect(existsSync(join(projectDir, ".fusion", "fusion.db"))).toBe(true);
+      expect(existsSync(join(projectDir, ".fusion", "kb.db"))).toBe(true);
       expect(existsSync(join(projectDir, ".fusion", "tasks", task.id, "task.json"))).toBe(true);
     });
 
