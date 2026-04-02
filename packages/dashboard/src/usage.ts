@@ -440,9 +440,9 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
         if (clean.includes("Current session") || clean.includes("% left") || clean.includes("% used")) {
           resolve(buf);
         } else {
-          reject(new Error("Claude CLI timed out"));
+          reject(new Error("Claude CLI timed out after 60 seconds. The Claude CLI may be slow to start or authenticate."));
         }
-      }, 30000);
+      }, 60000);
 
       ptyProcess.onData((data: string) => {
         if (settled) return;
