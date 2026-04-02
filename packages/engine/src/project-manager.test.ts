@@ -63,6 +63,7 @@ describe("ProjectManager", () => {
         projectsActive: {},
       }),
       updateProjectHealth: vi.fn().mockResolvedValue(undefined),
+      updateProject: vi.fn().mockResolvedValue({ ...mockProject, status: "active" }),
       logActivity: vi.fn().mockResolvedValue(undefined),
       acquireGlobalSlot: vi.fn().mockResolvedValue(true),
       releaseGlobalSlot: vi.fn().mockResolvedValue(undefined),
@@ -131,6 +132,15 @@ describe("ProjectManager", () => {
       expect(mockCentralCore.updateProjectHealth).toHaveBeenCalledWith(
         "proj_test123",
         expect.objectContaining({ status: "active" })
+      );
+    });
+
+    it("should update project status to active after adding", async () => {
+      await manager.addProject(testConfig);
+
+      expect(mockCentralCore.updateProject).toHaveBeenCalledWith(
+        "proj_test123",
+        { status: "active" }
       );
     });
   });
