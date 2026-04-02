@@ -170,7 +170,6 @@ export function Header({
       <div className="header-left">
         <img src="/logo.svg" alt="Fusion logo" className="header-logo" width={24} height={24} />
         <h1 className="logo">Fusion</h1>
-        <span className="logo-sub">tasks</span>
 
         {/* Project Selector - shown when 2+ projects, placed next to logo/title */}
         {projects.length > 1 && (

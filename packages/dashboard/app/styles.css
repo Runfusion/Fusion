@@ -457,12 +457,6 @@ body {
   font-weight: 700;
   letter-spacing: -0.5px;
 }
-.logo-sub {
-  font-size: 13px;
-  color: var(--text-muted);
-  font-weight: 400;
-}
-
 /* === Buttons === */
 .btn {
   padding: var(--btn-padding);

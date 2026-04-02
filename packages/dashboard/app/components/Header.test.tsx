@@ -38,7 +38,6 @@ describe("Header", () => {
   it("renders the logo and brand", () => {
     renderHeader();
     expect(screen.getByText("Fusion")).toBeDefined();
-    expect(screen.getByText("tasks")).toBeDefined();
   });
 
   it("renders action buttons", () => {
@@ -517,8 +516,7 @@ describe("Header", () => {
 
     it("hides logo-sub on mobile via CSS", () => {
       renderHeader({}, true);
-      // The element exists but is hidden via CSS on mobile
-      expect(screen.getByText("tasks")).toBeDefined();
+      // The "tasks" element no longer exists - it was removed
     });
   });
 });
