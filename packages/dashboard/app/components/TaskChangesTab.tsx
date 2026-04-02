@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { FileCode, ChevronDown, ChevronRight, AlertCircle } from "lucide-react";
 import { fetchTaskDiff, type TaskDiff } from "../api";
+import { highlightDiff } from "../utils/highlightDiff";
 
 interface TaskChangesTabProps {
   taskId: string;
@@ -185,7 +186,7 @@ export function TaskChangesTab({ taskId, worktree }: TaskChangesTabProps) {
               {isExpanded && patch && (
                 <div className="changes-file-content">
                   <pre className="changes-diff-patch">
-                    <code>{patch}</code>
+                    <code>{highlightDiff(patch)}</code>
                   </pre>
                 </div>
               )}

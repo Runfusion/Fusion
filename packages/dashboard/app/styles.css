@@ -13073,19 +13073,39 @@ html .column.drag-over * {
 }
 
 /* Syntax highlighting for diff */
+.gm-diff-patch .diff-add,
 .changes-diff-patch .diff-add,
+.gm-diff-patch [data-prefix="+"],
 .changes-diff-patch [data-prefix="+"] {
   color: #3fb950;
+  background-color: rgba(63, 185, 80, 0.12);
 }
 
+.gm-diff-patch .diff-del,
 .changes-diff-patch .diff-del,
+.gm-diff-patch [data-prefix="-"],
 .changes-diff-patch [data-prefix="-"] {
   color: #f85149;
+  background-color: rgba(248, 81, 73, 0.12);
 }
 
+.gm-diff-patch .diff-hunk,
 .changes-diff-patch .diff-hunk,
+.gm-diff-patch [data-prefix="@@"],
 .changes-diff-patch [data-prefix="@@"] {
   color: #58a6ff;
+}
+
+/* Block display for highlighted diff lines */
+.gm-diff-patch .diff-add,
+.gm-diff-patch .diff-del,
+.gm-diff-patch .diff-hunk,
+.changes-diff-patch .diff-add,
+.changes-diff-patch .diff-del,
+.changes-diff-patch .diff-hunk {
+  display: block;
+  padding: 0 8px;
+  margin: 0 -8px;
 }
 
 /* === Project Selector === */

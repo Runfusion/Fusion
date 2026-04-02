@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { FileEdit, FileMinus, FilePlus, FileSymlink, FolderGit2, X } from "lucide-react";
 import { useChangedFiles } from "../hooks/useChangedFiles";
+import { highlightDiff } from "../utils/highlightDiff";
 import type { TaskFileDiff } from "../api";
 
 interface ChangedFilesModalProps {
@@ -121,7 +122,9 @@ export function ChangedFilesModal({ taskId, worktree, column, isOpen, onClose }:
                 </div>
                 <div className="gm-diff-viewer">
                   {selectedStat ? <pre className="gm-diff-stat">{selectedStat}</pre> : null}
-                  <pre className="gm-diff-patch">{selectedFile.diff || "No diff available"}</pre>
+                  <pre className="gm-diff-patch">
+                    <code>{highlightDiff(selectedFile.diff || "No diff available")}</code>
+                  </pre>
                 </div>
               </div>
             ) : null}
