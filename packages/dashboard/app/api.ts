@@ -1355,6 +1355,46 @@ export function createWorkflowStepFromTemplate(templateId: string): Promise<Work
   });
 }
 
+// ── Scripts API ────────────────────────────────────────────────────────
+
+/** Script entry returned from the API */
+export interface ScriptEntry {
+  name: string;
+  command: string;
+}
+
+/** Result of running a script */
+export interface ScriptRunResult {
+  output: string;
+  exitCode: number;
+}
+
+/** Fetch all saved scripts from project settings */
+export function fetchScripts(): Promise<Record<string, string>> {
+  return api<Record<string, string>>("/scripts");
+}
+
+/** Add or update a script */
+export function addScript(name: string, command: string): Promise<ScriptEntry> {
+  return api<ScriptEntry>("/scripts", {
+    method: "POST",
+    body: JSON.stringify({ name, command }),
+  });
+}
+
+/** Remove a script by name */
+export function removeScript(name: string): Promise<void> {
+  return api<void>(`/scripts/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+/** Run a saved script by name */
+export function runScript(name: string, args?: string[]): Promise<ScriptRunResult> {
+  return api<ScriptRunResult>(`/scripts/${encodeURIComponent(name)}/run`, {
+    method: "POST",
+    body: JSON.stringify({ args }),
+  });
+}
+
 // ── AI Text Refinement API ────────────────────────────────────────────
 
 /** Refinement types for AI text refinement */
@@ -1950,28 +1990,6 @@ export function updateProject(id: string, updates: Partial<ProjectInfo>): Promis
   return api<ProjectInfo>(`/projects/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(updates),
-  });
-}
-
-// ── Scripts API ──────────────────────────────────────────────────────────
-
-/** Fetch all saved scripts */
-export function fetchScripts(): Promise<Record<string, string>> {
-  return api<Record<string, string>>("/scripts");
-}
-
-/** Add or update a script */
-export function addScript(name: string, command: string): Promise<Record<string, string>> {
-  return api<Record<string, string>>("/scripts", {
-    method: "POST",
-    body: JSON.stringify({ name, command }),
-  });
-}
-
-/** Remove a script */
-export function removeScript(name: string): Promise<Record<string, string>> {
-  return api<Record<string, string>>(`/scripts/${encodeURIComponent(name)}`, {
-    method: "DELETE",
   });
 }
 

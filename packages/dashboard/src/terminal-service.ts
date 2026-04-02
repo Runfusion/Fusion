@@ -583,6 +583,13 @@ export class TerminalService extends EventEmitter {
   }
 
   /**
+   * Alias for write() for backward compatibility
+   */
+  writeInput(sessionId: string, data: string): boolean {
+    return this.write(sessionId, data);
+  }
+
+  /**
    * Resize a terminal session
    */
   resize(sessionId: string, cols: number, rows: number, suppressOutput: boolean = true): boolean {

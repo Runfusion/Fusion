@@ -1,16 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
-import { X, Plus, Play, Trash2, Terminal, Check, AlertCircle } from "lucide-react";
-import {
-  fetchScripts,
-  addScript,
-  removeScript,
-} from "../api";
+import { fetchScripts, addScript, removeScript, type ScriptEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
+import {
+  X,
+  Plus,
+  Play,
+  Trash2,
+  Terminal,
+  Loader2,
+} from "lucide-react";
 
 interface ScriptsModalProps {
   isOpen: boolean;
   onClose: () => void;
   addToast: (message: string, type?: ToastType) => void;
+  /** Callback when user wants to run a script - opens terminal modal */
   onRunScript?: (name: string, command: string) => void;
 }
 
@@ -24,18 +28,28 @@ const EMPTY_FORM: ScriptFormData = {
   command: "",
 };
 
+/** Validate script name: alphanumeric, hyphens, underscores only */
+function isValidScriptName(name: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(name);
+}
+
+/** Truncate command for display */
+function truncateCommand(command: string, maxLength: number = 60): string {
+  if (command.length <= maxLength) return command;
+  return command.slice(0, maxLength - 3) + "...";
+}
+
 export function ScriptsModal({ isOpen, onClose, addToast, onRunScript }: ScriptsModalProps) {
   const [scripts, setScripts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
-  const [editingName, setEditingName] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState<string | null>(null);
   const [form, setForm] = useState<ScriptFormData>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [deleteConfirmName, setDeleteConfirmName] = useState<string | null>(null);
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   const loadScripts = useCallback(async () => {
-    if (!isOpen) return;
     try {
       setLoading(true);
       const data = await fetchScripts();
@@ -45,7 +59,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, onRunScript }: Scripts
     } finally {
       setLoading(false);
     }
-  }, [isOpen, addToast]);
+  }, [addToast]);
 
   useEffect(() => {
     if (isOpen) {
@@ -53,113 +67,103 @@ export function ScriptsModal({ isOpen, onClose, addToast, onRunScript }: Scripts
     }
   }, [isOpen, loadScripts]);
 
-  const validateScriptName = (name: string): string | null => {
-    if (!name.trim()) {
-      return "Script name is required";
-    }
-    if (!/^[a-zA-Z0-9_-]+$/.test(name.trim())) {
-      return "Name must be alphanumeric with hyphens and underscores only (no spaces)";
-    }
-    // Check for reserved names
-    const reservedNames = ["run", "list", "add", "remove", "delete", "help"];
-    if (reservedNames.includes(name.trim().toLowerCase())) {
-      return `Script name '${name.trim()}' is reserved`;
-    }
-    return null;
-  };
-
   const handleCreate = useCallback(() => {
     setIsCreating(true);
-    setEditingName(null);
+    setIsEditing(null);
     setForm(EMPTY_FORM);
-    setValidationError(null);
+    setNameError(null);
   }, []);
 
   const handleEdit = useCallback((name: string, command: string) => {
+    setIsEditing(name);
     setIsCreating(false);
-    setEditingName(name);
     setForm({ name, command });
-    setValidationError(null);
+    setNameError(null);
   }, []);
 
   const handleCancel = useCallback(() => {
+    setIsEditing(null);
     setIsCreating(false);
-    setEditingName(null);
     setForm(EMPTY_FORM);
-    setValidationError(null);
+    setNameError(null);
+  }, []);
+
+  const handleNameChange = useCallback((name: string) => {
+    setForm((prev) => ({ ...prev, name }));
+    if (name && !isValidScriptName(name)) {
+      setNameError("Name must contain only letters, numbers, hyphens, and underscores (no spaces)");
+    } else {
+      setNameError(null);
+    }
   }, []);
 
   const handleSave = useCallback(async () => {
     const trimmedName = form.name.trim();
     const trimmedCommand = form.command.trim();
 
-    // Validate name
-    const nameError = validateScriptName(trimmedName);
-    if (nameError) {
-      setValidationError(nameError);
+    if (!trimmedName) {
+      addToast("Script name is required", "error");
+      return;
+    }
+
+    if (!isValidScriptName(trimmedName)) {
+      addToast("Script name must contain only letters, numbers, hyphens, and underscores (no spaces)", "error");
       return;
     }
 
     if (!trimmedCommand) {
-      setValidationError("Command is required");
+      addToast("Script command is required", "error");
       return;
     }
 
     setSaving(true);
-    setValidationError(null);
-
     try {
       await addScript(trimmedName, trimmedCommand);
-      addToast(
-        isCreating ? `Script '${trimmedName}' created` : `Script '${trimmedName}' updated`,
-        "success"
-      );
+      addToast(isEditing ? "Script updated" : "Script created", "success");
+      setIsEditing(null);
       setIsCreating(false);
-      setEditingName(null);
       setForm(EMPTY_FORM);
+      setNameError(null);
       await loadScripts();
     } catch (err: any) {
-      const message = err.message || "Failed to save script";
-      setValidationError(message);
-      addToast(message, "error");
+      if (err.message?.includes("already exists")) {
+        addToast("A script with this name already exists", "error");
+      } else {
+        addToast(err.message || "Failed to save script", "error");
+      }
     } finally {
       setSaving(false);
     }
-  }, [form, isCreating, addToast, loadScripts]);
+  }, [form, isEditing, addToast, loadScripts]);
 
-  const handleDelete = useCallback(
-    async (name: string) => {
-      try {
-        await removeScript(name);
-        addToast(`Script '${name}' deleted`, "success");
-        setDeleteConfirmName(null);
-        if (editingName === name) {
-          setEditingName(null);
-          setForm(EMPTY_FORM);
-        }
-        await loadScripts();
-      } catch (err: any) {
-        addToast(err.message || "Failed to delete script", "error");
+  const handleDelete = useCallback(async (name: string) => {
+    try {
+      await removeScript(name);
+      addToast("Script deleted", "success");
+      setDeleteConfirmName(null);
+      if (isEditing === name) {
+        setIsEditing(null);
+        setForm(EMPTY_FORM);
       }
-    },
-    [editingName, addToast, loadScripts]
-  );
+      await loadScripts();
+    } catch (err: any) {
+      addToast(err.message || "Failed to delete script", "error");
+    }
+  }, [isEditing, addToast, loadScripts]);
 
-  const handleRunScript = useCallback(
-    (name: string, command: string) => {
-      if (onRunScript) {
-        onRunScript(name, command);
-      } else {
-        addToast("Terminal not available", "error");
-      }
-    },
-    [onRunScript, addToast]
-  );
+  const handleRun = useCallback((name: string, command: string) => {
+    if (onRunScript) {
+      onRunScript(name, command);
+    }
+  }, [onRunScript]);
 
   if (!isOpen) return null;
 
-  const isEditing = isCreating || editingName !== null;
-  const scriptEntries = Object.entries(scripts).sort(([a], [b]) => a.localeCompare(b));
+  const isEditingAny = isCreating || isEditing !== null;
+  const scriptEntries: ScriptEntry[] = Object.entries(scripts).map(([name, command]) => ({
+    name,
+    command,
+  }));
 
   return (
     <div className="modal-overlay" onClick={onClose} data-testid="scripts-modal">
@@ -167,12 +171,12 @@ export function ScriptsModal({ isOpen, onClose, addToast, onRunScript }: Scripts
         className="modal scripts-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
-        aria-label="Scripts Manager"
+        aria-label="Scripts"
       >
         {/* Header */}
         <div className="modal-header">
-          <h2 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <Terminal size={18} />
+          <h2>
+            <Terminal size={18} style={{ marginRight: "8px", verticalAlign: "middle" }} />
             Scripts
           </h2>
           <button className="btn-icon" onClick={onClose} aria-label="Close">
@@ -182,319 +186,296 @@ export function ScriptsModal({ isOpen, onClose, addToast, onRunScript }: Scripts
 
         <div className="modal-body" style={{ padding: "16px", maxHeight: "70vh", overflowY: "auto" }}>
           {loading ? (
-            <div
-              style={{
-                textAlign: "center",
-                padding: "32px",
-                color: "var(--text-secondary)",
-              }}
-              data-testid="scripts-loading"
-            >
-              Loading...
+            <div style={{ textAlign: "center", padding: "32px", color: "var(--text-secondary)" }}>
+              <Loader2 size={24} className="spin" style={{ margin: "0 auto 8px", display: "block" }} />
+              Loading scripts...
+            </div>
+          ) : isEditingAny ? (
+            /* Form for create/edit */
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <label
+                  htmlFor="script-name"
+                  style={{
+                    display: "block",
+                    marginBottom: "4px",
+                    fontSize: "13px",
+                    fontWeight: 500,
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  Script Name
+                </label>
+                <input
+                  id="script-name"
+                  type="text"
+                  className="input"
+                  value={form.name}
+                  onChange={(e) => handleNameChange(e.target.value)}
+                  placeholder="e.g., build, test, lint"
+                  disabled={saving || isEditing !== null}
+                  data-testid="script-name-input"
+                  style={{
+                    width: "100%",
+                    borderColor: nameError ? "var(--status-error, #ef4444)" : undefined,
+                  }}
+                />
+                {nameError && (
+                  <div
+                    style={{
+                      fontSize: "12px",
+                      color: "var(--status-error, #ef4444)",
+                      marginTop: "4px",
+                    }}
+                    data-testid="script-name-error"
+                  >
+                    {nameError}
+                  </div>
+                )}
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: "var(--text-secondary)",
+                    marginTop: "4px",
+                  }}
+                >
+                  Letters, numbers, hyphens, and underscores only
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="script-command"
+                  style={{
+                    display: "block",
+                    marginBottom: "4px",
+                    fontSize: "13px",
+                    fontWeight: 500,
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  Command
+                </label>
+                <textarea
+                  id="script-command"
+                  className="input"
+                  value={form.command}
+                  onChange={(e) => setForm((prev) => ({ ...prev, command: e.target.value }))}
+                  placeholder="e.g., npm run build"
+                  rows={3}
+                  disabled={saving}
+                  data-testid="script-command-input"
+                  style={{
+                    width: "100%",
+                    resize: "vertical",
+                    fontFamily: "monospace",
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleCancel}
+                  disabled={saving}
+                  data-testid="script-cancel-btn"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleSave}
+                  disabled={saving || !!nameError}
+                  data-testid="script-save-btn"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 size={14} className="spin" style={{ marginRight: "6px" }} />
+                      Saving...
+                    </>
+                  ) : isEditing ? (
+                    "Update"
+                  ) : (
+                    "Create"
+                  )}
+                </button>
+              </div>
             </div>
           ) : (
+            /* List view */
             <>
-              {/* Script List */}
-              {!isEditing && (
-                <>
-                  {scriptEntries.length === 0 && (
-                    <div
-                      style={{
-                        textAlign: "center",
-                        padding: "32px",
-                        color: "var(--text-secondary)",
-                        fontSize: "14px",
-                      }}
-                      data-testid="scripts-empty-state"
-                    >
-                      No scripts defined yet. Add your first script to run quick commands.
-                    </div>
-                  )}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "16px",
+                }}
+              >
+                <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
+                  {scriptEntries.length === 0
+                    ? "No scripts defined"
+                    : `${scriptEntries.length} script${scriptEntries.length === 1 ? "" : "s"}`}
+                </div>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleCreate}
+                  data-testid="add-script-btn"
+                  style={{ display: "flex", alignItems: "center", gap: "6px" }}
+                >
+                  <Plus size={14} />
+                  Add Script
+                </button>
+              </div>
 
-                  {scriptEntries.length > 0 && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      {scriptEntries.map(([name, command]) => (
-                        <div
-                          key={name}
-                          className="script-card"
-                          data-testid={`script-item-${name}`}
-                          style={{
-                            padding: "12px 16px",
-                            border: "1px solid var(--border-primary)",
-                            borderRadius: "8px",
-                            background: "var(--bg-secondary)",
-                          }}
-                        >
+              {scriptEntries.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "32px",
+                    color: "var(--text-secondary)",
+                    fontSize: "14px",
+                    border: "1px dashed var(--border-primary)",
+                    borderRadius: "8px",
+                  }}
+                  data-testid="empty-state"
+                >
+                  <Terminal size={32} style={{ margin: "0 auto 12px", opacity: 0.5 }} />
+                  <div>No scripts defined yet.</div>
+                  <div style={{ marginTop: "4px", fontSize: "12px" }}>
+                    Add scripts to quickly run common commands from the dashboard.
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {scriptEntries.map((script) => (
+                    <div
+                      key={script.name}
+                      className="script-card"
+                      data-testid={`script-${script.name}`}
+                      style={{
+                        padding: "12px 16px",
+                        border: "1px solid var(--border-primary)",
+                        borderRadius: "8px",
+                        background: "var(--bg-secondary)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
                           <div
                             style={{
                               display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "flex-start",
+                              alignItems: "center",
+                              gap: "8px",
+                              marginBottom: "4px",
                             }}
                           >
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "8px",
-                                  marginBottom: "4px",
-                                }}
-                              >
-                                <span style={{ fontWeight: 600, fontSize: "14px" }}>{name}</span>
-                              </div>
-                              <div
-                                style={{
-                                  fontSize: "12px",
-                                  color: "var(--text-secondary)",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                  fontFamily: "monospace",
-                                }}
-                                title={command}
-                              >
-                                {command.length > 60 ? `${command.slice(0, 60)}...` : command}
-                              </div>
-                            </div>
-                            <div
+                            <span
                               style={{
-                                display: "flex",
-                                gap: "4px",
-                                marginLeft: "8px",
-                                flexShrink: 0,
+                                fontWeight: 600,
+                                fontSize: "14px",
+                                fontFamily: "monospace",
                               }}
                             >
-                              <button
-                                className="btn-icon"
-                                onClick={() => handleRunScript(name, command)}
-                                title={`Run ${name}`}
-                                aria-label={`Run script ${name}`}
-                                data-testid={`run-script-${name}`}
-                              >
-                                <Play size={14} />
-                              </button>
-                              <button
-                                className="btn-icon"
-                                onClick={() => handleEdit(name, command)}
-                                title="Edit"
-                                aria-label={`Edit script ${name}`}
-                                data-testid={`edit-script-${name}`}
-                              >
-                                <svg
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                >
-                                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                                </svg>
-                              </button>
-                              {deleteConfirmName === name ? (
-                                <div
-                                  style={{ display: "flex", gap: "4px", alignItems: "center" }}
-                                >
-                                  <button
-                                    className="btn-icon"
-                                    onClick={() => handleDelete(name)}
-                                    title="Confirm delete"
-                                    aria-label={`Confirm delete script ${name}`}
-                                    style={{ color: "var(--status-error, #ef4444)" }}
-                                  >
-                                    <Check size={14} />
-                                  </button>
-                                  <button
-                                    className="btn-icon"
-                                    onClick={() => setDeleteConfirmName(null)}
-                                    title="Cancel delete"
-                                    aria-label="Cancel delete"
-                                  >
-                                    <X size={14} />
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  className="btn-icon"
-                                  onClick={() => setDeleteConfirmName(name)}
-                                  title="Delete"
-                                  aria-label={`Delete script ${name}`}
-                                  data-testid={`delete-script-${name}`}
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              )}
-                            </div>
+                              {script.name}
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              fontSize: "12px",
+                              color: "var(--text-secondary)",
+                              fontFamily: "monospace",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                            title={script.command}
+                          >
+                            {truncateCommand(script.command)}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* Edit / Create form */}
-              {isEditing && (
-                <div
-                  style={{
-                    padding: "16px",
-                    border: "1px solid var(--border-primary)",
-                    borderRadius: "8px",
-                    background: "var(--bg-secondary)",
-                  }}
-                  data-testid="script-form"
-                >
-                  <h3 style={{ margin: "0 0 12px", fontSize: "14px", fontWeight: 600 }}>
-                    {isCreating ? "New Script" : "Edit Script"}
-                  </h3>
-
-                  {/* Validation error */}
-                  {validationError && (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        padding: "8px 12px",
-                        marginBottom: "12px",
-                        background: "rgba(239, 68, 68, 0.1)",
-                        border: "1px solid rgba(239, 68, 68, 0.3)",
-                        borderRadius: "6px",
-                        color: "var(--status-error, #ef4444)",
-                        fontSize: "13px",
-                      }}
-                      data-testid="script-validation-error"
-                    >
-                      <AlertCircle size={14} />
-                      {validationError}
-                    </div>
-                  )}
-
-                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                    {/* Name */}
-                    <div>
-                      <label
-                        style={{
-                          display: "block",
-                          fontSize: "12px",
-                          color: "var(--text-secondary)",
-                          marginBottom: "4px",
-                        }}
-                      >
-                        Script Name
-                      </label>
-                      <input
-                        type="text"
-                        value={form.name}
-                        onChange={(e) =>
-                          setForm((prev) => ({ ...prev, name: e.target.value }))
-                        }
-                        placeholder="e.g. build, test, deploy"
-                        disabled={!isCreating}
-                        style={{
-                          width: "100%",
-                          padding: "8px 12px",
-                          borderRadius: "6px",
-                          border: "1px solid var(--border-primary)",
-                          background: isCreating ? "var(--bg-primary)" : "var(--bg-tertiary)",
-                          color: "var(--text-primary)",
-                          fontSize: "13px",
-                        }}
-                        data-testid="script-name-input"
-                      />
-                      <div
-                        style={{
-                          fontSize: "11px",
-                          color: "var(--text-secondary)",
-                          marginTop: "4px",
-                        }}
-                      >
-                        Alphanumeric with hyphens and underscores only. No spaces.
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "4px",
+                            marginLeft: "8px",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => handleRun(script.name, script.command)}
+                            title="Run script"
+                            aria-label={`Run ${script.name}`}
+                            data-testid={`run-script-${script.name}`}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              padding: "4px 10px",
+                              fontSize: "12px",
+                            }}
+                          >
+                            <Play size={12} />
+                            Run
+                          </button>
+                          <button
+                            className="btn-icon"
+                            onClick={() => handleEdit(script.name, script.command)}
+                            title="Edit"
+                            aria-label={`Edit ${script.name}`}
+                            data-testid={`edit-script-${script.name}`}
+                          >
+                            <Plus size={14} style={{ transform: "rotate(45deg)" }} />
+                          </button>
+                          {deleteConfirmName === script.name ? (
+                            <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                              <button
+                                className="btn-icon"
+                                onClick={() => handleDelete(script.name)}
+                                title="Confirm delete"
+                                aria-label={`Confirm delete ${script.name}`}
+                                data-testid={`confirm-delete-script-${script.name}`}
+                                style={{ color: "var(--status-error, #ef4444)" }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                              <button
+                                className="btn-icon"
+                                onClick={() => setDeleteConfirmName(null)}
+                                title="Cancel delete"
+                                aria-label="Cancel delete"
+                                data-testid={`cancel-delete-script-${script.name}`}
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className="btn-icon"
+                              onClick={() => setDeleteConfirmName(script.name)}
+                              title="Delete"
+                              aria-label={`Delete ${script.name}`}
+                              data-testid={`delete-script-${script.name}`}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-
-                    {/* Command */}
-                    <div>
-                      <label
-                        style={{
-                          display: "block",
-                          fontSize: "12px",
-                          color: "var(--text-secondary)",
-                          marginBottom: "4px",
-                        }}
-                      >
-                        Command
-                      </label>
-                      <textarea
-                        value={form.command}
-                        onChange={(e) =>
-                          setForm((prev) => ({ ...prev, command: e.target.value }))
-                        }
-                        placeholder="e.g. npm run build"
-                        rows={3}
-                        style={{
-                          width: "100%",
-                          padding: "8px 12px",
-                          borderRadius: "6px",
-                          border: "1px solid var(--border-primary)",
-                          background: "var(--bg-primary)",
-                          color: "var(--text-primary)",
-                          fontSize: "13px",
-                          fontFamily: "monospace",
-                          resize: "vertical",
-                        }}
-                        data-testid="script-command-input"
-                      />
-                    </div>
-
-                    {/* Form actions */}
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "flex-end",
-                        gap: "8px",
-                        marginTop: "4px",
-                      }}
-                    >
-                      <button className="btn btn-secondary" onClick={handleCancel} disabled={saving}>
-                        Cancel
-                      </button>
-                      <button
-                        className="btn btn-primary"
-                        onClick={handleSave}
-                        disabled={saving || !form.name.trim() || !form.command.trim()}
-                        data-testid="save-script-btn"
-                      >
-                        {saving ? "Saving..." : isCreating ? "Create" : "Save"}
-                      </button>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               )}
             </>
           )}
         </div>
-
-        {/* Footer */}
-        {!isEditing && (
-          <div
-            className="modal-footer"
-            style={{ padding: "12px 16px", borderTop: "1px solid var(--border-primary)" }}
-          >
-            <button
-              className="btn btn-primary"
-              onClick={handleCreate}
-              style={{ display: "flex", alignItems: "center", gap: "6px" }}
-              data-testid="add-script-btn"
-            >
-              <Plus size={14} />
-              Add Script
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

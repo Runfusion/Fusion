@@ -5640,6 +5640,210 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     }
   });
 
+  // ── Scripts Routes ──────────────────────────────────────────────────────────
+
+  /** Reserved script names that conflict with system commands or existing features */
+  const RESERVED_SCRIPT_NAMES = new Set(["run", "exec", "shell", "bash", "sh"]);
+
+  /**
+   * GET /api/scripts
+   * List all saved scripts from project settings.
+   * Returns: Record<string, string> (name -> command)
+   */
+  router.get("/scripts", async (_req, res) => {
+    try {
+      const settings = await store.getSettings();
+      res.json(settings.scripts ?? {});
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/scripts
+   * Add or update a script.
+   * Body: { name: string, command: string }
+   * Returns: { name: string, command: string }
+   */
+  router.post("/scripts", async (req, res) => {
+    try {
+      const { name, command } = req.body;
+
+      // Validate name
+      if (!name || typeof name !== "string" || !name.trim()) {
+        res.status(400).json({ error: "Script name is required" });
+        return;
+      }
+      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        res.status(400).json({ error: "Script name must contain only alphanumeric characters, hyphens, and underscores (no spaces)" });
+        return;
+      }
+      if (RESERVED_SCRIPT_NAMES.has(name.toLowerCase())) {
+        res.status(400).json({ error: `Script name '${name}' is reserved` });
+        return;
+      }
+
+      // Validate command
+      if (!command || typeof command !== "string" || !command.trim()) {
+        res.status(400).json({ error: "Script command is required" });
+        return;
+      }
+
+      const scriptName = name.trim();
+      const scriptCommand = command.trim();
+
+      // Get current settings
+      const settings = await store.getSettings();
+      const currentScripts = settings.scripts ?? {};
+
+      // Check for duplicate names (409 Conflict)
+      if (currentScripts[scriptName] !== undefined && currentScripts[scriptName] !== scriptCommand) {
+        res.status(409).json({ error: `Script named '${scriptName}' already exists. Use PUT to update or DELETE to remove first.` });
+        return;
+      }
+
+      // Update settings with the new/updated script
+      const updatedScripts = { ...currentScripts, [scriptName]: scriptCommand };
+      await store.updateSettings({ scripts: updatedScripts });
+
+      res.status(201).json({ name: scriptName, command: scriptCommand });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/scripts/:name
+   * Remove a script by name.
+   * Returns: Record<string, string> (remaining scripts)
+   */
+  router.delete("/scripts/:name", async (req, res) => {
+    try {
+      const scriptName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+
+      if (!scriptName) {
+        res.status(400).json({ error: "Script name is required" });
+        return;
+      }
+
+      if (!/^[a-zA-Z0-9_-]+$/.test(scriptName)) {
+        res.status(400).json({ error: "Script name must contain only alphanumeric characters, hyphens, and underscores (no spaces)" });
+        return;
+      }
+
+      // Get current settings
+      const settings = await store.getSettings();
+      const currentScripts = settings.scripts ?? {};
+
+      // Check if script exists
+      if (currentScripts[scriptName] === undefined) {
+        res.status(404).json({ error: `Script '${scriptName}' not found` });
+        return;
+      }
+
+      // Remove the script
+      const updatedScripts = { ...currentScripts };
+      delete updatedScripts[scriptName];
+      await store.updateSettings({ scripts: updatedScripts });
+
+      res.status(200).json(updatedScripts);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/scripts/:name/run
+   * Execute a saved script by name using terminal service.
+   * Body: { args?: string[] } - Optional arguments to append to the command
+   * Returns: { sessionId: string, command: string }
+   */
+  router.post("/scripts/:name/run", async (req, res) => {
+    try {
+      const scriptName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+
+      if (!scriptName) {
+        res.status(400).json({ error: "Script name is required" });
+        return;
+      }
+
+      if (!/^[a-zA-Z0-9_-]+$/.test(scriptName)) {
+        res.status(400).json({ error: "Script name must contain only alphanumeric characters, hyphens, and underscores (no spaces)" });
+        return;
+      }
+
+      // Get the script from settings
+      const settings = await store.getSettings();
+      const currentScripts = settings.scripts ?? {};
+
+      if (currentScripts[scriptName] === undefined) {
+        res.status(404).json({ error: `Script '${scriptName}' not found` });
+        return;
+      }
+
+      const baseCommand = currentScripts[scriptName];
+      const { args } = req.body ?? {};
+
+      // Validate args if provided
+      if (args !== undefined && !Array.isArray(args)) {
+        res.status(400).json({ error: "args must be an array of strings" });
+        return;
+      }
+      if (args && !args.every((a: unknown) => typeof a === "string")) {
+        res.status(400).json({ error: "args must be an array of strings" });
+        return;
+      }
+
+      // Build the full command with args
+      let fullCommand = baseCommand;
+      if (args && args.length > 0) {
+        // Properly escape arguments for shell execution
+        const escapedArgs = args.map((arg: unknown) => {
+          // Quote and escape the argument for shell
+          const str = String(arg);
+          // If the arg contains special characters, use double quotes with escaping
+          if (str.includes('"') || str.includes("$") || str.includes("`") || str.includes("\\")) {
+            // Use single quotes and escape embedded single quotes
+            return `'${str.replace(/'/g, "'\\''")}'`;
+          }
+          // Simple case: use double quotes
+          return `"${str}"`;
+        });
+        fullCommand = `${baseCommand} ${escapedArgs.join(" ")}`;
+      }
+
+      // Execute via terminal service
+      const terminalService = getTerminalService(store.getRootDir());
+      const result = await terminalService.createSession({
+        cwd: store.getRootDir(),
+      });
+
+      if (!result.success) {
+        const statusByCode = {
+          max_sessions: 503,
+          invalid_shell: 400,
+          pty_load_failed: 503,
+          pty_spawn_failed: 500,
+        } as const;
+        const status = result.code ? (statusByCode[result.code] ?? 500) : 500;
+        res.status(status).json({ error: result.error || "Failed to create terminal session" });
+        return;
+      }
+
+      const sessionId = result.session.id;
+
+      // Write the command to the PTY (use writeInput for compatibility with test mocks)
+      terminalService.writeInput(sessionId, `${fullCommand}\n`);
+
+      res.status(201).json({
+        sessionId,
+        command: fullCommand,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Agent Routes ───────────────────────────────────────────────────────────
 
   /**
