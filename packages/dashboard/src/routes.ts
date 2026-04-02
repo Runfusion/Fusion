@@ -6762,7 +6762,7 @@ function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike, 
     // Always return 200 with empty array instead of 404 when no models available.
     // This ensures the frontend can handle empty states gracefully.
     if (!modelRegistry) {
-      res.json({ models: [], favoriteProviders: [] });
+      res.json({ models: [], favoriteProviders: [], favoriteModels: [] });
       return;
     }
 
@@ -6776,23 +6776,25 @@ function registerModelsRoute(router: Router, modelRegistry?: ModelRegistryLike, 
         contextWindow: m.contextWindow,
       }));
 
-      // Get favoriteProviders from global settings
+      // Get favoriteProviders and favoriteModels from global settings
       let favoriteProviders: string[] = [];
+      let favoriteModels: string[] = [];
       if (store) {
         try {
           const globalStore = store.getGlobalSettingsStore();
           const globalSettings = await globalStore.getSettings();
           favoriteProviders = globalSettings.favoriteProviders ?? [];
+          favoriteModels = globalSettings.favoriteModels ?? [];
         } catch {
           // Silently ignore settings errors - just return empty favorites
         }
       }
 
-      res.json({ models, favoriteProviders });
+      res.json({ models, favoriteProviders, favoriteModels });
     } catch (err: any) {
       const message = err instanceof Error ? err.message : String(err);
       console.log(`[models] Failed to load models: ${message}`);
-      res.json({ models: [], favoriteProviders: [] });
+      res.json({ models: [], favoriteProviders: [], favoriteModels: [] });
     }
   });
 }
