@@ -3,13 +3,13 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TaskComments } from "../TaskComments";
 
 vi.mock("../../api", () => ({
-  addComment: vi.fn(),
+  addSteeringComment: vi.fn(),
   addTaskComment: vi.fn(),
   updateTaskComment: vi.fn(),
   deleteTaskComment: vi.fn(),
 }));
 
-import { addComment, addTaskComment, updateTaskComment, deleteTaskComment } from "../../api";
+import { addSteeringComment, addTaskComment, updateTaskComment, deleteTaskComment } from "../../api";
 
 const makeTask = (overrides: any = {}) => ({
   id: "FN-001",
@@ -155,8 +155,8 @@ describe("TaskComments", () => {
       expect(screen.getByText(/AI Guidance comments are injected into the task execution context/)).toBeTruthy();
     });
 
-    it("uses addComment API when AI Guidance type is selected", async () => {
-      vi.mocked(addComment).mockResolvedValue(makeTask({
+    it("uses addSteeringComment API when AI Guidance type is selected", async () => {
+      vi.mocked(addSteeringComment).mockResolvedValue(makeTask({
         comments: [{ id: "c1", text: "Guidance text", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
       }));
 
@@ -170,7 +170,7 @@ describe("TaskComments", () => {
       fireEvent.click(screen.getByText("Add Guidance"));
 
       await waitFor(() => {
-        expect(addComment).toHaveBeenCalledWith("FN-001", "Guidance text");
+        expect(addSteeringComment).toHaveBeenCalledWith("FN-001", "Guidance text");
         expect(addTaskComment).not.toHaveBeenCalled();
       });
     });
@@ -188,7 +188,7 @@ describe("TaskComments", () => {
 
       await waitFor(() => {
         expect(addTaskComment).toHaveBeenCalledWith("FN-001", "User text", "user");
-        expect(addComment).not.toHaveBeenCalled();
+        expect(addSteeringComment).not.toHaveBeenCalled();
       });
     });
 

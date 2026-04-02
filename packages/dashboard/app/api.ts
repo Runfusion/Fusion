@@ -287,13 +287,6 @@ export function fetchTaskComments(id: string): Promise<TaskComment[]> {
   return api<TaskComment[]>(`/tasks/${id}/comments`);
 }
 
-export function addComment(id: string, text: string): Promise<Task> {
-  return api<Task>(`/tasks/${id}/steer`, {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
-}
-
 export function addTaskComment(id: string, text: string, author?: string): Promise<Task> {
   return api<Task>(`/tasks/${id}/comments`, {
     method: "POST",

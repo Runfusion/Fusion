@@ -62,6 +62,38 @@ class MockStore extends EventEmitter {
     this.tasks.set(task.id, task);
     this.emit("task:created", task);
   }
+
+  getMissionStore() {
+    return {
+      listMissions: vi.fn().mockResolvedValue([]),
+      getMission: vi.fn(),
+      createMission: vi.fn(),
+      updateMission: vi.fn(),
+      deleteMission: vi.fn(),
+      getMissionWithHierarchy: vi.fn(),
+      listMilestones: vi.fn().mockResolvedValue([]),
+      getMilestone: vi.fn(),
+      addMilestone: vi.fn(),
+      updateMilestone: vi.fn(),
+      deleteMilestone: vi.fn(),
+      reorderMilestones: vi.fn(),
+      listSlices: vi.fn().mockResolvedValue([]),
+      getSlice: vi.fn(),
+      addSlice: vi.fn(),
+      updateSlice: vi.fn(),
+      deleteSlice: vi.fn(),
+      reorderSlices: vi.fn(),
+      activateSlice: vi.fn(),
+      listFeatures: vi.fn().mockResolvedValue([]),
+      getFeature: vi.fn(),
+      addFeature: vi.fn(),
+      updateFeature: vi.fn(),
+      deleteFeature: vi.fn(),
+      linkFeatureToTask: vi.fn(),
+      unlinkFeatureFromTask: vi.fn(),
+      getFeatureRollups: vi.fn().mockResolvedValue([]),
+    };
+  }
 }
 
 function createHmacSignature(payload: string, secret: string): string {

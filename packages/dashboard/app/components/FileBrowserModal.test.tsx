@@ -117,7 +117,7 @@ describe("FileBrowserModal", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /kb/i }));
-    await user.click(screen.getByRole("button", { name: /KB-002 Task Two/i }));
+    await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
 
     expect(mockOnWorkspaceChange).toHaveBeenCalledWith("FN-002");
   });

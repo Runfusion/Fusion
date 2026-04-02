@@ -26,10 +26,12 @@ export interface UseProjectsResult {
 }
 
 const POLL_INTERVAL_MS = 5000; // 5 seconds
+const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
 
 /**
  * Hook for fetching and managing projects.
  * Automatically polls for updates every 5 seconds.
+ * Refetches when the tab becomes visible again.
  * Provides optimistic updates for UI responsiveness.
  */
 export function useProjects(): UseProjectsResult {
@@ -37,6 +39,7 @@ export function useProjects(): UseProjectsResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastVisibilityRefreshRef = useRef<number>(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -49,7 +52,7 @@ export function useProjects(): UseProjectsResult {
     }
   }, []);
 
-  // Initial fetch
+  // Initial fetch and visibility change handler
   useEffect(() => {
     let cancelled = false;
 
@@ -72,12 +75,29 @@ export function useProjects(): UseProjectsResult {
       }
     }
 
-    load();
+    void load();
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      const now = Date.now();
+      const timeSinceLastRefresh = now - lastVisibilityRefreshRef.current;
+      if (timeSinceLastRefresh < VISIBILITY_REFRESH_DEBOUNCE_MS) {
+        return;
+      }
+
+      lastVisibilityRefreshRef.current = now;
+      void refresh();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, []);
+  }, [refresh]);
 
   // Polling for updates
   useEffect(() => {

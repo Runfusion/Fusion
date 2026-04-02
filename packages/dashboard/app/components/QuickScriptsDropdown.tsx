@@ -37,8 +37,10 @@ export function QuickScriptsDropdown({
     return Object.entries(scripts).sort(([a], [b]) => a.localeCompare(b));
   }, [scripts]);
 
+  const showFooter = scriptEntries.length > 0;
+
   // Total items for keyboard navigation (scripts + "Manage Scripts...")
-  const totalItems = scriptEntries.length + 1;
+  const totalItems = scriptEntries.length + (showFooter ? 1 : 0);
 
   // Fetch scripts when dropdown opens
   useEffect(() => {
@@ -135,7 +137,7 @@ export function QuickScriptsDropdown({
               // Run script
               const [name, command] = scriptEntries[highlightedIndex];
               handleRunScript(name, command);
-            } else {
+            } else if (showFooter && highlightedIndex === scriptEntries.length) {
               // Manage Scripts...
               handleManageScripts();
             }
@@ -151,7 +153,7 @@ export function QuickScriptsDropdown({
           break;
       }
     },
-    [highlightedIndex, totalItems, scriptEntries]
+    [highlightedIndex, totalItems, scriptEntries, showFooter]
   );
 
   // Toggle dropdown
@@ -179,7 +181,7 @@ export function QuickScriptsDropdown({
       {/* Trigger button */}
       <button
         ref={triggerRef}
-        className={`quick-scripts-dropdown__trigger ${isOpen ? "open" : ""}`}
+        className={`btn-icon quick-scripts-dropdown__trigger ${isOpen ? "open btn-icon--active" : ""}`}
         onClick={toggleDropdown}
         aria-expanded={isOpen}
         aria-haspopup="listbox"
@@ -212,9 +214,12 @@ export function QuickScriptsDropdown({
             </div>
           ) : scriptEntries.length === 0 ? (
             <div className="quick-scripts-dropdown__empty" data-testid="quick-scripts-empty">
+              <div className="quick-scripts-dropdown__empty-icon">
+                <Terminal size={16} />
+              </div>
               <p>No scripts configured</p>
               <button
-                className="quick-scripts-dropdown__empty-action"
+                className="quick-scripts-dropdown__empty-action btn"
                 onClick={handleManageScripts}
               >
                 Add your first script
@@ -250,7 +255,7 @@ export function QuickScriptsDropdown({
               <div className="quick-scripts-dropdown__footer">
                 <button
                   className={`quick-scripts-dropdown__manage ${
-                    highlightedIndex === scriptEntries.length ? "highlighted" : ""
+                    showFooter && highlightedIndex === scriptEntries.length ? "highlighted" : ""
                   }`}
                   onClick={handleManageScripts}
                   data-testid="quick-scripts-manage"
