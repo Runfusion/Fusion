@@ -1062,6 +1062,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     console.debug("[planning:routes:registered]", planningRoutes);
   }
   const sessionFilesCache = new Map<string, { files: string[]; expiresAt: number }>();
+  const fileDiffsCache = new Map<
+    string,
+    {
+      files: Array<{ path: string; status: "added" | "modified" | "deleted" | "renamed"; diff: string; oldPath?: string }>;
+      expiresAt: number;
+    }
+  >();
 
   // Get GitHub token from options or env
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
@@ -6273,73 +6280,88 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
   /**
    * GET /api/tasks/:id/file-diffs
-   * Fetch simplified file diffs for a task.
-   * Query: ?worktree=path
-   * Returns: TaskFileDiff[]
+   * Fetch changed files with individual git diffs for a task worktree.
+   * Returns: Array<{ path, status, diff, oldPath? }>
    */
   router.get("/tasks/:id/file-diffs", async (req, res) => {
     try {
-      const task = store.getTask(req.params.id);
-      if (!task) {
-        res.status(404).json({ error: "Task not found" });
+      const task = await store.getTask(req.params.id);
+      if (!task.worktree || !existsSync(task.worktree)) {
+        res.json([]);
         return;
       }
 
-      const worktree = typeof req.query.worktree === "string" ? req.query.worktree : undefined;
-      const cwd = worktree || store.getRootDir();
-
-      // Get the base commit
-      let baseCommit = "HEAD~1";
-
-      // Get the diff stat for file list
-      const { execSync } = await import("node:child_process");
-      
-      const filesOutput = execSync(`git diff --name-status ${baseCommit}..HEAD`, {
-        encoding: "utf-8",
-        cwd,
-        timeout: 10000,
-      });
-
-      const files: Array<{
-        path: string;
-        status: "added" | "modified" | "deleted";
-        additions: number;
-        deletions: number;
-        patch: string;
-      }> = [];
-
-      for (const line of filesOutput.trim().split("\n")) {
-        if (!line.trim()) continue;
-        
-        const parts = line.split("\t");
-        const statusCode = parts[0];
-        const filePath = parts[1];
-        
-        let status: "added" | "modified" | "deleted";
-        if (statusCode.startsWith("A")) status = "added";
-        else if (statusCode.startsWith("D")) status = "deleted";
-        else status = "modified";
-
-        let patch = "";
-        try {
-          patch = execSync(`git diff ${baseCommit}..HEAD -- "${filePath}"`, {
-            encoding: "utf-8",
-            cwd,
-            timeout: 10000,
-          });
-        } catch {
-          // Ignore errors for individual files
-        }
-
-        const additions = (patch.match(/^\+[^+]/gm) || []).length;
-        const deletions = (patch.match(/^-[^-]/gm) || []).length;
-
-        files.push({ path: filePath, status, additions, deletions, patch });
+      const cached = fileDiffsCache.get(task.id);
+      if (cached && cached.expiresAt > Date.now()) {
+        res.json(cached.files);
+        return;
       }
+
+      const baseBranch = task.baseBranch ?? "main";
+      const cwd = task.worktree;
+      let filesOutput = "";
+      let diffBase = `${baseBranch}...HEAD`;
+
+      try {
+        filesOutput = execSync(`git diff --name-status ${diffBase}`, {
+          cwd,
+          encoding: "utf-8",
+          timeout: 5000,
+        }).trim();
+      } catch {
+        diffBase = "HEAD";
+        filesOutput = execSync("git diff --name-status HEAD", {
+          cwd,
+          encoding: "utf-8",
+          timeout: 5000,
+        }).trim();
+      }
+
+      const files = filesOutput
+        ? filesOutput.split("\n").filter(Boolean).map((line) => {
+            const parts = line.split("\t");
+            const statusCode = parts[0] ?? "M";
+            let status: "added" | "modified" | "deleted" | "renamed" = "modified";
+            let path = parts[1] ?? "";
+            let oldPath: string | undefined;
+
+            if (statusCode.startsWith("A")) {
+              status = "added";
+            } else if (statusCode.startsWith("D")) {
+              status = "deleted";
+            } else if (statusCode.startsWith("R")) {
+              status = "renamed";
+              oldPath = parts[1];
+              path = parts[2] ?? parts[1] ?? "";
+            }
+
+            let diff = "";
+            try {
+              diff = execSync(`git diff ${diffBase} -- "${path}"`, {
+                cwd,
+                encoding: "utf-8",
+                timeout: 5000,
+              });
+            } catch {
+              diff = "";
+            }
+
+            return oldPath ? { path, status, diff, oldPath } : { path, status, diff };
+          })
+        : [];
+
+      fileDiffsCache.set(task.id, {
+        files,
+        expiresAt: Date.now() + 10000,
+      });
 
       res.json(files);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err.code === "ENOENT") {
+        res.status(404).json({ error: `Task ${req.params.id} not found` });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
     }
   });
 

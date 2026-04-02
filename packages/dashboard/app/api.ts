@@ -1948,18 +1948,14 @@ export function fetchTaskDiff(taskId: string, worktree?: string): Promise<TaskDi
 /** Individual file diff */
 export interface TaskFileDiff {
   path: string;
-  status: "added" | "modified" | "deleted";
-  additions: number;
-  deletions: number;
-  patch: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  diff: string;
+  oldPath?: string;
 }
 
 /** Fetch file diffs for a task */
-export function fetchTaskFileDiffs(taskId: string, worktree?: string): Promise<TaskFileDiff[]> {
-  const params = new URLSearchParams();
-  if (worktree) params.set("worktree", worktree);
-  const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<TaskFileDiff[]>(`/tasks/${encodeURIComponent(taskId)}/file-diffs${query}`);
+export function fetchTaskFileDiffs(taskId: string): Promise<TaskFileDiff[]> {
+  return api<TaskFileDiff[]>(`/tasks/${encodeURIComponent(taskId)}/file-diffs`);
 }
 
 
