@@ -835,6 +835,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       throw new Error(`Task ${id} not found`);
     }
 
+    // Sync steps from PROMPT.md if task.steps is empty
+    if (task.steps.length === 0) {
+      task.steps = await this.parseStepsFromPrompt(id);
+    }
+
     let prompt = "";
     const promptPath = join(this.taskDir(id), "PROMPT.md");
     if (existsSync(promptPath)) {

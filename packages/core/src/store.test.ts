@@ -904,6 +904,31 @@ describe("TaskStore", () => {
       expect(fetched.description).toBe(task.description);
       expect(fetched.prompt).toBe("");
     });
+
+    it("getTask syncs steps from PROMPT.md when task.steps is empty", async () => {
+      const task = await store.createTask({ description: "Test task" });
+      // task.steps should be empty in DB
+      const dir = join(rootDir, ".fusion", "tasks", task.id);
+      await writeFile(
+        join(dir, "PROMPT.md"),
+        `# ${task.id}: Test task
+
+## Steps
+
+### Step 0: Preflight
+- [ ] Check something
+
+### Step 1: Do the thing
+- [ ] Do it
+`,
+      );
+
+      const detail = await store.getTask(task.id);
+      expect(detail.steps).toEqual([
+        { name: "Preflight", status: "pending" },
+        { name: "Do the thing", status: "pending" },
+      ]);
+    });
   });
 
   describe("upsertTask regression coverage", () => {
