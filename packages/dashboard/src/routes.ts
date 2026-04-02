@@ -1813,24 +1813,42 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      const baseBranch = task.baseBranch ?? "main";
       let files: string[] = [];
 
       try {
-        const output = execSync(`git diff --name-only ${baseBranch}...HEAD`, {
-          cwd: task.worktree,
-          encoding: "utf-8",
-          timeout: 5000,
-        }).trim();
+        let baseRef = task.baseCommitSha;
 
-        files = output ? output.split("\n").filter(Boolean) : [];
+        if (!baseRef) {
+          try {
+            baseRef = execSync("git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main", {
+              cwd: task.worktree,
+              encoding: "utf-8",
+              timeout: 5000,
+            }).trim();
+          } catch {
+            try {
+              baseRef = execSync("git rev-parse HEAD~1", {
+                cwd: task.worktree,
+                encoding: "utf-8",
+                timeout: 5000,
+              }).trim();
+            } catch {
+              baseRef = undefined;
+            }
+          }
+        }
+
+        if (baseRef) {
+          const output = execSync(`git diff --name-only ${baseRef}..HEAD`, {
+            cwd: task.worktree,
+            encoding: "utf-8",
+            timeout: 5000,
+          }).trim();
+
+          files = output ? output.split("\n").filter(Boolean) : [];
+        }
       } catch {
-        const fallback = execSync("git diff --name-only HEAD", {
-          cwd: task.worktree,
-          encoding: "utf-8",
-          timeout: 5000,
-        }).trim();
-        files = fallback ? fallback.split("\n").filter(Boolean) : [];
+        files = [];
       }
 
       sessionFilesCache.set(task.id, {

@@ -95,6 +95,16 @@ export class Scheduler {
     private options: SchedulerOptions = {},
   ) {
     /**
+     * Event-driven scheduling: when a task is created, trigger a scheduling
+     * pass immediately instead of waiting for the next poll interval.
+     * This reduces latency from up to 15 seconds to near-instant.
+     */
+    this.store.on("task:created", () => {
+      schedulerLog.log("Task created — triggering scheduling");
+      this.schedule();
+    });
+
+    /**
      * Immediate unpause resume: when `globalPause` transitions from `true`
      * to `false`, trigger a scheduling pass right away instead of waiting
      * for the next poll interval (up to 15 s). Only reacts to true→false
@@ -151,6 +161,14 @@ export class Scheduler {
       // Mission progress tracking: when task with sliceId moves to in-progress
       if (task.sliceId && this.options.missionStore && to === "in-progress") {
         void this.handleMissionTaskStart(task.id, task.sliceId);
+      }
+
+      // Event-driven scheduling: when a dependency completes (task moves to "done"),
+      // trigger scheduling immediately so waiting tasks can start without waiting
+      // for the next poll interval (up to 15 seconds).
+      if (to === "done") {
+        schedulerLog.log("Task completed — triggering scheduling");
+        this.schedule();
       }
     });
 

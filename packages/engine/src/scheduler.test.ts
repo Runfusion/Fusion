@@ -138,6 +138,105 @@ describe("Scheduler", () => {
     });
   });
 
+  describe("event-driven scheduling", () => {
+    it("registers task:created event listener", () => {
+      const store = createMockStore();
+      new Scheduler(store);
+      // Verify task:created listener is registered
+      expect(store.on).toHaveBeenCalledWith("task:created", expect.any(Function));
+    });
+
+    it("triggers scheduling immediately when task:created event fires", async () => {
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([
+          createMockTask({ id: "FN-001", column: "todo", dependencies: [] }),
+        ]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+
+      // Find and call the task:created handler
+      const onCalls = (store.on as any).mock.calls;
+      const createdHandler = onCalls.find((call: any) => call[0] === "task:created")?.[1];
+      expect(createdHandler).toBeDefined();
+
+      // Simulate task:created event
+      const newTask = createMockTask({ id: "FN-002", column: "todo" });
+      await createdHandler(newTask);
+
+      // Verify schedule() was called (moveTask should be called since task can start)
+      expect(store.moveTask).toHaveBeenCalledWith("FN-002", "in-progress");
+    });
+
+    it("registers task:moved event listener", () => {
+      const store = createMockStore();
+      new Scheduler(store);
+      // Verify task:moved listener is registered
+      expect(store.on).toHaveBeenCalledWith("task:moved", expect.any(Function));
+    });
+
+    it("triggers scheduling immediately when task:moved to done event fires", async () => {
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([
+          createMockTask({ id: "FN-001", column: "done", dependencies: [] }), // Completed dep
+          createMockTask({ id: "FN-002", column: "todo", dependencies: ["FN-001"] }), // Waiting on FN-001
+        ]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+
+      // Find and call the task:moved handler
+      const onCalls = (store.on as any).mock.calls;
+      const movedHandler = onCalls.find((call: any) => call[0] === "task:moved")?.[1];
+      expect(movedHandler).toBeDefined();
+
+      // Simulate task:moved to done event
+      const doneTask = createMockTask({ id: "FN-001", column: "todo" });
+      await movedHandler({ task: doneTask, from: "in-progress", to: "done" });
+
+      // Verify schedule() was called - FN-002 should now be able to start
+      expect(store.moveTask).toHaveBeenCalledWith("FN-002", "in-progress");
+    });
+
+    it("does not trigger scheduling for non-done task:moved events", async () => {
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([
+          createMockTask({ id: "FN-001", column: "todo", dependencies: [] }),
+        ]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+
+      // Clear previous calls
+      (store.moveTask as any).mockClear();
+
+      // Find and call the task:moved handler
+      const onCalls = (store.on as any).mock.calls;
+      const movedHandler = onCalls.find((call: any) => call[0] === "task:moved")?.[1];
+
+      // Simulate task:moved to in-progress (not done)
+      const task = createMockTask({ id: "FN-001", column: "in-progress" });
+      await movedHandler({ task, from: "todo", to: "in-progress" });
+
+      // Should NOT have triggered additional scheduling (no new task moved to in-progress)
+      // Note: The existing handler runs, but it doesn't call schedule() for non-done transitions
+      // So moveTask won't be called for a task already in in-progress
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
+  });
+
   describe("start/stop", () => {
     it("starts and stops the scheduler", () => {
       const store = createMockStore();
