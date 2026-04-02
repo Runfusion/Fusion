@@ -6299,17 +6299,50 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   router.get("/projects/:id/health", async (req, res) => {
     try {
       const { CentralCore } = await import("@fusion/core");
+      const { realpath } = await import("node:fs/promises");
       const central = new CentralCore();
       await central.init();
-      
+
+      const project = await central.getProject(req.params.id);
+      if (!project) {
+        await central.close();
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+
       const health = await central.getProjectHealth(req.params.id);
       await central.close();
       
       if (!health) {
-        res.status(404).json({ error: "Project not found" });
+        res.status(404).json({ error: "Project health not found" });
         return;
       }
-      
+
+      // If this dashboard serves the requested project, compute live counts
+      // from the task store instead of relying on cached central DB values.
+      try {
+        const storePath = await realpath(store.getRootDir());
+        const projectPath = await realpath(project.path);
+
+        if (storePath === projectPath) {
+          const tasks = await store.listTasks();
+          const activeCols = new Set(["triage", "todo", "in-progress", "in-review"]);
+          const activeTaskCount = tasks.filter((t) => activeCols.has(t.column)).length;
+          const inFlightAgentCount = tasks.filter((t) => t.column === "in-progress").length;
+          const totalTasksCompleted = tasks.filter((t) => t.column === "done" || t.column === "archived").length;
+
+          res.json({
+            ...health,
+            activeTaskCount,
+            inFlightAgentCount,
+            totalTasksCompleted,
+          });
+          return;
+        }
+      } catch {
+        // realpath may fail if a path doesn't exist; fall through to cached data
+      }
+
       res.json(health);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
