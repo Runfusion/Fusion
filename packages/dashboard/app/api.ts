@@ -1916,6 +1916,21 @@ export function fetchProjects(): Promise<ProjectInfo[]> {
   return api<ProjectInfo[]>("/projects");
 }
 
+/** Browse directory entries for the directory picker */
+export interface BrowseDirectoryResult {
+  currentPath: string;
+  parentPath: string | null;
+  entries: Array<{ name: string; path: string; hasChildren: boolean }>;
+}
+
+export function browseDirectory(path?: string, showHidden?: boolean): Promise<BrowseDirectoryResult> {
+  const params = new URLSearchParams();
+  if (path) params.set("path", path);
+  if (showHidden) params.set("showHidden", "true");
+  const qs = params.toString();
+  return api<BrowseDirectoryResult>(`/browse-directory${qs ? `?${qs}` : ""}`);
+}
+
 /** Register a new project */
 export function registerProject(input: ProjectCreateInput): Promise<ProjectInfo> {
   return api<ProjectInfo>("/projects", {

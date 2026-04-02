@@ -6078,6 +6078,76 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   // Mount mission routes at /api/missions
   router.use("/missions", createMissionRouter(store));
 
+  // ── Directory Browsing ────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/browse-directory
+   * Browse filesystem directories for the directory picker.
+   * Query: { path?: string, showHidden?: "true" }
+   * Returns: { currentPath: string, parentPath: string | null, entries: Array<{ name: string, path: string, hasChildren: boolean }> }
+   */
+  router.get("/browse-directory", async (req, res) => {
+    try {
+      const { resolve, dirname, join } = await import("node:path");
+      const { readdir, stat } = await import("node:fs/promises");
+
+      const rawPath = (req.query.path as string) || process.env.HOME || process.env.USERPROFILE || "/";
+      const showHidden = req.query.showHidden === "true";
+
+      // Validate: must be absolute, no .. traversal
+      const resolvedPath = resolve(rawPath);
+      if (rawPath.includes("..")) {
+        res.status(400).json({ error: "Path must not contain '..' traversal" });
+        return;
+      }
+      if (resolvedPath !== resolve(resolvedPath)) {
+        res.status(400).json({ error: "Path must be absolute" });
+        return;
+      }
+
+      // Check path exists and is a directory
+      let pathStat;
+      try {
+        pathStat = await stat(resolvedPath);
+      } catch {
+        res.status(404).json({ error: "Directory not found" });
+        return;
+      }
+      if (!pathStat.isDirectory()) {
+        res.status(400).json({ error: "Path is not a directory" });
+        return;
+      }
+
+      // Read directory entries
+      const dirEntries = await readdir(resolvedPath, { withFileTypes: true });
+      const entries: Array<{ name: string; path: string; hasChildren: boolean }> = [];
+
+      for (const entry of dirEntries) {
+        if (!entry.isDirectory()) continue;
+        if (!showHidden && entry.name.startsWith(".")) continue;
+
+        const entryPath = join(resolvedPath, entry.name);
+        let hasChildren = false;
+        try {
+          const subEntries = await readdir(entryPath, { withFileTypes: true });
+          hasChildren = subEntries.some((e) => e.isDirectory());
+        } catch {
+          // Can't read subdirectory — treat as no children
+        }
+
+        entries.push({ name: entry.name, path: entryPath, hasChildren });
+      }
+
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+
+      const parentPath = resolvedPath === "/" ? null : dirname(resolvedPath);
+
+      res.json({ currentPath: resolvedPath, parentPath, entries });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Project Management Routes (Multi-Project Support) ───────────────────────
   // These routes require CentralCore which is imported dynamically to avoid
   // circular dependencies and ensure the central database is initialized.
