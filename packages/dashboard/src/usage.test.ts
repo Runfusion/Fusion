@@ -6,13 +6,10 @@ import {
   calculatePace,
   _setSleepFn,
   _resetSleepFn,
-<<<<<<< ours
   _stripClaudeAnsi,
   _parseClaudePercentLine,
   _parseClaudeResetLine,
   _parseClaudeResetText,
-=======
->>>>>>> theirs
 } from "./usage.js";
 
 // Mock the https module
@@ -404,7 +401,6 @@ describe("usage", () => {
       expect(claude.error).toContain("Auth expired");
     });
 
-<<<<<<< ours
     it("handles 403 auth error", async () => {
       setupClaudeMocks({
         credFileContent: {
@@ -421,7 +417,19 @@ describe("usage", () => {
           on: vi.fn((event: string, handler: any) => {
             if (event === "data") handler(Buffer.from('{"error": "forbidden"}'));
             if (event === "end") handler();
-=======
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("error");
+      expect(claude.error).toContain("Auth expired");
+    });
+
     it("does not send anthropic-beta header in requests", async () => {
       const mockResponse = {
         five_hour: { utilization: 10.0 },
@@ -518,7 +526,6 @@ describe("usage", () => {
             if (event === "end") {
               handler();
             }
->>>>>>> theirs
           }),
         };
         callback(mockRes);
@@ -528,9 +535,14 @@ describe("usage", () => {
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
-<<<<<<< ours
-      expect(claude.status).toBe("error");
-      expect(claude.error).toContain("Auth expired");
+      expect(claude.status).toBe("ok");
+      expect(claude.windows).toHaveLength(1);
+      expect(claude.windows[0].percentUsed).toBe(20);
+
+      // Verify sleep was called for retries (2 retry sleeps)
+      expect(noopSleep).toHaveBeenCalledTimes(2);
+
+      _resetSleepFn();
     });
 
     it("handles malformed JSON response", async () => {
@@ -549,15 +561,17 @@ describe("usage", () => {
           on: vi.fn((event: string, handler: any) => {
             if (event === "data") handler(Buffer.from("not valid json {{{"));
             if (event === "end") handler();
-=======
-      expect(claude.status).toBe("ok");
-      expect(claude.windows).toHaveLength(1);
-      expect(claude.windows[0].percentUsed).toBe(20);
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
 
-      // Verify sleep was called for retries (2 retry sleeps)
-      expect(noopSleep).toHaveBeenCalledTimes(2);
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
 
-      _resetSleepFn();
+      expect(claude.status).toBe("error");
+      expect(claude.error).toBeDefined();
     });
 
     it("reports rate limited after all retries exhausted on 429", async () => {
@@ -595,7 +609,6 @@ describe("usage", () => {
             if (event === "end") {
               handler();
             }
->>>>>>> theirs
           }),
         };
         callback(mockRes);
@@ -605,42 +618,9 @@ describe("usage", () => {
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
+      // After 429 retries exhausted, falls back to CLI which fails in test
+      // (node-pty not available) — so we get the CLI fallback error
       expect(claude.status).toBe("error");
-<<<<<<< ours
-      expect(claude.error).toBeDefined();
-    });
-
-    it("handles empty JSON object from API gracefully", async () => {
-      setupClaudeMocks({
-        credFileContent: {
-          accessToken: "test-token",
-          scopes: ["user:profile"],
-          subscriptionType: "pro",
-        },
-      });
-
-      setupClaudeApiResponse({});
-
-      const providers = await fetchAllProviderUsage();
-      const claude = providers.find((p) => p.name === "Claude")!;
-
-      expect(claude.status).toBe("ok");
-      expect(claude.plan).toBe("Pro");
-      expect(claude.windows).toHaveLength(0);
-    });
-
-    it("preserves plan detection from subscriptionType in credentials", async () => {
-      setupClaudeMocks({
-        credFileContent: {
-          accessToken: "test-token",
-          scopes: ["user:profile"],
-          subscriptionType: "team",
-        },
-      });
-
-      setupClaudeApiResponse({ five_hour: { utilization: 10 } });
-=======
-      expect(claude.error).toBe("Rate limited — try again later");
 
       // Verify retries happened (2 sleeps for 3 attempts)
       expect(noopSleep).toHaveBeenCalledTimes(2);
@@ -750,6 +730,42 @@ describe("usage", () => {
       _resetSleepFn();
     });
 
+    it("handles empty JSON object from API gracefully", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      setupClaudeApiResponse({});
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      expect(claude.plan).toBe("Pro");
+      expect(claude.windows).toHaveLength(0);
+    });
+
+    it("preserves plan detection from subscriptionType in credentials", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "team",
+        },
+      });
+
+      setupClaudeApiResponse({ five_hour: { utilization: 10 } });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.plan).toBe("Team");
+    });
+
     it("does not retry on 401 auth errors", async () => {
       const noopSleep = vi.fn().mockResolvedValue(undefined);
       _setSleepFn(noopSleep);
@@ -789,13 +805,16 @@ describe("usage", () => {
         callback(mockRes);
         return mockReq;
       });
->>>>>>> theirs
 
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
-<<<<<<< ours
-      expect(claude.plan).toBe("Team");
+      expect(claude.status).toBe("error");
+      expect(claude.error).toContain("Auth expired");
+      // No retries should happen for auth errors
+      expect(noopSleep).not.toHaveBeenCalled();
+
+      _resetSleepFn();
     });
 
     it("preserves plan detection from rateLimitTier for Pro", async () => {
@@ -810,13 +829,11 @@ describe("usage", () => {
       });
 
       setupClaudeApiResponse({ five_hour: { utilization: 10 } });
-=======
-      expect(claude.status).toBe("error");
-      expect(claude.error).toContain("Auth expired");
-      // No retries should happen for auth errors
-      expect(noopSleep).not.toHaveBeenCalled();
 
-      _resetSleepFn();
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.plan).toBe("Pro");
     });
 
     it("does not retry on 403 auth errors", async () => {
@@ -858,21 +875,16 @@ describe("usage", () => {
         callback(mockRes);
         return mockReq;
       });
->>>>>>> theirs
 
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
-<<<<<<< ours
-      expect(claude.plan).toBe("Pro");
-=======
       expect(claude.status).toBe("error");
       expect(claude.error).toContain("Auth expired");
       // No retries should happen for auth errors
       expect(noopSleep).not.toHaveBeenCalled();
 
       _resetSleepFn();
->>>>>>> theirs
     });
   });
 
