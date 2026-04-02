@@ -5324,6 +5324,75 @@ describe("PUT /settings", () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toContain("Write failed");
   });
+
+  it("updates planning and validator model settings via store.updateSettings", async () => {
+    const updatedSettings = {
+      ...DEFAULT_SETTINGS,
+      planningProvider: "anthropic",
+      planningModelId: "claude-sonnet-4-5",
+      validatorProvider: "openai",
+      validatorModelId: "gpt-4o",
+    };
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({
+        planningProvider: "anthropic",
+        planningModelId: "claude-sonnet-4-5",
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4o",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith({
+      planningProvider: "anthropic",
+      planningModelId: "claude-sonnet-4-5",
+      validatorProvider: "openai",
+      validatorModelId: "gpt-4o",
+    });
+  });
+
+  it("persists planning/validator settings and returns them via GET /settings", async () => {
+    // First, update the settings
+    const updatedSettings = {
+      ...DEFAULT_SETTINGS,
+      planningProvider: "anthropic",
+      planningModelId: "claude-opus-4",
+      validatorProvider: "openai",
+      validatorModelId: "gpt-4-turbo",
+    };
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+
+    const updateRes = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({
+        planningProvider: "anthropic",
+        planningModelId: "claude-opus-4",
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4-turbo",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(updateRes.status).toBe(200);
+
+    // Then, verify GET /settings returns the persisted values
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+    const getRes = await GET(buildApp(), "/api/settings");
+
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.planningProvider).toBe("anthropic");
+    expect(getRes.body.planningModelId).toBe("claude-opus-4");
+    expect(getRes.body.validatorProvider).toBe("openai");
+    expect(getRes.body.validatorModelId).toBe("gpt-4-turbo");
+  });
 });
 
 describe("GET /settings/global", () => {
