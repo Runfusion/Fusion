@@ -140,7 +140,7 @@ export function SettingsModal({
     if (activeSection === "default-model" || activeSection === "execution-model") {
       setModelsLoading(true);
       fetchModels()
-        .then((models) => setAvailableModels(models))
+        .then((response) => setAvailableModels(response.models))
         .catch(() => setAvailableModels([]))
         .finally(() => setModelsLoading(false));
     }

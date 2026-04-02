@@ -6,7 +6,7 @@ export { TaskStore } from "./store.js";
 export { Database, createDatabase, toJson, toJsonNullable, fromJson } from "./db.js";
 export type { Statement } from "./db.js";
 export { detectLegacyData, migrateFromLegacy, getMigrationStatus } from "./db-migrate.js";
-export { GlobalSettingsStore } from "./global-settings.js";
+export { GlobalSettingsStore, resolveGlobalDir } from "./global-settings.js";
 export { canTransition, getValidTransitions, resolveDependencyOrder } from "./board.js";
 export { 
   isGhAvailable, 

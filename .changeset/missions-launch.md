@@ -13,7 +13,7 @@ The Missions system provides a hierarchical planning structure:
 **New Features:**
 - SQLite database schema for mission hierarchy with automatic status rollup
 - MissionStore with full CRUD operations and event emissions
-- REST API with AI-driven interview system for interactive planning
+- REST API endpoints for mission CRUD operations
 - Dashboard UI: mission list, hierarchical detail view, timeline visualization
 - CLI commands: `fn mission create`, `list`, `show`, `delete`, `activate-slice`
 - Pi extension tools for chat-based mission management
