@@ -19,6 +19,7 @@ vi.mock("lucide-react", () => ({
   Zap: () => null,
   ChevronDown: () => null,
   ChevronUp: () => null,
+  Globe: () => null,
 }));
 
 // Mock the api module
@@ -739,5 +740,90 @@ describe("InlineCreateCard button visibility when collapsed", () => {
     expandCard();
     // Footer should now be in the DOM
     expect(document.getElementById("inline-create-controls")).toBeTruthy();
+  });
+
+  describe("browser verification", () => {
+    it("shows browser verification button when expanded", () => {
+      const { props } = renderCard();
+      
+      // Button should not be visible when collapsed
+      expect(screen.queryByTestId("browser-verification-toggle")).toBeNull();
+      
+      // Expand the card
+      expandCard();
+      
+      // Button should now be visible
+      expect(screen.getByTestId("browser-verification-toggle")).toBeTruthy();
+    });
+
+    it("toggles browser verification when button is clicked", () => {
+      const { props } = renderCard();
+      expandCard();
+      
+      const button = screen.getByTestId("browser-verification-toggle");
+      
+      // Initially not active
+      expect(button).not.toHaveClass("btn-active");
+      
+      // Click to enable
+      fireEvent.click(button);
+      expect(button).toHaveClass("btn-active");
+      
+      // Click to disable
+      fireEvent.click(button);
+      expect(button).not.toHaveClass("btn-active");
+    });
+
+    it("includes browser-verification in enabledWorkflowSteps when submitting with browser verification enabled", async () => {
+      const mockOnSubmit = vi.fn().mockResolvedValue(createMockTask());
+      const { props } = renderCard([], { onSubmit: mockOnSubmit });
+      expandCard();
+      
+      // Enable browser verification
+      fireEvent.click(screen.getByTestId("browser-verification-toggle"));
+      
+      // Fill in description
+      const textarea = screen.getByPlaceholderText("What needs to be done?");
+      fireEvent.change(textarea, { target: { value: "Test task with browser verification" } });
+      
+      // Submit
+      fireEvent.click(screen.getByTestId("save-button"));
+      
+      await waitFor(() => {
+        expect(mockOnSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            enabledWorkflowSteps: ["browser-verification"],
+          }),
+        );
+      });
+    });
+
+    it("resets browser verification state after successful submission", async () => {
+      const mockOnSubmit = vi.fn().mockResolvedValue(createMockTask({ id: "FN-042" }));
+      const { props } = renderCard([], { onSubmit: mockOnSubmit });
+      expandCard();
+      
+      // Enable browser verification
+      fireEvent.click(screen.getByTestId("browser-verification-toggle"));
+      
+      // Verify button is active
+      expect(screen.getByTestId("browser-verification-toggle")).toHaveClass("btn-active");
+      
+      // Fill in description and submit
+      const textarea = screen.getByPlaceholderText("What needs to be done?");
+      fireEvent.change(textarea, { target: { value: "Task to complete" } });
+      fireEvent.click(screen.getByTestId("save-button"));
+      
+      // Wait for submission to complete
+      await waitFor(() => {
+        expect(mockOnSubmit).toHaveBeenCalled();
+      });
+      
+      // Collapse and expand to reset
+      expandCard();
+      
+      // Browser verification should be reset (button not active)
+      expect(screen.getByTestId("browser-verification-toggle")).not.toHaveClass("btn-active");
+    });
   });
 });

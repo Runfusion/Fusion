@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp } from "lucide-react";
+import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp, Globe } from "lucide-react";
 import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings } from "../api";
@@ -89,6 +89,7 @@ export function InlineCreateCard({
   const [submitting, setSubmitting] = useState(false);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [browserVerification, setBrowserVerification] = useState(false);
   const justResetRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -284,6 +285,7 @@ export function InlineCreateCard({
         modelId: hasExecutorOverride ? executorModelId : undefined,
         validatorModelProvider: hasValidatorOverride ? validatorProvider : undefined,
         validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
+        enabledWorkflowSteps: browserVerification ? ["browser-verification"] : undefined,
       });
 
       // Upload pending images as attachments
@@ -318,6 +320,7 @@ export function InlineCreateCard({
       setShowDeps(false);
       setShowModels(false);
       setShowPresets(false);
+      setBrowserVerification(false);
       addToast(`Created ${task.id}`, "success");
 
       // Collapse and clear localStorage after successful task creation
@@ -345,6 +348,7 @@ export function InlineCreateCard({
     onSubmit,
     addToast,
     selectedPresetId,
+    browserVerification,
   ]);
 
   const handleKeyDown = useCallback(
@@ -463,6 +467,7 @@ export function InlineCreateCard({
     setShowDeps(false);
     setShowModels(false);
     setShowPresets(false);
+    setBrowserVerification(false);
     setIsExpanded(false);
   }, [description, onPlanningMode, addToast]);
 
@@ -484,6 +489,7 @@ export function InlineCreateCard({
     setShowDeps(false);
     setShowModels(false);
     setShowPresets(false);
+    setBrowserVerification(false);
     setIsExpanded(false);
   }, [description, onSubtaskBreakdown, addToast]);
 
@@ -774,6 +780,17 @@ export function InlineCreateCard({
                 >
                   <ListTree size={12} style={{ verticalAlign: "middle" }} />
                   Subtask
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${browserVerification ? "btn-active" : ""}`}
+                  onClick={() => setBrowserVerification((v) => !v)}
+                  disabled={submitting}
+                  data-testid="browser-verification-toggle"
+                  title="Verify with agent-browser"
+                >
+                  <Globe size={12} style={{ verticalAlign: "middle" }} />
+                  Browser
                 </button>
               </>
             )}

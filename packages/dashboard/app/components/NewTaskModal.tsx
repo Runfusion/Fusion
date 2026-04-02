@@ -5,7 +5,7 @@ import { uploadAttachment, fetchModels, fetchSettings, fetchWorkflowSteps, refin
 import type { ModelInfo } from "../api";
 import { applyPresetToSelection, getRecommendedPresetForSize } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Globe } from "lucide-react";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
@@ -585,44 +585,71 @@ export function NewTaskModal({ isOpen, onClose, tasks, onCreateTask, addToast, o
           </div>
 
           {/* Workflow Steps */}
-          {workflowSteps.length > 0 && (
-            <div className="form-group" data-testid="workflow-steps-section">
-              <label>Workflow Steps</label>
-              <small style={{ marginBottom: "8px", display: "block" }}>
-                Select steps to run after task implementation completes
-              </small>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                {workflowSteps.map((step) => (
-                  <label
-                    key={step.id}
-                    className="checkbox-label"
-                    style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}
-                    data-testid={`workflow-step-checkbox-${step.id}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedWorkflowSteps.includes(step.id)}
-                      onChange={(e) => {
-                        setSelectedWorkflowSteps((prev) =>
-                          e.target.checked
-                            ? [...prev, step.id]
-                            : prev.filter((id) => id !== step.id)
-                        );
-                      }}
-                      disabled={isSubmitting}
-                      style={{ marginTop: "2px" }}
-                    />
-                    <div>
-                      <span style={{ fontWeight: 500, fontSize: "13px" }}>{step.name}</span>
-                      <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
-                        {step.description}
-                      </div>
+          <div className="form-group" data-testid="workflow-steps-section">
+            <label>Workflow Steps</label>
+            <small style={{ marginBottom: "8px", display: "block" }}>
+              Select steps to run after task implementation completes
+            </small>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {workflowSteps.length > 0 && workflowSteps.map((step) => (
+                <label
+                  key={step.id}
+                  className="checkbox-label"
+                  style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}
+                  data-testid={`workflow-step-checkbox-${step.id}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedWorkflowSteps.includes(step.id)}
+                    onChange={(e) => {
+                      setSelectedWorkflowSteps((prev) =>
+                        e.target.checked
+                          ? [...prev, step.id]
+                          : prev.filter((id) => id !== step.id)
+                      );
+                    }}
+                    disabled={isSubmitting}
+                    style={{ marginTop: "2px" }}
+                  />
+                  <div>
+                    <span style={{ fontWeight: 500, fontSize: "13px" }}>{step.name}</span>
+                    <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                      {step.description}
                     </div>
-                  </label>
-                ))}
-              </div>
+                  </div>
+                </label>
+              ))}
+              <label
+                key="browser-verification"
+                className="checkbox-label"
+                style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}
+                data-testid="browser-verification-checkbox"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedWorkflowSteps.includes("browser-verification")}
+                  onChange={(e) => {
+                    setSelectedWorkflowSteps((prev) =>
+                      e.target.checked
+                        ? [...prev, "browser-verification"]
+                        : prev.filter((id) => id !== "browser-verification")
+                    );
+                  }}
+                  disabled={isSubmitting}
+                  style={{ marginTop: "2px" }}
+                />
+                <div>
+                  <span style={{ fontWeight: 500, fontSize: "13px" }}>
+                    <Globe size={14} style={{ verticalAlign: "middle", marginRight: "4px" }} />
+                    Browser Verification
+                  </span>
+                  <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                    Verify web application functionality using browser automation (agent-browser)
+                  </div>
+                </div>
+              </label>
             </div>
-          )}
+          </div>
 
           <div className="form-group">
             <label>AI-assisted creation</label>

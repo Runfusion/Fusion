@@ -3,6 +3,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { NewTaskModal } from "../NewTaskModal";
 import type { Task, Column } from "@fusion/core";
 
+// Mock lucide-react
+vi.mock("lucide-react", () => ({
+  Sparkles: () => null,
+  Globe: () => null,
+}));
+
 // Mock the api module
 vi.mock("../../api", () => ({
   uploadAttachment: vi.fn().mockResolvedValue({}),
@@ -232,5 +238,76 @@ describe("NewTaskModal", () => {
     
     const createButton = screen.getByRole("button", { name: "Create Task" });
     expect(createButton).not.toBeDisabled();
+  });
+
+  // Browser verification tests
+  describe("browser verification", () => {
+    it("shows browser verification checkbox", () => {
+      renderNewTaskModal();
+      
+      expect(screen.getByTestId("browser-verification-checkbox")).toBeTruthy();
+      expect(screen.getByText("Browser Verification")).toBeTruthy();
+    });
+
+    it("adds browser-verification to selected workflow steps when checkbox is checked", async () => {
+      const { props } = renderNewTaskModal();
+      
+      const checkbox = screen.getByTestId("browser-verification-checkbox").querySelector('input[type="checkbox"]') as HTMLInputElement;
+      fireEvent.click(checkbox);
+      
+      await waitFor(() => {
+        expect(checkbox.checked).toBe(true);
+      });
+      
+      const descTextarea = screen.getByLabelText(/Description/i);
+      fireEvent.change(descTextarea, { target: { value: "Test task" } });
+      
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+      
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            enabledWorkflowSteps: expect.arrayContaining(["browser-verification"]),
+          }),
+        );
+      });
+    });
+
+    it("removes browser-verification from selected workflow steps when checkbox is unchecked", async () => {
+      renderNewTaskModal();
+      
+      const checkbox = screen.getByTestId("browser-verification-checkbox").querySelector('input[type="checkbox"]') as HTMLInputElement;
+      
+      // Check then uncheck
+      fireEvent.click(checkbox);
+      await waitFor(() => {
+        expect(checkbox.checked).toBe(true);
+      });
+      
+      fireEvent.click(checkbox);
+      await waitFor(() => {
+        expect(checkbox.checked).toBe(false);
+      });
+    });
+
+    it("includes browser-verification in enabledWorkflowSteps when submitting with checkbox checked", async () => {
+      const { props } = renderNewTaskModal();
+      
+      const checkbox = screen.getByTestId("browser-verification-checkbox").querySelector('input[type="checkbox"]') as HTMLInputElement;
+      fireEvent.click(checkbox);
+      
+      const descTextarea = screen.getByLabelText(/Description/i);
+      fireEvent.change(descTextarea, { target: { value: "Browser test task" } });
+      
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+      
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            enabledWorkflowSteps: ["browser-verification"],
+          }),
+        );
+      });
+    });
   });
 });
