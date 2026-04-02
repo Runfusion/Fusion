@@ -118,6 +118,7 @@ describe("GitHubPollingService", () => {
       store: mockStore,
       token: "test-token",
       pollingIntervalMs: 60_000,
+      rateLimiter: new GitHubRateLimiter(),
     });
 
     mockGetBadgeStatusesBatch.mockReset();

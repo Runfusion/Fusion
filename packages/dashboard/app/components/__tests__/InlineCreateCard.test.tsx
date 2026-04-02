@@ -17,6 +17,8 @@ vi.mock("lucide-react", () => ({
   Lightbulb: () => null,
   ListTree: () => null,
   Zap: () => null,
+  ChevronDown: () => null,
+  ChevronUp: () => null,
 }));
 
 // Mock the api module
@@ -28,6 +30,7 @@ vi.mock("../../api", () => ({
     defaultPresetBySize: {},
   }),
   uploadAttachment: vi.fn(),
+  updateGlobalSettings: vi.fn(),
 }));
 
 const MOCK_MODELS: ModelInfo[] = [

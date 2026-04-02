@@ -14,43 +14,33 @@ import {
 } from "../file-service.js";
 import type { TaskStore } from "@fusion/core";
 
-// Create mock functions that can be configured in tests
-// Use vi.hoisted to hoist alongside vi.mock
-const mocks = vi.hoisted(() => ({
-  mockReaddir: vi.fn(),
-  mockReadFile: vi.fn(),
-  mockWriteFile: vi.fn(),
-  mockStat: vi.fn(),
-  mockExistsSync: vi.fn(),
-}));
+// Mock node:fs/promises
+const mockReaddir = vi.fn();
+const mockReadFile = vi.fn();
+const mockWriteFile = vi.fn();
+const mockStat = vi.fn();
 
-// Hoist mocks alongside vi.mock - must include default export
-vi.mock("node:fs/promises", () => {
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
-    default: {
-      readdir: mocks.mockReaddir,
-      readFile: mocks.mockReadFile,
-      writeFile: mocks.mockWriteFile,
-      stat: mocks.mockStat,
-    },
-    readdir: mocks.mockReaddir,
-    readFile: mocks.mockReadFile,
-    writeFile: mocks.mockWriteFile,
-    stat: mocks.mockStat,
+    ...actual,
+    readdir: (...args: any[]) => mockReaddir(...args),
+    readFile: (...args: any[]) => mockReadFile(...args),
+    writeFile: (...args: any[]) => mockWriteFile(...args),
+    stat: (...args: any[]) => mockStat(...args),
   };
 });
 
-vi.mock("node:fs", () => {
+// Mock node:fs
+const mockExistsSync = vi.fn();
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
   return {
-    default: {
-      existsSync: mocks.mockExistsSync,
-    },
-    existsSync: mocks.mockExistsSync,
+    ...actual,
+    existsSync: (...args: any[]) => mockExistsSync(...args),
   };
 });
-
-// Export mocks for use in tests
-export const { mockReaddir, mockReadFile, mockWriteFile, mockStat, mockExistsSync } = mocks;
 
 describe("FileServiceError", () => {
   it("constructor sets code and name correctly", () => {

@@ -94,7 +94,7 @@ function createMockServer(portToReturn: number = 0) {
   return server;
 }
 
-const mockListen = vi.fn<(port: number) => EventEmitter<DefaultEventMap> & { listen: ReturnType<typeof vi.fn>; address: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }>((port: number) => {
+const mockListen = vi.fn((port: number) => {
   const server = createMockServer(port);
   process.nextTick(() => server.emit("listening"));
   return server;
@@ -828,14 +828,14 @@ describe("runDashboard — port fallback on EADDRINUSE", () => {
     });
 
     // Override mockListen for one call: simulate EADDRINUSE
-    mockListen.mockImplementationOnce((_port: number) => {
+    mockListen.mockImplementationOnce(((_port: number) => {
       process.nextTick(() => {
         const err = new Error("listen EADDRINUSE: address already in use") as NodeJS.ErrnoException;
         err.code = "EADDRINUSE";
         serverEmitter.emit("error", err);
       });
       return serverEmitter;
-    });
+    }) as any);
 
     await runDashboard(4040, { open: false });
 
@@ -866,14 +866,14 @@ describe("runDashboard — port fallback on EADDRINUSE", () => {
       close: vi.fn(),
     });
 
-    mockListen.mockImplementationOnce((_port: number) => {
+    mockListen.mockImplementationOnce(((_port: number) => {
       process.nextTick(() => {
         const err = new Error("listen EADDRINUSE: address already in use") as NodeJS.ErrnoException;
         err.code = "EADDRINUSE";
         serverEmitter.emit("error", err);
       });
       return serverEmitter;
-    });
+    }) as any);
 
     await runDashboard(4040, { open: false });
 
