@@ -370,7 +370,7 @@ describe("SettingsModal", () => {
     expect(payload.pollIntervalMs).toBe(15000);
   });
 
-  it("saving project settings does not update global settings endpoint", async () => {
+  it("saving in General section updates project settings with task prefix", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
@@ -381,30 +381,68 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
 
-    // Global settings should NOT be called when in a project section
-    expect(updateGlobalSettings).not.toHaveBeenCalled();
+    // Verify taskPrefix is saved as project setting
+    const projectPayload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(projectPayload.taskPrefix).toBe("TEST");
   });
 
-  it("saving in Model section only updates global settings", async () => {
+  it("saving in Default Model section updates global settings with default model", async () => {
+    const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Save"));
-    // Model section is global-scoped
-    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    // Select a model
+    const trigger = screen.getByLabelText("Default Model");
+    await user.click(trigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
 
-    // Project settings should NOT be updated when in a global section
-    expect(updateSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Save"));
+
+    // Verify default model settings are saved as global settings
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    const globalPayload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(globalPayload.defaultProvider).toBe("anthropic");
+    expect(globalPayload.defaultModelId).toBe("claude-sonnet-4-5");
   });
 
-  it("shows Model in sidebar", async () => {
+  it("saving in Execution Model section updates project settings with planning and validator models", async () => {
+    const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    expect(screen.getAllByText("Model").length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(screen.getByText("Execution Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Select planning model
+    const planningTrigger = screen.getByLabelText("Planning Model");
+    await user.click(planningTrigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
+
+    // Select validator model
+    const validatorTrigger = screen.getByLabelText("Validator Model");
+    await user.click(validatorTrigger);
+    await user.click(screen.getByText("GPT-4o"));
+
+    fireEvent.click(screen.getByText("Save"));
+
+    // Verify planning and validator settings are saved as project settings
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+    const projectPayload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(projectPayload.planningProvider).toBe("anthropic");
+    expect(projectPayload.planningModelId).toBe("claude-sonnet-4-5");
+    expect(projectPayload.validatorProvider).toBe("openai");
+    expect(projectPayload.validatorModelId).toBe("gpt-4o");
+  });
+
+  it("shows Default Model and Execution Model in sidebar", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    expect(screen.getAllByText("Default Model").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Execution Model").length).toBeGreaterThanOrEqual(1);
   });
 
   it("supports creating and saving a model preset", async () => {
@@ -461,7 +499,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Dropdown trigger should be present
@@ -486,7 +524,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open dropdown and select a model
@@ -514,7 +552,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open dropdown and select "Use default"
@@ -545,7 +583,77 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    expect(screen.getByText("No models available. Configure authentication first.")).toBeTruthy();
+  });
+
+  // --- Execution Model section tests (project-scoped) ---
+
+  it("shows Execution Model section with planning and validator model dropdowns", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Execution Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Both dropdowns should be present
+    expect(screen.getByLabelText("Planning Model")).toBeTruthy();
+    expect(screen.getByLabelText("Validator Model")).toBeTruthy();
+  });
+
+  it("selecting a planning model updates form with provider and model ID", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Execution Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Open planning model dropdown and select a model
+    const trigger = screen.getByLabelText("Planning Model");
+    await user.click(trigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
+
+    fireEvent.click(screen.getByText("Save"));
+    // planningProvider and planningModelId are project settings, so they go through updateSettings
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.planningProvider).toBe("anthropic");
+    expect(payload.planningModelId).toBe("claude-sonnet-4-5");
+  });
+
+  it("selecting a validator model updates form with provider and model ID", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Execution Model"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    // Open validator model dropdown and select a model
+    const trigger = screen.getByLabelText("Validator Model");
+    await user.click(trigger);
+    await user.click(screen.getByText("GPT-4o"));
+
+    fireEvent.click(screen.getByText("Save"));
+    // validatorProvider and validatorModelId are project settings, so they go through updateSettings
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.validatorProvider).toBe("openai");
+    expect(payload.validatorModelId).toBe("gpt-4o");
+  });
+
+  it("shows empty state in Execution Model section when no models available", async () => {
+    (fetchModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Execution Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     expect(screen.getByText("No models available. Configure authentication first.")).toBeTruthy();
@@ -660,7 +768,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // CustomModelDropdown renders as a button trigger, not a select element
@@ -692,11 +800,11 @@ describe("SettingsModal", () => {
     expect(elementsWithStyle.length).toBe(1);
   });
 
-  it("shows Thinking Effort dropdown with correct options in Model section", async () => {
+  it("shows Thinking Effort dropdown with correct options in Default Model section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     const select = screen.getByLabelText("Thinking Effort") as HTMLSelectElement;
@@ -710,7 +818,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     const select = screen.getByLabelText("Thinking Effort") as HTMLSelectElement;
@@ -734,7 +842,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     expect(screen.queryByLabelText("Thinking Effort")).toBeNull();
@@ -833,20 +941,21 @@ describe("SettingsModal", () => {
     expect(layout!.querySelector(".settings-content")).toBeTruthy();
   });
 
-  it("has .settings-sidebar with 12 .settings-nav-item buttons for all sections", async () => {
+  it("has .settings-sidebar with 13 .settings-nav-item buttons for all sections", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     const sidebar = container.querySelector(".settings-sidebar");
     expect(sidebar).toBeTruthy();
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
-    expect(navItems.length).toBe(12);
+    expect(navItems.length).toBe(13);
 
     // Labels include scope emoji indicators (🌐 for global, 📁 for project)
     const labels = Array.from(navItems).map((el) => el.textContent);
     expect(labels).toEqual([
       "📁General",
-      "🌐Model",
+      "🌐Default Model",
+      "📁Execution Model",
       "📁Model Presets",
       "📁AI Summarization",
       "🌐Appearance",
@@ -1111,12 +1220,12 @@ describe("SettingsModal", () => {
   });
 
   // Model filter tests with CustomModelDropdown
-  it("renders filter input in Model section dropdown", async () => {
+  it("renders filter input in Default Model section dropdown", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open dropdown to access filter input
@@ -1127,12 +1236,12 @@ describe("SettingsModal", () => {
     expect(screen.getByPlaceholderText("Filter models…")).toBeTruthy();
   });
 
-  it("filters default model options in Model section", async () => {
+  it("filters default model options in Default Model section", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open dropdown
@@ -1151,12 +1260,12 @@ describe("SettingsModal", () => {
     expect(screen.queryByText("GPT-4o")).not.toBeInTheDocument();
   });
 
-  it("clear button resets filter in Model section", async () => {
+  it("clear button resets filter in Default Model section", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open dropdown
@@ -1183,12 +1292,12 @@ describe("SettingsModal", () => {
     expect(screen.getByText("Claude Sonnet 4.5")).toBeTruthy();
   });
 
-  it("shows empty state in Model section when filter matches nothing", async () => {
+  it("shows empty state in Default Model section when filter matches nothing", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Model"));
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open dropdown
@@ -1402,10 +1511,15 @@ describe("SettingsModal", () => {
     expect(container.querySelector(".settings-scope-project")).toBeTruthy();
     expect(container.querySelector(".settings-scope-global")).toBeNull();
 
-    // Switch to Model → should show global banner
-    fireEvent.click(screen.getByText("Model"));
+    // Switch to Default Model → should show global banner
+    fireEvent.click(screen.getByText("Default Model"));
     expect(container.querySelector(".settings-scope-global")).toBeTruthy();
     expect(container.querySelector(".settings-scope-project")).toBeNull();
+
+    // Switch to Execution Model → should show project banner
+    fireEvent.click(screen.getByText("Execution Model"));
+    expect(container.querySelector(".settings-scope-project")).toBeTruthy();
+    expect(container.querySelector(".settings-scope-global")).toBeNull();
   });
 
   // --- Settings save error handling tests ---
@@ -1429,8 +1543,8 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    // Switch to Model section (global scope)
-    fireEvent.click(screen.getByText("Model"));
+    // Switch to Default Model section (global scope)
+    fireEvent.click(screen.getByText("Default Model"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     fireEvent.click(screen.getByText("Save"));
