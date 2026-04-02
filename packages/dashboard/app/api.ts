@@ -1799,6 +1799,40 @@ export interface ProjectHealth {
   updatedAt: string;
 }
 
+/** Executor state values */
+export type ExecutorState = "idle" | "running" | "paused";
+
+/** Aggregated executor statistics for the status bar.
+ * 
+ * Counts (runningTaskCount, blockedTaskCount, queuedTaskCount, inReviewCount, stuckTaskCount)
+ * are derived client-side from the tasks array to avoid duplication.
+ * The API returns settings-based values (globalPause, enginePaused, maxConcurrent) and
+ * lastActivityAt from the activity log.
+ * 
+ * The executorState is derived from:
+ * - "idle": globalPause is true OR (enginePaused is true AND runningTaskCount is 0)
+ * - "paused": enginePaused is true AND runningTaskCount > 0
+ * - "running": globalPause is false AND enginePaused is false AND runningTaskCount > 0
+ */
+export interface ExecutorStats {
+  /** Number of tasks currently in "in-progress" column */
+  runningTaskCount: number;
+  /** Number of tasks with blockedBy field set (waiting on file overlap) */
+  blockedTaskCount: number;
+  /** Number of "in-progress" tasks with no activity for > 10 minutes */
+  stuckTaskCount: number;
+  /** Number of tasks in "todo" column */
+  queuedTaskCount: number;
+  /** Number of tasks in "in-review" column */
+  inReviewCount: number;
+  /** Derived executor state: "idle", "running", or "paused" */
+  executorState: ExecutorState;
+  /** Maximum concurrent tasks allowed from settings */
+  maxConcurrent: number;
+  /** ISO timestamp of most recent task event from activity log */
+  lastActivityAt?: string;
+}
+
 /** Unified activity feed entry */
 export interface ActivityFeedEntry {
   id: string;
@@ -1900,6 +1934,25 @@ export function unregisterProject(id: string): Promise<void> {
 /** Fetch health metrics for a specific project */
 export function fetchProjectHealth(id: string): Promise<ProjectHealth> {
   return api<ProjectHealth>(`/projects/${encodeURIComponent(id)}/health`);
+}
+
+/** Fetch executor statistics for the status bar.
+ * 
+ * Returns settings-based values and lastActivityAt.
+ * Counts are derived client-side from the tasks array.
+ */
+export function fetchExecutorStats(): Promise<{
+  globalPause: boolean;
+  enginePaused: boolean;
+  maxConcurrent: number;
+  lastActivityAt?: string;
+}> {
+  return api<{
+    globalPause: boolean;
+    enginePaused: boolean;
+    maxConcurrent: number;
+    lastActivityAt?: string;
+  }>("/executor/stats");
 }
 
 /** Fetch unified activity feed */

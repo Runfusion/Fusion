@@ -34,11 +34,14 @@ import {
   fetchGlobalConcurrency,
   fetchProjectTasks,
   fetchProjectConfig,
+  fetchExecutorStats,
   type ProjectInfo,
   type ProjectHealth,
   type ActivityFeedEntry,
   type FirstRunStatus,
   type GlobalConcurrencyState,
+  type ExecutorStats,
+  type ExecutorState,
 } from "./api";
 import type { Task, TaskDetail, BatchStatusResponse } from "@fusion/core";
 
@@ -2157,5 +2160,153 @@ describe("fetchProjectConfig", () => {
 
     expect(result.maxConcurrent).toBe(4);
     expect(result.rootDir).toBe("/path/to/project");
+  });
+});
+
+describe("fetchExecutorStats", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("returns executor stats with running state", async () => {
+    const response = {
+      globalPause: false,
+      enginePaused: false,
+      maxConcurrent: 4,
+      lastActivityAt: "2026-04-01T12:00:00.000Z",
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, response));
+
+    const result = await fetchExecutorStats();
+
+    expect(result.globalPause).toBe(false);
+    expect(result.enginePaused).toBe(false);
+    expect(result.maxConcurrent).toBe(4);
+    expect(result.lastActivityAt).toBe("2026-04-01T12:00:00.000Z");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/executor/stats", {
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  it("returns executor stats with paused state", async () => {
+    const response = {
+      globalPause: false,
+      enginePaused: true,
+      maxConcurrent: 2,
+      lastActivityAt: "2026-04-01T11:00:00.000Z",
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, response));
+
+    const result = await fetchExecutorStats();
+
+    expect(result.globalPause).toBe(false);
+    expect(result.enginePaused).toBe(true);
+    expect(result.maxConcurrent).toBe(2);
+  });
+
+  it("returns executor stats with global pause", async () => {
+    const response = {
+      globalPause: true,
+      enginePaused: false,
+      maxConcurrent: 2,
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, response));
+
+    const result = await fetchExecutorStats();
+
+    expect(result.globalPause).toBe(true);
+    expect(result.enginePaused).toBe(false);
+  });
+
+  it("throws on API error", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Internal server error" }));
+
+    await expect(fetchExecutorStats()).rejects.toThrow("Internal server error");
+  });
+});
+
+describe("ExecutorStats type", () => {
+  it("has correct shape for executor stats object", () => {
+    const stats: ExecutorStats = {
+      runningTaskCount: 3,
+      blockedTaskCount: 2,
+      stuckTaskCount: 1,
+      queuedTaskCount: 10,
+      inReviewCount: 4,
+      executorState: "running",
+      maxConcurrent: 4,
+      lastActivityAt: "2026-04-01T12:00:00.000Z",
+    };
+
+    expect(stats.runningTaskCount).toBe(3);
+    expect(stats.blockedTaskCount).toBe(2);
+    expect(stats.stuckTaskCount).toBe(1);
+    expect(stats.queuedTaskCount).toBe(10);
+    expect(stats.inReviewCount).toBe(4);
+    expect(stats.executorState).toBe("running");
+    expect(stats.maxConcurrent).toBe(4);
+    expect(stats.lastActivityAt).toBe("2026-04-01T12:00:00.000Z");
+  });
+
+  it("accepts all valid executor states", () => {
+    const idleStats: ExecutorStats = {
+      runningTaskCount: 0,
+      blockedTaskCount: 0,
+      stuckTaskCount: 0,
+      queuedTaskCount: 5,
+      inReviewCount: 0,
+      executorState: "idle",
+      maxConcurrent: 2,
+    };
+
+    const runningStats: ExecutorStats = {
+      runningTaskCount: 2,
+      blockedTaskCount: 1,
+      stuckTaskCount: 0,
+      queuedTaskCount: 3,
+      inReviewCount: 1,
+      executorState: "running",
+      maxConcurrent: 2,
+    };
+
+    const pausedStats: ExecutorStats = {
+      runningTaskCount: 1,
+      blockedTaskCount: 0,
+      stuckTaskCount: 0,
+      queuedTaskCount: 8,
+      inReviewCount: 2,
+      executorState: "paused",
+      maxConcurrent: 2,
+    };
+
+    expect(idleStats.executorState).toBe("idle");
+    expect(runningStats.executorState).toBe("running");
+    expect(pausedStats.executorState).toBe("paused");
+  });
+
+  it("allows optional lastActivityAt", () => {
+    const stats: ExecutorStats = {
+      runningTaskCount: 0,
+      blockedTaskCount: 0,
+      stuckTaskCount: 0,
+      queuedTaskCount: 0,
+      inReviewCount: 0,
+      executorState: "idle",
+      maxConcurrent: 2,
+    };
+
+    expect(stats.lastActivityAt).toBeUndefined();
+  });
+});
+
+describe("ExecutorState type", () => {
+  it("has valid executor state values", () => {
+    const states: ExecutorState[] = ["idle", "running", "paused"];
+
+    expect(states).toContain("idle");
+    expect(states).toContain("running");
+    expect(states).toContain("paused");
   });
 });
