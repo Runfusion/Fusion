@@ -365,6 +365,20 @@ describe("Header", () => {
       fireEvent.click(screen.getByTestId("overflow-terminal-btn"));
       expect(onToggleTerminal).toHaveBeenCalled();
     });
+
+    it("shows scripts in overflow menu on mobile", () => {
+      renderHeader({ onOpenScripts: noop }, true);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      expect(screen.getByTestId("overflow-scripts-btn")).toBeDefined();
+    });
+
+    it("calls onOpenScripts from mobile overflow menu", () => {
+      const onOpenScripts = vi.fn();
+      renderHeader({ onOpenScripts }, true);
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByTestId("overflow-scripts-btn"));
+      expect(onOpenScripts).toHaveBeenCalled();
+    });
   });
 
   describe("search functionality", () => {
