@@ -12,6 +12,9 @@
     "extensions": [
       "./dist/extension.js"
     ],
+    "skills": [
+      "./skill"
+    ],
     "image": "https://raw.githubusercontent.com/gsxdsm/fusion/main/demo/screenshot.png"
   },
   "publishConfig": {
@@ -23,6 +26,7 @@
     "dist/**/*.d.ts.map",
     "dist/**/*.js.map",
     "dist/client/**",
+    "skill/**",
     "README.md"
   ],
   "scripts": {
