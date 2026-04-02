@@ -673,3 +673,71 @@ describe("InlineCreateCard localStorage persistence", () => {
     expect((textarea as HTMLTextAreaElement).value).toBe("");
   });
 });
+
+describe("InlineCreateCard button visibility when collapsed", () => {
+  it("hides all buttons when not expanded", () => {
+    renderCard();
+    // Card starts collapsed (isExpanded is false by default)
+    // Only the toggle button should be visible, all footer buttons should be hidden
+
+    // Footer controls should not be rendered
+    expect(screen.queryByTestId("plan-button")).toBeNull();
+    expect(screen.queryByTestId("subtask-button")).toBeNull();
+    expect(screen.queryByText(/Deps/)).toBeNull();
+    expect(screen.queryByText(/Preset/)).toBeNull();
+    expect(screen.queryByText(/Models/)).toBeNull();
+    expect(screen.queryByTestId("save-button")).toBeNull();
+  });
+
+  it("toggle button is always visible regardless of expanded state", () => {
+    renderCard();
+    // Toggle button should always be visible
+    expect(screen.getByTestId("inline-create-toggle")).toBeTruthy();
+  });
+
+  it("shows buttons after clicking toggle to expand", () => {
+    renderCard();
+
+    // Initially collapsed - buttons hidden
+    expect(screen.queryByTestId("plan-button")).toBeNull();
+    expect(screen.queryByText(/Deps/)).toBeNull();
+
+    // Click toggle to expand
+    expandCard();
+
+    // Now buttons should be visible
+    expect(screen.getByTestId("plan-button")).toBeTruthy();
+    expect(screen.getByTestId("subtask-button")).toBeTruthy();
+    expect(screen.getByText(/Deps/)).toBeTruthy();
+    expect(screen.getByTestId("save-button")).toBeTruthy();
+  });
+
+  it("hides buttons again after collapsing via toggle", () => {
+    renderCard();
+
+    // Expand
+    expandCard();
+    expect(screen.getByTestId("plan-button")).toBeTruthy();
+
+    // Collapse
+    expandCard();
+
+    // Buttons should be hidden again
+    expect(screen.queryByTestId("plan-button")).toBeNull();
+    expect(screen.queryByTestId("subtask-button")).toBeNull();
+    expect(screen.queryByText(/Deps/)).toBeNull();
+    expect(screen.queryByText(/Preset/)).toBeNull();
+    expect(screen.queryByText(/Models/)).toBeNull();
+    expect(screen.queryByTestId("save-button")).toBeNull();
+  });
+
+  it("footer div is not rendered when collapsed", () => {
+    renderCard();
+    // Footer should not be in the DOM when collapsed
+    expect(document.getElementById("inline-create-controls")).toBeNull();
+
+    expandCard();
+    // Footer should now be in the DOM
+    expect(document.getElementById("inline-create-controls")).toBeTruthy();
+  });
+});

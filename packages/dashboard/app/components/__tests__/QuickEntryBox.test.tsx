@@ -1397,4 +1397,67 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("save-button")).toBeTruthy();
     });
   });
+
+  describe("Button visibility when collapsed", () => {
+    it("controls div has hidden attribute when not expanded", () => {
+      renderQuickEntryBox({}, { startCollapsed: true });
+      // Component starts collapsed (disclosure expanded state is false)
+      // Only the toggle button should be visible, all other buttons should be hidden
+
+      const controls = document.getElementById("quick-entry-controls");
+      expect(controls?.hasAttribute("hidden")).toBe(true);
+    });
+
+    it("toggle button is always visible regardless of expanded state", () => {
+      renderQuickEntryBox({}, { startCollapsed: true });
+      // Toggle button should always be visible
+      expect(screen.getByTestId("quick-entry-toggle")).toBeTruthy();
+    });
+
+    it("shows buttons after clicking toggle to expand", () => {
+      renderQuickEntryBox({}, { startCollapsed: true });
+
+      // Initially collapsed - controls hidden
+      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(true);
+
+      // Click toggle to expand
+      expandQuickEntry();
+
+      // Now controls should be visible
+      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
+      // And buttons inside should be accessible
+      expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
+      expect(screen.getByTestId("quick-entry-models-button")).toBeTruthy();
+      expect(screen.getByTestId("plan-button")).toBeTruthy();
+      expect(screen.getByTestId("subtask-button")).toBeTruthy();
+    });
+
+    it("hides buttons again after collapsing via toggle", () => {
+      renderQuickEntryBox({}, { startCollapsed: true });
+
+      // Expand
+      expandQuickEntry();
+      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
+      expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
+
+      // Collapse
+      expandQuickEntry();
+
+      // Controls should be hidden again
+      expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(true);
+    });
+
+    it("verifies all buttons are accessible when expanded", () => {
+      renderQuickEntryBox({}, { startCollapsed: true });
+      expandQuickEntry();
+
+      // All buttons should be accessible when expanded
+      expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
+      expect(screen.getByTestId("quick-entry-models-button")).toBeTruthy();
+      expect(screen.getByTestId("plan-button")).toBeTruthy();
+      expect(screen.getByTestId("subtask-button")).toBeTruthy();
+      expect(screen.getByTestId("save-button")).toBeTruthy();
+      expect(screen.getByTestId("refine-button")).toBeTruthy();
+    });
+  });
 });

@@ -785,6 +785,7 @@ export function InlineCreateCard({
               className="btn btn-primary btn-sm"
               onClick={handleSubmit}
               disabled={!description.trim() || submitting}
+              data-testid="save-button"
             >
               {submitting ? "Creating..." : "Save"}
             </button>
