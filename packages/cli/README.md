@@ -12,6 +12,8 @@ pi install npm:@gsxdsm/fusion
 
 This gives pi the ability to manage and create tasks in your Fusion dashboard.
 
+The package includes a bundled **Fusion skill** that enables AI agents to discover and use Fusion tools automatically. No additional skill installation is needed.
+
 ## The dashboard
 
 Run `/fn` in pi to launch the dashboard and AI engine.

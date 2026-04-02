@@ -1,0 +1,126 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const cliRoot = resolve(__dirname, "../..");
+const skillDir = resolve(cliRoot, "skill/fusion");
+const extensionPath = resolve(cliRoot, "src/extension.ts");
+
+/**
+ * Extract all tool names registered via pi.registerTool({ name: "..." })
+ * from the extension source code.
+ */
+function getExtensionToolNames(): string[] {
+  const src = readFileSync(extensionPath, "utf-8");
+  const matches = [...src.matchAll(/name:\s*"(kb_[a-z_]+)"/g)];
+  return matches.map((m) => m[1]).sort();
+}
+
+/**
+ * Extract tool names documented in extension-tools.md (### kb_* headings).
+ */
+function getDocumentedToolNames(): string[] {
+  const doc = readFileSync(
+    resolve(skillDir, "references/extension-tools.md"),
+    "utf-8",
+  );
+  const matches = [...doc.matchAll(/^### (kb_[a-z_]+)/gm)];
+  return matches.map((m) => m[1]).sort();
+}
+
+/**
+ * Extract tool names listed in SKILL.md under the tool categories.
+ */
+function getSkillMdToolNames(): string[] {
+  const doc = readFileSync(resolve(skillDir, "SKILL.md"), "utf-8");
+  const matches = [...doc.matchAll(/`(kb_[a-z_]+)`/g)];
+  // Deduplicate
+  return [...new Set(matches.map((m) => m[1]))].sort();
+}
+
+/**
+ * Extract tool names from the capabilities catalog table.
+ */
+function getCapabilitiesToolNames(): string[] {
+  const doc = readFileSync(
+    resolve(skillDir, "references/fusion-capabilities.md"),
+    "utf-8",
+  );
+  const matches = [...doc.matchAll(/\| `(kb_[a-z_]+)` \|/g)];
+  return matches.map((m) => m[1]).sort();
+}
+
+describe("Skill-Extension Sync", () => {
+  it("skill directory structure exists", () => {
+    expect(existsSync(resolve(skillDir, "SKILL.md"))).toBe(true);
+    expect(existsSync(resolve(skillDir, "references"))).toBe(true);
+    expect(existsSync(resolve(skillDir, "workflows"))).toBe(true);
+    expect(
+      existsSync(resolve(skillDir, "references/extension-tools.md")),
+    ).toBe(true);
+  });
+
+  it("SKILL.md has valid frontmatter with name and description", () => {
+    const content = readFileSync(resolve(skillDir, "SKILL.md"), "utf-8");
+    expect(content).toMatch(/^---\n/);
+    expect(content).toMatch(/\nname:\s*fusion\n/);
+    expect(content).toMatch(/\ndescription:\s*.+\n/);
+  });
+
+  it("extension-tools.md documents exactly the same tools as extension.ts", () => {
+    const extensionTools = getExtensionToolNames();
+    const documentedTools = getDocumentedToolNames();
+
+    const missingFromDocs = extensionTools.filter(
+      (t) => !documentedTools.includes(t),
+    );
+    const extraInDocs = documentedTools.filter(
+      (t) => !extensionTools.includes(t),
+    );
+
+    expect(missingFromDocs).toEqual([]);
+    expect(extraInDocs).toEqual([]);
+    expect(documentedTools).toEqual(extensionTools);
+  });
+
+  it("SKILL.md tool listing includes all registered tools", () => {
+    const extensionTools = getExtensionToolNames();
+    const skillTools = getSkillMdToolNames();
+
+    const missingFromSkill = extensionTools.filter(
+      (t) => !skillTools.includes(t),
+    );
+    expect(missingFromSkill).toEqual([]);
+  });
+
+  it("fusion-capabilities.md tool table includes all registered tools", () => {
+    const extensionTools = getExtensionToolNames();
+    const capTools = getCapabilitiesToolNames();
+
+    const missingFromCaps = extensionTools.filter(
+      (t) => !capTools.includes(t),
+    );
+    expect(missingFromCaps).toEqual([]);
+  });
+
+  it("/fn command is documented in the skill", () => {
+    const skillMd = readFileSync(resolve(skillDir, "SKILL.md"), "utf-8");
+    expect(skillMd).toContain("/fn");
+
+    const dashboardCli = readFileSync(
+      resolve(skillDir, "workflows/dashboard-cli.md"),
+      "utf-8",
+    );
+    expect(dashboardCli).toContain("/fn");
+  });
+
+  it("package.json includes skills in pi config and files array", () => {
+    const pkg = JSON.parse(
+      readFileSync(resolve(cliRoot, "package.json"), "utf-8"),
+    );
+    expect(pkg.pi.skills).toContain("./skill");
+    expect(pkg.files).toContain("skill/**");
+  });
+});
