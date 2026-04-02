@@ -12,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { DEFAULT_PROJECT_SETTINGS } from "./types.js";
-import type { TaskComment } from "./types.js";
+import type { SteeringComment, TaskComment } from "./types.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -62,9 +62,9 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 const SCHEMA_VERSION = 5;
 
 function normalizeTaskComments(
-  steeringComments: TaskComment[] | undefined,
+  steeringComments: SteeringComment[] | undefined,
   comments: TaskComment[] | undefined,
-): { steeringComments: TaskComment[]; comments: TaskComment[] } {
+): { steeringComments: SteeringComment[]; comments: TaskComment[] } {
   const normalizedComments: TaskComment[] = [];
   const seenKeys = new Set<string>();
 
@@ -460,7 +460,7 @@ export class Database {
     );
 
     for (const row of rows) {
-      const steeringComments = fromJson<TaskComment[]>(row.steeringComments) || [];
+      const steeringComments = fromJson<SteeringComment[]>(row.steeringComments) || [];
       const comments = fromJson<TaskComment[]>(row.comments) || [];
       const normalized = normalizeTaskComments(steeringComments, comments);
       const nextCommentsJson = toJson(normalized.comments);
