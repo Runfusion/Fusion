@@ -62,6 +62,33 @@ The dashboard header adapts to small screens to remain usable without wrapping o
 ### Mobile Task Entry
 Task entry inputs (the quick entry box in the Triage column and the New Task modal's description field) are sized to prevent browser zoom-on-focus on iOS Safari. On mobile viewports (≤768px), these inputs use a minimum 16px font size, which keeps the viewport stable when users focus the fields.
 
+### Executor Status Bar
+A persistent footer status bar at the bottom of the dashboard displays real-time executor statistics in project view. The status bar provides immediate visibility into the engine's state without opening modals or hovering over badges.
+
+**Statistics Displayed**:
+- **Running**: Count of tasks currently in "in-progress" column with pulsing animation when > 0
+- **Blocked**: Count of tasks with `blockedBy` field set (waiting on file overlap)
+- **Stuck**: Count of tasks in "in-progress" with no activity for > 10 minutes (shown only when > 0)
+- **Queued**: Count of tasks in "todo" column
+- **In Review**: Count of tasks in "in-review" column
+- **Executor State**: Current state badge (Idle/Running/Paused)
+- **Last Activity**: Relative timestamp of most recent task event
+
+**State Mapping**:
+- **Idle**: Global pause enabled, OR engine paused with no running tasks
+- **Paused**: Engine paused with running tasks
+- **Running**: Engine active with running tasks
+
+**Features**:
+- Real-time updates via 5-second polling
+- Responsive design: collapses labels on mobile screens (<768px)
+- Dark/light theme support via CSS variables
+- Error state shows connection issues
+- Only visible in project view, not in overview/project selector
+
+**API Endpoint**:
+- `GET /api/executor/stats` - Returns `globalPause`, `enginePaused`, `maxConcurrent`, and `lastActivityAt` for state derivation
+
 ### Interactive Terminal
 Access a fully functional PTY (pseudo-terminal) shell directly from the dashboard. Click the terminal icon in the header to open the interactive terminal modal.
 
