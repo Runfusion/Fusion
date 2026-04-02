@@ -69,6 +69,7 @@ function getSuccessToastMessage(target: "executor" | "validator", selection: Mod
 export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
 
@@ -88,6 +89,7 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
       .then((response) => {
         setAvailableModels(response.models);
         setFavoriteProviders(response.favoriteProviders);
+        setFavoriteModels(response.favoriteModels);
       })
       .catch((err) => {
         setModelsError(err.message || "Failed to load models");
@@ -108,13 +110,32 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
     setFavoriteProviders(newFavorites);
 
     try {
-      await updateGlobalSettings({ favoriteProviders: newFavorites });
+      await updateGlobalSettings({ favoriteProviders: newFavorites, favoriteModels });
     } catch (err) {
       // Revert on error
       setFavoriteProviders(currentFavorites);
       addToast("Failed to update favorites", "error");
     }
-  }, [favoriteProviders, addToast]);
+  }, [favoriteProviders, favoriteModels, addToast]);
+
+  // Handle toggle model favorite
+  const handleToggleModelFavorite = useCallback(async (modelId: string) => {
+    const currentFavorites = favoriteModels;
+    const isFavorite = currentFavorites.includes(modelId);
+    const newFavorites = isFavorite
+      ? currentFavorites.filter((m) => m !== modelId)
+      : [modelId, ...currentFavorites]; // Add to front
+
+    setFavoriteModels(newFavorites);
+
+    try {
+      await updateGlobalSettings({ favoriteProviders, favoriteModels: newFavorites });
+    } catch (err) {
+      // Revert on error
+      setFavoriteModels(currentFavorites);
+      addToast("Failed to update model favorites", "error");
+    }
+  }, [favoriteModels, favoriteProviders, addToast]);
 
   useEffect(() => {
     activeTaskIdRef.current = task.id;
@@ -249,6 +270,7 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
                 .then((response) => {
                   setAvailableModels(response.models);
                   setFavoriteProviders(response.favoriteProviders);
+                  setFavoriteModels(response.favoriteModels);
                 })
                 .catch((err) => setModelsError(err.message))
                 .finally(() => setModelsLoading(false));
@@ -286,6 +308,8 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
               placeholder="Select executor model…"
               favoriteProviders={favoriteProviders}
               onToggleFavorite={handleToggleFavorite}
+              favoriteModels={favoriteModels}
+              onToggleModelFavorite={handleToggleModelFavorite}
             />
             <small>The AI model used to implement this task.</small>
           </div>
@@ -312,6 +336,8 @@ export function ModelSelectorTab({ task, addToast }: ModelSelectorTabProps) {
               placeholder="Select validator model…"
               favoriteProviders={favoriteProviders}
               onToggleFavorite={handleToggleFavorite}
+              favoriteModels={favoriteModels}
+              onToggleModelFavorite={handleToggleModelFavorite}
             />
             <small>The AI model used to review code and plans for this task.</small>
           </div>
