@@ -443,6 +443,152 @@ describe("NtfyNotifier", () => {
     });
   });
 
+  describe("project ID in URLs", () => {
+    beforeEach(() => {
+      fetchMock.mockResolvedValue({ ok: true });
+    });
+
+    it("includes projectId in Click URL when configured for in-review notifications", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "http://localhost:3000",
+      });
+      notifier = new NtfyNotifier(store, { projectId: "proj_123" });
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "http://localhost:3000/?project=proj_123&task=FN-001",
+          }),
+        })
+      );
+    });
+
+    it("includes projectId in Click URL when configured for failed task notifications", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "https://fusion.example.com",
+      });
+      notifier = new NtfyNotifier(store, { projectId: "my-project" });
+      await notifier.start();
+
+      const failedTask = createTask("FN-001", "Test Task", "failed");
+      store.triggerTaskUpdated(failedTask);
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "https://fusion.example.com/?project=my-project&task=FN-001",
+          }),
+        })
+      );
+    });
+
+    it("includes projectId in Click URL when configured for merged task notifications", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "https://fusion.example.com",
+      });
+      notifier = new NtfyNotifier(store, { projectId: "another-project" });
+      await notifier.start();
+
+      const mergeResult: MergeResult = {
+        task: createTask("FN-001", "Test Task"),
+        branch: "fusion/fn-001",
+        merged: true,
+        worktreeRemoved: true,
+        branchDeleted: true,
+      };
+      store.triggerTaskMerged(mergeResult);
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "https://fusion.example.com/?project=another-project&task=FN-001",
+          }),
+        })
+      );
+    });
+
+    it("falls back to task-only URL when projectId not configured", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "http://localhost:3000",
+      });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "http://localhost:3000/?task=FN-001",
+          }),
+        })
+      );
+    });
+
+    it("encodes special characters in projectId", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "http://localhost:3000",
+      });
+      notifier = new NtfyNotifier(store, { projectId: "proj/abc" });
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "http://localhost:3000/?project=proj%2Fabc&task=FN-001",
+          }),
+        })
+      );
+    });
+
+    it("handles projectId with spaces and special characters", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "http://localhost:3000",
+      });
+      notifier = new NtfyNotifier(store, { projectId: "my project test" });
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "http://localhost:3000/?project=my%20project%20test&task=FN-001",
+          }),
+        })
+      );
+    });
+  });
+
   describe("runtime reconfiguration", () => {
     it("starts sending notifications when enabled at runtime", async () => {
       store.setSettings({ ntfyEnabled: false, ntfyTopic: "test-topic" });

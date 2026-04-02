@@ -5,6 +5,8 @@ import { schedulerLog } from "./logger.js";
 export interface NtfyNotifierOptions {
   /** Base URL for ntfy.sh. Default: https://ntfy.sh */
   ntfyBaseUrl?: string;
+  /** Project identifier for deep links in notifications */
+  projectId?: string;
 }
 
 /**
@@ -53,6 +55,8 @@ type NotificationEventType = "in-review" | "merged" | "failed";
 export class NtfyNotifier {
   private config: NtfyConfig = { enabled: false, topic: undefined, dashboardHost: undefined };
   private ntfyBaseUrl: string;
+  /** Project identifier for deep links in notifications */
+  private projectId?: string;
   /** Tracks which (taskId, eventType) pairs have been notified to prevent duplicates */
   private notifiedEvents: Set<string> = new Set();
   /** AbortController for in-flight requests during shutdown */
@@ -63,6 +67,7 @@ export class NtfyNotifier {
     options: NtfyNotifierOptions = {},
   ) {
     this.ntfyBaseUrl = options.ntfyBaseUrl ?? "https://ntfy.sh";
+    this.projectId = options.projectId;
   }
 
   /**
@@ -204,6 +209,7 @@ export class NtfyNotifier {
   /**
    * Build a dashboard URL for deep linking to a task.
    * Returns undefined if dashboardHost is not configured.
+   * Includes projectId in the URL when configured for multi-project support.
    */
   private buildTaskUrl(taskId: string): string | undefined {
     if (!this.config.dashboardHost) {
@@ -211,6 +217,9 @@ export class NtfyNotifier {
     }
     // Strip trailing slash from hostname if present
     const host = this.config.dashboardHost.replace(/\/$/, "");
+    if (this.projectId) {
+      return `${host}/?project=${encodeURIComponent(this.projectId)}&task=${encodeURIComponent(taskId)}`;
+    }
     return `${host}/?task=${encodeURIComponent(taskId)}`;
   }
 

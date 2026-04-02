@@ -183,12 +183,29 @@ function AppInner() {
       .catch(() => {/* keep empty array on failure */});
   }, []);
 
-  // Handle deep link to task on mount
+  // Handle deep link to task on mount (with optional project context)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const projectParam = params.get("project");
     const taskId = params.get("task");
+
+    // If no task to load, nothing to do
     if (!taskId) return;
 
+    // If project param is present, try to switch to that project first
+    if (projectParam) {
+      const matchingProject = projects.find((p) => p.id === projectParam);
+      if (!matchingProject) {
+        addToast(`Project '${projectParam}' not found`, "error");
+        return;
+      }
+      // Switch to the project if it's different from the current one
+      if (currentProject?.id !== matchingProject.id) {
+        setCurrentProject(matchingProject);
+      }
+    }
+
+    // After project context is resolved (or if no project param), fetch the task
     fetchTaskDetail(taskId)
       .then((detail) => {
         setDetailTask(detail);
@@ -196,7 +213,7 @@ function AppInner() {
       .catch(() => {
         addToast(`Task ${taskId} not found`, "error");
       });
-  }, [addToast]);
+  }, [addToast, projects, currentProject, setCurrentProject]);
 
   // View change handlers
   const handleChangeTaskView = useCallback((newView: TaskView) => {

@@ -57,9 +57,21 @@ vi.mock("../../hooks/useTasks", () => ({
   useTasks: () => mockUseTasks(),
 }));
 
+// Mock state holders for dynamic mocking
+const mockProjectsState = {
+  projects: [] as any[],
+};
+
+const mockCurrentProjectState = {
+  currentProject: { id: "proj_123", name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" },
+  setCurrentProject: vi.fn(),
+  clearCurrentProject: vi.fn(),
+  loading: false,
+};
+
 vi.mock("../../hooks/useProjects", () => ({
   useProjects: () => ({
-    projects: [],
+    projects: mockProjectsState.projects,
     loading: false,
     error: null,
     refresh: vi.fn(),
@@ -70,12 +82,7 @@ vi.mock("../../hooks/useProjects", () => ({
 }));
 
 vi.mock("../../hooks/useCurrentProject", () => ({
-  useCurrentProject: () => ({
-    currentProject: { id: "proj_123", name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" },
-    setCurrentProject: vi.fn(),
-    clearCurrentProject: vi.fn(),
-    loading: false,
-  }),
+  useCurrentProject: () => mockCurrentProjectState,
 }));
 
 import { App } from "../../App";
@@ -97,6 +104,11 @@ beforeEach(() => {
     unarchiveTask: vi.fn(),
     archiveAllDone: vi.fn(),
   }));
+  // Reset mock states
+  mockProjectsState.projects = [];
+  mockCurrentProjectState.currentProject = { id: "proj_123", name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" };
+  mockCurrentProjectState.setCurrentProject.mockClear();
+  mockCurrentProjectState.clearCurrentProject.mockClear();
 });
 
 describe("App deep link handling", () => {
@@ -165,6 +177,100 @@ describe("App deep link handling", () => {
 
     expect(fetchTaskDetail).not.toHaveBeenCalled();
     expect(window.history.replaceState).not.toHaveBeenCalled();
+  });
+
+  it("switches project and opens task when both project and task params are present", async () => {
+    const project1 = { id: "proj_123", name: "Test Project", path: "/test", status: "active", isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+    const project2 = { id: "proj_456", name: "Other Project", path: "/other", status: "active", isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+    mockProjectsState.projects = [project1, project2];
+    mockCurrentProjectState.currentProject = project1;
+
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=proj_456&task=FN-789"),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledWith(project2);
+    });
+
+    await waitFor(() => {
+      expect(fetchTaskDetail).toHaveBeenCalledWith("FN-789");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Task FN-789")).toBeTruthy();
+    });
+  });
+
+  it("shows error toast when project param references non-existent project", async () => {
+    mockProjectsState.projects = [];
+    mockCurrentProjectState.currentProject = null;
+
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=nonexistent&task=FN-123"),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+    });
+
+    // Should show error toast for project not found
+    await waitFor(() => {
+      expect(screen.getByText("Project 'nonexistent' not found")).toBeTruthy();
+    });
+
+    // Should NOT fetch the task since project wasn't found
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
+  });
+
+  it("does not call setCurrentProject when project param matches current project", async () => {
+    const project = { id: "proj_123", name: "Test Project", path: "/test", status: "active", isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+    mockProjectsState.projects = [project];
+    mockCurrentProjectState.currentProject = project;
+
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=proj_123&task=FN-123"),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchTaskDetail).toHaveBeenCalledWith("FN-123");
+    });
+
+    // setCurrentProject should NOT be called since we're already on this project
+    expect(mockCurrentProjectState.setCurrentProject).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(screen.getByText("Task FN-123")).toBeTruthy();
+    });
+  });
+
+  it("works without project param for backward compatibility", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?task=FN-123"),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchTaskDetail).toHaveBeenCalledWith("FN-123");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Task FN-123")).toBeTruthy();
+    });
+
+    // setCurrentProject should NOT be called when no project param
+    expect(mockCurrentProjectState.setCurrentProject).not.toHaveBeenCalled();
   });
 });
 
