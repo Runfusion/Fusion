@@ -246,7 +246,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("maintains the collapsed and expanded styling contract on the root container", () => {
-    renderQuickEntryBox();
+    renderQuickEntryBox({}, { startCollapsed: true });
     const box = screen.getByTestId("quick-entry-box");
 
     expect(box.classList.contains("quick-entry-box--collapsed")).toBe(true);
@@ -1306,7 +1306,7 @@ describe("QuickEntryBox", () => {
     });
 
     it("clicking save button persists to localStorage", async () => {
-      renderQuickEntryBox({}, { startCollapsed: true });
+      const { props } = renderQuickEntryBox({}, { startCollapsed: true });
       // Component starts with disclosure expanded by default
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");

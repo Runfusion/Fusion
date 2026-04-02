@@ -3913,6 +3913,64 @@ body {
   color: var(--text-dim);
 }
 
+/* Inline Create Card Toggle Button */
+.inline-create-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  height: 28px;
+  width: 28px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.inline-create-toggle:hover {
+  background: var(--card-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.inline-create-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Inline Create Card Main Row */
+.inline-create-main-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.inline-create-main-row .inline-create-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Collapsed state */
+.inline-create-card--collapsed {
+  padding: 8px 10px;
+}
+
+.inline-create-card--collapsed .inline-create-input {
+  min-height: 28px;
+}
+
+/* Expanded state */
+.inline-create-card--expanded {
+  padding: 10px 12px;
+}
+
+.inline-create-card--expanded .inline-create-input {
+  min-height: 32px;
+}
+
 .inline-create-footer {
   display: flex;
   align-items: flex-start;
