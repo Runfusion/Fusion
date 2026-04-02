@@ -142,7 +142,7 @@ describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
       errors: [],
     });
     const { TaskStore } = await import("@fusion/core");
-    (TaskStore as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
   });
 
   it("passes authStorage and modelRegistry to createServer", async () => {
