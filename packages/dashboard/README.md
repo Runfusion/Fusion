@@ -99,6 +99,7 @@ Access a fully functional PTY (pseudo-terminal) shell directly from the dashboar
 - **Auto-resizing**: Terminal automatically fits to container size
 - **Scrollback Buffer**: 50KB of scrollback history with replay on reconnect
 - **Reconnection Support**: Automatic reconnect with exponential backoff if connection drops
+- **Reliable Prompt Delivery**: Initial shell prompt and first keystrokes are always visible — output is preserved across the WebSocket connection, xterm initialization, and resize lifecycle without loss or duplication
 
 **Keyboard Shortcuts**:
 - `Ctrl+C` - Send SIGINT to process (copy if text selected)

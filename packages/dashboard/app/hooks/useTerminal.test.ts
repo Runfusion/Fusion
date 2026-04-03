@@ -267,7 +267,7 @@ describe("useTerminal", () => {
       expect(onData).toHaveBeenCalledTimes(1);
     });
 
-    it("replays buffered messages only once per subscriber registration", () => {
+    it("clears buffered scrollback after first replay to prevent duplicate delivery", () => {
       const { result } = renderHook(() => useTerminal("test-session-123"));
 
       act(() => {
@@ -277,25 +277,26 @@ describe("useTerminal", () => {
       const sub1 = vi.fn();
       const sub2 = vi.fn();
 
+      // First subscriber gets the buffered scrollback
       act(() => {
         result.current.onScrollback(sub1);
       });
+      expect(sub1).toHaveBeenCalledWith("buf");
 
+      // Second subscriber does NOT get the stale buffer — it was already
+      // delivered to sub1, so replaying it would cause duplicate output.
       act(() => {
         result.current.onScrollback(sub2);
       });
+      expect(sub2).not.toHaveBeenCalled();
 
-      // Both subscribers should get the buffered scrollback
-      expect(sub1).toHaveBeenCalledWith("buf");
-      expect(sub2).toHaveBeenCalledWith("buf");
-
-      // New live messages should go to both without re-delivering buffer
+      // New live messages should go to both subscribers
       act(() => {
         MockWebSocket.instances[0].emitMessage({ type: "scrollback", data: "live-update" });
       });
 
       expect(sub1).toHaveBeenCalledTimes(2); // buffer + live
-      expect(sub2).toHaveBeenCalledTimes(2); // buffer + live
+      expect(sub2).toHaveBeenCalledTimes(1); // live only
     });
 
     it("clears buffer on reconnect so stale data is not replayed", () => {
@@ -327,6 +328,181 @@ describe("useTerminal", () => {
       // Subscribers registered on the new connection should NOT get old buffer
       expect(onScrollback).not.toHaveBeenCalled();
       expect(onConnect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("first-paint regression — prompt delivery", () => {
+    it("delivers scrollback, connected, and data messages to subscribers even when they register late", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+
+      // Simulate the messages arriving before any subscriber (xterm not ready)
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({ type: "scrollback", data: "shell-prompt$ " });
+        MockWebSocket.instances[0].emitMessage({ type: "connected", shell: "/bin/zsh", cwd: "/project" });
+        MockWebSocket.instances[0].emitMessage({ type: "data", data: "echo hello\n" });
+      });
+
+      const onScrollback = vi.fn();
+      const onConnect = vi.fn();
+      const onData = vi.fn();
+
+      act(() => {
+        result.current.onScrollback(onScrollback);
+        result.current.onConnect(onConnect);
+        result.current.onData(onData);
+      });
+
+      // All three message types should be replayed to late subscribers
+      expect(onScrollback).toHaveBeenCalledWith("shell-prompt$ ");
+      expect(onConnect).toHaveBeenCalledWith({ shell: "/bin/zsh", cwd: "/project" });
+      expect(onData).toHaveBeenCalledWith("echo hello\n");
+    });
+
+    it("does not lose prompt when data arrives after scrollback before subscriber", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+
+      // Simulate the exact startup race:
+      // 1. Scrollback arrives (may include partial prompt)
+      // 2. Data arrives with the rest of the prompt
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({ type: "scrollback", data: "user@host" });
+        MockWebSocket.instances[0].emitMessage({ type: "data", data: " ~/project $ " });
+      });
+
+      const onScrollback = vi.fn();
+      const onData = vi.fn();
+
+      act(() => {
+        result.current.onScrollback(onScrollback);
+        result.current.onData(onData);
+      });
+
+      // Both messages should be delivered (no loss)
+      expect(onScrollback).toHaveBeenCalledWith("user@host");
+      expect(onData).toHaveBeenCalledWith(" ~/project $ ");
+    });
+  });
+
+  describe("first-paint regression — no duplicate output", () => {
+    it("does not replay scrollback to second subscriber to prevent duplicate terminal output", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({ type: "scrollback", data: "prompt$ " });
+      });
+
+      const sub1 = vi.fn();
+      act(() => {
+        result.current.onScrollback(sub1);
+      });
+      expect(sub1).toHaveBeenCalledWith("prompt$ ");
+
+      // Second subscriber does NOT get the replay (prevents duplicate output)
+      const sub2 = vi.fn();
+      act(() => {
+        result.current.onScrollback(sub2);
+      });
+      expect(sub2).not.toHaveBeenCalled();
+
+      // But live messages go to both
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({ type: "scrollback", data: "new!" });
+      });
+      expect(sub1).toHaveBeenCalledTimes(2);
+      expect(sub2).toHaveBeenCalledTimes(1);
+      expect(sub2).toHaveBeenCalledWith("new!");
+    });
+
+    it("does not replay data to second subscriber to prevent duplicate terminal output", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({ type: "data", data: "output" });
+      });
+
+      const sub1 = vi.fn();
+      act(() => {
+        result.current.onData(sub1);
+      });
+      expect(sub1).toHaveBeenCalledWith("output");
+
+      // Second subscriber does NOT get the stale buffer
+      const sub2 = vi.fn();
+      act(() => {
+        result.current.onData(sub2);
+      });
+      expect(sub2).not.toHaveBeenCalled();
+
+      // But live messages go to both
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({ type: "data", data: "live" });
+      });
+      expect(sub1).toHaveBeenCalledTimes(2);
+      expect(sub2).toHaveBeenCalledTimes(1);
+      expect(sub2).toHaveBeenCalledWith("live");
+    });
+
+    it("does not replay connected info to second subscriber to prevent duplicate tab title update", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({ type: "connected", shell: "/bin/bash", cwd: "/home" });
+      });
+
+      const sub1 = vi.fn();
+      act(() => {
+        result.current.onConnect(sub1);
+      });
+      expect(sub1).toHaveBeenCalledWith({ shell: "/bin/bash", cwd: "/home" });
+
+      // Second subscriber does NOT get stale connected info
+      const sub2 = vi.fn();
+      act(() => {
+        result.current.onConnect(sub2);
+      });
+      expect(sub2).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("reconnect — scrollback replay on new connection", () => {
+    it("delivers fresh scrollback on reconnect without stale data", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+
+      // First connection — send some data
+      act(() => {
+        MockWebSocket.instances[0].emitMessage({ type: "scrollback", data: "old prompt$ " });
+        MockWebSocket.instances[0].emitMessage({ type: "connected", shell: "/bin/zsh", cwd: "/old" });
+      });
+
+      // Register subscriber on old connection
+      const onScrollback = vi.fn();
+      const onConnect = vi.fn();
+      act(() => {
+        result.current.onScrollback(onScrollback);
+        result.current.onConnect(onConnect);
+      });
+
+      // Old buffer was delivered
+      expect(onScrollback).toHaveBeenCalledWith("old prompt$ ");
+
+      // Reconnect — creates new WebSocket, clears buffers
+      act(() => {
+        result.current.reconnect();
+      });
+
+      const newWs = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+
+      // New connection sends fresh scrollback
+      act(() => {
+        newWs.emitMessage({ type: "scrollback", data: "new prompt$ " });
+        newWs.emitMessage({ type: "connected", shell: "/bin/zsh", cwd: "/new" });
+      });
+
+      // Existing subscriber gets new live data
+      expect(onScrollback).toHaveBeenCalledTimes(2); // old buffer + new live
+      expect(onScrollback).toHaveBeenLastCalledWith("new prompt$ ");
+      expect(onConnect).toHaveBeenCalledTimes(2); // old buffer + new live
+      expect(onConnect).toHaveBeenLastCalledWith({ shell: "/bin/zsh", cwd: "/new" });
     });
   });
 });

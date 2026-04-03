@@ -152,6 +152,16 @@ export interface TerminalSession {
   flushTimeout: NodeJS.Timeout | null;
   resizeInProgress: boolean;
   resizeDebounceTimeout: NodeJS.Timeout | null;
+  /**
+   * PTY output queued during resize suppression.
+   * Instead of discarding data that arrives while `resizeInProgress` is true,
+   * we buffer it here and flush it to clients once the resize debounce completes.
+   * This prevents the initial shell prompt (and other output) from being lost
+   * when it falls inside the 150 ms resize-suppression window.
+   */
+  resizeSuppressedBuffer: string;
+  /** Internal flush callback set by createSession; used by resize debounce */
+  _flushOutput: (() => void) | null;
 }
 
 export interface TerminalOptions {
@@ -503,6 +513,8 @@ export class TerminalService extends EventEmitter {
       flushTimeout: null,
       resizeInProgress: false,
       resizeDebounceTimeout: null,
+      resizeSuppressedBuffer: "",
+      _flushOutput: null,
     };
 
     this.sessions.set(id, session);
@@ -534,6 +546,10 @@ export class TerminalService extends EventEmitter {
       this.emit("data", id, dataToSend);
     };
 
+    // Store reference so the resize debounce can trigger a flush of
+    // suppressed output through the same throttled path.
+    session._flushOutput = flushOutput;
+
     // Forward data events with throttling
     ptyProcess.onData((data: string) => {
       // Always append to scrollback buffer so no output is lost
@@ -542,9 +558,11 @@ export class TerminalService extends EventEmitter {
         session.scrollbackBuffer = session.scrollbackBuffer.slice(-MAX_SCROLLBACK_SIZE);
       }
 
-      // During resize, buffer to scrollback only — suppress delivery to avoid
-      // rendering artifacts, but don't drop the data entirely
+      // During resize, buffer to scrollback only — suppress immediate delivery
+      // to avoid rendering artifacts, but queue the data so it is flushed to
+      // clients once the resize debounce completes (no data loss).
       if (session.resizeInProgress) {
+        session.resizeSuppressedBuffer += data;
         return;
       }
 
@@ -568,6 +586,8 @@ export class TerminalService extends EventEmitter {
         clearTimeout(session.resizeDebounceTimeout);
         session.resizeDebounceTimeout = null;
       }
+      session._flushOutput = null;
+      session.resizeSuppressedBuffer = "";
       this.sessions.delete(id);
       this.exitCallbacks.forEach((cb) => cb(id, exitCode ?? 0));
       this.emit("exit", id, exitCode ?? 0);
@@ -637,6 +657,18 @@ export class TerminalService extends EventEmitter {
         session.resizeDebounceTimeout = setTimeout(() => {
           session.resizeInProgress = false;
           session.resizeDebounceTimeout = null;
+
+          // Flush any data that was suppressed during the resize window.
+          // This ensures the initial shell prompt (and any other output that
+          // landed inside the suppression window) is delivered to clients
+          // rather than being silently dropped.
+          if (session.resizeSuppressedBuffer.length > 0) {
+            session.outputBuffer += session.resizeSuppressedBuffer;
+            session.resizeSuppressedBuffer = "";
+            if (!session.flushTimeout && session._flushOutput) {
+              session.flushTimeout = setTimeout(session._flushOutput, OUTPUT_THROTTLE_MS);
+            }
+          }
         }, 150);
       }
 

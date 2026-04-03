@@ -459,4 +459,121 @@ describe("TerminalService", () => {
       svc.cleanup();
     });
   });
+
+  describe("resize suppression data preservation", () => {
+    it("queues data emitted during resize and delivers it after debounce", async () => {
+      vi.useFakeTimers();
+
+      const dataListener = vi.fn();
+      service.onData(dataListener);
+
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
+      // Start a resize — this sets resizeInProgress = true for 150ms
+      service.resize(session.id, 120, 40, true);
+
+      // Emit data while resize is in progress
+      mockPtyProcess._onDataCallback?.("prompt$ ");
+
+      // Data should NOT be delivered yet (suppressed)
+      expect(dataListener).not.toHaveBeenCalled();
+
+      // But scrollback should contain the data
+      expect(service.getScrollback(session.id)).toContain("prompt$ ");
+
+      // Advance past the 150ms resize debounce
+      vi.advanceTimersByTime(160);
+
+      // Now the suppressed data should be flushed through the normal path.
+      // The flush is throttled (OUTPUT_THROTTLE_MS = 4ms), so advance a bit more.
+      vi.advanceTimersByTime(10);
+
+      // Data should have been delivered to subscribers
+      expect(dataListener).toHaveBeenCalledWith(session.id, "prompt$ ");
+
+      vi.useRealTimers();
+    });
+
+    it("delivers multiple data chunks suppressed during resize", async () => {
+      vi.useFakeTimers();
+
+      const dataListener = vi.fn();
+      service.onData(dataListener);
+
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
+      // Start a resize
+      service.resize(session.id, 80, 24, true);
+
+      // Emit multiple data chunks while suppressed
+      mockPtyProcess._onDataCallback?.("line1\n");
+      mockPtyProcess._onDataCallback?.("line2\n");
+      mockPtyProcess._onDataCallback?.("line3\n");
+
+      // Nothing delivered yet
+      expect(dataListener).not.toHaveBeenCalled();
+
+      // Advance past resize debounce + flush throttle
+      vi.advanceTimersByTime(160);
+      vi.advanceTimersByTime(10);
+
+      // All suppressed data should be delivered as one concatenated chunk
+      expect(dataListener).toHaveBeenCalledTimes(1);
+      expect(dataListener).toHaveBeenCalledWith(session.id, "line1\nline2\nline3\n");
+
+      vi.useRealTimers();
+    });
+
+    it("scrollback includes data even while resize is in progress", async () => {
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
+      // Start a resize
+      service.resize(session.id, 120, 40, true);
+
+      // Emit data while suppressed
+      mockPtyProcess._onDataCallback?.("important output");
+
+      // Scrollback should always contain the data
+      const scrollback = service.getScrollback(session.id);
+      expect(scrollback).toContain("important output");
+    });
+
+    it("does not lose data when resize debounce fires before flush", async () => {
+      vi.useFakeTimers();
+
+      const dataListener = vi.fn();
+      service.onData(dataListener);
+
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+      const session = createResult.session;
+
+      // Start a resize
+      service.resize(session.id, 100, 30, true);
+
+      // Emit data during suppression
+      mockPtyProcess._onDataCallback?.("shell prompt> ");
+
+      // Advance exactly to the resize debounce boundary
+      vi.advanceTimersByTime(150);
+
+      // The resize debounce should have moved suppressed data to outputBuffer
+      // and scheduled a flush. Advance past the flush throttle.
+      vi.advanceTimersByTime(10);
+
+      expect(dataListener).toHaveBeenCalledWith(session.id, "shell prompt> ");
+
+      vi.useRealTimers();
+    });
+  });
 });

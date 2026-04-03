@@ -665,4 +665,66 @@ describe("TerminalModal — mobile layout contract", () => {
     expect(mockTerminalInstance.write).toHaveBeenCalledWith("prompt$ ");
     expect(mockTerminalInstance.write).toHaveBeenCalledWith("previous output");
   });
+
+  /**
+   * Regression: terminal shows "Connected" and cursor but no visible prompt.
+   *
+   * The original bug occurred when PTY output containing the initial shell
+   * prompt was emitted during the resize-suppression window (150ms after the
+   * initial fitAddon.fit()). That output was silently discarded, so xterm
+   * rendered a connected cursor over an empty terminal — the prompt was
+   * permanently lost for that session.
+   *
+   * This test verifies the buffering layer ensures the prompt arrives at
+   * xterm even when subscribers register after the WebSocket has already
+   * received the scrollback and data messages.
+   */
+  it("displays the shell prompt even when scrollback and data arrive before xterm subscription", async () => {
+    let capturedDataCallback: ((data: string) => void) | null = null;
+    let capturedScrollbackCallback: ((data: string) => void) | null = null;
+
+    const mockOnData = vi.fn((cb: (data: string) => void) => {
+      capturedDataCallback = cb;
+      return vi.fn();
+    });
+    const mockOnScrollback = vi.fn((cb: (data: string) => void) => {
+      capturedScrollbackCallback = cb;
+      return vi.fn();
+    });
+
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        connectionStatus: "connected",
+        onData: mockOnData,
+        onScrollback: mockOnScrollback,
+      })
+    );
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    // Wait for xterm to initialize
+    await waitFor(() => {
+      expect(mockTerminalInstance.open).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(mockOnData).toHaveBeenCalled();
+      expect(mockOnScrollback).toHaveBeenCalled();
+    });
+
+    // Simulate the prompt arriving: scrollback contains the initial prompt,
+    // and data contains subsequent output (echo of first keystroke)
+    act(() => {
+      if (capturedScrollbackCallback) {
+        capturedScrollbackCallback("user@host:~$ ");
+      }
+      if (capturedDataCallback) {
+        capturedDataCallback("ls\r\n");
+      }
+    });
+
+    // xterm must receive BOTH the prompt and the data — neither should be lost
+    expect(mockTerminalInstance.write).toHaveBeenCalledWith("user@host:~$ ");
+    expect(mockTerminalInstance.write).toHaveBeenCalledWith("ls\r\n");
+  });
 });
