@@ -453,3 +453,162 @@ describe("TerminalModal", () => {
     expect(mockRestartActiveTab).toHaveBeenCalled();
   });
 });
+
+// --- Mobile layout regression tests ---
+describe("TerminalModal — mobile layout contract", () => {
+  const mockOnClose = vi.fn();
+  const mockSendInput = vi.fn();
+  const mockResize = vi.fn();
+  const mockReconnect = vi.fn();
+
+  // Helper: create 5+ tabs for the many-tabs scenario
+  const createManyTabs = () => [
+    { id: "tab-1", sessionId: "s-1", title: "bash", isActive: true, createdAt: Date.now() },
+    { id: "tab-2", sessionId: "s-2", title: "zsh", isActive: false, createdAt: Date.now() },
+    { id: "tab-3", sessionId: "s-3", title: "node", isActive: false, createdAt: Date.now() },
+    { id: "tab-4", sessionId: "s-4", title: "python3", isActive: false, createdAt: Date.now() },
+    { id: "tab-5", sessionId: "s-5", title: "make test", isActive: false, createdAt: Date.now() },
+    { id: "tab-6", sessionId: "s-6", title: "docker", isActive: false, createdAt: Date.now() },
+  ];
+
+  const createMockTerminalState = (overrides = {}) => ({
+    connectionStatus: "disconnected" as const,
+    sendInput: mockSendInput,
+    resize: mockResize,
+    onData: vi.fn(() => vi.fn()),
+    onExit: vi.fn(() => vi.fn()),
+    onConnect: vi.fn(() => vi.fn()),
+    onScrollback: vi.fn(() => vi.fn()),
+    reconnect: mockReconnect,
+    ...overrides,
+  });
+
+  const manyTabsSessionState = {
+    tabs: createManyTabs(),
+    activeTab: createManyTabs()[0],
+    isReady: true,
+    createTab: vi.fn(),
+    closeTab: vi.fn(),
+    setActiveTab: vi.fn(),
+    updateTabTitle: vi.fn(),
+    restartActiveTab: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseTerminal.mockReturnValue(createMockTerminalState());
+    mockUseTerminalSessions.mockReturnValue(manyTabsSessionState);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders all 6 tabs inside terminal-tabs container with many tabs", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const tabsContainer = screen.getByTestId("terminal-tabs");
+      expect(tabsContainer).toBeTruthy();
+
+      // All 6 tab titles should be rendered
+      expect(screen.getByText("bash")).toBeTruthy();
+      expect(screen.getByText("zsh")).toBeTruthy();
+      expect(screen.getByText("node")).toBeTruthy();
+      expect(screen.getByText("python3")).toBeTruthy();
+      expect(screen.getByText("make test")).toBeTruthy();
+      expect(screen.getByText("docker")).toBeTruthy();
+    });
+  });
+
+  it("preserves header structure: tabs, title, and actions are present", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      // Verify the three structural sections of the header exist
+      expect(screen.getByTestId("terminal-tabs")).toBeTruthy();
+      expect(screen.getByTestId("terminal-title")).toBeTruthy();
+      expect(screen.getByTestId("terminal-actions")).toBeTruthy();
+    });
+  });
+
+  it("close button is clickable with many tabs", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const closeBtn = screen.getByTestId("terminal-close-btn");
+      expect(closeBtn).toBeTruthy();
+      fireEvent.click(closeBtn);
+    });
+
+    expect(mockOnClose).toHaveBeenCalled();
+  });
+
+  it("clear button is clickable with many tabs", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const clearBtn = screen.getByTestId("terminal-clear-btn");
+      expect(clearBtn).toBeTruthy();
+      fireEvent.click(clearBtn);
+    });
+
+    // Clear calls xtermRef.current?.clear() — just verify button is functional
+    expect(screen.getByTestId("terminal-clear-btn")).toBeTruthy();
+  });
+
+  it("reconnect button is clickable with many tabs when disconnected", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const reconnectBtn = screen.getByTestId("terminal-reconnect-btn");
+      expect(reconnectBtn).toBeTruthy();
+      fireEvent.click(reconnectBtn);
+    });
+
+    expect(mockReconnect).toHaveBeenCalled();
+  });
+
+  it("action buttons have .terminal-action-label spans for mobile CSS targeting", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      // The reconnect and clear buttons should have .terminal-action-label spans
+      const reconnectBtn = screen.getByTestId("terminal-reconnect-btn");
+      const labelSpan = reconnectBtn.querySelector(".terminal-action-label");
+      expect(labelSpan).toBeTruthy();
+      expect(labelSpan?.textContent).toBe("Reconnect");
+
+      const clearBtn = screen.getByTestId("terminal-clear-btn");
+      const clearLabel = clearBtn.querySelector(".terminal-action-label");
+      expect(clearLabel).toBeTruthy();
+      expect(clearLabel?.textContent).toBe("Clear");
+    });
+  });
+
+  it("terminal-title section contains the status indicator for connection state", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const titleSection = screen.getByTestId("terminal-title");
+      // Should contain the TerminalIcon (svg) and the status indicator span
+      expect(titleSection.querySelector("svg")).toBeTruthy();
+      const statusIndicator = titleSection.querySelector(".terminal-status");
+      expect(statusIndicator).toBeTruthy();
+      // Disconnected state should show disconnected class
+      expect(statusIndicator?.classList.contains("disconnected")).toBe(true);
+    });
+  });
+
+  it("status-bar shows connection state text alongside tabs row", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const statusBar = screen.getByTestId("terminal-status-bar");
+      expect(statusBar).toBeTruthy();
+      // Should contain connection status text
+      const connectionStatus = statusBar.querySelector(".terminal-connection-status");
+      expect(connectionStatus?.textContent).toBe("Disconnected");
+    });
+  });
+});

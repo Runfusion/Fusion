@@ -366,7 +366,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
       data-testid="terminal-modal-overlay"
     >
       <div className="modal terminal-modal" data-testid="terminal-modal">
-        {/* Header */}
+        {/* Header — on mobile (≤768px) flex-wrap stacks tabs and actions on separate rows;
+            .terminal-title is hidden; action button labels are hidden (icons only) */}
         <div className="terminal-header">
           {/* Tab Bar */}
           <div className="terminal-tabs" data-testid="terminal-tabs">
@@ -409,8 +410,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
             {getStatusIndicator()}
           </div>
           
-          {/* Actions */}
-          <div className="terminal-actions">
+          {/* Actions — labels hidden on mobile via .terminal-action-label */}
+          <div className="terminal-actions" data-testid="terminal-actions">
             {connectionStatus === "disconnected" && activeTab && (
               <button
                 className="terminal-reconnect-btn"
@@ -419,7 +420,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
                 data-testid="terminal-reconnect-btn"
               >
                 <RefreshCw size={14} />
-                <span>Reconnect</span>
+                <span className="terminal-action-label">Reconnect</span>
               </button>
             )}
             {exitCode !== null && (
@@ -430,7 +431,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
                 data-testid="terminal-restart-btn"
               >
                 <RefreshCw size={14} />
-                <span>New Session</span>
+                <span className="terminal-action-label">New Session</span>
               </button>
             )}
             <button
@@ -440,7 +441,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
               title="Clear terminal"
             >
               <Trash2 size={14} />
-              <span>Clear</span>
+              <span className="terminal-action-label">Clear</span>
             </button>
             <button
               className="terminal-close"

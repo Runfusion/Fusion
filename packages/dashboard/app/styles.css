@@ -6360,6 +6360,7 @@ body {
 .terminal-tabs {
   display: flex;
   flex: 1;
+  min-width: 0;
   overflow-x: auto;
   gap: 0;
   padding: 0 4px;
@@ -6989,8 +6990,45 @@ body {
     border: none;
   }
 
+  /* Stack tabs and actions on separate rows */
   .terminal-header {
+    flex-wrap: wrap;
     padding-top: env(safe-area-inset-top, 0);
+  }
+
+  /* Tabs get their own full-width row and remain scrollable */
+  .terminal-tabs {
+    flex: 1 1 100%;
+    min-width: 100%;
+    order: 1;
+  }
+
+  /* Hide the redundant title/status indicator on mobile — .terminal-status-bar shows connection state */
+  .terminal-title {
+    display: none;
+  }
+
+  /* Actions sit on a compact second row */
+  .terminal-actions {
+    flex: 1 1 100%;
+    order: 2;
+    justify-content: flex-end;
+    border-top: 1px solid var(--border);
+    padding: 0 4px;
+  }
+
+  /* Hide text labels on action buttons to save space */
+  .terminal-action-label {
+    display: none;
+  }
+
+  .terminal-reconnect-btn,
+  .terminal-restart-btn,
+  .terminal-clear-btn {
+    padding: 8px;
+    min-height: 36px;
+    min-width: 36px;
+    justify-content: center;
   }
 
   .terminal-tab {
@@ -7018,22 +7056,12 @@ body {
     max-width: 200px;
   }
 
-  .terminal-clear-btn {
-    padding: var(--space-sm) var(--space-md);
-    min-height: 36px;
-  }
-
   .terminal-empty-state {
     padding: var(--space-xl);
     padding-bottom: max(24px, env(safe-area-inset-bottom, 0));
   }
 
   /* Mobile styles for interactive terminal */
-  .terminal-title {
-    padding: 0 12px;
-    font-size: 13px;
-  }
-
   .terminal-output {
     padding: var(--space-md);
     font-size: 12px;
