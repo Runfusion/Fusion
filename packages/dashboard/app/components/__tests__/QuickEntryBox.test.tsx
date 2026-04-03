@@ -704,6 +704,7 @@ describe("QuickEntryBox", () => {
     it("calls onPlanningMode and clears input when Plan clicked", async () => {
       const onPlanningMode = vi.fn();
       const { props } = renderQuickEntryBox({ onPlanningMode });
+      expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Plan this task" } });
@@ -720,6 +721,7 @@ describe("QuickEntryBox", () => {
     it("calls onSubtaskBreakdown and clears input when Subtask clicked", async () => {
       const onSubtaskBreakdown = vi.fn();
       const { props } = renderQuickEntryBox({ onSubtaskBreakdown });
+      expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Break this down" } });
@@ -1576,6 +1578,66 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("subtask-button")).toBeTruthy();
       expect(screen.getByTestId("save-button")).toBeTruthy();
       expect(screen.getByTestId("refine-button")).toBeTruthy();
+    });
+  });
+
+  describe("Description-adjacent actions layout (FN-781)", () => {
+    it("renders Plan, Subtask, and Refine in description-actions area when expanded", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      // The description-actions container should exist
+      expect(screen.getByTestId("quick-entry-description-actions")).toBeTruthy();
+
+      // Plan, Subtask, and Refine buttons should be inside it
+      const actionsContainer = screen.getByTestId("quick-entry-description-actions");
+      expect(actionsContainer.contains(screen.getByTestId("plan-button"))).toBe(true);
+      expect(actionsContainer.contains(screen.getByTestId("subtask-button"))).toBe(true);
+      expect(actionsContainer.contains(screen.getByTestId("refine-button"))).toBe(true);
+    });
+
+    it("does not render description-actions when not expanded", () => {
+      renderQuickEntryBox({});
+
+      // Description actions should not exist when collapsed
+      expect(screen.queryByTestId("quick-entry-description-actions")).toBeNull();
+    });
+
+    it("Save button remains in the expanded controls area, not description-actions", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const actionsContainer = screen.getByTestId("quick-entry-description-actions");
+      const saveButton = screen.getByTestId("save-button");
+
+      // Save button should NOT be in the description-actions area
+      expect(actionsContainer.contains(saveButton)).toBe(false);
+    });
+
+    it("Deps and Models buttons remain in the expanded controls area, not description-actions", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const actionsContainer = screen.getByTestId("quick-entry-description-actions");
+      const depsButton = screen.getByTestId("quick-entry-deps-button");
+      const modelsButton = screen.getByTestId("quick-entry-models-button");
+
+      // Deps and Models should NOT be in the description-actions area
+      expect(actionsContainer.contains(depsButton)).toBe(false);
+      expect(actionsContainer.contains(modelsButton)).toBe(false);
+    });
+
+    it("Plan button disabled state still works when in description-actions", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      // Plan button should be disabled when description is empty
+      expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(true);
+
+      // Type something — Plan should become enabled
+      fireEvent.change(textarea, { target: { value: "Some task" } });
+      expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(false);
     });
   });
 });

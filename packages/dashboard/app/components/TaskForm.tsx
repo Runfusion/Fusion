@@ -387,6 +387,50 @@ export function TaskForm({
         </div>
       </div>
 
+      {/* AI-assisted creation actions — adjacent to description (create mode only) */}
+      {mode === "create" && (onPlanningMode || onSubtaskBreakdown) && (
+        <div className="task-form-description-actions" data-testid="task-form-description-actions">
+          {onPlanningMode && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                const trimmed = description.trim();
+                if (!trimmed) {
+                  addToast("Enter a description first", "error");
+                  return;
+                }
+                onClose?.();
+                onPlanningMode(trimmed);
+              }}
+              disabled={disabled || !description.trim()}
+              data-testid="task-form-plan-button"
+            >
+              Plan
+            </button>
+          )}
+          {onSubtaskBreakdown && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                const trimmed = description.trim();
+                if (!trimmed) {
+                  addToast("Enter a description first", "error");
+                  return;
+                }
+                onClose?.();
+                onSubtaskBreakdown(trimmed);
+              }}
+              disabled={disabled || !description.trim()}
+              data-testid="task-form-subtask-button"
+            >
+              Subtask
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Dependencies */}
       <div className="form-group">
         <label>Dependencies</label>
@@ -612,52 +656,6 @@ export function TaskForm({
           </label>
         </div>
       </div>
-
-      {/* AI-assisted creation (create mode only) */}
-      {mode === "create" && (onPlanningMode || onSubtaskBreakdown) && (
-        <div className="form-group">
-          <label>AI-assisted creation</label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            {onPlanningMode && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => {
-                  const trimmed = description.trim();
-                  if (!trimmed) {
-                    addToast("Enter a description first", "error");
-                    return;
-                  }
-                  onClose?.();
-                  onPlanningMode(trimmed);
-                }}
-                disabled={disabled || !description.trim()}
-              >
-                Plan
-              </button>
-            )}
-            {onSubtaskBreakdown && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => {
-                  const trimmed = description.trim();
-                  if (!trimmed) {
-                    addToast("Enter a description first", "error");
-                    return;
-                  }
-                  onClose?.();
-                  onSubtaskBreakdown(trimmed);
-                }}
-                disabled={disabled || !description.trim()}
-              >
-                Subtask
-              </button>
-            )}
-          </div>
-          <small>Use Plan for clarifying questions or Subtask to split the work into editable child tasks.</small>
-        </div>
-      )}
 
       {/* Attachments */}
       <div className="form-group">

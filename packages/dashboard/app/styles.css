@@ -4348,6 +4348,14 @@ body {
   flex-wrap: wrap;
 }
 
+/* AI-assisted description actions — sits between textarea and expanded controls */
+.inline-create-description-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .inline-create-controls {
   display: flex;
   align-items: center;
@@ -4574,6 +4582,16 @@ body {
 /* NewTaskModal description with refine button */
 .description-with-refine {
   position: relative;
+}
+
+/* AI-assisted description actions — sits directly below description in TaskForm */
+.task-form-description-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
 }
 
 .description-with-refine .refine-button {
@@ -10968,6 +10986,15 @@ html .column.drag-over * {
   margin-top: var(--space-sm);
   padding-top: 8px;
   border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+/* AI-assisted description actions — sits between textarea and expanded controls */
+.quick-entry-description-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
   flex-wrap: wrap;
 }
 

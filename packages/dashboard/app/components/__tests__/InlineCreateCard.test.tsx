@@ -875,4 +875,65 @@ describe("InlineCreateCard button visibility when collapsed", () => {
       expect(screen.getByTestId("browser-verification-toggle")).not.toHaveClass("btn-active");
     });
   });
+
+  describe("Description-adjacent actions layout (FN-781)", () => {
+    it("renders Plan and Subtask in description-actions area when expanded", () => {
+      renderCard();
+      expandCard();
+
+      // The description-actions container should exist
+      expect(screen.getByTestId("inline-create-description-actions")).toBeTruthy();
+
+      // Plan and Subtask buttons should be inside it
+      const actionsContainer = screen.getByTestId("inline-create-description-actions");
+      expect(actionsContainer.contains(screen.getByTestId("plan-button"))).toBe(true);
+      expect(actionsContainer.contains(screen.getByTestId("subtask-button"))).toBe(true);
+    });
+
+    it("does not render description-actions when not expanded", () => {
+      renderCard();
+
+      // Description actions should not exist when collapsed
+      expect(screen.queryByTestId("inline-create-description-actions")).toBeNull();
+    });
+
+    it("Save button remains in footer area, not description-actions", () => {
+      renderCard();
+      expandCard();
+
+      const actionsContainer = screen.getByTestId("inline-create-description-actions");
+      const saveButton = screen.getByTestId("save-button");
+
+      // Save button should NOT be in the description-actions area
+      expect(actionsContainer.contains(saveButton)).toBe(false);
+    });
+
+    it("Deps, Preset, Models buttons remain in footer area, not description-actions", () => {
+      renderCard();
+      expandCard();
+
+      const actionsContainer = screen.getByTestId("inline-create-description-actions");
+      const depsButton = screen.getByText(/Deps/);
+      const modelsButton = screen.getByRole("button", { name: /Models/i });
+
+      // Deps and Models should NOT be in the description-actions area
+      expect(actionsContainer.contains(depsButton)).toBe(false);
+      expect(actionsContainer.contains(modelsButton)).toBe(false);
+    });
+
+    it("Plan and Subtask disabled state still works in description-actions", () => {
+      renderCard();
+      expandCard();
+      const textarea = screen.getByPlaceholderText("What needs to be done?");
+
+      // Buttons should be disabled when description is empty
+      expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByTestId("subtask-button") as HTMLButtonElement).disabled).toBe(true);
+
+      // Type something — buttons should become enabled
+      fireEvent.change(textarea, { target: { value: "Some task" } });
+      expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByTestId("subtask-button") as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
 });

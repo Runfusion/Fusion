@@ -249,3 +249,75 @@ describe("TaskForm", () => {
     });
   });
 });
+
+describe("TaskForm description-adjacent actions layout (FN-781)", () => {
+  it("renders Plan and Subtask in description-actions area in create mode", () => {
+    renderTaskForm({
+      mode: "create",
+      description: "Some task",
+      onPlanningMode: vi.fn(),
+      onSubtaskBreakdown: vi.fn(),
+    });
+
+    // The description-actions container should exist
+    expect(screen.getByTestId("task-form-description-actions")).toBeTruthy();
+
+    // Plan and Subtask buttons should be inside it
+    const actionsContainer = screen.getByTestId("task-form-description-actions");
+    expect(actionsContainer.contains(screen.getByTestId("task-form-plan-button"))).toBe(true);
+    expect(actionsContainer.contains(screen.getByTestId("task-form-subtask-button"))).toBe(true);
+  });
+
+  it("does not render description-actions in edit mode", () => {
+    renderTaskForm({
+      mode: "edit",
+      title: "My task",
+      onTitleChange: vi.fn(),
+      description: "Some task",
+      onPlanningMode: vi.fn(),
+      onSubtaskBreakdown: vi.fn(),
+    });
+
+    expect(screen.queryByTestId("task-form-description-actions")).toBeNull();
+  });
+
+  it("Plan and Subtask buttons are disabled when description is empty", () => {
+    renderTaskForm({
+      mode: "create",
+      description: "",
+      onPlanningMode: vi.fn(),
+      onSubtaskBreakdown: vi.fn(),
+    });
+
+    expect((screen.getByTestId("task-form-plan-button") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("task-form-subtask-button") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Plan and Subtask buttons are enabled when description has content", () => {
+    renderTaskForm({
+      mode: "create",
+      description: "A real task",
+      onPlanningMode: vi.fn(),
+      onSubtaskBreakdown: vi.fn(),
+    });
+
+    expect((screen.getByTestId("task-form-plan-button") as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByTestId("task-form-subtask-button") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("Refine button remains near the description textarea", () => {
+    renderTaskForm({
+      mode: "create",
+      description: "Some text",
+      onPlanningMode: vi.fn(),
+      onSubtaskBreakdown: vi.fn(),
+    });
+
+    // Refine button should be rendered (it's inside the description-with-refine wrapper)
+    expect(screen.getByTestId("refine-button")).toBeTruthy();
+
+    // But NOT inside the description-actions container
+    const actionsContainer = screen.getByTestId("task-form-description-actions");
+    expect(actionsContainer.contains(screen.getByTestId("refine-button"))).toBe(false);
+  });
+});

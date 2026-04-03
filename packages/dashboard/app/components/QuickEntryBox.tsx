@@ -569,6 +569,87 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           {isDisclosureExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
       </div>
+      {/* AI-assisted refinement actions — always visible when expanded */}
+      {isExpanded && !isSubmitting && (
+        <div className="quick-entry-description-actions" data-testid="quick-entry-description-actions">
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={handlePlanClick}
+            onMouseDown={(e) => e.preventDefault()}
+            disabled={!description.trim()}
+            data-testid="plan-button"
+            title="Open planning mode with current description"
+          >
+            <Lightbulb size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+            Plan
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={handleSubtaskClick}
+            onMouseDown={(e) => e.preventDefault()}
+            disabled={!description.trim()}
+            data-testid="subtask-button"
+            title="Break down into AI-generated subtasks"
+          >
+            <ListTree size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+            Subtask
+          </button>
+          <div className="refine-trigger-wrap" ref={refineMenuRef}>
+            <button
+              type="button"
+              className={`btn btn-sm refine-button ${isRefining ? "refine-button--loading" : ""}`}
+              onClick={() => setIsRefineMenuOpen((prev) => !prev)}
+              disabled={!description.trim() || isRefining}
+              data-testid="refine-button"
+              title="Refine description with AI"
+            >
+              <Sparkles size={12} style={{ verticalAlign: "middle" }} />
+              {isRefining ? "Refining..." : "Refine"}
+            </button>
+            {isRefineMenuOpen && (
+              <div
+                className="refine-menu"
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                <div
+                  className="refine-menu-item"
+                  onClick={() => handleRefine("clarify")}
+                  data-testid="refine-clarify"
+                >
+                  <div className="refine-menu-item-title">Clarify</div>
+                  <div className="refine-menu-item-desc">Make the description clearer and more specific</div>
+                </div>
+                <div
+                  className="refine-menu-item"
+                  onClick={() => handleRefine("add-details")}
+                  data-testid="refine-add-details"
+                >
+                  <div className="refine-menu-item-title">Add details</div>
+                  <div className="refine-menu-item-desc">Add implementation details and context</div>
+                </div>
+                <div
+                  className="refine-menu-item"
+                  onClick={() => handleRefine("expand")}
+                  data-testid="refine-expand"
+                >
+                  <div className="refine-menu-item-title">Expand</div>
+                  <div className="refine-menu-item-desc">Expand into a more comprehensive description</div>
+                </div>
+                <div
+                  className="refine-menu-item"
+                  onClick={() => handleRefine("simplify")}
+                  data-testid="refine-simplify"
+                >
+                  <div className="refine-menu-item-title">Simplify</div>
+                  <div className="refine-menu-item-desc">Simplify and make more concise</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div
         id="quick-entry-controls"
         className="quick-entry-controls"
@@ -649,96 +730,18 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           </div>
 
           {!isSubmitting && (
-            <>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={handlePlanClick}
-                onMouseDown={(e) => e.preventDefault()}
-                disabled={!description.trim()}
-                data-testid="plan-button"
-                title="Open planning mode with current description"
-              >
-                <Lightbulb size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-                Plan
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={handleSubtaskClick}
-                onMouseDown={(e) => e.preventDefault()}
-                disabled={!description.trim()}
-                data-testid="subtask-button"
-                title="Break down into AI-generated subtasks"
-              >
-                <ListTree size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-                Subtask
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={handleSaveClick}
-                onMouseDown={(e) => e.preventDefault()}
-                disabled={!description.trim() || isSubmitting}
-                data-testid="save-button"
-                title="Create task"
-              >
-                <Save size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-                Save
-              </button>
-              <div className="refine-trigger-wrap" ref={refineMenuRef}>
-                <button
-                  type="button"
-                  className={`btn btn-sm refine-button ${isRefining ? "refine-button--loading" : ""}`}
-                  onClick={() => setIsRefineMenuOpen((prev) => !prev)}
-                  disabled={!description.trim() || isRefining}
-                  data-testid="refine-button"
-                  title="Refine description with AI"
-                >
-                  <Sparkles size={12} style={{ verticalAlign: "middle" }} />
-                  {isRefining ? "Refining..." : "Refine"}
-                </button>
-                {isRefineMenuOpen && (
-                  <div
-                    className="refine-menu"
-                    onMouseDown={(e) => e.preventDefault()}
-                  >
-                    <div
-                      className="refine-menu-item"
-                      onClick={() => handleRefine("clarify")}
-                      data-testid="refine-clarify"
-                    >
-                      <div className="refine-menu-item-title">Clarify</div>
-                      <div className="refine-menu-item-desc">Make the description clearer and more specific</div>
-                    </div>
-                    <div
-                      className="refine-menu-item"
-                      onClick={() => handleRefine("add-details")}
-                      data-testid="refine-add-details"
-                    >
-                      <div className="refine-menu-item-title">Add details</div>
-                      <div className="refine-menu-item-desc">Add implementation details and context</div>
-                    </div>
-                    <div
-                      className="refine-menu-item"
-                      onClick={() => handleRefine("expand")}
-                      data-testid="refine-expand"
-                    >
-                      <div className="refine-menu-item-title">Expand</div>
-                      <div className="refine-menu-item-desc">Expand into a more comprehensive description</div>
-                    </div>
-                    <div
-                      className="refine-menu-item"
-                      onClick={() => handleRefine("simplify")}
-                      data-testid="refine-simplify"
-                    >
-                      <div className="refine-menu-item-title">Simplify</div>
-                      <div className="refine-menu-item-desc">Simplify and make more concise</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={handleSaveClick}
+              onMouseDown={(e) => e.preventDefault()}
+              disabled={!description.trim() || isSubmitting}
+              data-testid="save-button"
+              title="Create task"
+            >
+              <Save size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+              Save
+            </button>
           )}
         </div>
         <div className="quick-entry-hint">
