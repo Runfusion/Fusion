@@ -1370,10 +1370,10 @@ export interface ScriptEntry {
   command: string;
 }
 
-/** Result of running a script */
+/** Result of running a script via POST /api/scripts/:name/run */
 export interface ScriptRunResult {
-  output: string;
-  exitCode: number;
+  sessionId: string;
+  command: string;
 }
 
 /** Fetch all saved scripts from project settings */

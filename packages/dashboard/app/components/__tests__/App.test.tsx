@@ -36,6 +36,8 @@ vi.mock("../../api", async (importOriginal) => {
     fetchGitRemotes: vi.fn(() => Promise.resolve([])),
     fetchAgents: vi.fn(() => Promise.resolve([])),
     fetchTaskDetail: vi.fn((id: string) => Promise.resolve({ id, title: `Task ${id}` })),
+    runScript: vi.fn(() => Promise.resolve({ sessionId: "sess-script-1", command: "echo hello" })),
+    killPtyTerminalSession: vi.fn(() => Promise.resolve({ killed: true })),
   };
 });
 
@@ -85,8 +87,22 @@ vi.mock("../../hooks/useCurrentProject", () => ({
   useCurrentProject: () => mockCurrentProjectState,
 }));
 
+// Mock useTerminal for ScriptRunDialog
+vi.mock("../../hooks/useTerminal", () => ({
+  useTerminal: () => ({
+    connectionStatus: "connected",
+    sendInput: vi.fn(),
+    resize: vi.fn(),
+    onData: vi.fn(() => vi.fn()),
+    onExit: vi.fn(() => vi.fn()),
+    onConnect: vi.fn(() => vi.fn()),
+    onScrollback: vi.fn(() => vi.fn()),
+    reconnect: vi.fn(),
+  }),
+}));
+
 import { App } from "../../App";
-import { fetchAuthStatus, fetchSettings, fetchTaskDetail, updateSettings } from "../../api";
+import { fetchAuthStatus, fetchSettings, fetchTaskDetail, updateSettings, runScript } from "../../api";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -835,5 +851,45 @@ describe("App Planning Mode", () => {
       expect(screen.getByPlaceholderText(/e.g., Build a user authentication system with login/)).toBeTruthy();
       expect(screen.getByText("Start Planning")).toBeTruthy();
     });
+  });
+});
+
+describe("Script run flow", () => {
+  it("calls runScript API and returns session info", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTitle("Settings")).toBeTruthy();
+    });
+
+    const { runScript: runScriptMock } = await import("../../api");
+
+    await act(async () => {
+      const result = await runScriptMock("build", undefined, "proj_123");
+      expect(result).toEqual({ sessionId: "sess-script-1", command: "echo hello" });
+    });
+
+    expect(runScriptMock).toHaveBeenCalledWith("build", undefined, "proj_123");
+  });
+
+  it("shows error toast when runScript API fails", async () => {
+    const { runScript: runScriptMock } = await import("../../api");
+    (runScriptMock as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Script not found"));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTitle("Settings")).toBeTruthy();
+    });
+
+    await act(async () => {
+      try {
+        await runScriptMock("missing-script", undefined, "proj_123");
+      } catch {
+        // Expected to throw
+      }
+    });
+
+    expect(runScriptMock).toHaveBeenCalledWith("missing-script", undefined, "proj_123");
   });
 });

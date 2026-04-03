@@ -98,6 +98,32 @@ Access a fully functional PTY (pseudo-terminal) shell directly from the dashboar
 - **Bidirectional Communication**: WebSocket connection for instant input/output
 - **xterm.js Integration**: Full terminal emulation with proper ANSI support, colors, and cursor handling
 - **Auto-resizing**: Terminal automatically fits to container size
+- **Scrollback Buffer**: 5KB of scrollback history with replay on reconnect
+- **Reconnection Support**: Automatic reconnect with exponential backoff if connection drops
+- **Reliable Prompt Delivery**: Initial shell prompt visible through first keyst press
+- **Keyboard Shortcuts**:
+  - `Ctrl+C` - Send SIGINT to process (copy if text selected)
+  - `Ctrl+V` - Paste from clipboard
+  - `Ctrl+L` - Clear terminal screen
+  - `Ctrl++` / `Ctrl+-` - Zoom in/out
+  - `Ctrl+0` - Reset zoom
+  - `Escape` - Close terminal modal
+
+### Script Run Dialog
+When running a saved script from the dashboard (via QuickScripts dropdown in the header or the Run button in Scripts modal), a dedicated ScriptRunDialog opens with live output streaming. The exit status. The dialog uses the existing terminal PTY session infrastructure:
+ WebSocket connection for output, but is non-interactive (no user input).
+ It **Features**:
+  - **Live Output**: Streams stdout/stderr from the script in real-time via WebSocket
+  - **Script Name & Command**: Shows the script name and resolved command
+  - **Status Indicator**: Shows running/completed/error status
+  - **Exit Code**: Displays exit code when the script completes
+  - **Clean Closure**: Kills the backing PTY session if closed while still running
+
+**Features**:
+- **Real PTY Terminal**: Spawns a real shell (bash/zsh/powershell) using node-pty for authentic terminal behavior
+- **Bidirectional Communication**: WebSocket connection for instant input/output
+- **xterm.js Integration**: Full terminal emulation with proper ANSI support, colors, and cursor handling
+- **Auto-resizing**: Terminal automatically fits to container size
 - **Scrollback Buffer**: 50KB of scrollback history with replay on reconnect
 - **Reconnection Support**: Automatic reconnect with exponential backoff if connection drops
 - **Reliable Prompt Delivery**: Initial shell prompt and first keystrokes are always visible — output is preserved across the WebSocket connection, xterm initialization, and resize lifecycle without loss or duplication
