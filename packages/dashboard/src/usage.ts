@@ -440,7 +440,7 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
         if (clean.includes("Current session") || clean.includes("% left") || clean.includes("% used")) {
           resolve(buf);
         } else {
-          reject(new Error("Claude CLI timed out after 60 seconds. The Claude CLI may be slow to start or authenticate."));
+          reject(new Error("Claude CLI timed out after 60s — got output but no usage data. Try running `claude /usage` manually."));
         }
       }, 60000);
 
@@ -704,7 +704,8 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
       // Any other non-200 status — fail immediately (not transient)
       if (res.status !== 200) {
         usage.status = "error";
-        usage.error = `HTTP ${res.status}`;
+        const bodySnippet = res.body ? res.body.slice(0, 100).replace(/\n/g, " ") : "";
+        usage.error = bodySnippet ? `HTTP ${res.status}: ${bodySnippet}` : `HTTP ${res.status}`;
         return usage;
       }
 
@@ -1232,10 +1233,17 @@ async function fetchZaiUsage(): Promise<ProviderUsage> {
 const PROVIDER_FETCH_TIMEOUT_MS = 10_000; // 10 seconds
 
 /**
+ * Extended timeout for Claude provider fetch (ms).
+ * Claude's flow can include up to 3 API retries with exponential backoff (~7s)
+ * plus a 60-second CLI fallback via PTY, so the default 10s is insufficient.
+ */
+export const CLAUDE_FETCH_TIMEOUT_MS = 75_000; // 75 seconds
+
+/**
  * Wrap a provider fetch with a timeout. Returns the provider result or an
  * error provider if the fetch takes longer than PROVIDER_FETCH_TIMEOUT_MS.
  */
-function withTimeout(
+export function withTimeout(
   providerPromise: Promise<ProviderUsage>,
   providerName: string,
   timeoutMs: number = PROVIDER_FETCH_TIMEOUT_MS,
@@ -1246,7 +1254,7 @@ function withTimeout(
         name: providerName,
         icon: "⏱️",
         status: "error",
-        error: "Timed out",
+        error: `Timed out after ${Math.round(timeoutMs / 1000)}s`,
         windows: [],
       });
     }, timeoutMs);
@@ -1277,7 +1285,7 @@ export async function fetchAllProviderUsage(_authStorage?: AuthStorageLike): Pro
 
   // Fetch all providers in parallel with per-provider timeout
   const results = await Promise.allSettled([
-    withTimeout(fetchClaudeUsage(), "Claude"),
+    withTimeout(fetchClaudeUsage(), "Claude", CLAUDE_FETCH_TIMEOUT_MS),
     withTimeout(fetchCodexUsage(), "Codex"),
     withTimeout(fetchGeminiUsage(), "Gemini"),
     withTimeout(fetchMinimaxUsage(), "Minimax"),

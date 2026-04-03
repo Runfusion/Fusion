@@ -10,6 +10,8 @@ import {
   _parseClaudePercentLine,
   _parseClaudeResetLine,
   _parseClaudeResetText,
+  withTimeout,
+  CLAUDE_FETCH_TIMEOUT_MS,
 } from "./usage.js";
 
 // Mock the https module
@@ -2066,6 +2068,105 @@ describe("usage", () => {
       it("returns null for unparseable text", () => {
         expect(_parseClaudeResetText("unknown format")).toBeNull();
       });
+    });
+  });
+
+  describe("withTimeout", () => {
+    it("resolves with provider result when fetch completes within timeout", async () => {
+      const provider: ProviderUsage = {
+        name: "TestProvider",
+        icon: "🧪",
+        status: "ok",
+        windows: [],
+      };
+      const result = await withTimeout(Promise.resolve(provider), "TestProvider", 5000);
+      expect(result).toEqual(provider);
+      expect(result.status).toBe("ok");
+    });
+
+    it("returns error provider when fetch exceeds timeout", async () => {
+      const slowPromise = new Promise<ProviderUsage>((resolve) => {
+        setTimeout(() => resolve({ name: "Slow", icon: "🐌", status: "ok", windows: [] }), 10000);
+      });
+      const result = await withTimeout(slowPromise, "Slow", 50); // 50ms timeout
+      expect(result.status).toBe("error");
+      expect(result.error).toBe("Timed out after 0s");
+      expect(result.name).toBe("Slow");
+    });
+
+    it("includes timeout duration in error message for different durations", async () => {
+      // 100ms => "0s"
+      const result100 = await withTimeout(
+        new Promise<ProviderUsage>(() => {}),
+        "Test",
+        100,
+      );
+      expect(result100.error).toBe("Timed out after 0s");
+
+      // 10_000ms is too long to actually wait, but we can verify the format
+      // by using a 1050ms timeout (rounds to 1s)
+      const result1s = await withTimeout(
+        new Promise<ProviderUsage>(() => {}),
+        "Test",
+        1050,
+      );
+      expect(result1s.error).toBe("Timed out after 1s");
+    });
+
+    it("catches rejected promises and returns error provider", async () => {
+      const failingPromise = Promise.reject(new Error("Network failure"));
+      const result = await withTimeout(failingPromise, "Failing", 5000);
+      expect(result.status).toBe("error");
+      expect(result.error).toBe("Network failure");
+    });
+  });
+
+  describe("Claude timeout constant", () => {
+    it("CLAUDE_FETCH_TIMEOUT_MS is 75 seconds", () => {
+      expect(CLAUDE_FETCH_TIMEOUT_MS).toBe(75_000);
+    });
+
+    it("CLAUDE_FETCH_TIMEOUT_MS is larger than default provider timeout", () => {
+      // The default PROVIDER_FETCH_TIMEOUT_MS is 10_000. CLAUDE_FETCH_TIMEOUT_MS should be much larger.
+      expect(CLAUDE_FETCH_TIMEOUT_MS).toBeGreaterThan(10_000);
+    });
+  });
+
+  describe("Claude API error diagnostics", () => {
+    it("includes response body snippet in HTTP 500 error", async () => {
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes("claude")) {
+          return JSON.stringify({
+            accessToken: "test-token",
+            scopes: ["user:profile"],
+          });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 500,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from('{"error": "internal server error", "details": "something went wrong"}'));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("error");
+      expect(claude.error).toContain("HTTP 500");
+      expect(claude.error).toContain("internal server error");
     });
   });
 });
