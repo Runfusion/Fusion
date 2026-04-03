@@ -908,10 +908,13 @@ describe("usage", () => {
 
         // Track which requests are made
         const requestUrls: string[] = [];
+        const capturedOptions: any[] = [];
+        const capturedBodies: string[] = [];
         const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
         mockRequest.mockImplementation((options: any, callback: any) => {
           const url = `https://${options.hostname}${options.path}`;
           requestUrls.push(url);
+          capturedOptions.push(options);
 
           if (url.includes("oauth/token")) {
             // Token refresh succeeds
@@ -951,6 +954,74 @@ describe("usage", () => {
         expect(requestUrls).toHaveLength(2);
         expect(requestUrls[0]).toContain("oauth/token");
         expect(requestUrls[1]).toContain("oauth/usage");
+      });
+
+      it("sends refresh request to platform.claude.com with correct content-type and client_id", async () => {
+        const expiredAt = Date.now() - 60_000;
+        setupClaudeMocks({
+          credFileContent: {
+            claudeAiOauth: {
+              accessToken: "expired-token",
+              expiresAt: expiredAt,
+              refreshToken: "refresh-token-456",
+              scopes: ["user:profile"],
+              subscriptionType: "max",
+            },
+          },
+        });
+
+        const capturedOptions: any[] = [];
+        const capturedBodies: string[] = [];
+        const mockReq = {
+          on: vi.fn(),
+          write: vi.fn((data: string) => capturedBodies.push(data)),
+          end: vi.fn(),
+        };
+        mockRequest.mockImplementation((options: any, callback: any) => {
+          capturedOptions.push({ ...options });
+          const url = `https://${options.hostname}${options.path}`;
+
+          if (url.includes("oauth/token")) {
+            const mockRes = {
+              statusCode: 200,
+              headers: {},
+              on: vi.fn((event: string, handler: any) => {
+                if (event === "data") handler(Buffer.from(JSON.stringify({ access_token: "refreshed-token" })));
+                if (event === "end") handler();
+              }),
+            };
+            callback(mockRes);
+          } else {
+            const mockRes = {
+              statusCode: 200,
+              headers: {},
+              on: vi.fn((event: string, handler: any) => {
+                if (event === "data") handler(Buffer.from(JSON.stringify({
+                  five_hour: { utilization: 10.0, resets_at: new Date(Date.now() + 3600000).toISOString() },
+                })));
+                if (event === "end") handler();
+              }),
+            };
+            callback(mockRes);
+          }
+          return mockReq;
+        });
+
+        await fetchAllProviderUsage();
+
+        // Verify the refresh request (first call)
+        const refreshOpts = capturedOptions[0];
+        expect(refreshOpts.hostname).toBe("platform.claude.com");
+        expect(refreshOpts.path).toBe("/v1/oauth/token");
+        expect(refreshOpts.headers["content-type"]).toBe("application/x-www-form-urlencoded");
+
+        // Verify body contains required parameters
+        expect(capturedBodies.length).toBeGreaterThanOrEqual(1);
+        const body = capturedBodies[0];
+        const params = new URLSearchParams(body);
+        expect(params.get("grant_type")).toBe("refresh_token");
+        expect(params.get("refresh_token")).toBe("refresh-token-456");
+        expect(params.get("client_id")).toBe("9d1c250a-e61b-44d9-88ed-5944d1962f5e");
       });
 
       it("returns actionable error when refresh fails for expired token", async () => {

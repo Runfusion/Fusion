@@ -258,10 +258,17 @@ const CLAUDE_INITIAL_RETRY_MS = 1000;
 let refreshedAccessToken: string | null = null;
 
 /**
- * Anthropic OAuth token refresh endpoint.
- * Used when the access token has expired but a refresh token is available.
+ * Anthropic OAuth token refresh endpoint on the Claude platform.
+ * The OAuth token endpoint lives on platform.claude.com (not console.anthropic.com)
+ * per the Anthropic OAuth 2.0 specification.
  */
-const ANTHROPIC_TOKEN_ENDPOINT = "https://console.anthropic.com/v1/oauth/token";
+const ANTHROPIC_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
+
+/**
+ * Public OAuth client ID for the Claude CLI / first-party OAuth flow.
+ * Required as `client_id` in token refresh requests per the OAuth 2.0 spec.
+ */
+const ANTHROPIC_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 
 /**
  * Check whether an OAuth access token is expired using the `expiresAt` timestamp
@@ -280,13 +287,16 @@ function isTokenExpired(expiresAt: number | undefined): boolean {
  */
 async function refreshClaudeAccessToken(refreshToken: string): Promise<string | null> {
   try {
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: ANTHROPIC_OAUTH_CLIENT_ID,
+    }).toString();
+
     const res = await httpsRequest(ANTHROPIC_TOKEN_ENDPOINT, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-      }),
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
       timeout: 10_000, // 10s timeout for refresh
     });
 
