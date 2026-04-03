@@ -23,10 +23,8 @@ import { applyPresetToSelection, generatePresetId, validatePresetId } from "../u
  *
  * Sections:
  *   - general: Task prefix configuration (project)
- *   - default-model: Default AI model selection (global)
- *   - execution-model: Planning and validator model selection (project)
- *   - model-presets: Reusable model presets (project)
- *   - ai-summarization: Auto-summarization settings (project)
+ *   - models: All model settings — default model (global), planning & validator models,
+ *     model presets, and AI summarization (project). Rendered as sub-sections on one screen.
  *   - appearance: Theme and color settings (global)
  *   - scheduling: Concurrency, poll interval, file overlap serialization (project)
  *   - worktrees: Worktree limits, init commands, recycling (project)
@@ -37,10 +35,7 @@ import { applyPresetToSelection, generatePresetId, validatePresetId } from "../u
  */
 const SETTINGS_SECTIONS = [
   { id: "general", label: "General", scope: "project" as const },
-  { id: "default-model", label: "Default Model", scope: "global" as const },
-  { id: "execution-model", label: "Execution Model", scope: "project" as const },
-  { id: "model-presets", label: "Model Presets", scope: "project" as const },
-  { id: "ai-summarization", label: "AI Summarization", scope: "project" as const },
+  { id: "models", label: "Models", scope: "project" as const },
   { id: "appearance", label: "Appearance", scope: "global" as const },
   { id: "scheduling", label: "Scheduling", scope: "project" as const },
   { id: "worktrees", label: "Worktrees", scope: "project" as const },
@@ -139,7 +134,7 @@ export function SettingsModal({
   }, []);
 
   useEffect(() => {
-    if (activeSection === "default-model" || activeSection === "execution-model") {
+    if (activeSection === "models") {
       setModelsLoading(true);
       fetchModels()
         .then((response) => setAvailableModels(response.models))
@@ -493,14 +488,27 @@ export function SettingsModal({
             </div>
           </>
         );
-      case "default-model": {
+      case "models": {
         const selectedValue = form.defaultProvider && form.defaultModelId
           ? `${form.defaultProvider}/${form.defaultModelId}`
           : "";
+        const planningValue = form.planningProvider && form.planningModelId
+          ? `${form.planningProvider}/${form.planningModelId}`
+          : "";
+        const validatorValue = form.validatorProvider && form.validatorModelId
+          ? `${form.validatorProvider}/${form.validatorModelId}`
+          : "";
+        const presets = form.modelPresets || [];
+        const presetOptions = presets.map((preset) => ({ id: preset.id, name: preset.name }));
+        const inUsePresetIds = new Set(Object.values(form.defaultPresetBySize || {}).filter(Boolean));
+
         return (
           <>
             {renderScopeBanner()}
+
+            {/* --- Default Model --- */}
             <h4 className="settings-section-heading">Default Model</h4>
+            <small className="settings-muted" style={{ display: "block", marginBottom: "0.5rem" }}>🌐 Default model is shared across all projects.</small>
             {modelsLoading ? (
               <div className="settings-empty-state">Loading available models…</div>
             ) : availableModels.length === 0 ? (
@@ -559,20 +567,9 @@ export function SettingsModal({
                 </div>
               );
             })()}
-          </>
-        );
-      }
-      case "execution-model": {
-        const planningValue = form.planningProvider && form.planningModelId
-          ? `${form.planningProvider}/${form.planningModelId}`
-          : "";
-        const validatorValue = form.validatorProvider && form.validatorModelId
-          ? `${form.validatorProvider}/${form.validatorModelId}`
-          : "";
-        return (
-          <>
-            {renderScopeBanner()}
-            <h4 className="settings-section-heading">Execution Model</h4>
+
+            {/* --- Planning & Validation --- */}
+            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>Planning &amp; Validation</h4>
             {modelsLoading ? (
               <div className="settings-empty-state">Loading available models…</div>
             ) : availableModels.length === 0 ? (
@@ -629,18 +626,9 @@ export function SettingsModal({
                 </div>
               </>
             )}
-          </>
-        );
-      }
-      case "model-presets": {
-        const presets = form.modelPresets || [];
-        const presetOptions = presets.map((preset) => ({ id: preset.id, name: preset.name }));
-        const inUsePresetIds = new Set(Object.values(form.defaultPresetBySize || {}).filter(Boolean));
 
-        return (
-          <>
-            {renderScopeBanner()}
-            <h4 className="settings-section-heading">Model Presets</h4>
+            {/* --- Model Presets --- */}
+            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>Model Presets</h4>
             <div className="form-group">
               <label>Configured presets</label>
               {presets.length === 0 ? (
@@ -847,14 +835,9 @@ export function SettingsModal({
                 ))}
               </>
             ) : null}
-          </>
-        );
-      }
-      case "ai-summarization":
-        return (
-          <>
-            {renderScopeBanner()}
-            <h4 className="settings-section-heading">AI Summarization</h4>
+
+            {/* --- AI Summarization --- */}
+            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>AI Summarization</h4>
             <div className="form-group">
               <label htmlFor="autoSummarizeTitles" className="checkbox-label">
                 <input
@@ -955,6 +938,7 @@ export function SettingsModal({
             )}
           </>
         );
+      }
 
       case "appearance":
         return (
