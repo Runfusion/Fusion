@@ -216,6 +216,23 @@ describe("AgentsView", () => {
   });
 
   describe("filter agents by state", () => {
+    it("renders the state filter with styled container", async () => {
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("All States")).toBeTruthy();
+      });
+
+      // Styled filter container exists
+      const filterContainer = document.querySelector(".agent-state-filter");
+      expect(filterContainer).toBeTruthy();
+
+      // Select has correct aria-label
+      const filterSelect = screen.getByLabelText("Filter agents by state");
+      expect(filterSelect).toBeTruthy();
+      expect(filterSelect).toHaveValue("all");
+    });
+
     it("can filter agents by state", async () => {
       render(<AgentsView addToast={mockAddToast} />);
 

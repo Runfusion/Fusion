@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { JSX } from "react";
-import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight } from "lucide-react";
+import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
 import { fetchAgents, createAgent, updateAgent, updateAgentState, deleteAgent } from "../api";
 import { AgentDetailView } from "./AgentDetailView";
@@ -189,17 +189,21 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
       <div className="agents-view-content">
         {/* Filter and Create Bar */}
         <div className="agent-controls">
-          <select
-            className="select"
-            value={filterState}
-            onChange={(e) => setFilterState(e.target.value as AgentState | "all")}
-          >
-            <option value="all">All States</option>
-            <option value="idle">Idle</option>
-            <option value="active">Active</option>
-            <option value="paused">Paused</option>
-            <option value="terminated">Terminated</option>
-          </select>
+          <div className="agent-state-filter">
+            <Filter size={14} />
+            <select
+              className="agent-state-filter-select"
+              value={filterState}
+              onChange={(e) => setFilterState(e.target.value as AgentState | "all")}
+              aria-label="Filter agents by state"
+            >
+              <option value="all">All States</option>
+              <option value="idle">Idle</option>
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+              <option value="terminated">Terminated</option>
+            </select>
+          </div>
 
           <button
             className="btn btn--primary"
@@ -568,8 +572,38 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
           margin-bottom: 16px;
         }
 
-        .agent-controls .select {
-          width: auto;
+        .agent-state-filter {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
+          background: var(--bg);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          color: var(--text-muted);
+          transition: border-color var(--transition-fast), color var(--transition-fast);
+        }
+
+        .agent-state-filter:hover {
+          border-color: var(--text-dim);
+          color: var(--text);
+        }
+
+        .agent-state-filter:focus-within {
+          border-color: var(--todo);
+          box-shadow: var(--focus-ring);
+        }
+
+        .agent-state-filter-select {
+          appearance: none;
+          background: transparent;
+          border: none;
+          color: var(--text);
+          font-size: 13px;
+          font-family: var(--font-primary);
+          cursor: pointer;
+          outline: none;
+          padding-right: 4px;
         }
 
         .agent-create-form {

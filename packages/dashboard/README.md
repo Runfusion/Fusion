@@ -92,6 +92,16 @@ A persistent footer status bar at the bottom of the dashboard displays real-time
 **API Endpoint**:
 - `GET /api/executor/stats` - Returns `globalPause`, `enginePaused`, `maxConcurrent`, and `lastActivityAt` for state derivation. Column-based counts (running, blocked, stuck, queued, in-review) are derived client-side from the shared task list.
 
+### Agents View
+Manage AI agents with a dedicated control surface accessible from the main dashboard navigation.
+
+**Features**:
+- **State Filter**: Styled dropdown to filter agents by state (All States, Idle, Active, Paused, Terminated) with icon and consistent dashboard styling
+- **View Modes**: Board (compact grid) and list (detailed card) layouts, persisted to localStorage
+- **Agent CRUD**: Create agents with name and role, change state, update roles inline, delete terminated agents
+- **Health Monitoring**: Heartbeat-based health status (Healthy, Unresponsive, Starting, Paused, Terminated)
+- **Agent Detail**: Click any agent card to open a detail modal with full agent information
+
 ### Interactive Terminal
 Access a fully functional PTY (pseudo-terminal) shell directly from the dashboard. Click the terminal icon in the header to open the interactive terminal modal.
 
