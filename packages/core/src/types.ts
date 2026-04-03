@@ -602,6 +602,10 @@ export interface GlobalSettings {
    *  If undefined or empty when ntfyEnabled is true, all events are sent (backward compatible).
    *  Default: ["in-review", "merged", "failed"] */
   ntfyEvents?: NtfyNotificationEvent[];
+  /** Dashboard hostname for ntfy.sh deep links. When set along with ntfyEnabled
+   *  and ntfyTopic, notifications include a Click URL that opens the dashboard
+   *  directly to the task. Example: "http://localhost:3000" or "https://fusion.example.com" */
+  ntfyDashboardHost?: string;
   /** The default project ID for CLI operations when --project flag is not provided.
    *  Used to determine which project to operate on when not in a project directory.
    *  Set via `kb project set-default <name>`. */
@@ -779,9 +783,6 @@ export interface ProjectSettings {
   /** Reference to a named script in the scripts map that runs before task execution.
    *  Used for pre-task setup like environment preparation. */
   setupScript?: string;
-  /** Dashboard host URL for ntfy notifications (e.g., "http://localhost:3000").
-   *  When set, notifications include links to the dashboard. */
-  ntfyDashboardHost?: string;
 }
 
 /**
@@ -811,6 +812,7 @@ export const DEFAULT_GLOBAL_SETTINGS: Required<Pick<GlobalSettings, "themeMode" 
   ntfyEnabled: false,
   ntfyTopic: undefined,
   ntfyEvents: ["in-review", "merged", "failed"],
+  ntfyDashboardHost: undefined,
 };
 
 /** Default values for project-level settings. */
@@ -878,6 +880,7 @@ export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<keyof GlobalSettings> = [
   "ntfyEnabled",
   "ntfyTopic",
   "ntfyEvents",
+  "ntfyDashboardHost",
   "defaultProjectId",
 ] as const;
 

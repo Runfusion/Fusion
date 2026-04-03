@@ -196,6 +196,64 @@ describe("GlobalSettingsStore", () => {
     });
   });
 
+  describe("schema protection", () => {
+    it("preserves unknown keys during updateSettings", async () => {
+      await store.init();
+
+      // Simulate a setting that existed in an older schema version
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      raw.legacyCustomField = "preserve-me";
+      raw.anotherRemovedSetting = 42;
+      await writeFile(join(dir, "settings.json"), JSON.stringify(raw, null, 2));
+
+      // Update a known field — unknown keys must survive the write cycle
+      await store.updateSettings({ ntfyEnabled: true });
+
+      const ondisk = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(ondisk.legacyCustomField).toBe("preserve-me");
+      expect(ondisk.anotherRemovedSetting).toBe(42);
+      expect(ondisk.ntfyEnabled).toBe(true);
+    });
+
+    it("readRaw returns all keys including unknown ones", async () => {
+      await store.init();
+
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      raw.futureField = "hello";
+      await writeFile(join(dir, "settings.json"), JSON.stringify(raw, null, 2));
+
+      const result = await store.readRaw();
+      expect(result.futureField).toBe("hello");
+      expect(result.themeMode).toBe("dark");
+    });
+
+    it("readRaw returns empty object for missing file", async () => {
+      const emptyStore = new GlobalSettingsStore(join(dir, "nonexistent"));
+      const result = await emptyStore.readRaw();
+      expect(result).toEqual({});
+    });
+
+    it("preserves unknown keys across multiple save cycles", async () => {
+      await store.init();
+
+      // Inject an unknown key
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      raw.removedFeatureHost = "http://example.com";
+      await writeFile(join(dir, "settings.json"), JSON.stringify(raw, null, 2));
+
+      // Multiple save cycles with different known fields
+      await store.updateSettings({ ntfyEnabled: true });
+      await store.updateSettings({ ntfyTopic: "test-topic" });
+      await store.updateSettings({ themeMode: "light" });
+
+      const ondisk = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(ondisk.removedFeatureHost).toBe("http://example.com");
+      expect(ondisk.ntfyEnabled).toBe(true);
+      expect(ondisk.ntfyTopic).toBe("test-topic");
+      expect(ondisk.themeMode).toBe("light");
+    });
+  });
+
   describe("getSettingsPath()", () => {
     it("returns the path to settings.json", () => {
       const path = store.getSettingsPath();

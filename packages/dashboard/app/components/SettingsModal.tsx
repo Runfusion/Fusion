@@ -1584,6 +1584,28 @@ export function SettingsModal({
                   <small>When a task fails during execution (high priority)</small>
                 </div>
               </div>
+              <div className="form-group">
+                <label htmlFor="ntfyDashboardHost">Dashboard Hostname</label>
+                <input
+                  id="ntfyDashboardHost"
+                  type="text"
+                  placeholder="http://localhost:3000"
+                  value={form.ntfyDashboardHost || ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setForm((f) => ({ ...f, ntfyDashboardHost: val || undefined }));
+                  }}
+                />
+                <small>
+                  Base URL for deep links in notifications. When set, clicking a notification
+                  opens the dashboard directly to the task.
+                </small>
+                {form.ntfyDashboardHost && !/^https?:\/\/.+/.test(form.ntfyDashboardHost) && (
+                  <small className="field-error">
+                    Must be a valid URL starting with http:// or https://
+                  </small>
+                )}
+              </div>
               </>
             )}
           </>

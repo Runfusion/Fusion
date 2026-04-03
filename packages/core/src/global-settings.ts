@@ -5,6 +5,11 @@
  * They include UI theme preferences, default AI model selection, and
  * notification configuration.
  *
+ * **Schema protection**: The store preserves any keys found in the settings
+ * file that are not part of the current `GlobalSettings` schema. This prevents
+ * data loss when schema changes remove fields — the values remain on disk and
+ * can be restored if the field is re-added later. See `readRaw()`.
+ *
  * @see {@link GlobalSettings} for the full list of global fields.
  */
 
@@ -82,18 +87,30 @@ export class GlobalSettingsStore {
   }
 
   /**
+   * Read the raw JSON object from disk without applying defaults.
+   * Returns all keys present in the file, including any that are no longer
+   * part of the current GlobalSettings schema. Returns an empty object if
+   * the file is missing or invalid.
+   *
+   * This is the foundation of schema protection — unknown keys survive
+   * read-modify-write cycles because they flow through this method.
+   */
+  async readRaw(): Promise<Record<string, unknown>> {
+    try {
+      const raw = await readFile(this.settingsPath, "utf-8");
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+
+  /**
    * Read global settings from disk. Returns defaults merged with persisted values.
    * If the file doesn't exist or is invalid, returns defaults without throwing.
    */
   async getSettings(): Promise<GlobalSettings> {
-    try {
-      const raw = await readFile(this.settingsPath, "utf-8");
-      const parsed = JSON.parse(raw) as Partial<GlobalSettings>;
-      return { ...DEFAULT_GLOBAL_SETTINGS, ...parsed };
-    } catch {
-      // File missing, unreadable, or invalid JSON → return defaults
-      return { ...DEFAULT_GLOBAL_SETTINGS };
-    }
+    const parsed = await this.readRaw();
+    return { ...DEFAULT_GLOBAL_SETTINGS, ...parsed } as GlobalSettings;
   }
 
   /**
@@ -101,15 +118,19 @@ export class GlobalSettingsStore {
    * Only fields present in the patch are overwritten; other fields are preserved.
    * Uses atomic write (write-to-temp-then-rename) and serialized locking.
    *
+   * **Schema protection**: reads the raw file (including unknown keys) before
+   * merging, so fields that were removed from the TypeScript schema are not
+   * silently dropped during save cycles.
+   *
    * @returns The full updated settings after merge.
    */
   async updateSettings(patch: Partial<GlobalSettings>): Promise<GlobalSettings> {
     return this.withLock(async () => {
-      const current = await this.getSettings();
-      const updated = { ...current, ...patch };
+      const raw = await this.readRaw();
+      const merged = { ...DEFAULT_GLOBAL_SETTINGS, ...raw, ...patch };
       await mkdir(this.dir, { recursive: true });
-      await this.atomicWrite(updated);
-      return updated;
+      await this.atomicWrite(merged as GlobalSettings);
+      return merged as GlobalSettings;
     });
   }
 

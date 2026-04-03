@@ -190,6 +190,27 @@ function AppInner() {
       .catch(() => {/* keep empty array on failure */});
   }, []);
 
+  // Handle deep link to task on mount (from ntfy Click URLs)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const taskId = params.get("task");
+    if (!taskId) return;
+
+    // Clean URL immediately without reloading
+    const url = new URL(window.location.href);
+    url.searchParams.delete("task");
+    url.searchParams.delete("project");
+    window.history.replaceState({}, "", url.toString());
+
+    fetchTaskDetail(taskId)
+      .then((task) => {
+        handleDetailOpen(task);
+      })
+      .catch(() => {
+        addToast(`Task ${taskId} not found`, "error");
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Favorite provider/model toggle handlers (shared by ListView bulk edit)
   const handleToggleFavorite = useCallback(async (provider: string) => {
     const currentFavorites = favoriteProviders;
