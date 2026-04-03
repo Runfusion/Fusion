@@ -544,4 +544,82 @@ describe("Header", () => {
       // The "tasks" element no longer exists - it was removed
     });
   });
+
+  describe("action ordering", () => {
+    it("Settings is the last inline user-facing action on desktop (before pause/stop)", () => {
+      const { container } = renderHeader({
+        onOpenUsage: noop,
+        onOpenActivityLog: noop,
+        onOpenWorkflowSteps: noop,
+        onOpenMissions: noop,
+        onOpenFiles: noop,
+        onOpenGitManager: noop,
+        onOpenScripts: noop,
+        onRunScript: noop,
+      }, "desktop");
+
+      // Get all inline btn-icon buttons inside header-actions
+      const headerActions = container.querySelector(".header-actions")!;
+      const inlineButtons = Array.from(headerActions.querySelectorAll<HTMLButtonElement>(":scope > button.btn-icon"));
+
+      // Find the Settings button index and the Pause/Stop button indices
+      const settingsIdx = inlineButtons.findIndex((btn) => btn.title === "Settings");
+      const pauseIdx = inlineButtons.findIndex((btn) => btn.title === "Pause scheduling" || btn.title === "Resume scheduling");
+      const stopIdx = inlineButtons.findIndex((btn) => btn.title === "Stop AI engine" || btn.title === "Start AI engine");
+
+      // Settings must exist
+      expect(settingsIdx).toBeGreaterThanOrEqual(0);
+
+      // Settings must come before pause/stop (engine controls come after Settings)
+      if (pauseIdx >= 0) {
+        expect(settingsIdx).toBeLessThan(pauseIdx);
+      }
+      if (stopIdx >= 0) {
+        expect(settingsIdx).toBeLessThan(stopIdx);
+      }
+
+      // Settings must be the last button before pause/stop — no other user-facing btn-icon after it
+      const buttonsAfterSettings = inlineButtons.slice(settingsIdx + 1);
+      const userFacingAfterSettings = buttonsAfterSettings.filter(
+        (btn) => btn.title !== "Pause scheduling" &&
+                 btn.title !== "Resume scheduling" &&
+                 btn.title !== "Stop AI engine" &&
+                 btn.title !== "Start AI engine"
+      );
+      expect(userFacingAfterSettings).toHaveLength(0);
+    });
+
+    it("Settings is the last item in the mobile overflow menu", () => {
+      const { container } = renderHeader({
+        onOpenUsage: noop,
+        onOpenActivityLog: noop,
+        onOpenWorkflowSteps: noop,
+        onOpenMissions: noop,
+        onOpenFiles: noop,
+        onOpenGitManager: noop,
+      }, "mobile");
+
+      fireEvent.click(screen.getByTitle("More header actions"));
+
+      // Get all menu items inside the overflow menu
+      const menu = container.querySelector(".mobile-overflow-menu")!;
+      const menuItems = Array.from(menu.querySelectorAll<HTMLButtonElement>("button.mobile-overflow-item"));
+
+      // The last menu item should be Settings
+      const lastItem = menuItems[menuItems.length - 1];
+      expect(lastItem.textContent).toBe("Settings");
+    });
+
+    it("Settings is the last item in the mobile overflow menu even when optional items are absent", () => {
+      renderHeader({}, "mobile");
+      fireEvent.click(screen.getByTitle("More header actions"));
+
+      // Get the overflow menu items
+      const menu = screen.getByRole("menu");
+      const menuItems = Array.from(menu.querySelectorAll<HTMLButtonElement>("button[role='menuitem']"));
+
+      const lastItem = menuItems[menuItems.length - 1];
+      expect(lastItem.textContent).toBe("Settings");
+    });
+  });
 });

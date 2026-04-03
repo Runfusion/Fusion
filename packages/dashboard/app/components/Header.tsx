@@ -564,14 +564,6 @@ export function Header({
               <Clock size={16} />
               <span>Scheduled Tasks</span>
             </button>
-            <button
-              className="mobile-overflow-item"
-              onClick={() => handleOverflowAction(onOpenSettings)}
-              role="menuitem"
-            >
-              <Settings size={16} />
-              <span>Settings</span>
-            </button>
             {/* Activity Log - in overflow on mobile */}
             {onOpenActivityLog && (
               <button
@@ -620,6 +612,15 @@ export function Header({
                 <span>Missions</span>
               </button>
             )}
+            {/* Settings - always last in overflow menu */}
+            <button
+              className="mobile-overflow-item"
+              onClick={() => handleOverflowAction(onOpenSettings)}
+              role="menuitem"
+            >
+              <Settings size={16} />
+              <span>Settings</span>
+            </button>
           </div>
         )}
       </div>

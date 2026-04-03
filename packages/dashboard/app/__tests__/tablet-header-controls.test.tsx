@@ -370,4 +370,40 @@ describe("tablet header controls", () => {
       expect(screen.getByTestId("project-selector-trigger")).toBeDefined();
     });
   });
+
+  // ── Settings is the last overflow menu item ────────────────────
+
+  describe("overflow menu ordering on tablet", () => {
+    it("Settings is the last item in the tablet overflow menu when all optional items are present", () => {
+      const { container } = renderTabletHeader({
+        onOpenUsage: noop,
+        onOpenActivityLog: noop,
+        onOpenWorkflowSteps: noop,
+        onOpenMissions: noop,
+        onOpenFiles: noop,
+        onOpenGitManager: noop,
+      });
+
+      fireEvent.click(screen.getByTitle("More header actions"));
+
+      // Get all menu items inside the overflow menu
+      const menu = container.querySelector(".mobile-overflow-menu")!;
+      const menuItems = Array.from(menu.querySelectorAll<HTMLButtonElement>("button.mobile-overflow-item"));
+
+      // The last menu item should be Settings
+      const lastItem = menuItems[menuItems.length - 1];
+      expect(lastItem.textContent).toBe("Settings");
+    });
+
+    it("Settings is the last item in the tablet overflow menu when optional items are absent", () => {
+      renderTabletHeader();
+      fireEvent.click(screen.getByTitle("More header actions"));
+
+      const menu = screen.getByRole("menu");
+      const menuItems = Array.from(menu.querySelectorAll<HTMLButtonElement>("button[role='menuitem']"));
+
+      const lastItem = menuItems[menuItems.length - 1];
+      expect(lastItem.textContent).toBe("Settings");
+    });
+  });
 });
