@@ -18,13 +18,14 @@ vi.mock("../WorktreeGroup", () => ({
   WorktreeGroup: () => <div />,
 }));
 vi.mock("../QuickEntryBox", () => ({
-  QuickEntryBox: ({ favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite }: { favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void }) => (
+  QuickEntryBox: ({ favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, autoExpand }: { favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; autoExpand?: boolean }) => (
     <div
       data-testid="quick-entry-box"
       data-favorite-providers={JSON.stringify(favoriteProviders ?? [])}
       data-favorite-models={JSON.stringify(favoriteModels ?? [])}
       data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"}
       data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"}
+      data-auto-expand={autoExpand === false ? "false" : "true"}
     />
   ),
 }));
@@ -205,6 +206,13 @@ describe("Column QuickEntryBox", () => {
     const tasks = [makeTask("FN-001")];
     render(<Column {...defaultProps} tasks={tasks} column="todo" onQuickCreate={vi.fn()} />);
     expect(screen.queryByTestId("quick-entry-box")).toBeNull();
+  });
+
+  it("passes autoExpand={false} to QuickEntryBox in triage column (collapsed by default)", () => {
+    const tasks = [makeTask("FN-001")];
+    render(<Column {...defaultProps} tasks={tasks} onQuickCreate={vi.fn()} />);
+    const quickEntry = screen.getByTestId("quick-entry-box");
+    expect(quickEntry.getAttribute("data-auto-expand")).toBe("false");
   });
 });
 

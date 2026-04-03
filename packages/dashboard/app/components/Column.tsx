@@ -199,7 +199,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
               availableModels={availableModels}
               onPlanningMode={onPlanningMode}
               onSubtaskBreakdown={onSubtaskBreakdown}
-              autoExpand={true}
+              autoExpand={false}
               favoriteProviders={favoriteProviders}
               favoriteModels={favoriteModels}
               onToggleFavorite={onToggleFavorite}
