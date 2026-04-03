@@ -178,8 +178,31 @@ export function CustomModelDropdown({
     return optionsList.findIndex((opt) => opt.value === value);
   }, [optionsList, value]);
 
+  /**
+   * Get the effective visible viewport dimensions, preferring
+   * `window.visualViewport` when available (accounts for mobile virtual
+   * keyboards, pinch-zoom, etc.) and falling back to `window` dimensions.
+   */
+  const getEffectiveViewport = useCallback(() => {
+    const vv = window.visualViewport;
+    if (vv && vv.height > 0 && vv.width > 0) {
+      return {
+        width: vv.width,
+        height: vv.height,
+        offsetTop: vv.offsetTop,
+        offsetLeft: vv.offsetLeft,
+      };
+    }
+    return {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      offsetTop: 0,
+      offsetLeft: 0,
+    };
+  }, []);
+
   const getPreferredDropdownHeight = useCallback(() => {
-    const viewportHeight = window.innerHeight;
+    const { height: viewportHeight } = getEffectiveViewport();
     const supportsMatchMedia = typeof window.matchMedia === "function";
     const isSmallMobile = supportsMatchMedia ? window.matchMedia("(max-width: 640px)").matches : false;
     const isMobile = supportsMatchMedia ? window.matchMedia("(max-width: 768px)").matches : false;
@@ -192,23 +215,26 @@ export function CustomModelDropdown({
       return Math.min(viewportHeight * 0.7, 420);
     }
     return 320;
-  }, []);
+  }, [getEffectiveViewport]);
 
   const updateDropdownPosition = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger) return;
 
     const rect = trigger.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
+    const { width: viewportWidth, height: viewportHeight, offsetTop, offsetLeft } = getEffectiveViewport();
     const horizontalPadding = 16;
     const verticalPadding = 16;
     const gap = 4;
     const preferredHeight = getPreferredDropdownHeight();
 
-    // Calculate space below and above the trigger
-    const spaceBelow = viewportHeight - rect.bottom;
-    const spaceAbove = rect.top;
+    // Calculate space below and above the trigger, relative to the visible viewport.
+    // On mobile with a virtual keyboard, offsetTop/offsetLeft shift the origin.
+    const triggerBottom = rect.bottom - offsetTop;
+    const triggerTop = rect.top - offsetTop;
+    const triggerLeft = rect.left - offsetLeft;
+    const spaceBelow = viewportHeight - triggerBottom;
+    const spaceAbove = triggerTop;
     const availableBelow = Math.max(spaceBelow - verticalPadding - gap, 160);
     const availableAbove = Math.max(spaceAbove - verticalPadding - gap, 160);
 
@@ -223,12 +249,12 @@ export function CustomModelDropdown({
 
     const dropdownWidth = Math.min(rect.width, viewportWidth - horizontalPadding * 2);
     const left = Math.min(
-      Math.max(rect.left, horizontalPadding),
+      Math.max(triggerLeft, horizontalPadding),
       viewportWidth - horizontalPadding - dropdownWidth,
-    );
+    ) + offsetLeft;
     const top = openUpward
-      ? Math.max(verticalPadding, rect.top - maxHeight - gap)
-      : Math.min(rect.bottom + gap, viewportHeight - verticalPadding - maxHeight);
+      ? Math.max(verticalPadding + offsetTop, triggerTop - maxHeight - gap + offsetTop)
+      : Math.min(triggerBottom + gap + offsetTop, viewportHeight + offsetTop - verticalPadding - maxHeight);
 
     setDropdownPosition({
       top,
@@ -236,7 +262,7 @@ export function CustomModelDropdown({
       width: dropdownWidth,
       maxHeight,
     });
-  }, [getPreferredDropdownHeight]);
+  }, [getEffectiveViewport, getPreferredDropdownHeight]);
 
   useEffect(() => {
     setPortalRoot(document.body);
@@ -263,6 +289,8 @@ export function CustomModelDropdown({
   }, [isOpen, updateDropdownPosition]);
 
   // Keep portaled dropdown anchored during viewport and container scrolling.
+  // Also reposition when the visual viewport changes (mobile virtual keyboard,
+  // pinch-zoom, etc.).
   useEffect(() => {
     if (!isOpen) return;
 
@@ -271,9 +299,20 @@ export function CustomModelDropdown({
     window.addEventListener("resize", handleReposition);
     window.addEventListener("scroll", handleReposition, true);
 
+    // Listen for visual viewport changes (virtual keyboard open/close, zoom)
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener("resize", handleReposition);
+      vv.addEventListener("scroll", handleReposition);
+    }
+
     return () => {
       window.removeEventListener("resize", handleReposition);
       window.removeEventListener("scroll", handleReposition, true);
+      if (vv) {
+        vv.removeEventListener("resize", handleReposition);
+        vv.removeEventListener("scroll", handleReposition);
+      }
     };
   }, [isOpen, updateDropdownPosition]);
 

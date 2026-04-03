@@ -560,4 +560,417 @@ describe("CustomModelDropdown", () => {
     });
   });
 
+  describe("Mobile Visual Viewport Positioning", () => {
+    // Helper to mock getBoundingClientRect on Element.prototype
+    const setupBoundingRectMock = (rectValues: DOMRect) => {
+      const originalGetBCR = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = vi.fn(() => rectValues as DOMRect);
+      return () => {
+        Element.prototype.getBoundingClientRect = originalGetBCR;
+      };
+    };
+
+    /**
+     * Sets up a mock visualViewport on window.
+     * Returns cleanup function to restore the original state.
+     */
+    const setupVisualViewportMock = (vv: {
+      width: number;
+      height: number;
+      offsetTop: number;
+      offsetLeft: number;
+    }) => {
+      const listeners: Record<string, Array<() => void>> = {};
+      const mockVV = {
+        width: vv.width,
+        height: vv.height,
+        offsetTop: vv.offsetTop,
+        offsetLeft: vv.offsetLeft,
+        addEventListener: vi.fn((event: string, handler: () => void) => {
+          listeners[event] ??= [];
+          listeners[event].push(handler);
+        }),
+        removeEventListener: vi.fn((event: string, handler: () => void) => {
+          listeners[event] = (listeners[event] ?? []).filter((h) => h !== handler);
+        }),
+        dispatchEvent: vi.fn(),
+      };
+
+      const originalVV = window.visualViewport;
+      Object.defineProperty(window, "visualViewport", {
+        writable: true,
+        configurable: true,
+        value: mockVV,
+      });
+
+      return {
+        mockVV,
+        listeners,
+        /**
+         * Simulate a visual viewport change event (e.g. keyboard open/close).
+         * Updates the mock dimensions and fires all registered listeners.
+         */
+        simulateChange: (newVV: { width?: number; height?: number; offsetTop?: number; offsetLeft?: number }) => {
+          Object.assign(mockVV, {
+            width: newVV.width ?? mockVV.width,
+            height: newVV.height ?? mockVV.height,
+            offsetTop: newVV.offsetTop ?? mockVV.offsetTop,
+            offsetLeft: newVV.offsetLeft ?? mockVV.offsetLeft,
+          });
+          // Fire resize listeners (component subscribes to "resize" on visualViewport)
+          for (const handler of listeners["resize"] ?? []) {
+            handler();
+          }
+        },
+        cleanup: () => {
+          if (originalVV === undefined) {
+            Object.defineProperty(window, "visualViewport", {
+              writable: true,
+              configurable: true,
+              value: undefined,
+            });
+          } else {
+            Object.defineProperty(window, "visualViewport", {
+              writable: true,
+              configurable: true,
+              value: originalVV,
+            });
+          }
+        },
+      };
+    };
+
+    it("uses visualViewport dimensions for positioning when available", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      // Simulate a mobile phone with virtual keyboard open:
+      // window is 375×812, but visual viewport shrinks to 375×350
+      const { cleanup: vvCleanup } = setupVisualViewportMock({
+        width: 375,
+        height: 350,
+        offsetTop: 462, // 812 - 350 = 462 (keyboard pushed viewport up)
+        offsetLeft: 0,
+      });
+
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(812);
+      vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+        matches: query === "(max-width: 640px)" || query === "(max-width: 768px)",
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      } as MediaQueryList));
+
+      // Trigger button in the middle of the page at y=500
+      // In the visible viewport: triggerTop = 500 - 462 = 38, triggerBottom = 536 - 462 = 74
+      const restore = setupBoundingRectMock({
+        top: 500,
+        left: 20,
+        bottom: 536,
+        width: 335,
+        height: 36,
+        right: 355,
+        x: 20,
+        y: 500,
+      } as DOMRect);
+
+      try {
+        render(
+          <CustomModelDropdown
+            label="Executor Model"
+            value=""
+            onChange={onChange}
+            models={MOCK_MODELS}
+          />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Executor Model" }));
+
+        const portal = await screen.findByTestId("model-combobox-portal");
+        const top = parseFloat(portal.style.top);
+        const left = parseFloat(portal.style.left);
+        const maxHeight = parseFloat(portal.style.maxHeight);
+
+        // The dropdown should open downward from the trigger
+        // triggerBottom relative to viewport = 74, plus gap = 4, plus offsetTop = 462 → top = 540
+        expect(top).toBe(540);
+        // left = max(20 - 0, 16) + 0 = 20
+        expect(left).toBe(20);
+        // maxHeight capped by visual viewport height: min(350 - 74 - 16 - 4, 210) = min(256, 210) = 210
+        // (0.6 * 350 = 210)
+        expect(maxHeight).toBe(210);
+
+        // Verify the dropdown bottom (top + maxHeight) stays within visual viewport
+        const vvBottom = 462 + 350; // offsetTop + height = 812
+        expect(top + maxHeight).toBeLessThanOrEqual(vvBottom - 16);
+      } finally {
+        restore();
+        vvCleanup();
+      }
+    });
+
+    it("repositions when visual viewport changes (keyboard opens)", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      // Start with no keyboard: visual viewport = full window
+      const { simulateChange, cleanup: vvCleanup } = setupVisualViewportMock({
+        width: 375,
+        height: 667,
+        offsetTop: 0,
+        offsetLeft: 0,
+      });
+
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(667);
+      vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+        matches: query === "(max-width: 640px)" || query === "(max-width: 768px)",
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      } as MediaQueryList));
+
+      // Trigger at top area of viewport
+      const restore = setupBoundingRectMock({
+        top: 200,
+        left: 20,
+        bottom: 236,
+        width: 335,
+        height: 36,
+        right: 355,
+        x: 20,
+        y: 200,
+      } as DOMRect);
+
+      try {
+        render(
+          <CustomModelDropdown
+            label="Executor Model"
+            value=""
+            onChange={onChange}
+            models={MOCK_MODELS}
+          />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Executor Model" }));
+        const portal = await screen.findByTestId("model-combobox-portal");
+
+        const initialTop = parseFloat(portal.style.top);
+        const initialMaxHeight = parseFloat(portal.style.maxHeight);
+
+        // Now simulate keyboard opening: visual viewport shrinks to 250px, pushed up
+        await waitFor(() => {
+          simulateChange({
+            height: 250,
+            offsetTop: 417, // 667 - 250 = 417
+          });
+        });
+
+        // Wait for repositioning to take effect
+        await waitFor(() => {
+          const newTop = parseFloat(portal.style.top);
+          const newMaxHeight = parseFloat(portal.style.maxHeight);
+          // At least one value should have changed
+          expect(newTop !== initialTop || newMaxHeight !== initialMaxHeight).toBe(true);
+        });
+
+        // Verify the new position is within the shrunken visual viewport
+        const newTop = parseFloat(portal.style.top);
+        const newMaxHeight = parseFloat(portal.style.maxHeight);
+        const vvBottom = 417 + 250;
+        expect(newTop + newMaxHeight).toBeLessThanOrEqual(vvBottom + 1); // allow 1px for rounding
+        expect(newTop).toBeGreaterThanOrEqual(16 - 1); // minimum vertical padding
+      } finally {
+        restore();
+        vvCleanup();
+      }
+    });
+
+    it("clamps dropdown to stay within visual viewport on small mobile screen", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      // Small mobile: 320px wide, 568px tall viewport
+      const { cleanup: vvCleanup } = setupVisualViewportMock({
+        width: 320,
+        height: 568,
+        offsetTop: 0,
+        offsetLeft: 0,
+      });
+
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(320);
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(568);
+      vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+        matches: query === "(max-width: 640px)" || query === "(max-width: 768px)",
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      } as MediaQueryList));
+
+      // Trigger near right edge
+      const restore = setupBoundingRectMock({
+        top: 100,
+        left: 200,
+        bottom: 136,
+        width: 110,
+        height: 36,
+        right: 310,
+        x: 200,
+        y: 100,
+      } as DOMRect);
+
+      try {
+        render(
+          <CustomModelDropdown
+            label="Executor Model"
+            value=""
+            onChange={onChange}
+            models={MOCK_MODELS}
+          />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Executor Model" }));
+        const portal = await screen.findByTestId("model-combobox-portal");
+
+        const left = parseFloat(portal.style.left);
+        const width = parseFloat(portal.style.width);
+
+        // Dropdown must fit within viewport (320px) with 16px padding on each side
+        expect(left).toBeGreaterThanOrEqual(16);
+        expect(left + width).toBeLessThanOrEqual(320 - 16);
+      } finally {
+        restore();
+        vvCleanup();
+      }
+    });
+
+    it("falls back to window dimensions when visualViewport is unavailable", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      // Remove visualViewport to simulate older browsers
+      const originalVV = window.visualViewport;
+      Object.defineProperty(window, "visualViewport", {
+        writable: true,
+        configurable: true,
+        value: undefined,
+      });
+
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(667);
+      vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+        matches: query === "(max-width: 640px)" || query === "(max-width: 768px)",
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      } as MediaQueryList));
+
+      const restore = setupBoundingRectMock({
+        top: 100,
+        left: 50,
+        bottom: 136,
+        width: 300,
+        height: 36,
+        right: 350,
+        x: 50,
+        y: 100,
+      } as DOMRect);
+
+      try {
+        render(
+          <CustomModelDropdown
+            label="Executor Model"
+            value=""
+            onChange={onChange}
+            models={MOCK_MODELS}
+          />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Executor Model" }));
+        const portal = await screen.findByTestId("model-combobox-portal");
+
+        // Should still render and be positioned correctly using window dimensions
+        const top = parseFloat(portal.style.top);
+        const left = parseFloat(portal.style.left);
+        const maxHeight = parseFloat(portal.style.maxHeight);
+
+        expect(top).toBe(140); // rect.bottom + gap = 136 + 4
+        expect(left).toBe(50); // trigger left
+        expect(maxHeight).toBeGreaterThan(0);
+
+        // Must stay within window bounds
+        expect(top).toBeGreaterThanOrEqual(16);
+        expect(top + maxHeight).toBeLessThanOrEqual(667 - 16);
+      } finally {
+        restore();
+        Object.defineProperty(window, "visualViewport", {
+          writable: true,
+          configurable: true,
+          value: originalVV,
+        });
+      }
+    });
+
+    it("subscribes to visualViewport resize events when available", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      const { mockVV, cleanup: vvCleanup } = setupVisualViewportMock({
+        width: 375,
+        height: 667,
+        offsetTop: 0,
+        offsetLeft: 0,
+      });
+
+      const restore = setupBoundingRectMock({
+        top: 100,
+        left: 50,
+        bottom: 136,
+        width: 300,
+        height: 36,
+        right: 350,
+        x: 50,
+        y: 100,
+      } as DOMRect);
+
+      try {
+        render(
+          <CustomModelDropdown
+            label="Executor Model"
+            value=""
+            onChange={onChange}
+            models={MOCK_MODELS}
+          />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Executor Model" }));
+        await screen.findByTestId("model-combobox-portal");
+
+        // Verify that visualViewport.addEventListener was called for "resize" and "scroll"
+        expect(mockVV.addEventListener).toHaveBeenCalledWith("resize", expect.any(Function));
+        expect(mockVV.addEventListener).toHaveBeenCalledWith("scroll", expect.any(Function));
+      } finally {
+        restore();
+        vvCleanup();
+      }
+    });
+  });
+
 });
