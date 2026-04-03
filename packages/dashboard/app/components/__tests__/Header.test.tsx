@@ -643,20 +643,6 @@ describe("Header", () => {
       expect(screen.queryByTestId("overflow-project-selector-btn")).toBeNull();
     });
 
-    it("shows agents button in overflow menu on mobile when onOpenAgents provided", () => {
-      render(<Header onOpenSettings={vi.fn()} onOpenAgents={vi.fn()} />);
-      fireEvent.click(screen.getByTitle("More header actions"));
-      expect(screen.getByText("Manage Agents")).toBeDefined();
-    });
-
-    it("agents overflow menu item calls onOpenAgents when clicked", () => {
-      const onOpenAgents = vi.fn();
-      render(<Header onOpenSettings={vi.fn()} onOpenAgents={onOpenAgents} />);
-      fireEvent.click(screen.getByTitle("More header actions"));
-      fireEvent.click(screen.getByText("Manage Agents"));
-      expect(onOpenAgents).toHaveBeenCalledOnce();
-    });
-
     it("missions overflow menu item calls onOpenMissions when clicked", () => {
       const onOpenMissions = vi.fn();
       render(<Header onOpenSettings={vi.fn()} onOpenMissions={onOpenMissions} />);
@@ -680,36 +666,6 @@ describe("Header", () => {
       fireEvent.click(screen.getByText("Scripts"));
       expect(onOpenScripts).toHaveBeenCalledOnce();
     });
-  });
-
-  // ── Agents Button ────────────────────────────────────────────────
-
-  it("renders agents button with correct title on desktop", () => {
-    const onOpenAgents = vi.fn();
-    render(<Header onOpenAgents={onOpenAgents} />);
-    const btn = screen.getByTitle("Manage Agents");
-    expect(btn).toBeDefined();
-  });
-
-  it("calls onOpenAgents when agents button is clicked", () => {
-    const onOpenAgents = vi.fn();
-    render(<Header onOpenAgents={onOpenAgents} />);
-    const btn = screen.getByTitle("Manage Agents");
-    fireEvent.click(btn);
-    expect(onOpenAgents).toHaveBeenCalledOnce();
-  });
-
-  it("does not render agents button when onOpenAgents is not provided", () => {
-    render(<Header />);
-    const btn = screen.queryByTitle("Manage Agents");
-    expect(btn).toBeNull();
-  });
-
-  it("agents button has correct data-testid", () => {
-    const onOpenAgents = vi.fn();
-    render(<Header onOpenAgents={onOpenAgents} />);
-    const btn = screen.getByTestId("agents-btn");
-    expect(btn).toBeDefined();
   });
 
   // ── Multi-Project Selector ────────────────────────────────────

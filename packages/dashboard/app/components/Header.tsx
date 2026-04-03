@@ -29,7 +29,6 @@ export interface HeaderProps {
   onOpenGitManager?: () => void;
   onOpenWorkflowSteps?: () => void;
   onOpenMissions?: () => void;
-  onOpenAgents?: () => void;
   onOpenScripts?: () => void;
   onRunScript?: (name: string, command: string) => void;
   onToggleTerminal?: () => void;
@@ -79,7 +78,6 @@ export function Header({
   onOpenGitManager,
   onOpenWorkflowSteps,
   onOpenMissions,
-  onOpenAgents,
   onOpenScripts,
   onRunScript,
   onToggleTerminal,
@@ -401,18 +399,6 @@ export function Header({
           </button>
         )}
 
-        {/* Agents - desktop only */}
-        {!isMobile && onOpenAgents && (
-          <button
-            className="btn-icon"
-            onClick={onOpenAgents}
-            title="Manage Agents"
-            data-testid="agents-btn"
-          >
-            <Bot size={16} />
-          </button>
-        )}
-
         {/* Scripts - desktop only */}
         {!isMobile && onOpenScripts && onRunScript && (
           <QuickScriptsDropdown
@@ -524,18 +510,6 @@ export function Header({
               <GitHubLogo size={16} />
               <span>Import from GitHub</span>
             </button>
-            {/* Agents - in overflow on mobile */}
-            {onOpenAgents && (
-              <button
-                className="mobile-overflow-item"
-                onClick={() => handleOverflowAction(onOpenAgents)}
-                role="menuitem"
-                data-testid="overflow-agents-btn"
-              >
-                <Bot size={16} />
-                <span>Manage Agents</span>
-              </button>
-            )}
             {onOpenScripts && (
               <button
                 className="mobile-overflow-item"

@@ -412,7 +412,6 @@ function AppInner() {
   const handleCloseGitManager = useCallback(() => setGitManagerOpen(false), []);
 
   // Agent handlers
-  const handleOpenAgents = useCallback(() => setAgentsOpen(true), []);
   const handleCloseAgents = useCallback(() => setAgentsOpen(false), []);
 
   // Scripts handlers
@@ -508,7 +507,6 @@ function AppInner() {
         onOpenGitManager={handleOpenGitManager}
         onOpenWorkflowSteps={() => setWorkflowStepsOpen(true)}
         onOpenMissions={viewMode === "project" && currentProject ? () => setMissionsOpen(true) : undefined}
-        onOpenAgents={viewMode === "project" && currentProject ? handleOpenAgents : undefined}
         onOpenScripts={handleOpenScripts}
         onRunScript={handleRunScript}
         onToggleTerminal={handleToggleTerminal}
