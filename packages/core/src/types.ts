@@ -569,6 +569,14 @@ export interface GlobalSettings {
    *  Must be set together with `defaultProvider`. When both are undefined,
    *  the engine uses pi's automatic model resolution. */
   defaultModelId?: string;
+  /** Fallback AI model provider used when the primary default model fails due to
+   *  transient provider-side issues such as rate limits or overloaded capacity.
+   *  Must be set together with `fallbackModelId`. */
+  fallbackProvider?: string;
+  /** Fallback AI model ID used with `fallbackProvider` when the primary default
+   *  model fails due to transient provider-side issues such as rate limits or
+   *  overloaded capacity. Must be set together with `fallbackProvider`. */
+  fallbackModelId?: string;
   /** Default thinking effort level for AI agent sessions.
    *  Controls how much reasoning effort the model uses — higher levels
    *  produce better results but cost more. When undefined, the engine
@@ -676,6 +684,12 @@ export interface ProjectSettings {
    *  Must be set together with `planningProvider`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */
   planningModelId?: string;
+  /** Fallback model provider for planning/triage. When unset, falls back to the
+   *  global fallback model. Must be set together with `planningFallbackModelId`. */
+  planningFallbackProvider?: string;
+  /** Fallback model ID for planning/triage. When unset, falls back to the
+   *  global fallback model. Must be set together with `planningFallbackProvider`. */
+  planningFallbackModelId?: string;
   /** AI model provider for validator/reviewer agent.
    *  Must be set together with `validatorModelId`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */
@@ -684,6 +698,13 @@ export interface ProjectSettings {
    *  Must be set together with `validatorProvider`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */
   validatorModelId?: string;
+  /** Fallback model provider for validator/reviewer. When unset, falls back to
+   *  the global fallback model. Must be set together with
+   *  `validatorFallbackModelId`. */
+  validatorFallbackProvider?: string;
+  /** Fallback model ID for validator/reviewer. When unset, falls back to the
+   *  global fallback model. Must be set together with `validatorFallbackProvider`. */
+  validatorFallbackModelId?: string;
   /** Reusable model configuration presets for task creation. */
   modelPresets?: ModelPreset[];
   /** When true, task creation UIs automatically recommend/apply a preset based on task size. */
@@ -735,6 +756,14 @@ export interface ProjectSettings {
    *  Must be set together with `titleSummarizerProvider`. Falls back to planningModelId,
    *  then defaultModelId if not specified. */
   titleSummarizerModelId?: string;
+  /** Fallback model provider for title summarization. When unset, falls back to
+   *  planning fallback, then global fallback. Must be set together with
+   *  `titleSummarizerFallbackModelId`. */
+  titleSummarizerFallbackProvider?: string;
+  /** Fallback model ID for title summarization. When unset, falls back to
+   *  planning fallback, then global fallback. Must be set together with
+   *  `titleSummarizerFallbackProvider`. */
+  titleSummarizerFallbackModelId?: string;
   /** Named scripts that can be referenced by setupScript or other automation.
    *  A map of script name to shell command. */
   scripts?: Record<string, string>;
@@ -767,6 +796,8 @@ export const DEFAULT_GLOBAL_SETTINGS: Required<Pick<GlobalSettings, "themeMode" 
   colorTheme: "default",
   defaultProvider: undefined,
   defaultModelId: undefined,
+  fallbackProvider: undefined,
+  fallbackModelId: undefined,
   defaultThinkingLevel: undefined,
   ntfyEnabled: false,
   ntfyTopic: undefined,
@@ -790,8 +821,12 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   includeTaskIdInCommit: true,
   planningProvider: undefined,
   planningModelId: undefined,
+  planningFallbackProvider: undefined,
+  planningFallbackModelId: undefined,
   validatorProvider: undefined,
   validatorModelId: undefined,
+  validatorFallbackProvider: undefined,
+  validatorFallbackModelId: undefined,
   modelPresets: [],
   autoSelectModelPreset: false,
   defaultPresetBySize: {},
@@ -808,6 +843,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   autoSummarizeTitles: false,
   titleSummarizerProvider: undefined,
   titleSummarizerModelId: undefined,
+  titleSummarizerFallbackProvider: undefined,
+  titleSummarizerFallbackModelId: undefined,
 };
 
 /**
@@ -826,6 +863,8 @@ export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<keyof GlobalSettings> = [
   "colorTheme",
   "defaultProvider",
   "defaultModelId",
+  "fallbackProvider",
+  "fallbackModelId",
   "defaultThinkingLevel",
   "ntfyEnabled",
   "ntfyTopic",
@@ -852,8 +891,12 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "includeTaskIdInCommit",
   "planningProvider",
   "planningModelId",
+  "planningFallbackProvider",
+  "planningFallbackModelId",
   "validatorProvider",
   "validatorModelId",
+  "validatorFallbackProvider",
+  "validatorFallbackModelId",
   "modelPresets",
   "autoSelectModelPreset",
   "defaultPresetBySize",
@@ -870,6 +913,8 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "autoSummarizeTitles",
   "titleSummarizerProvider",
   "titleSummarizerModelId",
+  "titleSummarizerFallbackProvider",
+  "titleSummarizerFallbackModelId",
 ] as const;
 
 export interface BoardConfig {

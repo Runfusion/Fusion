@@ -3,6 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("./pi.js", () => ({
   createKbAgent: vi.fn(),
   describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
+  promptWithFallback: vi.fn(async (session, prompt, options) => {
+    if (options === undefined) {
+      await session.prompt(prompt);
+    } else {
+      await session.prompt(prompt, options);
+    }
+  }),
 }));
 
 import { reviewStep } from "./reviewer.js";

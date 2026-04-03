@@ -3,6 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock external dependencies
 vi.mock("./pi.js", () => ({
   createKbAgent: vi.fn(),
+  promptWithFallback: vi.fn(async (session, prompt, options) => {
+    if (options === undefined) {
+      await session.prompt(prompt);
+    } else {
+      await session.prompt(prompt, options);
+    }
+  }),
 }));
 
 vi.mock("node:child_process", () => ({

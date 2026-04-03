@@ -112,62 +112,104 @@ describe("build-exe", () => {
       });
       
       // Wait for server to be ready
+      let startupOutput = "";
+      let sqliteUnsupported = false;
       await new Promise<void>((resolve, reject) => {
-        let output = "";
         const timeout = setTimeout(() => {
           child!.kill("SIGTERM");
-          reject(new Error("Server startup timeout"));
+          reject(new Error(`Server startup timeout\n${startupOutput}`));
         }, 10_000);
-        
-        child!.stdout.on("data", (d: Buffer) => {
-          output += d.toString();
-          if (output.includes("kb board") && output.includes(`→ http://localhost:${port}`)) {
+
+        const onStdout = (d: Buffer) => {
+          startupOutput += d.toString();
+          if (startupOutput.includes("kb board") && startupOutput.includes(`→ http://localhost:${port}`)) {
             clearTimeout(timeout);
             resolve();
           }
-        });
-        
-        child!.stderr.on("data", (d: Buffer) => {
-          output += d.toString();
-          if (output.includes("No such built-in module: node:sqlite")) {
+        };
+
+        const onStderr = (d: Buffer) => {
+          startupOutput += d.toString();
+          if (startupOutput.includes("No such built-in module: node:sqlite")) {
+            sqliteUnsupported = true;
             clearTimeout(timeout);
             child!.kill("SIGTERM");
             resolve();
           }
-        });
+        };
 
-        child!.on("error", reject);
-        child!.on("exit", () => {
-          if (output.includes("No such built-in module: node:sqlite")) {
+        if (!child) {
+          clearTimeout(timeout);
+          reject(new Error("Dashboard process failed to start"));
+          return;
+        }
+
+        if (!child.stdout || !child.stderr) {
+          clearTimeout(timeout);
+          reject(new Error("Dashboard process stdio was not piped"));
+          return;
+        }
+
+        child.stdout.on("data", onStdout);
+        child.stderr.on("data", onStderr);
+
+        child.on("error", reject);
+        child.on("exit", () => {
+          if (startupOutput.includes("No such built-in module: node:sqlite")) {
+            sqliteUnsupported = true;
             clearTimeout(timeout);
             resolve();
+            return;
+          }
+          if (!startupOutput.includes("kb board")) {
+            clearTimeout(timeout);
+            reject(new Error(`Dashboard exited before becoming ready\n${startupOutput}`));
           }
         });
       });
 
-      if (child.exitCode !== null) {
+      if (sqliteUnsupported || child.exitCode !== null) {
         return;
       }
       
       // Test PTY session creation endpoint
-      let response: Response;
-      try {
-        response = await fetch(`http://localhost:${port}/api/terminal/sessions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cols: 80, rows: 24 }),
-        });
-      } catch (error) {
-        const err = error as NodeJS.ErrnoException & { cause?: NodeJS.ErrnoException & { errors?: NodeJS.ErrnoException[] } };
-        const codes = [
-          err.code,
-          err.cause?.code,
-          ...(err.cause?.errors?.map((nested) => nested.code) ?? []),
-        ];
-        if (codes.includes("EPERM")) {
-          return;
+      let response: Response | undefined;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          response = await fetch(`http://localhost:${port}/api/terminal/sessions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cols: 80, rows: 24 }),
+          });
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+          const err = error as NodeJS.ErrnoException & { cause?: NodeJS.ErrnoException & { errors?: NodeJS.ErrnoException[] } };
+          const codes = [
+            err.code,
+            err.cause?.code,
+            ...(err.cause?.errors?.map((nested) => nested.code) ?? []),
+          ];
+          if (codes.includes("EPERM")) {
+            return;
+          }
+          if (!codes.includes("ECONNREFUSED")) {
+            throw new Error(`PTY endpoint request failed after startup\n${startupOutput}\n${String(error)}`);
+          }
+          if (child?.exitCode !== null) {
+            throw new Error(`Dashboard exited before PTY endpoint became available\n${startupOutput}`);
+          }
+          await new Promise((r) => setTimeout(r, 100));
         }
-        throw error;
+      }
+
+      if (lastError) {
+        throw lastError;
+      }
+      if (!response) {
+        throw new Error(`PTY endpoint did not respond after retries\n${startupOutput}`);
       }
       
       // Accept either success (201) or service unavailable (503 when PTY not available)

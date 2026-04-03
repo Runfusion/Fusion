@@ -77,6 +77,9 @@ function normalizeListenArgsForTests(args: unknown[]): unknown[] {
 
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
   const app = express();
+  const mutationRateLimit = rateLimit(RATE_LIMITS.mutation);
+  const setupRateLimit = rateLimit(RATE_LIMITS.api);
+  const setupReadRateLimit = rateLimit(RATE_LIMITS.api);
 
   // Raw body buffer for webhook signature verification - must be before express.json()
   // Only applied to the webhook route
@@ -227,8 +230,40 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     });
   });
 
-  // Rate limiting — mutation endpoints (POST/PUT/PATCH/DELETE)
-  app.use("/api", rateLimit(RATE_LIMITS.api));
+  // Rate limiting — avoid throttling normal dashboard reads, which are often
+  // driven by polling, but keep targeted limits for setup flows, writes, and SSE.
+  app.use("/api", (req, res, next) => {
+    const isSetupRead =
+      req.method === "GET" && (
+        req.path === "/browse-directory" ||
+        req.path === "/setup-state" ||
+        req.path === "/first-run-status"
+      );
+
+    const isSetupMutation =
+      req.method === "POST" && (
+        req.path === "/projects" ||
+        req.path === "/projects/detect" ||
+        req.path === "/complete-setup"
+      );
+
+    if (isSetupRead) {
+      setupReadRateLimit(req, res, next);
+      return;
+    }
+
+    if (isSetupMutation) {
+      setupRateLimit(req, res, next);
+      return;
+    }
+
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
+      mutationRateLimit(req, res, next);
+      return;
+    }
+
+    next();
+  });
 
   // Planning route diagnostics for production/runtime debugging. Disabled by default.
   if (process.env.FUSION_DEBUG_PLANNING_ROUTES === "1") {

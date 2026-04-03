@@ -17,6 +17,13 @@ import { AgentSemaphore } from "./concurrency.js";
 vi.mock("./pi.js", () => ({
   createKbAgent: vi.fn(),
   describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
+  promptWithFallback: vi.fn(async (session, prompt, options) => {
+    if (options === undefined) {
+      await session.prompt(prompt);
+    } else {
+      await session.prompt(prompt, options);
+    }
+  }),
 }));
 vi.mock("./reviewer.js", () => ({
   reviewStep: vi.fn(),

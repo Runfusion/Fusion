@@ -413,6 +413,26 @@ describe("SettingsModal", () => {
     expect(globalPayload.defaultModelId).toBe("claude-sonnet-4-5");
   });
 
+  it("saving in Models section updates global fallback model", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Models"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    const trigger = screen.getByLabelText("Fallback Model");
+    await user.click(trigger);
+    await user.click(screen.getByText("GPT-4o"));
+
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+    const globalPayload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(globalPayload.fallbackProvider).toBe("openai");
+    expect(globalPayload.fallbackModelId).toBe("gpt-4o");
+  });
+
   it("stores favoriteModels from fetchModels response", async () => {
     (fetchModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       models: [
@@ -459,6 +479,32 @@ describe("SettingsModal", () => {
     expect(projectPayload.planningModelId).toBe("claude-sonnet-4-5");
     expect(projectPayload.validatorProvider).toBe("openai");
     expect(projectPayload.validatorModelId).toBe("gpt-4o");
+  });
+
+  it("saving in Models section updates planning and validator fallback models", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Models"));
+    await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+
+    const planningFallbackTrigger = screen.getByLabelText("Planning Fallback Model");
+    await user.click(planningFallbackTrigger);
+    await user.click(screen.getByText("Claude Sonnet 4.5"));
+
+    const validatorFallbackTrigger = screen.getByLabelText("Validator Fallback Model");
+    await user.click(validatorFallbackTrigger);
+    await user.click(screen.getByText("GPT-4o"));
+
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+    const projectPayload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(projectPayload.planningFallbackProvider).toBe("anthropic");
+    expect(projectPayload.planningFallbackModelId).toBe("claude-sonnet-4-5");
+    expect(projectPayload.validatorFallbackProvider).toBe("openai");
+    expect(projectPayload.validatorFallbackModelId).toBe("gpt-4o");
   });
 
   it("shows Models in sidebar", async () => {

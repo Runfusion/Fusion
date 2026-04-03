@@ -5,7 +5,7 @@ import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, M
 import { findWorktreeUser } from "./merger.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
-import { createKbAgent, describeModel } from "./pi.js";
+import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import type { ToolDefinition, AgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
@@ -578,6 +578,8 @@ export class TaskExecutor {
         const executorModelId = detail.modelProvider && detail.modelId
           ? detail.modelId
           : settings.defaultModelId;
+        const executorFallbackProvider = settings.fallbackProvider;
+        const executorFallbackModelId = settings.fallbackModelId;
 
         const { session } = await createKbAgent({
           cwd: worktreePath,
@@ -590,6 +592,8 @@ export class TaskExecutor {
           onToolEnd: agentLogger.onToolEnd,
           defaultProvider: executorProvider,
           defaultModelId: executorModelId,
+          fallbackProvider: executorFallbackProvider,
+          fallbackModelId: executorFallbackModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,
         });
 
@@ -616,7 +620,7 @@ export class TaskExecutor {
           const agentPrompt = buildExecutionPrompt(detail, this.rootDir, settings);
           // Record activity on prompt start (heartbeat for stuck detection)
           stuckDetector?.recordActivity(task.id);
-          await session.prompt(agentPrompt);
+          await promptWithFallback(session, agentPrompt);
 
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           // session.prompt() resolves normally even when retries are exhausted —
@@ -1014,10 +1018,14 @@ export class TaskExecutor {
               onText: (delta) => options.onAgentText?.(taskId, delta),
               defaultProvider: settings.defaultProvider,
               defaultModelId: settings.defaultModelId,
+              fallbackProvider: settings.fallbackProvider,
+              fallbackModelId: settings.fallbackModelId,
               defaultThinkingLevel: settings.defaultThinkingLevel,
               // Per-task validator overrides take precedence over global validator settings
               validatorModelProvider: detail.validatorModelProvider ?? settings.validatorProvider,
               validatorModelId: detail.validatorModelId ?? settings.validatorModelId,
+              validatorFallbackModelProvider: settings.validatorFallbackProvider,
+              validatorFallbackModelId: settings.validatorFallbackModelId,
               store,
               taskId,
             },
@@ -1369,6 +1377,8 @@ If issues are found that need attention, describe them clearly.`;
         tools: "readonly",
         defaultProvider: settings.defaultProvider,
         defaultModelId: settings.defaultModelId,
+        fallbackProvider: settings.fallbackProvider,
+        fallbackModelId: settings.fallbackModelId,
         defaultThinkingLevel: settings.defaultThinkingLevel,
       });
 
@@ -1394,7 +1404,8 @@ If issues are found that need attention, describe them clearly.`;
         }
       });
 
-      await session.prompt(
+      await promptWithFallback(
+        session,
         `Execute the workflow step "${workflowStep.name}" for task ${task.id}.\n\n` +
         `Review the work done in this worktree and evaluate it against the criteria in your instructions.`,
       );

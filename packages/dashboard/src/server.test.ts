@@ -160,4 +160,87 @@ describe("API Error Handling Middleware", () => {
       expect(res.body).toEqual({ error: "Not found" });
     });
   });
+
+  describe("API rate limiting", () => {
+    it("does not rate limit general dashboard reads", async () => {
+      const app = createServer(store);
+
+      for (let i = 0; i < 150; i++) {
+        const res = await GET(app, `/api/nonexistent-read-${i}`);
+        expect(res.status).toBe(404);
+      }
+
+      const trailingReadRes = await GET(app, "/api/nonexistent-read-final");
+      expect(trailingReadRes.status).toBe(404);
+    });
+
+    it("allows setup reads after the general read budget is exhausted", async () => {
+      const app = createServer(store);
+
+      for (let i = 0; i < 150; i++) {
+        const res = await GET(app, `/api/nonexistent-read-${i}`);
+        expect(res.status).toBe(404);
+      }
+
+      const browseRes = await GET(app, "/api/browse-directory");
+
+      expect(browseRes.status).toBe(200);
+      expect(browseRes.body).toHaveProperty("currentPath");
+      expect(browseRes.body).toHaveProperty("entries");
+    });
+
+    it("still enforces the mutation rate-limit budget independently", async () => {
+      const app = createServer(store);
+
+      for (let i = 0; i < 30; i++) {
+        const res = await REQUEST(
+          app,
+          "POST",
+          "/api/planning/not-a-route",
+          JSON.stringify({}),
+          { "Content-Type": "application/json" },
+        );
+        expect(res.status).toBe(404);
+      }
+
+      const limitedRes = await REQUEST(
+        app,
+        "POST",
+        "/api/planning/not-a-route",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(limitedRes.status).toBe(429);
+      expect(limitedRes.body).toEqual({ error: "Too many requests, please try again later." });
+    });
+
+    it("allows project setup mutations after the general mutation budget is exhausted", async () => {
+      const app = createServer(store);
+
+      for (let i = 0; i < 30; i++) {
+        const res = await REQUEST(
+          app,
+          "POST",
+          "/api/planning/not-a-route",
+          JSON.stringify({}),
+          { "Content-Type": "application/json" },
+        );
+        expect(res.status).toBe(404);
+      }
+
+      const createProjectRes = await REQUEST(
+        app,
+        "POST",
+        "/api/projects",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(createProjectRes.status).toBe(400);
+      expect(createProjectRes.body).toEqual({
+        error: "name is required and must be a non-empty string",
+      });
+    });
+  });
 });

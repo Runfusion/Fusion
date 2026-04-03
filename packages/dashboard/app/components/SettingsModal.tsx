@@ -554,33 +554,63 @@ export function SettingsModal({
                 No models available. Configure authentication first.
               </div>
             ) : (
-              <div className="form-group">
-                <label htmlFor="defaultModel">Default Model</label>
-                <CustomModelDropdown
-                  id="defaultModel"
-                  label="Default Model"
-                  models={availableModels}
-                  value={selectedValue}
-                  onChange={(val) => {
-                    if (!val) {
-                      setForm((f) => ({ ...f, defaultProvider: undefined, defaultModelId: undefined }));
-                    } else {
-                      const slashIdx = val.indexOf("/");
-                      setForm((f) => ({
-                        ...f,
-                        defaultProvider: val.slice(0, slashIdx),
-                        defaultModelId: val.slice(slashIdx + 1),
-                      }));
-                    }
-                  }}
-                  placeholder="Use default"
-                  favoriteProviders={favoriteProviders}
-                  onToggleFavorite={handleToggleFavorite}
-                  favoriteModels={favoriteModels}
-                  onToggleModelFavorite={handleToggleModelFavorite}
-                />
-                <small>Default AI model used for task execution when no per-task override is set. &quot;Use default&quot; lets the engine choose automatically.</small>
-              </div>
+              <>
+                <div className="form-group">
+                  <label htmlFor="defaultModel">Default Model</label>
+                  <CustomModelDropdown
+                    id="defaultModel"
+                    label="Default Model"
+                    models={availableModels}
+                    value={selectedValue}
+                    onChange={(val) => {
+                      if (!val) {
+                        setForm((f) => ({ ...f, defaultProvider: undefined, defaultModelId: undefined }));
+                      } else {
+                        const slashIdx = val.indexOf("/");
+                        setForm((f) => ({
+                          ...f,
+                          defaultProvider: val.slice(0, slashIdx),
+                          defaultModelId: val.slice(slashIdx + 1),
+                        }));
+                      }
+                    }}
+                    placeholder="Use default"
+                    favoriteProviders={favoriteProviders}
+                    onToggleFavorite={handleToggleFavorite}
+                    favoriteModels={favoriteModels}
+                    onToggleModelFavorite={handleToggleModelFavorite}
+                  />
+                  <small>Default AI model used for task execution when no per-task override is set. &quot;Use default&quot; lets the engine choose automatically.</small>
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="fallbackModel">Fallback Model</label>
+                  <CustomModelDropdown
+                    id="fallbackModel"
+                    label="Fallback Model"
+                    models={availableModels}
+                    value={form.fallbackProvider && form.fallbackModelId ? `${form.fallbackProvider}/${form.fallbackModelId}` : ""}
+                    onChange={(val) => {
+                      if (!val) {
+                        setForm((f) => ({ ...f, fallbackProvider: undefined, fallbackModelId: undefined }));
+                      } else {
+                        const slashIdx = val.indexOf("/");
+                        setForm((f) => ({
+                          ...f,
+                          fallbackProvider: val.slice(0, slashIdx),
+                          fallbackModelId: val.slice(slashIdx + 1),
+                        }));
+                      }
+                    }}
+                    placeholder="No fallback"
+                    favoriteProviders={favoriteProviders}
+                    onToggleFavorite={handleToggleFavorite}
+                    favoriteModels={favoriteModels}
+                    onToggleModelFavorite={handleToggleModelFavorite}
+                  />
+                  <small>Used automatically if the primary default model hits a retryable provider error like rate limiting or overload.</small>
+                </div>
+              </>
             )}
             {(() => {
               const selectedModel = availableModels.find(
@@ -648,6 +678,33 @@ export function SettingsModal({
                   <small>AI model used for task planning and specification (triage). Falls back to Default Model when not set.</small>
                 </div>
                 <div className="form-group">
+                  <label htmlFor="planningFallbackModel">Planning Fallback Model</label>
+                  <CustomModelDropdown
+                    id="planningFallbackModel"
+                    label="Planning Fallback Model"
+                    models={availableModels}
+                    value={form.planningFallbackProvider && form.planningFallbackModelId ? `${form.planningFallbackProvider}/${form.planningFallbackModelId}` : ""}
+                    onChange={(val) => {
+                      if (!val) {
+                        setForm((f) => ({ ...f, planningFallbackProvider: undefined, planningFallbackModelId: undefined }));
+                      } else {
+                        const slashIdx = val.indexOf("/");
+                        setForm((f) => ({
+                          ...f,
+                          planningFallbackProvider: val.slice(0, slashIdx),
+                          planningFallbackModelId: val.slice(slashIdx + 1),
+                        }));
+                      }
+                    }}
+                    placeholder="Use global fallback"
+                    favoriteProviders={favoriteProviders}
+                    onToggleFavorite={handleToggleFavorite}
+                    favoriteModels={favoriteModels}
+                    onToggleModelFavorite={handleToggleModelFavorite}
+                  />
+                  <small>Used if the planning model fails due to rate limits or provider overload. Defaults to the global fallback model.</small>
+                </div>
+                <div className="form-group">
                   <label htmlFor="validatorModel">Validator Model</label>
                   <CustomModelDropdown
                     id="validatorModel"
@@ -673,6 +730,33 @@ export function SettingsModal({
                     onToggleModelFavorite={handleToggleModelFavorite}
                   />
                   <small>AI model used for code and specification review. Falls back to Default Model when not set.</small>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="validatorFallbackModel">Validator Fallback Model</label>
+                  <CustomModelDropdown
+                    id="validatorFallbackModel"
+                    label="Validator Fallback Model"
+                    models={availableModels}
+                    value={form.validatorFallbackProvider && form.validatorFallbackModelId ? `${form.validatorFallbackProvider}/${form.validatorFallbackModelId}` : ""}
+                    onChange={(val) => {
+                      if (!val) {
+                        setForm((f) => ({ ...f, validatorFallbackProvider: undefined, validatorFallbackModelId: undefined }));
+                      } else {
+                        const slashIdx = val.indexOf("/");
+                        setForm((f) => ({
+                          ...f,
+                          validatorFallbackProvider: val.slice(0, slashIdx),
+                          validatorFallbackModelId: val.slice(slashIdx + 1),
+                        }));
+                      }
+                    }}
+                    placeholder="Use global fallback"
+                    favoriteProviders={favoriteProviders}
+                    onToggleFavorite={handleToggleFavorite}
+                    favoriteModels={favoriteModels}
+                    onToggleModelFavorite={handleToggleModelFavorite}
+                  />
+                  <small>Used if the validator model fails due to rate limits or provider overload. Defaults to the global fallback model.</small>
                 </div>
               </>
             )}

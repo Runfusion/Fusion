@@ -96,7 +96,7 @@ export function SetupWizardModal({
         {/* Header */}
         <div className="setup-wizard-header">
           <h2 id="wizard-title" className="setup-wizard-title">
-            {state.step === "manual" && "Welcome to kb"}
+            {state.step === "manual" && "Welcome to Fusion"}
             {state.step === "complete" && "Setup Complete!"}
           </h2>
           {state.step !== "complete" && (

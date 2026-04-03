@@ -11,7 +11,7 @@ import type {
   ToolDefinition,
   AgentSession,
 } from "@mariozechner/pi-coding-agent";
-import { createKbAgent, describeModel } from "./pi.js";
+import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { PRIORITY_SPECIFY, type AgentSemaphore } from "./concurrency.js";
 import { AgentLogger } from "./agent-logger.js";
@@ -474,6 +474,12 @@ export class TriageProcessor {
           defaultModelId: settings.planningProvider && settings.planningModelId
             ? settings.planningModelId
             : settings.defaultModelId,
+          fallbackProvider: settings.planningFallbackProvider && settings.planningFallbackModelId
+            ? settings.planningFallbackProvider
+            : settings.fallbackProvider,
+          fallbackModelId: settings.planningFallbackProvider && settings.planningFallbackModelId
+            ? settings.planningFallbackModelId
+            : settings.fallbackModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,
         });
 
@@ -523,7 +529,8 @@ export class TriageProcessor {
             existingPrompt,
             feedback,
           );
-          await session.prompt(
+          await promptWithFallback(
+            session,
             agentPrompt,
             imageContents.length > 0 ? { images: imageContents } : undefined,
           );
@@ -934,6 +941,10 @@ export class TriageProcessor {
             };
           }
 
+          // Re-read settings at review time so long-lived triage sessions pick up
+          // model changes made after the session started.
+          const currentSettings = await store.getSettings();
+
           const result = await reviewStep(
             rootDir,
             taskId,
@@ -944,11 +955,11 @@ export class TriageProcessor {
             undefined,
             {
               onText: (delta) => options.onAgentText?.(taskId, delta),
-              defaultProvider: settings.defaultProvider,
-              defaultModelId: settings.defaultModelId,
-              validatorModelProvider: settings.validatorProvider,
-              validatorModelId: settings.validatorModelId,
-              defaultThinkingLevel: settings.defaultThinkingLevel,
+              defaultProvider: currentSettings.defaultProvider,
+              defaultModelId: currentSettings.defaultModelId,
+              validatorModelProvider: currentSettings.validatorProvider,
+              validatorModelId: currentSettings.validatorModelId,
+              defaultThinkingLevel: currentSettings.defaultThinkingLevel,
               store,
               taskId,
             },

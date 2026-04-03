@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import multer from "multer";
 import { createReadStream, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { resolve, sep } from "node:path";
 import * as nodeFs from "node:fs";
 import * as nodeChildProcess from "node:child_process";
 import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset, AutomationStep } from "@fusion/core";
@@ -1051,6 +1052,29 @@ function discardGitChanges(files: string[], cwd?: string): string[] {
 
 export function createApiRoutes(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
+
+  function prioritizeProjectsForCurrentDirectory<T extends { path: string }>(projects: T[]): T[] {
+    const cwd = resolve(process.cwd());
+
+    const rankProject = (projectPath: string): number => {
+      const normalizedProjectPath = resolve(projectPath);
+      if (normalizedProjectPath === cwd) {
+        return Number.MAX_SAFE_INTEGER;
+      }
+
+      const prefix = normalizedProjectPath.endsWith(sep)
+        ? normalizedProjectPath
+        : `${normalizedProjectPath}${sep}`;
+
+      if (!cwd.startsWith(prefix)) {
+        return -1;
+      }
+
+      return normalizedProjectPath.length;
+    };
+
+    return [...projects].sort((a, b) => rankProject(b.path) - rankProject(a.path));
+  }
 
   function getProjectIdFromRequest(req: Request): string | undefined {
     if (req.query && typeof req.query.projectId === "string" && req.query.projectId.length > 0) {
@@ -6138,7 +6162,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const central = new CentralCore();
       await central.init();
       
-      const projects = await central.listProjects();
+      const projects = prioritizeProjectsForCurrentDirectory(await central.listProjects());
       await central.close();
       
       res.json(projects);

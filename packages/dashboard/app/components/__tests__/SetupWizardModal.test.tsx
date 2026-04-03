@@ -48,7 +48,7 @@ describe("SetupWizardModal", () => {
       />
     );
 
-    expect(screen.getByText("Welcome to kb")).toBeDefined();
+    expect(screen.getByText("Welcome to Fusion")).toBeDefined();
     expect(screen.getByText(/Let's set up your first project/)).toBeDefined();
   });
 

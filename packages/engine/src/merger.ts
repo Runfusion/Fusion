@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import type { TaskStore, Task, MergeResult } from "@fusion/core";
-import { createKbAgent } from "./pi.js";
+import { createKbAgent, promptWithFallback } from "./pi.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
 import { mergerLog } from "./logger.js";
@@ -1155,7 +1155,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       buildCommand,
     });
     await withRateLimitRetry(async () => {
-      await session.prompt(prompt);
+      await promptWithFallback(session, prompt);
       checkSessionError(session);
     }, {
       onRetry: (attempt, delayMs, error) => {

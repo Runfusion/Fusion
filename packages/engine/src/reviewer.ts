@@ -9,7 +9,7 @@
  */
 
 import type { TaskStore } from "@fusion/core";
-import { createKbAgent, describeModel } from "./pi.js";
+import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
 import { AgentLogger } from "./agent-logger.js";
 import { reviewerLog } from "./logger.js";
 import { checkSessionError } from "./usage-limit-detector.js";
@@ -149,6 +149,14 @@ export interface ReviewOptions {
   validatorModelProvider?: string;
   /** Validator model ID override. When both `validatorModelProvider` and `validatorModelId` are set, they take precedence over `defaultProvider`/`defaultModelId`. */
   validatorModelId?: string;
+  /** Fallback model provider used when the primary reviewer model hits a retryable provider-side error. */
+  fallbackProvider?: string;
+  /** Fallback model ID used with `fallbackProvider`. */
+  fallbackModelId?: string;
+  /** Validator fallback model provider override. When both validator fallback fields are set, they take precedence over fallbackProvider/fallbackModelId. */
+  validatorFallbackModelProvider?: string;
+  /** Validator fallback model ID override. When both validator fallback fields are set, they take precedence over fallbackProvider/fallbackModelId. */
+  validatorFallbackModelId?: string;
   /** Default thinking effort level for the reviewer agent session. */
   defaultThinkingLevel?: string;
   /** Task store for persisting agent log entries. When provided with `taskId`, enables full conversation logging. */
@@ -195,6 +203,12 @@ export async function reviewStep(
   const validatorModelId = options.validatorModelProvider && options.validatorModelId
     ? options.validatorModelId
     : options.defaultModelId;
+  const validatorFallbackProvider = options.validatorFallbackModelProvider && options.validatorFallbackModelId
+    ? options.validatorFallbackModelProvider
+    : options.fallbackProvider;
+  const validatorFallbackModelId = options.validatorFallbackModelProvider && options.validatorFallbackModelId
+    ? options.validatorFallbackModelId
+    : options.fallbackModelId;
 
   // Spawn a reviewer agent with read-only tools
   const { session } = await createKbAgent({
@@ -207,6 +221,8 @@ export async function reviewStep(
     onToolEnd: agentLogger?.onToolEnd,
     defaultProvider: validatorProvider,
     defaultModelId: validatorModelId,
+    fallbackProvider: validatorFallbackProvider,
+    fallbackModelId: validatorFallbackModelId,
     defaultThinkingLevel: options.defaultThinkingLevel,
   });
 
@@ -225,7 +241,7 @@ export async function reviewStep(
   });
 
   try {
-    await session.prompt(request);
+    await promptWithFallback(session, request);
 
     // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
     // The caller (executor's createReviewStepTool) catches errors and returns

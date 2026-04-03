@@ -16,6 +16,16 @@ describe("CustomModelDropdown", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     document.body.innerHTML = "";
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as MediaQueryList));
   });
 
   it("renders the open dropdown in a portal attached to document.body", async () => {
@@ -36,12 +46,12 @@ describe("CustomModelDropdown", () => {
     await user.click(screen.getByRole("button", { name: "Executor Model" }));
 
     const portal = await screen.findByTestId("model-combobox-portal");
-    expect(portal).toBeInTheDocument();
-    expect(portal).toHaveClass("model-combobox-dropdown--portal");
-    expect(document.body).toContainElement(portal);
+    expect(portal).toBeTruthy();
+    expect(portal.classList.contains("model-combobox-dropdown--portal")).toBe(true);
+    expect(document.body.contains(portal)).toBe(true);
 
     const hostSurface = screen.getByTestId("host-surface");
-    expect(hostSurface).not.toContainElement(portal);
+    expect(hostSurface.contains(portal)).toBe(false);
   });
 
   it("keeps the portaled list interactive for selecting a model and clearing back to default", async () => {
@@ -88,13 +98,61 @@ describe("CustomModelDropdown", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Executor Model" }));
-    expect(await screen.findByTestId("model-combobox-portal")).toBeInTheDocument();
+    expect(await screen.findByTestId("model-combobox-portal")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Outside surface" }));
 
     await waitFor(() => {
-      expect(screen.queryByTestId("model-combobox-portal")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("model-combobox-portal")).toBeNull();
     });
+  });
+
+  it("keeps the portaled dropdown within the viewport on small screens", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(667);
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: query === "(max-width: 640px)" || query === "(max-width: 768px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as MediaQueryList));
+
+    render(
+      <CustomModelDropdown
+        label="Executor Model"
+        value=""
+        onChange={onChange}
+        models={MOCK_MODELS}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Executor Model" });
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 330,
+      y: 560,
+      width: 120,
+      height: 36,
+      top: 560,
+      right: 450,
+      bottom: 596,
+      left: 330,
+      toJSON: () => ({}),
+    });
+
+    await user.click(trigger);
+
+    const portal = await screen.findByTestId("model-combobox-portal");
+    expect(portal.style.left).toBe("239px");
+    expect(portal.style.width).toBe("120px");
+    expect(portal.style.top).toBe("196px");
+    expect(portal.style.maxHeight).toBe("360px");
   });
 
 
@@ -119,10 +177,10 @@ describe("CustomModelDropdown", () => {
       // The favorited model should appear first (after "Use default" at index 0)
       const options = within(portal).getAllByRole("option");
       // Index 0 is "Use default", index 1 should be the favorited model
-      expect(options[1]).toHaveTextContent("Claude Sonnet 4.5");
+      expect(options[1]?.textContent).toContain("Claude Sonnet 4.5");
 
       // GPT-4o should appear under its provider group, after the favorited model section
-      expect(options[options.length - 1]).toHaveTextContent("GPT-4o");
+      expect(options[options.length - 1]?.textContent).toContain("GPT-4o");
     });
 
     it("shows star buttons on model options when onToggleModelFavorite is provided", async () => {
@@ -224,10 +282,10 @@ describe("CustomModelDropdown", () => {
       const options = within(portal).getAllByRole("option");
 
       // First favorited model (gemini-pro) should be at index 1
-      expect(options[1]).toHaveTextContent("Gemini Pro");
+      expect(options[1]?.textContent).toContain("Gemini Pro");
 
       // Second favorited model (claude-sonnet) should be at index 2
-      expect(options[2]).toHaveTextContent("Claude Sonnet 4.5");
+      expect(options[2]?.textContent).toContain("Claude Sonnet 4.5");
     });
 
     it("shows no pinned section when favoriteModels is empty", async () => {
@@ -276,7 +334,7 @@ describe("CustomModelDropdown", () => {
 
       // The favorited model that matches should still appear (appears in pinned section)
       // GPT-4o should not appear since it doesn't match "claude"
-      expect(within(portal).queryByText("GPT-4o")).not.toBeInTheDocument();
+      expect(within(portal).queryByText("GPT-4o")).toBeNull();
     });
   });
 

@@ -26,6 +26,7 @@ interface DropdownPosition {
   top: number;
   left: number;
   width: number;
+  maxHeight: number;
 }
 
 /**
@@ -177,31 +178,65 @@ export function CustomModelDropdown({
     return optionsList.findIndex((opt) => opt.value === value);
   }, [optionsList, value]);
 
-  // Estimated max height for dropdown (desktop default: 320px)
-  // Mobile uses 60-70vh via CSS, but we use 320px as the safe default estimate
-  const ESTIMATED_DROPDOWN_HEIGHT = 320;
+  const getPreferredDropdownHeight = useCallback(() => {
+    const viewportHeight = window.innerHeight;
+    const supportsMatchMedia = typeof window.matchMedia === "function";
+    const isSmallMobile = supportsMatchMedia ? window.matchMedia("(max-width: 640px)").matches : false;
+    const isMobile = supportsMatchMedia ? window.matchMedia("(max-width: 768px)").matches : false;
+
+    if (viewportHeight <= 0) return 320;
+    if (isSmallMobile) {
+      return Math.min(viewportHeight * 0.6, 360);
+    }
+    if (isMobile) {
+      return Math.min(viewportHeight * 0.7, 420);
+    }
+    return 320;
+  }, []);
 
   const updateDropdownPosition = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger) return;
 
     const rect = trigger.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
+    const horizontalPadding = 16;
+    const verticalPadding = 16;
+    const gap = 4;
+    const preferredHeight = getPreferredDropdownHeight();
 
     // Calculate space below and above the trigger
     const spaceBelow = viewportHeight - rect.bottom;
     const spaceAbove = rect.top;
+    const availableBelow = Math.max(spaceBelow - verticalPadding - gap, 160);
+    const availableAbove = Math.max(spaceAbove - verticalPadding - gap, 160);
 
     // Determine if we should open upward
     // Open upward if: not enough space below AND enough space above
-    const openUpward = spaceBelow < ESTIMATED_DROPDOWN_HEIGHT && spaceAbove >= ESTIMATED_DROPDOWN_HEIGHT;
+    const openUpward = spaceBelow < preferredHeight && spaceAbove > spaceBelow;
+
+    const maxHeight = Math.max(
+      Math.min(openUpward ? availableAbove : availableBelow, preferredHeight),
+      160,
+    );
+
+    const dropdownWidth = Math.min(rect.width, viewportWidth - horizontalPadding * 2);
+    const left = Math.min(
+      Math.max(rect.left, horizontalPadding),
+      viewportWidth - horizontalPadding - dropdownWidth,
+    );
+    const top = openUpward
+      ? Math.max(verticalPadding, rect.top - maxHeight - gap)
+      : Math.min(rect.bottom + gap, viewportHeight - verticalPadding - maxHeight);
 
     setDropdownPosition({
-      top: openUpward ? rect.top - ESTIMATED_DROPDOWN_HEIGHT - 4 : rect.bottom + 4,
-      left: rect.left,
-      width: rect.width,
+      top,
+      left,
+      width: dropdownWidth,
+      maxHeight,
     });
-  }, []);
+  }, [getPreferredDropdownHeight]);
 
   useEffect(() => {
     setPortalRoot(document.body);
@@ -370,6 +405,7 @@ export function CustomModelDropdown({
         top: `${dropdownPosition.top}px`,
         left: `${dropdownPosition.left}px`,
         width: `${dropdownPosition.width}px`,
+        maxHeight: `${dropdownPosition.maxHeight}px`,
       }}
     >
       <div className="model-combobox-search-wrapper">

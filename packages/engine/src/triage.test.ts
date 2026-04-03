@@ -10,6 +10,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 
+const { mockReviewStep } = vi.hoisted(() => ({
+  mockReviewStep: vi.fn(),
+}));
+
+vi.mock("./reviewer.js", () => ({
+  reviewStep: mockReviewStep,
+}));
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
@@ -344,6 +352,7 @@ describe("TriageProcessor", () => {
   beforeEach(() => {
     store = createMockStore();
     processor = new TriageProcessor(store, rootDir);
+    mockReviewStep.mockReset();
   });
 
   it("creates processor with default options", () => {
@@ -371,6 +380,73 @@ describe("TriageProcessor", () => {
     new TriageProcessor(store, rootDir);
 
     expect(store.on).toHaveBeenCalledWith("settings:updated", expect.any(Function));
+  });
+
+  it("re-reads settings when review_spec runs so reviewer uses the latest validator model", async () => {
+    const taskId = "FN-001";
+    const testRootDir = join(__dirname, "__test_triage_review_spec__");
+    const promptPath = `.fusion/tasks/${taskId}/PROMPT.md`;
+    const taskDir = join(testRootDir, ".fusion", "tasks", taskId);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, "PROMPT.md"), "# Spec\n\nCurrent prompt");
+
+    const freshSettings: Settings = {
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 10000,
+      groupOverlappingFiles: false,
+      autoMerge: true,
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.4",
+      validatorProvider: "zai",
+      validatorModelId: "glm-5.1",
+    };
+
+    store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue(freshSettings),
+    });
+    processor = new TriageProcessor(store, testRootDir);
+
+    mockReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Looks good.",
+      summary: "approved",
+    });
+
+    const tool = (processor as any).createReviewSpecTool(
+      taskId,
+      promptPath,
+      { current: null },
+      { current: null },
+      { current: null },
+      {
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-opus-4-6",
+        validatorProvider: "anthropic",
+        validatorModelId: "claude-opus-4-6",
+      },
+    );
+
+    await tool.execute({});
+
+    expect(store.getSettings).toHaveBeenCalled();
+    expect(mockReviewStep).toHaveBeenCalledWith(
+      testRootDir,
+      taskId,
+      0,
+      "Specification",
+      "spec",
+      "# Spec\n\nCurrent prompt",
+      undefined,
+      expect.objectContaining({
+        defaultProvider: "openai-codex",
+        defaultModelId: "gpt-5.4",
+        validatorModelProvider: "zai",
+        validatorModelId: "glm-5.1",
+      }),
+    );
+
+    await rm(testRootDir, { recursive: true, force: true });
   });
 });
 

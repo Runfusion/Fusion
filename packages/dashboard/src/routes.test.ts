@@ -20,11 +20,19 @@ import * as terminalServiceModule from "./terminal-service.js";
 import { get as performGet, request as performRequest } from "./test-request.js";
 
 // Mock @fusion/core for gh CLI auth checks
+const mockCentralListProjects = vi.fn().mockResolvedValue([]);
+const mockCentralInit = vi.fn().mockResolvedValue(undefined);
+const mockCentralClose = vi.fn().mockResolvedValue(undefined);
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
   return {
     ...actual,
     isGhAuthenticated: vi.fn(),
+    CentralCore: vi.fn().mockImplementation(() => ({
+      init: mockCentralInit,
+      close: mockCentralClose,
+      listProjects: mockCentralListProjects,
+    })),
   };
 });
 
@@ -160,6 +168,98 @@ describe("GET /tasks", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("limit");
+  });
+});
+
+describe("GET /projects", () => {
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(createMockStore()));
+    return app;
+  }
+
+  beforeEach(() => {
+    mockCentralListProjects.mockReset().mockResolvedValue([]);
+    mockCentralInit.mockReset().mockResolvedValue(undefined);
+    mockCentralClose.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("prioritizes the project for the current working directory", async () => {
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/workspace/current-project");
+    mockCentralListProjects.mockResolvedValueOnce([
+      {
+        id: "proj_other",
+        name: "Other Project",
+        path: "/workspace/other-project",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "proj_current",
+        name: "Current Project",
+        path: "/workspace/current-project",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const res = await GET(buildApp(), "/api/projects");
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect((res.body as Array<{ id: string }>).map((project) => project.id)).toEqual([
+      "proj_current",
+      "proj_other",
+    ]);
+    cwdSpy.mockRestore();
+  });
+
+  it("prefers the deepest matching ancestor when cwd is nested inside a project", async () => {
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/workspace/current-project/packages/dashboard");
+    mockCentralListProjects.mockResolvedValueOnce([
+      {
+        id: "proj_parent",
+        name: "Parent",
+        path: "/workspace",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "proj_current",
+        name: "Current Project",
+        path: "/workspace/current-project",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "proj_other",
+        name: "Other Project",
+        path: "/workspace/other-project",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const res = await GET(buildApp(), "/api/projects");
+
+    expect(res.status).toBe(200);
+    expect((res.body as Array<{ id: string }>).map((project) => project.id)).toEqual([
+      "proj_current",
+      "proj_parent",
+      "proj_other",
+    ]);
+    cwdSpy.mockRestore();
   });
 });
 
@@ -3655,7 +3755,7 @@ describe("Git Management endpoints", () => {
   let gitRepoDir: string;
   let gitTestRoot: string;
 
-  beforeAll(() => {
+  function createGitTestRepo() {
     gitTestRoot = mkdtempSync(join(tmpdir(), "kb-dashboard-git-"));
     const remoteDir = join(gitTestRoot, "remote.git");
     gitRepoDir = join(gitTestRoot, "repo");
@@ -3670,17 +3770,20 @@ describe("Git Management endpoints", () => {
     execFileSync("git", ["-C", gitRepoDir, "commit", "-m", "Initial commit"]);
     execFileSync("git", ["-C", gitRepoDir, "remote", "add", "origin", remoteDir]);
     execFileSync("git", ["-C", gitRepoDir, "push", "-u", "origin", "HEAD"]);
-  });
+  }
 
   beforeEach(() => {
+    createGitTestRepo();
     store = createMockStore({
       getRootDir: vi.fn().mockReturnValue(gitRepoDir),
     });
   });
 
-  afterAll(() => {
+  afterEach(() => {
     if (gitTestRoot) {
       rmSync(gitTestRoot, { recursive: true, force: true });
+      gitTestRoot = "";
+      gitRepoDir = "";
     }
   });
 
