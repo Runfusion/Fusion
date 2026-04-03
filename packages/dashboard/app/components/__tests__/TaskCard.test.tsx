@@ -1005,13 +1005,12 @@ describe("TaskCard inline editing", () => {
     expect(card).toBeDefined();
     fireEvent.doubleClick(card!);
 
-    // Should show editing UI
-    const titleInput = screen.getByPlaceholderText(/Task title/i);
+    // Should show editing UI — description textarea only, no title input
+    const titleInput = screen.queryByPlaceholderText(/Task title/i);
     const descTextarea = screen.getByPlaceholderText(/Task description/i);
 
-    expect(titleInput).toBeDefined();
+    expect(titleInput).toBeNull();
     expect(descTextarea).toBeDefined();
-    expect((titleInput as HTMLInputElement).value).toBe("Test Title");
     expect((descTextarea as HTMLTextAreaElement).value).toBe("Test Description");
   });
 
@@ -1030,8 +1029,11 @@ describe("TaskCard inline editing", () => {
     const editBtn = screen.getByRole("button", { name: /Edit task/i });
     fireEvent.click(editBtn);
 
-    const titleInput = screen.getByPlaceholderText(/Task title/i);
-    expect(titleInput).toBeDefined();
+    // Should show description textarea only, no title input
+    const titleInput = screen.queryByPlaceholderText(/Task title/i);
+    const descTextarea = screen.getByPlaceholderText(/Task description/i);
+    expect(titleInput).toBeNull();
+    expect(descTextarea).toBeDefined();
   });
 
   it("does NOT enter edit mode on double-click for non-editable cards", () => {
@@ -1050,12 +1052,12 @@ describe("TaskCard inline editing", () => {
     fireEvent.doubleClick(card!);
 
     // Should NOT show editing UI
-    const titleInput = screen.queryByPlaceholderText(/Task title/i);
-    expect(titleInput).toBeNull();
+    const descTextarea = screen.queryByPlaceholderText(/Task description/i);
+    expect(descTextarea).toBeNull();
   });
 
   it("Escape key cancels edit mode", () => {
-    const task = makeEditableTask({ title: "Original Title" });
+    const task = makeEditableTask({ title: "Original Title", description: "Original Desc" });
 
     render(
       <TaskCard
@@ -1070,14 +1072,14 @@ describe("TaskCard inline editing", () => {
     const card = document.querySelector('[data-id="FN-099"]');
     fireEvent.doubleClick(card!);
 
-    const titleInput = screen.getByPlaceholderText(/Task title/i) as HTMLInputElement;
-    fireEvent.change(titleInput, { target: { value: "Changed Title" } });
+    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
+    fireEvent.change(descTextarea, { target: { value: "Changed Desc" } });
 
     // Press Escape
-    fireEvent.keyDown(titleInput, { key: "Escape" });
+    fireEvent.keyDown(descTextarea, { key: "Escape" });
 
     // Should exit edit mode without saving
-    expect(screen.queryByPlaceholderText(/Task title/i)).toBeNull();
+    expect(screen.queryByPlaceholderText(/Task description/i)).toBeNull();
     expect(noopUpdateTask).not.toHaveBeenCalled();
   });
 
@@ -1098,17 +1100,17 @@ describe("TaskCard inline editing", () => {
     const card = document.querySelector('[data-id="FN-099"]');
     await user.dblClick(card!);
 
-    const titleInput = screen.getByPlaceholderText(/Task title/i);
+    const descTextarea = screen.getByPlaceholderText(/Task description/i);
+    expect(descTextarea).toBeDefined();
 
     // Tab out to move focus outside the editing area
     await user.tab();
-    await user.tab(); // Second tab to move past the textarea
 
     // Wait for the blur handler to execute
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // Should have exited edit mode
-    expect(screen.queryByPlaceholderText(/Task title/i)).toBeNull();
+    // Should have exited edit mode without saving
+    expect(screen.queryByPlaceholderText(/Task description/i)).toBeNull();
     expect(noopUpdateTask).not.toHaveBeenCalled();
   });
 
@@ -1137,36 +1139,9 @@ describe("TaskCard inline editing", () => {
 
     await waitFor(() => {
       expect(mockUpdateTask).toHaveBeenCalledWith("FN-099", {
-        title: "Title",
         description: "New Desc",
       });
     });
-  });
-
-  it("Enter in title moves focus to description", () => {
-    const task = makeEditableTask();
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-        onUpdateTask={noopUpdateTask}
-      />
-    );
-
-    // Enter edit mode
-    const card = document.querySelector('[data-id="FN-099"]');
-    fireEvent.doubleClick(card!);
-
-    const titleInput = screen.getByPlaceholderText(/Task title/i) as HTMLInputElement;
-    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
-
-    // Press Enter in title - should move focus to description
-    fireEvent.keyDown(titleInput, { key: "Enter" });
-
-    // Description should receive focus
-    expect(document.activeElement).toBe(descTextarea);
   });
 
   it("Shift+Enter in description adds newline", () => {
@@ -1307,6 +1282,110 @@ describe("TaskCard inline editing", () => {
 
     const editingCard = document.querySelector(".card-editing");
     expect(editingCard).toBeDefined();
+  });
+
+  it("saves only description — existing title is not sent in update", async () => {
+    const task = makeEditableTask({ title: "Keep This Title", description: "Old Desc" });
+    const mockUpdateTask = vi.fn().mockResolvedValue({ ...task, description: "New Desc" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={mockUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="FN-099"]');
+    fireEvent.doubleClick(card!);
+
+    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
+    fireEvent.change(descTextarea, { target: { value: "New Desc" } });
+
+    // Press Enter to save
+    fireEvent.keyDown(descTextarea, { key: "Enter" });
+
+    await waitFor(() => {
+      // onUpdateTask should only receive description, not title
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-099", {
+        description: "New Desc",
+      });
+    });
+  });
+
+  it("description textarea is auto-focused when entering edit mode", () => {
+    const task = makeEditableTask({ description: "Some description" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="FN-099"]');
+    fireEvent.doubleClick(card!);
+
+    const descTextarea = screen.getByPlaceholderText(/Task description/i);
+    expect(document.activeElement).toBe(descTextarea);
+  });
+
+  it("no-change blur exits edit mode without saving", async () => {
+    const user = userEvent.setup();
+    const task = makeEditableTask({ description: "Original Desc" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="FN-099"]');
+    await user.dblClick(card!);
+
+    // Verify description textarea is visible with original value
+    const descTextarea = screen.getByPlaceholderText(/Task description/i);
+    expect((descTextarea as HTMLTextAreaElement).value).toBe("Original Desc");
+
+    // Tab away to move focus outside the editing area
+    await user.tab();
+
+    // Wait for the blur handler to execute
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Should exit edit mode without calling update
+    expect(screen.queryByPlaceholderText(/Task description/i)).toBeNull();
+    expect(noopUpdateTask).not.toHaveBeenCalled();
+  });
+
+  it("does not render an inline title input in edit mode", () => {
+    const task = makeEditableTask({ title: "Some Title" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="FN-099"]');
+    fireEvent.doubleClick(card!);
+
+    // Only description textarea should exist, no title input
+    expect(screen.queryByPlaceholderText(/Task title/i)).toBeNull();
+    expect(screen.getByPlaceholderText(/Task description/i)).toBeDefined();
   });
 });
 

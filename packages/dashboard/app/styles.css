@@ -3746,38 +3746,6 @@ body {
   gap: var(--space-sm);
 }
 
-/* Title input in edit mode */
-.card-edit-title-input {
-  width: 100%;
-  padding: 6px 8px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  font-family: inherit;
-  outline: none;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.card-edit-title-input:focus {
-  border-color: var(--todo);
-  border-bottom-color: var(--todo);
-  box-shadow: var(--focus-ring);
-  border-radius: var(--radius);
-}
-
-.card-edit-title-input::placeholder {
-  color: var(--text-dim);
-  font-weight: 400;
-}
-
-.card-edit-title-input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 /* Description textarea in edit mode - follows InlineCreateCard patterns */
 .card-edit-desc-textarea {
   width: 100%;
@@ -4601,7 +4569,6 @@ body {
   .quick-entry-input,
   #new-task-description,
   .inline-create-input,
-  .card-edit-title-input,
   .card-edit-desc-textarea {
     font-size: 16px;
   }

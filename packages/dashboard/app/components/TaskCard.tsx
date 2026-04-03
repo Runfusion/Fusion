@@ -134,7 +134,6 @@ function TaskCardComponent({
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [editTitle, setEditTitle] = useState(task.title || "");
   const [editDescription, setEditDescription] = useState(task.description || "");
   const [isSaving, setIsSaving] = useState(false);
   const [showSteps, setShowSteps] = useState(
@@ -142,7 +141,6 @@ function TaskCardComponent({
     (task.column === "triage" && task.steps.some(s => s.status === "done" || s.status === "skipped"))
   );
 
-  const titleInputRef = useRef<HTMLInputElement>(null);
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
   const touchOpenHandledRef = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -160,15 +158,13 @@ function TaskCardComponent({
 
   // Reset edit state when task changes
   useEffect(() => {
-    setEditTitle(task.title || "");
     setEditDescription(task.description || "");
-  }, [task.id, task.title, task.description]);
+  }, [task.id, task.description]);
 
-  // Auto-focus on title when entering edit mode
+  // Auto-focus on description textarea when entering edit mode
   useEffect(() => {
     if (isEditing) {
-      titleInputRef.current?.focus();
-      titleInputRef.current?.select();
+      descTextareaRef.current?.focus();
     }
   }, [isEditing]);
 
@@ -386,19 +382,17 @@ function TaskCardComponent({
     e?.stopPropagation();
     if (!canEdit || isSaving) return;
     setIsEditing(true);
-    setEditTitle(task.title || "");
     setEditDescription(task.description || "");
-  }, [canEdit, isSaving, task.title, task.description]);
+  }, [canEdit, isSaving, task.description]);
 
   const exitEditMode = useCallback(() => {
     setIsEditing(false);
-    setEditTitle(task.title || "");
     setEditDescription(task.description || "");
-  }, [task.title, task.description]);
+  }, [task.description]);
 
   const hasChanges = useCallback(() => {
-    return editTitle !== (task.title || "") || editDescription !== (task.description || "");
-  }, [editTitle, editDescription, task.title, task.description]);
+    return editDescription !== (task.description || "");
+  }, [editDescription, task.description]);
 
   const saveChanges = useCallback(async () => {
     if (!onUpdateTask || isSaving) return;
@@ -410,7 +404,6 @@ function TaskCardComponent({
     setIsSaving(true);
     try {
       await onUpdateTask(task.id, {
-        title: editTitle.trim() || undefined,
         description: editDescription.trim() || undefined,
       });
       addToast(`Updated ${task.id}`, "success");
@@ -421,18 +414,7 @@ function TaskCardComponent({
     } finally {
       setIsSaving(false);
     }
-  }, [onUpdateTask, task.id, editTitle, editDescription, isSaving, hasChanges, exitEditMode, addToast]);
-
-  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      // Move focus to description textarea
-      descTextareaRef.current?.focus();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      exitEditMode();
-    }
-  }, [exitEditMode]);
+  }, [onUpdateTask, task.id, editDescription, isSaving, hasChanges, exitEditMode, addToast]);
 
   const handleDescKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -445,12 +427,10 @@ function TaskCardComponent({
   }, [saveChanges, exitEditMode]);
 
   const handleBlur = useCallback(() => {
-    // Small delay to allow focus to move between title and description inputs
-    // before checking if we should save or cancel
+    // Small delay to allow focus to move before checking if we should save or cancel
     setTimeout(() => {
       const activeElement = document.activeElement;
       const isFocusInEditArea =
-        activeElement === titleInputRef.current ||
         activeElement === descTextareaRef.current ||
         activeElement?.closest(".card-editing-content");
 
@@ -522,17 +502,6 @@ function TaskCardComponent({
         onDoubleClick={handleDoubleClick}
       >
         <div className="card-editing-content">
-          <input
-            ref={titleInputRef}
-            type="text"
-            className="card-edit-title-input"
-            placeholder="Task title (optional)"
-            value={editTitle}
-            onChange={(e) => setEditTitle(e.target.value)}
-            onKeyDown={handleTitleKeyDown}
-            onBlur={handleBlur}
-            disabled={isSaving}
-          />
           <textarea
             ref={descTextareaRef}
             className="card-edit-desc-textarea"
