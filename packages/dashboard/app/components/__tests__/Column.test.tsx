@@ -18,7 +18,15 @@ vi.mock("../WorktreeGroup", () => ({
   WorktreeGroup: () => <div />,
 }));
 vi.mock("../QuickEntryBox", () => ({
-  QuickEntryBox: () => <div data-testid="quick-entry-box" />,
+  QuickEntryBox: ({ favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite }: { favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void }) => (
+    <div
+      data-testid="quick-entry-box"
+      data-favorite-providers={JSON.stringify(favoriteProviders ?? [])}
+      data-favorite-models={JSON.stringify(favoriteModels ?? [])}
+      data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"}
+      data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"}
+    />
+  ),
 }));
 vi.mock("lucide-react", () => ({
   Link: () => null,
@@ -260,5 +268,48 @@ describe("Column same-column drop", () => {
     fireEvent.drop(columnEl, { dataTransfer });
 
     expect(onMoveTask).toHaveBeenCalledWith("FN-001", "in-review");
+  });
+
+  describe("favorite model prop forwarding (FN-770)", () => {
+    it("forwards favoriteProviders, favoriteModels, and toggle callbacks to QuickEntryBox", () => {
+      const onToggleFavorite = vi.fn();
+      const onToggleModelFavorite = vi.fn();
+
+      render(
+        <Column
+          {...defaultProps}
+          column="triage"
+          tasks={[]}
+          onQuickCreate={vi.fn().mockResolvedValue({})}
+          favoriteProviders={["anthropic"]}
+          favoriteModels={["claude-sonnet-4-5"]}
+          onToggleFavorite={onToggleFavorite}
+          onToggleModelFavorite={onToggleModelFavorite}
+        />,
+      );
+
+      const quickEntry = screen.getByTestId("quick-entry-box");
+      expect(quickEntry.getAttribute("data-favorite-providers")).toBe(JSON.stringify(["anthropic"]));
+      expect(quickEntry.getAttribute("data-favorite-models")).toBe(JSON.stringify(["claude-sonnet-4-5"]));
+      expect(quickEntry.getAttribute("data-has-toggle-favorite")).toBe("yes");
+      expect(quickEntry.getAttribute("data-has-toggle-model-favorite")).toBe("yes");
+    });
+
+    it("passes empty favorites when props not provided", () => {
+      render(
+        <Column
+          {...defaultProps}
+          column="triage"
+          tasks={[]}
+          onQuickCreate={vi.fn().mockResolvedValue({})}
+        />,
+      );
+
+      const quickEntry = screen.getByTestId("quick-entry-box");
+      expect(quickEntry.getAttribute("data-favorite-providers")).toBe("[]");
+      expect(quickEntry.getAttribute("data-favorite-models")).toBe("[]");
+      expect(quickEntry.getAttribute("data-has-toggle-favorite")).toBe("no");
+      expect(quickEntry.getAttribute("data-has-toggle-model-favorite")).toBe("no");
+    });
   });
 });

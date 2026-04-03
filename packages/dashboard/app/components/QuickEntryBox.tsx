@@ -29,6 +29,26 @@ interface QuickEntryBoxProps {
    * Defaults to true for backward compatibility.
    */
   autoExpand?: boolean;
+  /**
+   * Favorited provider IDs from shared app-level state.
+   * When provided (alongside availableModels), the component uses these
+   * instead of its own internal favorite state.
+   */
+  favoriteProviders?: string[];
+  /**
+   * Favorited model IDs from shared app-level state.
+   * When provided (alongside availableModels), the component uses these
+   * instead of its own internal favorite state.
+   */
+  favoriteModels?: string[];
+  /**
+   * Toggle favorite provider callback from shared app-level state.
+   */
+  onToggleFavorite?: (provider: string) => void;
+  /**
+   * Toggle favorite model callback from shared app-level state.
+   */
+  onToggleModelFavorite?: (modelId: string) => void;
 }
 
 function getModelSelectionValue(provider?: string, modelId?: string): string {
@@ -51,7 +71,7 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
   };
 }
 
-export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels, onPlanningMode, onSubtaskBreakdown, autoExpand = true }: QuickEntryBoxProps) {
+export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels, onPlanningMode, onSubtaskBreakdown, autoExpand = true, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite }: QuickEntryBoxProps) {
   const [description, setDescription] = useState(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem(STORAGE_KEY) || "";
@@ -87,6 +107,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [isRefining, setIsRefining] = useState(false);
   const refineMenuRef = useRef<HTMLDivElement>(null);
 
+  // Use parent-provided favorites when available, otherwise internal state
+  const effectiveFavoriteProviders = parentFavoriteProviders ?? favoriteProviders;
+  const effectiveFavoriteModels = parentFavoriteModels ?? favoriteModels;
+
   // If onCreate is not provided, the component is disabled
   const isDisabled = !onCreate;
 
@@ -106,8 +130,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       .then((response) => {
         if (!cancelled) {
           setLoadedModels(response.models);
-          setFavoriteProviders(response.favoriteProviders);
-          setFavoriteModels(response.favoriteModels);
+          // Only set internal favorites when parent doesn't manage them
+          if (!parentFavoriteProviders) {
+            setFavoriteProviders(response.favoriteProviders);
+          }
+          if (!parentFavoriteModels) {
+            setFavoriteModels(response.favoriteModels);
+          }
         }
       })
       .catch((err: any) => {
@@ -374,6 +403,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, []);
 
   const handleToggleFavorite = useCallback(async (provider: string) => {
+    // Delegate to parent callback when available
+    if (parentToggleFavorite) {
+      parentToggleFavorite(provider);
+      return;
+    }
+
     const currentFavorites = favoriteProviders;
     const isFavorite = currentFavorites.includes(provider);
     const newFavorites = isFavorite
@@ -388,9 +423,15 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       // Revert on error
       setFavoriteProviders(currentFavorites);
     }
-  }, [favoriteProviders, favoriteModels]);
+  }, [favoriteProviders, favoriteModels, parentToggleFavorite]);
 
   const handleToggleModelFavorite = useCallback(async (modelId: string) => {
+    // Delegate to parent callback when available
+    if (parentToggleModelFavorite) {
+      parentToggleModelFavorite(modelId);
+      return;
+    }
+
     const currentFavorites = favoriteModels;
     const isFavorite = currentFavorites.includes(modelId);
     const newFavorites = isFavorite
@@ -405,7 +446,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       // Revert on error
       setFavoriteModels(currentFavorites);
     }
-  }, [favoriteModels, favoriteProviders]);
+  }, [favoriteModels, favoriteProviders, parentToggleModelFavorite]);
 
   const handlePlanClick = useCallback(() => {
     const trimmed = description.trim();
@@ -473,14 +514,19 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     try {
       const response = await fetchModels();
       setLoadedModels(response.models);
-      setFavoriteProviders(response.favoriteProviders);
-      setFavoriteModels(response.favoriteModels);
+      // Only set internal favorites when parent doesn't manage them
+      if (!parentFavoriteProviders) {
+        setFavoriteProviders(response.favoriteProviders);
+      }
+      if (!parentFavoriteModels) {
+        setFavoriteModels(response.favoriteModels);
+      }
     } catch (err: any) {
       setModelsError(err?.message || "Failed to load models");
     } finally {
       setModelsLoading(false);
     }
-  }, [availableModels]);
+  }, [availableModels, parentFavoriteProviders, parentFavoriteModels]);
 
   // Show expanded controls based on disclosure state (user preference), not textarea focus
   const showExpandedControls = isDisclosureExpanded;
@@ -713,9 +759,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               modelsLoading={modelsLoading}
               modelsError={modelsError}
               onRetry={loadModels}
-              favoriteProviders={favoriteProviders}
+              favoriteProviders={effectiveFavoriteProviders}
               onToggleFavorite={handleToggleFavorite}
-              favoriteModels={favoriteModels}
+              favoriteModels={effectiveFavoriteModels}
               onToggleModelFavorite={handleToggleModelFavorite}
             />,
             document.body,

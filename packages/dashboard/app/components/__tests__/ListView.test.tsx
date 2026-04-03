@@ -1973,4 +1973,42 @@ describe("ListView - Bulk Selection", () => {
     // The dropdown would need to be interacted with to enable the button
     // This test verifies the initial disabled state and button presence
   });
+
+  it("forwards favoriteProviders and favoriteModels to QuickEntryBox model modal (FN-770)", async () => {
+    const availableModels = [
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
+    ];
+    const tasks = [createMockTask({ id: "FN-001" })];
+    const onToggleFavorite = vi.fn();
+    const onToggleModelFavorite = vi.fn();
+
+    render(
+      <ListView
+        tasks={tasks}
+        onMoveTask={vi.fn()}
+        onOpenDetail={vi.fn()}
+        addToast={mockAddToast}
+        onQuickCreate={vi.fn().mockResolvedValue(undefined)}
+        availableModels={availableModels}
+        favoriteProviders={["anthropic"]}
+        favoriteModels={["claude-sonnet-4-5"]}
+        onToggleFavorite={onToggleFavorite}
+        onToggleModelFavorite={onToggleModelFavorite}
+      />
+    );
+
+    // Expand the QuickEntryBox and open the model modal
+    const toggleButton = screen.getByTestId("quick-entry-toggle");
+    fireEvent.click(toggleButton);
+
+    const modelButton = await screen.findByTestId("quick-entry-models-button");
+    fireEvent.click(modelButton);
+
+    // The real ModelSelectionModal should render via portal with data-testid
+    const modal = await screen.findByTestId("model-selection-modal");
+    expect(modal).toBeDefined();
+
+    // Verify the modal has content (models are loaded)
+    expect(modal.textContent).toContain("Select Models");
+  });
 });

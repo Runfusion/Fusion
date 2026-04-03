@@ -514,6 +514,10 @@ function AppInner() {
           searchQuery={searchQuery}
           availableModels={availableModels}
           onOpenFilesForTask={handleOpenChangedFiles}
+          favoriteProviders={favoriteProviders}
+          favoriteModels={favoriteModels}
+          onToggleFavorite={handleToggleFavorite}
+          onToggleModelFavorite={handleToggleModelFavorite}
         />
       );
     }

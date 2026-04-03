@@ -10,10 +10,10 @@ const columnRenderCounts: Record<string, number> = {};
 
 // Mock child components so we only test Board's own rendering
 vi.mock("../Column", () => ({
-  Column: React.memo(({ column, tasks, onToggleCollapse, availableModels }: { column: string; tasks: Task[]; onToggleCollapse?: () => void; availableModels?: unknown }) => {
+  Column: React.memo(({ column, tasks, onToggleCollapse, availableModels, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite }: { column: string; tasks: Task[]; onToggleCollapse?: () => void; availableModels?: unknown; favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
-      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)}>
+      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"}>
         {onToggleCollapse && <button onClick={onToggleCollapse}>toggle-{column}</button>}
       </div>
     );
@@ -335,5 +335,42 @@ describe("Board", () => {
     renderBoard();
     const badge = document.querySelector(".board-project-context");
     expect(badge).toBeNull();
+  });
+
+  describe("favorite model prop forwarding (FN-770)", () => {
+    it("forwards favoriteProviders and favoriteModels to all columns", () => {
+      const favoriteProviders = ["anthropic"];
+      const favoriteModels = ["claude-sonnet-4-5"];
+      const onToggleFavorite = vi.fn();
+      const onToggleModelFavorite = vi.fn();
+
+      renderBoard({
+        favoriteProviders,
+        favoriteModels,
+        onToggleFavorite,
+        onToggleModelFavorite,
+      });
+
+      // Every column should receive the favorite props
+      for (const col of COLUMNS) {
+        const columnEl = screen.getByTestId(`column-${col}`);
+        expect(columnEl.getAttribute("data-favorite-providers")).toBe(JSON.stringify(favoriteProviders));
+        expect(columnEl.getAttribute("data-favorite-models")).toBe(JSON.stringify(favoriteModels));
+        expect(columnEl.getAttribute("data-has-toggle-favorite")).toBe("yes");
+        expect(columnEl.getAttribute("data-has-toggle-model-favorite")).toBe("yes");
+      }
+    });
+
+    it("passes empty arrays for favorites when not provided", () => {
+      renderBoard();
+
+      for (const col of COLUMNS) {
+        const columnEl = screen.getByTestId(`column-${col}`);
+        expect(columnEl.getAttribute("data-favorite-providers")).toBe("[]");
+        expect(columnEl.getAttribute("data-favorite-models")).toBe("[]");
+        expect(columnEl.getAttribute("data-has-toggle-favorite")).toBe("no");
+        expect(columnEl.getAttribute("data-has-toggle-model-favorite")).toBe("no");
+      }
+    });
   });
 });

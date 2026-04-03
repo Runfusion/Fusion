@@ -47,9 +47,13 @@ interface ColumnProps {
    */
   onSubtaskBreakdown?: (description: string) => void;
   onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  favoriteProviders?: string[];
+  favoriteModels?: string[];
+  onToggleFavorite?: (provider: string) => void;
+  onToggleModelFavorite?: (modelId: string) => void;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
@@ -196,6 +200,10 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
               onPlanningMode={onPlanningMode}
               onSubtaskBreakdown={onSubtaskBreakdown}
               autoExpand={true}
+              favoriteProviders={favoriteProviders}
+              favoriteModels={favoriteModels}
+              onToggleFavorite={onToggleFavorite}
+              onToggleModelFavorite={onToggleModelFavorite}
             />
           )}
           {column === "in-progress" ? (

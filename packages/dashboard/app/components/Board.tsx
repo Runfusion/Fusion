@@ -36,6 +36,10 @@ interface BoardProps {
    */
   onSubtaskBreakdown?: (description: string) => void;
   onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  favoriteProviders?: string[];
+  favoriteModels?: string[];
+  onToggleFavorite?: (provider: string) => void;
+  onToggleModelFavorite?: (modelId: string) => void;
 }
 
 function sortTasksForColumn(tasks: Task[]): Task[] {
@@ -54,7 +58,7 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const { fetchBatch } = useBatchBadgeFetch(projectId);
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -164,6 +168,10 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
             allTasks={filteredTasks}
             availableModels={availableModels}
             onOpenFilesForTask={onOpenFilesForTask}
+            favoriteProviders={favoriteProviders}
+            favoriteModels={favoriteModels}
+            onToggleFavorite={onToggleFavorite}
+            onToggleModelFavorite={onToggleModelFavorite}
             {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
             {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
             {...(col === "done" ? { onArchiveAllDone } : {})}

@@ -748,6 +748,10 @@ export function ListView({
             onPlanningMode={onPlanningMode}
             onSubtaskBreakdown={onSubtaskBreakdown}
             autoExpand={false}
+            favoriteProviders={favoriteProviders}
+            favoriteModels={favoriteModels}
+            onToggleFavorite={onToggleFavorite}
+            onToggleModelFavorite={onToggleModelFavorite}
           />
         </div>
         {filteredCount === 0 ? (
