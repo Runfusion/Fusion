@@ -526,7 +526,7 @@ describe("Header", () => {
       expect(screen.getByTitle("List view")).toBeDefined();
     });
 
-    it("shows terminal in overflow menu and pause controls inline on mobile", () => {
+    it("shows terminal group in overflow menu and pause controls inline on mobile", () => {
       render(
         <Header
           onToggleTerminal={vi.fn()}
@@ -536,7 +536,10 @@ describe("Header", () => {
       );
       // Terminal is in overflow menu on mobile, not inline
       fireEvent.click(screen.getByTitle("More header actions"));
-      expect(screen.getByText("Open Terminal")).toBeDefined();
+      expect(screen.getByTestId("overflow-terminal-group-trigger")).toBeDefined();
+      // Expand submenu to see Open Terminal
+      fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
+      expect(screen.getByTestId("overflow-terminal-btn")).toBeDefined();
       // Pause/stop are always inline
       expect(screen.getByTitle("Pause scheduling")).toBeDefined();
       expect(screen.getByTitle("Stop AI engine")).toBeDefined();
@@ -703,7 +706,9 @@ describe("Header", () => {
       const onOpenScripts = vi.fn();
       render(<Header onOpenSettings={vi.fn()} onOpenScripts={onOpenScripts} onRunScript={vi.fn()} />);
       fireEvent.click(screen.getByTitle("More header actions"));
-      fireEvent.click(screen.getByText("Scripts"));
+      // Open the terminal submenu first
+      fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
+      fireEvent.click(screen.getByTestId("overflow-scripts-btn"));
       expect(onOpenScripts).toHaveBeenCalledOnce();
     });
   });

@@ -345,10 +345,49 @@ describe("Header", () => {
       expect(screen.queryByTitle("More header actions")).toBeNull();
     });
 
-    it("shows terminal in overflow menu on mobile", () => {
+    it("shows terminal group in overflow menu on mobile", () => {
       renderHeader({ onToggleTerminal: noop }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
+      expect(screen.getByTestId("overflow-terminal-group-trigger")).toBeDefined();
+    });
+
+    it("shows terminal submenu items when terminal group is expanded on mobile", () => {
+      renderHeader({ onToggleTerminal: noop, onOpenScripts: noop }, "mobile");
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
       expect(screen.getByTestId("overflow-terminal-btn")).toBeDefined();
+    });
+
+    it("shows scripts in terminal submenu on mobile when onOpenScripts is provided", () => {
+      renderHeader({ onOpenScripts: noop }, "mobile");
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
+      expect(screen.getByTestId("overflow-scripts-btn")).toBeDefined();
+    });
+
+    it("does not show scripts in terminal submenu when onOpenScripts is undefined", () => {
+      renderHeader({ onToggleTerminal: noop }, "mobile");
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
+      expect(screen.queryByTestId("overflow-scripts-btn")).toBeNull();
+    });
+
+    it("calls onToggleTerminal from terminal submenu on mobile", () => {
+      const onToggleTerminal = vi.fn();
+      renderHeader({ onToggleTerminal }, "mobile");
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
+      fireEvent.click(screen.getByTestId("overflow-terminal-btn"));
+      expect(onToggleTerminal).toHaveBeenCalled();
+    });
+
+    it("calls onOpenScripts from terminal submenu on mobile", () => {
+      const onOpenScripts = vi.fn();
+      renderHeader({ onOpenScripts }, "mobile");
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
+      fireEvent.click(screen.getByTestId("overflow-scripts-btn"));
+      expect(onOpenScripts).toHaveBeenCalled();
     });
 
     it("shows GitHub import in overflow menu on mobile", () => {
@@ -367,28 +406,6 @@ describe("Header", () => {
       renderHeader({}, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByText("Settings")).toBeDefined();
-    });
-
-    it("calls onToggleTerminal when overflow terminal button is clicked", () => {
-      const onToggleTerminal = vi.fn();
-      renderHeader({ onToggleTerminal }, "mobile");
-      fireEvent.click(screen.getByTitle("More header actions"));
-      fireEvent.click(screen.getByTestId("overflow-terminal-btn"));
-      expect(onToggleTerminal).toHaveBeenCalled();
-    });
-
-    it("shows scripts in overflow menu on mobile", () => {
-      renderHeader({ onOpenScripts: noop }, "mobile");
-      fireEvent.click(screen.getByTitle("More header actions"));
-      expect(screen.getByTestId("overflow-scripts-btn")).toBeDefined();
-    });
-
-    it("calls onOpenScripts from mobile overflow menu", () => {
-      const onOpenScripts = vi.fn();
-      renderHeader({ onOpenScripts }, "mobile");
-      fireEvent.click(screen.getByTitle("More header actions"));
-      fireEvent.click(screen.getByTestId("overflow-scripts-btn"));
-      expect(onOpenScripts).toHaveBeenCalled();
     });
   });
 

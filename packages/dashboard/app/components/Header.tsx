@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow, Bot, ChevronLeft, Target, Building2 } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow, Bot, ChevronLeft, Target, Building2, ChevronRight, FileCode } from "lucide-react";
 import type { ProjectInfo } from "../api";
 import { ProjectSelector } from "./ProjectSelector";
 import { QuickScriptsDropdown } from "./QuickScriptsDropdown";
@@ -125,10 +125,17 @@ export function Header({
   const isCompact = isMobile || isTablet;
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false);
+  const [isTerminalSubmenuOpen, setIsTerminalSubmenuOpen] = useState(false);
   const overflowButtonRef = useRef<HTMLButtonElement>(null);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const mobileSearchRef = useRef<HTMLDivElement>(null);
   const mobileSearchInputRef = useRef<HTMLInputElement>(null);
+  const terminalSubmenuOpenRef = useRef(false);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    terminalSubmenuOpenRef.current = isTerminalSubmenuOpen;
+  }, [isTerminalSubmenuOpen]);
 
   // Keep mobile search open if there's an active search query
   const shouldShowMobileSearch = isMobileSearchOpen || searchQuery.length > 0;
@@ -156,6 +163,10 @@ export function Header({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (terminalSubmenuOpenRef.current) {
+          setIsTerminalSubmenuOpen(false);
+          return;
+        }
         setIsOverflowMenuOpen(false);
         setIsMobileSearchOpen(false);
       }
@@ -183,6 +194,7 @@ export function Header({
   const handleOverflowAction = useCallback((callback?: () => void) => {
     if (callback) callback();
     setIsOverflowMenuOpen(false);
+    setIsTerminalSubmenuOpen(false);
   }, []);
 
   const handleMobileSearchClose = useCallback(() => {
@@ -535,26 +547,50 @@ export function Header({
               <GitHubLogo size={16} />
               <span>Import from GitHub</span>
             </button>
-            {onOpenScripts && (
+            <div
+              className="mobile-overflow-group"
+              data-testid="overflow-terminal-group"
+            >
               <button
-                className="mobile-overflow-item"
-                onClick={() => handleOverflowAction(onOpenScripts)}
+                className="mobile-overflow-item mobile-overflow-group-trigger"
+                onClick={() => setIsTerminalSubmenuOpen((prev) => !prev)}
                 role="menuitem"
-                data-testid="overflow-scripts-btn"
+                aria-expanded={isTerminalSubmenuOpen}
+                aria-haspopup="menu"
+                data-testid="overflow-terminal-group-trigger"
               >
                 <Terminal size={16} />
-                <span>Scripts</span>
+                <span>Terminal</span>
+                <ChevronRight
+                  size={14}
+                  className={`mobile-overflow-chevron${isTerminalSubmenuOpen ? " mobile-overflow-chevron--open" : ""}`}
+                />
               </button>
-            )}
-            <button
-              className="mobile-overflow-item"
-              onClick={() => handleOverflowAction(onToggleTerminal)}
-              role="menuitem"
-              data-testid="overflow-terminal-btn"
-            >
-              <Terminal size={16} />
-              <span>Open Terminal</span>
-            </button>
+              {isTerminalSubmenuOpen && (
+                <div className="mobile-overflow-submenu" role="menu" aria-label="Terminal submenu">
+                  <button
+                    className="mobile-overflow-item mobile-overflow-subitem"
+                    onClick={() => handleOverflowAction(onToggleTerminal)}
+                    role="menuitem"
+                    data-testid="overflow-terminal-btn"
+                  >
+                    <Terminal size={16} />
+                    <span>Open Terminal</span>
+                  </button>
+                  {onOpenScripts && (
+                    <button
+                      className="mobile-overflow-item mobile-overflow-subitem"
+                      onClick={() => handleOverflowAction(onOpenScripts)}
+                      role="menuitem"
+                      data-testid="overflow-scripts-btn"
+                    >
+                      <FileCode size={16} />
+                      <span>Scripts</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             <button
               className="mobile-overflow-item"
               onClick={() => handleOverflowAction(onOpenSchedules)}

@@ -172,10 +172,18 @@ describe("tablet header controls", () => {
     expect(screen.getByText("Import from GitHub")).toBeDefined();
   });
 
-  it("overflow menu contains terminal on tablet", () => {
+  it("overflow menu contains terminal group on tablet", () => {
     renderTabletHeader({ onToggleTerminal: noop });
     fireEvent.click(screen.getByTitle("More header actions"));
+    expect(screen.getByTestId("overflow-terminal-group-trigger")).toBeDefined();
+  });
+
+  it("overflow menu contains terminal submenu items when expanded on tablet", () => {
+    renderTabletHeader({ onToggleTerminal: noop, onOpenScripts: noop });
+    fireEvent.click(screen.getByTitle("More header actions"));
+    fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
     expect(screen.getByTestId("overflow-terminal-btn")).toBeDefined();
+    expect(screen.getByTestId("overflow-scripts-btn")).toBeDefined();
   });
 
   it("overflow menu contains scheduled tasks on tablet", () => {
@@ -230,10 +238,11 @@ describe("tablet header controls", () => {
     expect(onOpenSettings).toHaveBeenCalled();
   });
 
-  it("calls onToggleTerminal from overflow menu on tablet", () => {
+  it("calls onToggleTerminal from terminal submenu on tablet", () => {
     const onToggleTerminal = vi.fn();
     renderTabletHeader({ onToggleTerminal });
     fireEvent.click(screen.getByTitle("More header actions"));
+    fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
     fireEvent.click(screen.getByTestId("overflow-terminal-btn"));
     expect(onToggleTerminal).toHaveBeenCalled();
   });
@@ -276,6 +285,17 @@ describe("tablet header controls", () => {
     expect(screen.getByRole("menu")).toBeDefined();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("closes terminal submenu on Escape without closing overflow menu on tablet", () => {
+    renderTabletHeader({ onToggleTerminal: noop });
+    fireEvent.click(screen.getByTitle("More header actions"));
+    fireEvent.click(screen.getByTestId("overflow-terminal-group-trigger"));
+    expect(screen.getByTestId("overflow-terminal-btn")).toBeDefined();
+    fireEvent.keyDown(document, { key: "Escape" });
+    // Submenu closes but overflow menu stays open
+    expect(screen.queryByTestId("overflow-terminal-btn")).toBeNull();
+    expect(screen.getByRole("menu")).toBeDefined();
   });
 
   // ── Search on tablet ───────────────────────────────────────────

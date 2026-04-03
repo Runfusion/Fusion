@@ -72,6 +72,13 @@ describe("mobile-header-controls.css", () => {
     expect(cssContent).toMatch(/\.mobile-overflow-item:hover/);
   });
 
+  it("has terminal submenu styles for nested scripts under terminal", () => {
+    expect(cssContent).toContain(".mobile-overflow-group");
+    expect(cssContent).toContain(".mobile-overflow-submenu");
+    expect(cssContent).toContain(".mobile-overflow-subitem");
+    expect(cssContent).toContain(".mobile-overflow-chevron");
+  });
+
   it("does not contain obsolete mobile header search wrap rules", () => {
     // The old @media (max-width: 640px) and @media (max-width: 480px) 
     // header search rules should be removed
