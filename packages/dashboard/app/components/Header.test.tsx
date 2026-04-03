@@ -4,23 +4,34 @@ import { Header } from "./Header";
 
 const noop = () => {};
 
-// Helper to mock mobile/desktop viewport
-function mockMatchMedia(matches: boolean) {
+// Helper to mock mobile/tablet/desktop viewport
+type ViewportTier = "mobile" | "tablet" | "desktop";
+
+function mockMatchMedia(tier: ViewportTier) {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches: matches && query.includes("max-width: 768px"),
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
+    value: vi.fn().mockImplementation((query: string) => {
+      let matches = false;
+      if (tier === "mobile" && query.includes("max-width: 768px")) {
+        matches = true;
+      } else if (tier === "tablet" && query.includes("769px") && query.includes("1024px")) {
+        matches = true;
+      }
+      // desktop: neither mobile nor tablet query matches
+      return {
+        matches,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      };
+    }),
   });
 }
 
-function renderHeader(props = {}, isMobile = false) {
-  mockMatchMedia(isMobile);
+function renderHeader(props = {}, tier: ViewportTier = "desktop") {
+  mockMatchMedia(tier);
   return render(
     <Header
       onOpenSettings={noop}
@@ -114,24 +125,24 @@ describe("Header", () => {
 
   describe("terminal button", () => {
     it("renders terminal button with correct title on desktop", () => {
-      renderHeader({ onToggleTerminal: noop }, false);
+      renderHeader({ onToggleTerminal: noop }, "desktop");
       expect(screen.getByTitle("Open Terminal")).toBeDefined();
     });
 
     it("does not render terminal button inline on mobile", () => {
-      renderHeader({ onToggleTerminal: noop }, true);
+      renderHeader({ onToggleTerminal: noop }, "mobile");
       expect(screen.queryByTitle("Open Terminal")).toBeNull();
     });
 
     it("calls onToggleTerminal when terminal button is clicked", () => {
       const onToggleTerminal = vi.fn();
-      renderHeader({ onToggleTerminal }, false);
+      renderHeader({ onToggleTerminal }, "desktop");
       fireEvent.click(screen.getByTitle("Open Terminal"));
       expect(onToggleTerminal).toHaveBeenCalled();
     });
 
     it("is always enabled regardless of task state", () => {
-      renderHeader({ onToggleTerminal: noop }, false);
+      renderHeader({ onToggleTerminal: noop }, "desktop");
       const btn = screen.getByTitle("Open Terminal");
       expect(btn.hasAttribute("disabled")).toBe(false);
     });
@@ -139,36 +150,36 @@ describe("Header", () => {
 
   describe("files button", () => {
     it("renders files button on desktop when handler is provided", () => {
-      renderHeader({ onOpenFiles: vi.fn() }, false);
+      renderHeader({ onOpenFiles: vi.fn() }, "desktop");
       expect(screen.getByTitle("Browse files")).toBeDefined();
     });
 
     it("does not render files button on desktop when handler is omitted", () => {
-      renderHeader({}, false);
+      renderHeader({}, "desktop");
       expect(screen.queryByTitle("Browse files")).toBeNull();
     });
 
     it("calls onOpenFiles when desktop files button is clicked", () => {
       const onOpenFiles = vi.fn();
-      renderHeader({ onOpenFiles }, false);
+      renderHeader({ onOpenFiles }, "desktop");
       fireEvent.click(screen.getByTitle("Browse files"));
       expect(onOpenFiles).toHaveBeenCalled();
     });
 
     it("applies active class when files modal is open", () => {
-      renderHeader({ onOpenFiles: vi.fn(), filesOpen: true }, false);
+      renderHeader({ onOpenFiles: vi.fn(), filesOpen: true }, "desktop");
       expect(screen.getByTitle("Browse files").className).toContain("btn-icon--active");
     });
 
     it("shows files action in mobile overflow menu", () => {
-      renderHeader({ onOpenFiles: vi.fn() }, true);
+      renderHeader({ onOpenFiles: vi.fn() }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByTestId("overflow-files-btn")).toBeDefined();
     });
 
     it("calls onOpenFiles from mobile overflow menu", () => {
       const onOpenFiles = vi.fn();
-      renderHeader({ onOpenFiles }, true);
+      renderHeader({ onOpenFiles }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       fireEvent.click(screen.getByTestId("overflow-files-btn"));
       expect(onOpenFiles).toHaveBeenCalled();
@@ -213,42 +224,42 @@ describe("Header", () => {
 
   describe("usage button", () => {
     it("does not render usage button when onOpenUsage is not provided", () => {
-      renderHeader({}, false);
+      renderHeader({}, "desktop");
       expect(screen.queryByTitle("View usage")).toBeNull();
     });
 
     it("does not render usage button when onOpenUsage is not provided on mobile", () => {
-      renderHeader({}, true);
+      renderHeader({}, "mobile");
       expect(screen.queryByTitle("View usage")).toBeNull();
     });
 
     it("renders usage button with correct title when onOpenUsage is provided on desktop", () => {
-      renderHeader({ onOpenUsage: vi.fn() }, false);
+      renderHeader({ onOpenUsage: vi.fn() }, "desktop");
       expect(screen.getByTitle("View usage")).toBeDefined();
     });
 
     it("does not render usage button inline on mobile when onOpenUsage is provided", () => {
-      renderHeader({ onOpenUsage: vi.fn() }, true);
+      renderHeader({ onOpenUsage: vi.fn() }, "mobile");
       // Button should NOT be inline on mobile (it's in overflow menu)
       expect(screen.queryByTitle("View usage")).toBeNull();
     });
 
     it("shows usage in overflow menu on mobile", () => {
-      renderHeader({ onOpenUsage: vi.fn() }, true);
+      renderHeader({ onOpenUsage: vi.fn() }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByTestId("overflow-usage-btn")).toBeDefined();
     });
 
     it("calls onOpenUsage when usage button is clicked on desktop", () => {
       const onOpenUsage = vi.fn();
-      renderHeader({ onOpenUsage }, false);
+      renderHeader({ onOpenUsage }, "desktop");
       fireEvent.click(screen.getByTitle("View usage"));
       expect(onOpenUsage).toHaveBeenCalled();
     });
 
     it("calls onOpenUsage when usage button in overflow menu is clicked", () => {
       const onOpenUsage = vi.fn();
-      renderHeader({ onOpenUsage }, true);
+      renderHeader({ onOpenUsage }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       fireEvent.click(screen.getByTestId("overflow-usage-btn"));
       expect(onOpenUsage).toHaveBeenCalled();
@@ -257,42 +268,42 @@ describe("Header", () => {
 
   describe("activity log button", () => {
     it("does not render activity log button when onOpenActivityLog is not provided", () => {
-      renderHeader({}, false);
+      renderHeader({}, "desktop");
       expect(screen.queryByTitle("View Activity Log")).toBeNull();
     });
 
     it("does not render activity log button when onOpenActivityLog is not provided on mobile", () => {
-      renderHeader({}, true);
+      renderHeader({}, "mobile");
       expect(screen.queryByTitle("View Activity Log")).toBeNull();
     });
 
     it("renders activity log button with correct title when onOpenActivityLog is provided on desktop", () => {
-      renderHeader({ onOpenActivityLog: vi.fn() }, false);
+      renderHeader({ onOpenActivityLog: vi.fn() }, "desktop");
       expect(screen.getByTitle("View Activity Log")).toBeDefined();
     });
 
     it("does not render activity log button inline on mobile when onOpenActivityLog is provided", () => {
-      renderHeader({ onOpenActivityLog: vi.fn() }, true);
+      renderHeader({ onOpenActivityLog: vi.fn() }, "mobile");
       // Button should NOT be inline on mobile (it's in overflow menu)
       expect(screen.queryByTitle("View Activity Log")).toBeNull();
     });
 
     it("shows activity log in overflow menu on mobile", () => {
-      renderHeader({ onOpenActivityLog: vi.fn() }, true);
+      renderHeader({ onOpenActivityLog: vi.fn() }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByTestId("overflow-activity-log-btn")).toBeDefined();
     });
 
     it("calls onOpenActivityLog when activity log button is clicked on desktop", () => {
       const onOpenActivityLog = vi.fn();
-      renderHeader({ onOpenActivityLog }, false);
+      renderHeader({ onOpenActivityLog }, "desktop");
       fireEvent.click(screen.getByTitle("View Activity Log"));
       expect(onOpenActivityLog).toHaveBeenCalled();
     });
 
     it("calls onOpenActivityLog when activity log button in overflow menu is clicked", () => {
       const onOpenActivityLog = vi.fn();
-      renderHeader({ onOpenActivityLog }, true);
+      renderHeader({ onOpenActivityLog }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       fireEvent.click(screen.getByTestId("overflow-activity-log-btn"));
       expect(onOpenActivityLog).toHaveBeenCalled();
@@ -301,80 +312,80 @@ describe("Header", () => {
 
   describe("planning button", () => {
     it("renders planning button with correct title on desktop", () => {
-      renderHeader({ onOpenPlanning: vi.fn() }, false);
+      renderHeader({ onOpenPlanning: vi.fn() }, "desktop");
       expect(screen.getByTitle("Create a task with AI planning")).toBeDefined();
     });
 
     it("does not render planning button inline on mobile", () => {
-      renderHeader({ onOpenPlanning: vi.fn() }, true);
+      renderHeader({ onOpenPlanning: vi.fn() }, "mobile");
       expect(screen.queryByTitle("Create a task with AI planning")).toBeNull();
     });
 
     it("calls onOpenPlanning when planning button is clicked", () => {
       const onOpenPlanning = vi.fn();
-      renderHeader({ onOpenPlanning }, false);
+      renderHeader({ onOpenPlanning }, "desktop");
       fireEvent.click(screen.getByTitle("Create a task with AI planning"));
       expect(onOpenPlanning).toHaveBeenCalled();
     });
 
     it("has correct data-testid for testing on desktop", () => {
-      renderHeader({ onOpenPlanning: vi.fn() }, false);
+      renderHeader({ onOpenPlanning: vi.fn() }, "desktop");
       expect(screen.getByTestId("planning-btn")).toBeDefined();
     });
   });
 
   describe("mobile overflow menu", () => {
     it("renders overflow trigger on mobile", () => {
-      renderHeader({}, true);
+      renderHeader({}, "mobile");
       expect(screen.getByTitle("More header actions")).toBeDefined();
     });
 
     it("does not render overflow trigger on desktop", () => {
-      renderHeader({}, false);
+      renderHeader({}, "desktop");
       expect(screen.queryByTitle("More header actions")).toBeNull();
     });
 
     it("shows terminal in overflow menu on mobile", () => {
-      renderHeader({ onToggleTerminal: noop }, true);
+      renderHeader({ onToggleTerminal: noop }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByTestId("overflow-terminal-btn")).toBeDefined();
     });
 
     it("shows GitHub import in overflow menu on mobile", () => {
-      renderHeader({}, true);
+      renderHeader({}, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByText("Import from GitHub")).toBeDefined();
     });
 
     it("shows planning in overflow menu on mobile", () => {
-      renderHeader({ onOpenPlanning: noop }, true);
+      renderHeader({ onOpenPlanning: noop }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByTestId("overflow-planning-btn")).toBeDefined();
     });
 
     it("shows settings in overflow menu on mobile", () => {
-      renderHeader({}, true);
+      renderHeader({}, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByText("Settings")).toBeDefined();
     });
 
     it("calls onToggleTerminal when overflow terminal button is clicked", () => {
       const onToggleTerminal = vi.fn();
-      renderHeader({ onToggleTerminal }, true);
+      renderHeader({ onToggleTerminal }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       fireEvent.click(screen.getByTestId("overflow-terminal-btn"));
       expect(onToggleTerminal).toHaveBeenCalled();
     });
 
     it("shows scripts in overflow menu on mobile", () => {
-      renderHeader({ onOpenScripts: noop }, true);
+      renderHeader({ onOpenScripts: noop }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByTestId("overflow-scripts-btn")).toBeDefined();
     });
 
     it("calls onOpenScripts from mobile overflow menu", () => {
       const onOpenScripts = vi.fn();
-      renderHeader({ onOpenScripts }, true);
+      renderHeader({ onOpenScripts }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       fireEvent.click(screen.getByTestId("overflow-scripts-btn"));
       expect(onOpenScripts).toHaveBeenCalled();
@@ -431,36 +442,36 @@ describe("Header", () => {
 
   describe("schedules button", () => {
     it("renders schedules button on desktop", () => {
-      renderHeader({ onOpenSchedules: vi.fn() }, false);
+      renderHeader({ onOpenSchedules: vi.fn() }, "desktop");
       expect(screen.getByTitle("Scheduled tasks")).toBeDefined();
     });
 
     it("does not render schedules button inline on mobile", () => {
-      renderHeader({ onOpenSchedules: vi.fn() }, true);
+      renderHeader({ onOpenSchedules: vi.fn() }, "mobile");
       expect(screen.queryByTitle("Scheduled tasks")).toBeNull();
     });
 
     it("calls onOpenSchedules when schedules button is clicked", () => {
       const onOpenSchedules = vi.fn();
-      renderHeader({ onOpenSchedules }, false);
+      renderHeader({ onOpenSchedules }, "desktop");
       fireEvent.click(screen.getByTitle("Scheduled tasks"));
       expect(onOpenSchedules).toHaveBeenCalled();
     });
 
     it("has correct data-testid for testing on desktop", () => {
-      renderHeader({ onOpenSchedules: vi.fn() }, false);
+      renderHeader({ onOpenSchedules: vi.fn() }, "desktop");
       expect(screen.getByTestId("schedules-btn")).toBeDefined();
     });
 
     it("includes scheduled tasks in overflow menu on mobile", () => {
-      renderHeader({ onOpenSchedules: vi.fn() }, true);
+      renderHeader({ onOpenSchedules: vi.fn() }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByText("Scheduled Tasks")).toBeDefined();
     });
 
     it("calls onOpenSchedules from mobile overflow menu", () => {
       const onOpenSchedules = vi.fn();
-      renderHeader({ onOpenSchedules }, true);
+      renderHeader({ onOpenSchedules }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       fireEvent.click(screen.getByTestId("overflow-schedules-btn"));
       expect(onOpenSchedules).toHaveBeenCalled();
@@ -495,12 +506,12 @@ describe("Header", () => {
     });
 
     it("does not render header-back-button on mobile when no currentProject", () => {
-      const { container } = renderHeader({}, true);
+      const { container } = renderHeader({}, "mobile");
       expect(container.querySelector(".header-back-button")).toBeNull();
     });
 
     it("mobile overflow menu closes when clicking outside", () => {
-      renderHeader({ onOpenFiles: vi.fn() }, true);
+      renderHeader({ onOpenFiles: vi.fn() }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByRole("menu")).toBeDefined();
 
@@ -510,7 +521,7 @@ describe("Header", () => {
     });
 
     it("mobile overflow menu closes on Escape key", () => {
-      renderHeader({ onOpenFiles: vi.fn() }, true);
+      renderHeader({ onOpenFiles: vi.fn() }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
       expect(screen.getByRole("menu")).toBeDefined();
 
@@ -519,7 +530,7 @@ describe("Header", () => {
     });
 
     it("mobile overflow trigger has correct accessibility attributes", () => {
-      renderHeader({}, true);
+      renderHeader({}, "mobile");
       const trigger = screen.getByTitle("More header actions");
       expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
       expect(trigger.getAttribute("aria-expanded")).toBe("false");
@@ -529,7 +540,7 @@ describe("Header", () => {
     });
 
     it("hides logo-sub on mobile via CSS", () => {
-      renderHeader({}, true);
+      renderHeader({}, "mobile");
       // The "tasks" element no longer exists - it was removed
     });
   });

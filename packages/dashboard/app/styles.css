@@ -470,6 +470,55 @@ body {
   background: var(--border);
 }
 
+/* === Compact Overflow Menu (mobile + tablet) === */
+/* Styles for the overflow menu used on mobile and tablet viewports.
+   Visibility is controlled by React rendering, not CSS display. */
+.compact-overflow-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 12px;
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  padding: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.mobile-overflow-item:hover {
+  background: var(--card);
+}
+
+.mobile-overflow-item svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 .logo {
   font-size: 20px;
   font-weight: 700;
@@ -4634,52 +4683,6 @@ body {
     box-shadow: var(--shadow-md);
   }
 
-  .mobile-overflow-trigger {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .mobile-overflow-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 12px;
-    min-width: 220px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
-    z-index: 100;
-    padding: var(--space-xs);
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .mobile-overflow-item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-md);
-    padding: 10px 12px;
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text);
-    font-size: 13px;
-    cursor: pointer;
-    text-align: left;
-    transition: background var(--transition-fast);
-  }
-
-  .mobile-overflow-item:hover {
-    background: var(--card);
-  }
-
-  .mobile-overflow-item svg {
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-
   /* Modal: full-screen on mobile */
   .modal-overlay {
     padding-top: 0;
@@ -4805,6 +4808,29 @@ body {
   .card-edit-btn svg {
     width: 16px;
     height: 16px;
+  }
+}
+
+/* === Tablet Responsive Tier (769px–1024px) === */
+/* On tablet-width screens the header uses a compact layout:
+   view toggle and engine controls stay inline while lower-priority
+   actions move into the overflow menu. */
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* Reduce header padding slightly to reclaim horizontal space */
+  .header {
+    padding: var(--space-md) var(--space-lg);
+  }
+
+  /* Hide project selector and back button on tablet (controlled by React rendering too) */
+  .header-project-selector,
+  .header-back-button {
+    display: none;
+  }
+
+  /* Compact search: narrower than desktop */
+  .header-search {
+    max-width: 200px;
+    min-width: 120px;
   }
 }
 

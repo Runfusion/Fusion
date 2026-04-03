@@ -52,12 +52,12 @@ AI-guided interactive planning for creating well-specified tasks from high-level
 - **PR Management**: Create, monitor, and merge pull requests for in-review tasks
 
 ### Responsive Header
-The dashboard header adapts to small screens to remain usable without wrapping or dropping controls:
+The dashboard header adapts across three responsive tiers to remain usable without wrapping or dropping controls:
 
-- **Mobile Overflow Menu**: On screens narrower than 768px, lower-priority actions (GitHub Import, Planning, Settings, and optionally Usage) move into an accessible overflow menu triggered by a "More actions" button. The menu closes on outside click, Escape key, or after selecting an action.
-- **Collapsible Board Search**: On mobile board view, the search input collapses to an icon button. Tapping the icon expands a focused search field. If a search query is already active, the search stays expanded until cleared or explicitly closed so active filters remain visible.
-- **Always-Visible Controls**: View toggle (Board/List), Terminal, Pause, and Stop buttons remain inline on mobile for immediate access.
-- **Keyboard Accessible**: All mobile controls expose proper ARIA attributes (aria-expanded, aria-haspopup, aria-label) and support keyboard navigation.
+- **Mobile (≤768px)**: Lower-priority actions (GitHub Import, Planning, Settings, and optionally Usage) move into an accessible overflow menu triggered by a "More actions" button. The menu closes on outside click, Escape key, or after selecting an action. The board search input collapses to an icon button; tapping it expands a focused search field that stays visible while a query is active. The project selector and back button are hidden to save space. View toggle (Board/List), Terminal, Pause, and Stop buttons remain inline for immediate access.
+- **Tablet (769px–1024px)**: The header uses a compact layout that keeps the view toggle, search input, and both engine controls (Pause/Resume scheduling and Stop/Start AI engine) inline at all times. Lower-priority utility actions (GitHub Import, Planning, Settings, Usage) move into the overflow menu so the engine controls never disappear. The project selector and back button are hidden on tablet.
+- **Desktop (>1024px)**: Full header with all controls and the project selector inline. No overflow menu.
+- **Keyboard Accessible**: All controls across tiers expose proper ARIA attributes (aria-expanded, aria-haspopup, aria-label) and support keyboard navigation.
 
 ### Mobile Task Entry
 Task entry inputs (the quick entry box in the Triage column and the New Task modal's description field) are sized to prevent browser zoom-on-focus on iOS Safari. On mobile viewports (≤768px), these inputs use a minimum 16px font size, which keeps the viewport stable when users focus the fields.

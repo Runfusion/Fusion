@@ -9,10 +9,12 @@ import { resolve } from "path";
  * header selectors and rules for:
  * - Collapsed search trigger (.mobile-search-trigger)
  * - Expanded mobile search panel (.mobile-search-expanded)
- * - Overflow menu trigger (.mobile-overflow-trigger)
+ * - Compact overflow trigger (.compact-overflow-trigger)
  * - Overflow menu popover (.mobile-overflow-menu, .mobile-overflow-item)
  *
- * The mobile styles are located within @media (max-width: 768px) blocks.
+ * The overflow trigger and menu styles are defined at the top level (shared
+ * by mobile and tablet viewports), while the mobile search styles remain
+ * inside @media (max-width: 768px) blocks.
  */
 
 describe("mobile-header-controls.css", () => {
@@ -57,17 +59,17 @@ describe("mobile-header-controls.css", () => {
     expect(mobileCss).toContain(".mobile-search-expanded");
   });
 
-  it("has mobile overflow trigger styles", () => {
-    expect(mobileCss).toContain(".mobile-overflow-trigger");
+  it("has compact overflow trigger styles at top level (shared mobile/tablet)", () => {
+    expect(cssContent).toContain(".compact-overflow-trigger");
   });
 
-  it("has mobile overflow menu styles", () => {
-    expect(mobileCss).toContain(".mobile-overflow-menu");
-    expect(mobileCss).toContain(".mobile-overflow-item");
+  it("has overflow menu styles at top level (shared mobile/tablet)", () => {
+    expect(cssContent).toContain(".mobile-overflow-menu");
+    expect(cssContent).toContain(".mobile-overflow-item");
   });
 
-  it("has mobile overflow menu item hover states", () => {
-    expect(mobileCss).toMatch(/\.mobile-overflow-item:hover/);
+  it("has overflow menu item hover states", () => {
+    expect(cssContent).toMatch(/\.mobile-overflow-item:hover/);
   });
 
   it("does not contain obsolete mobile header search wrap rules", () => {

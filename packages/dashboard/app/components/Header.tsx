@@ -51,21 +51,43 @@ export interface HeaderProps {
   projectId?: string;
 }
 
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia("(max-width: 768px)").matches;
-  });
+type ViewportMode = "mobile" | "tablet" | "desktop";
+
+function getViewportMode(): ViewportMode {
+  if (typeof window === "undefined") return "desktop";
+  if (window.matchMedia("(max-width: 768px)").matches) return "mobile";
+  if (window.matchMedia("(min-width: 769px) and (max-width: 1024px)").matches) return "tablet";
+  return "desktop";
+}
+
+function useViewportMode(): ViewportMode {
+  const [mode, setMode] = useState<ViewportMode>(getViewportMode);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const mediaQuery = window.matchMedia("(max-width: 768px)");
-    const handleChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
+
+    const mobileQuery = window.matchMedia("(max-width: 768px)");
+    const tabletQuery = window.matchMedia("(min-width: 769px) and (max-width: 1024px)");
+
+    const updateMode = () => {
+      if (mobileQuery.matches) {
+        setMode("mobile");
+      } else if (tabletQuery.matches) {
+        setMode("tablet");
+      } else {
+        setMode("desktop");
+      }
+    };
+
+    mobileQuery.addEventListener("change", updateMode);
+    tabletQuery.addEventListener("change", updateMode);
+    return () => {
+      mobileQuery.removeEventListener("change", updateMode);
+      tabletQuery.removeEventListener("change", updateMode);
+    };
   }, []);
 
-  return isMobile;
+  return mode;
 }
 
 export function Header({
@@ -97,7 +119,10 @@ export function Header({
   onViewAllProjects,
   projectId,
 }: HeaderProps) {
-  const isMobile = useIsMobile();
+  const mode = useViewportMode();
+  const isMobile = mode === "mobile";
+  const isTablet = mode === "tablet";
+  const isCompact = isMobile || isTablet;
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false);
   const overflowButtonRef = useRef<HTMLButtonElement>(null);
@@ -172,7 +197,7 @@ export function Header({
         <h1 className="logo">Fusion</h1>
 
         {/* Project Selector - shown when 2+ projects on desktop only */}
-        {!isMobile && projects.length > 1 && (
+        {!isCompact && projects.length > 1 && (
           <div className="header-project-selector">
             <ProjectSelector
               projects={projects}
@@ -186,7 +211,7 @@ export function Header({
         )}
         
         {/* Back to All Projects button when viewing a specific project (desktop only) */}
-        {!isMobile && currentProject && onViewAllProjects && (
+        {!isCompact && currentProject && onViewAllProjects && (
           <button
             className="header-back-button"
             onClick={onViewAllProjects}
@@ -295,28 +320,28 @@ export function Header({
           </div>
         )}
 
-        {/* Usage button - desktop only (moved to overflow on mobile) */}
-        {!isMobile && onOpenUsage && (
+        {/* Usage button - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && onOpenUsage && (
           <button className="btn-icon" onClick={onOpenUsage} title="View usage">
             <Activity size={16} />
           </button>
         )}
 
-        {/* Activity Log button - desktop only (moved to overflow on mobile) */}
-        {!isMobile && onOpenActivityLog && (
+        {/* Activity Log button - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && onOpenActivityLog && (
           <button className="btn-icon" onClick={onOpenActivityLog} title="View Activity Log">
             <History size={16} />
           </button>
         )}
 
         {/* Desktop actions */}
-        {!isMobile && (
+        {!isCompact && (
           <button className="btn-icon" onClick={onOpenGitHubImport} title="Import from GitHub">
             <GitHubLogo size={16} />
           </button>
         )}
 
-        {!isMobile && (
+        {!isCompact && (
           <button
             className="btn-icon"
             onClick={onOpenPlanning}
@@ -327,8 +352,8 @@ export function Header({
           </button>
         )}
 
-        {/* Schedules button - desktop only (moved to overflow on mobile) */}
-        {!isMobile && (
+        {/* Schedules button - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && (
           <button
             className="btn-icon"
             onClick={onOpenSchedules}
@@ -339,8 +364,8 @@ export function Header({
           </button>
         )}
 
-        {/* Terminal button - desktop only (moved to overflow on mobile) */}
-        {!isMobile && (
+        {/* Terminal button - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && (
           <button
             className="btn-icon btn-icon--terminal"
             onClick={onToggleTerminal}
@@ -351,8 +376,8 @@ export function Header({
           </button>
         )}
 
-        {/* Files button - desktop only */}
-        {!isMobile && onOpenFiles && (
+        {/* Files button - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && onOpenFiles && (
           <button
             className={`btn-icon${filesOpen ? " btn-icon--active" : ""}`}
             onClick={onOpenFiles}
@@ -363,8 +388,8 @@ export function Header({
           </button>
         )}
 
-        {/* Git Manager button - desktop only */}
-        {!isMobile && onOpenGitManager && (
+        {/* Git Manager button - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && onOpenGitManager && (
           <button
             className="btn-icon"
             onClick={onOpenGitManager}
@@ -375,8 +400,8 @@ export function Header({
           </button>
         )}
 
-        {/* Workflow Steps - desktop only */}
-        {!isMobile && onOpenWorkflowSteps && (
+        {/* Workflow Steps - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && onOpenWorkflowSteps && (
           <button
             className="btn-icon"
             onClick={onOpenWorkflowSteps}
@@ -387,8 +412,8 @@ export function Header({
           </button>
         )}
 
-        {/* Missions - desktop only */}
-        {!isMobile && onOpenMissions && (
+        {/* Missions - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && onOpenMissions && (
           <button
             className="btn-icon"
             onClick={onOpenMissions}
@@ -399,8 +424,8 @@ export function Header({
           </button>
         )}
 
-        {/* Scripts - desktop only */}
-        {!isMobile && onOpenScripts && onRunScript && (
+        {/* Scripts - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && onOpenScripts && onRunScript && (
           <QuickScriptsDropdown
             onOpenScripts={onOpenScripts}
             onRunScript={onRunScript}
@@ -408,8 +433,8 @@ export function Header({
           />
         )}
 
-        {/* Settings - always inline on desktop */}
-        {!isMobile && (
+        {/* Settings - always inline on desktop only (overflow on mobile/tablet) */}
+        {!isCompact && (
           <button className="btn-icon" onClick={onOpenSettings} title="Settings">
             <Settings size={16} />
           </button>
@@ -434,11 +459,11 @@ export function Header({
           {globalPaused ? <Play size={16} /> : <Square size={16} />}
         </button>
 
-        {/* Mobile overflow menu trigger */}
-        {isMobile && (
+        {/* Compact overflow menu trigger (mobile + tablet) */}
+        {isCompact && (
           <button
             ref={overflowButtonRef}
-            className="btn-icon mobile-overflow-trigger"
+            className="btn-icon compact-overflow-trigger"
             onClick={handleOverflowToggle}
             title="More header actions"
             aria-label="More header actions"
@@ -449,8 +474,8 @@ export function Header({
           </button>
         )}
 
-        {/* Mobile overflow menu */}
-        {isMobile && isOverflowMenuOpen && (
+        {/* Compact overflow menu (mobile + tablet) */}
+        {isCompact && isOverflowMenuOpen && (
           <div
             ref={overflowMenuRef}
             className="mobile-overflow-menu"

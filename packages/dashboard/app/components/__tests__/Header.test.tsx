@@ -2,24 +2,34 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Header } from "../Header";
 
-// Mock matchMedia for mobile/desktop viewport tests
-const mockMatchMedia = (matches: boolean) => {
+// Mock matchMedia for mobile/tablet/desktop viewport tests
+type ViewportTier = "mobile" | "tablet" | "desktop";
+
+const mockMatchMedia = (tier: ViewportTier) => {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches,
-      media: query,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
+    value: vi.fn().mockImplementation((query: string) => {
+      let matches = false;
+      if (tier === "mobile" && query.includes("max-width: 768px")) {
+        matches = true;
+      } else if (tier === "tablet" && query.includes("769px") && query.includes("1024px")) {
+        matches = true;
+      }
+      return {
+        matches,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      };
+    }),
   });
 };
 
 describe("Header", () => {
   beforeEach(() => {
     // Default to desktop viewport
-    mockMatchMedia(false);
+    mockMatchMedia("desktop");
   });
 
   afterEach(() => {
@@ -330,7 +340,7 @@ describe("Header", () => {
 
   describe("mobile viewport", () => {
     beforeEach(() => {
-      mockMatchMedia(true); // Mobile viewport
+      mockMatchMedia("mobile"); // Mobile viewport
     });
 
     it("renders mobile search trigger instead of inline search on mobile", () => {
