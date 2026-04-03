@@ -1925,49 +1925,52 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       let files: string[] = [];
 
       try {
-        let baseRef = task.baseCommitSha;
+        const fileSet = new Set<string>();
+        const baseBranch = task.baseBranch ?? "main";
+        let baseRef: string | undefined;
 
-        if (baseRef) {
-          try {
-            nodeChildProcess.execSync(`git merge-base --is-ancestor ${baseRef} HEAD`, {
+        try {
+          baseRef = nodeChildProcess.execSync(
+            `git merge-base HEAD origin/${baseBranch} 2>/dev/null || git merge-base HEAD ${baseBranch}`,
+            {
               cwd: task.worktree,
-              stdio: "pipe",
+              encoding: "utf-8",
               timeout: 5000,
-            });
-          } catch {
-            baseRef = undefined;
-          }
-        }
-
-        if (!baseRef) {
+            },
+          ).trim();
+        } catch {
           try {
-            baseRef = nodeChildProcess.execSync("git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main", {
+            baseRef = nodeChildProcess.execSync("git rev-parse HEAD~1", {
               cwd: task.worktree,
               encoding: "utf-8",
               timeout: 5000,
             }).trim();
           } catch {
-            try {
-              baseRef = nodeChildProcess.execSync("git rev-parse HEAD~1", {
-                cwd: task.worktree,
-                encoding: "utf-8",
-                timeout: 5000,
-              }).trim();
-            } catch {
-              baseRef = undefined;
-            }
+            baseRef = undefined;
           }
         }
 
         if (baseRef) {
-          const output = nodeChildProcess.execSync(`git diff --name-only ${baseRef}..HEAD`, {
+          const committedOutput = nodeChildProcess.execSync(`git diff --name-only ${baseRef}..HEAD`, {
             cwd: task.worktree,
             encoding: "utf-8",
             timeout: 5000,
           }).trim();
-
-          files = output ? output.split("\n").filter(Boolean) : [];
+          for (const file of committedOutput.split("\n").filter(Boolean)) {
+            fileSet.add(file);
+          }
         }
+
+        const workingTreeOutput = nodeChildProcess.execSync("git diff --name-only", {
+          cwd: task.worktree,
+          encoding: "utf-8",
+          timeout: 5000,
+        }).trim();
+        for (const file of workingTreeOutput.split("\n").filter(Boolean)) {
+          fileSet.add(file);
+        }
+
+        files = Array.from(fileSet);
       } catch {
         files = [];
       }

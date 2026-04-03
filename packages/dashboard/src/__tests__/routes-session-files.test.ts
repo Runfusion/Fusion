@@ -131,15 +131,18 @@ describe("GET /api/tasks/:id/session-files", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses baseCommitSha with double-dot syntax when available", async () => {
+  it("uses merge-base against the task base branch and includes working-tree changes", async () => {
     const store = new MockStore();
     store.addTask(createTask({ id: "FN-675-base", baseCommitSha: "abc123" }));
     mockExecSync.mockImplementation((command) => {
-      if (String(command) === "git merge-base --is-ancestor abc123 HEAD") {
-        return "" as any;
+      if (String(command) === "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main") {
+        return "mergebase123\n" as any;
       }
-      if (String(command) === "git diff --name-only abc123..HEAD") {
-        return "src/a.ts\nsrc/b.ts\n" as any;
+      if (String(command) === "git diff --name-only mergebase123..HEAD") {
+        return "src/a.ts\n" as any;
+      }
+      if (String(command) === "git diff --name-only") {
+        return "src/b.ts\n" as any;
       }
       throw new Error(`Unexpected command: ${String(command)}`);
     });
@@ -150,29 +153,33 @@ describe("GET /api/tasks/:id/session-files", () => {
     expect(response.body).toEqual(["src/a.ts", "src/b.ts"]);
     expect(mockExecSync).toHaveBeenNthCalledWith(
       1,
-      "git merge-base --is-ancestor abc123 HEAD",
+      "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main",
       expect.objectContaining({ cwd: "/tmp/fn-675" }),
     );
     expect(mockExecSync).toHaveBeenNthCalledWith(
       2,
-      "git diff --name-only abc123..HEAD",
+      "git diff --name-only mergebase123..HEAD",
       expect.objectContaining({ cwd: "/tmp/fn-675" }),
     );
-    expect(mockExecSync).not.toHaveBeenCalledWith(expect.stringContaining("...HEAD"), expect.anything());
+    expect(mockExecSync).toHaveBeenNthCalledWith(
+      3,
+      "git diff --name-only",
+      expect.objectContaining({ cwd: "/tmp/fn-675" }),
+    );
   });
 
-  it("ignores stale baseCommitSha values that are not ancestors of HEAD", async () => {
+  it("ignores stale baseCommitSha values and uses current branch merge-base", async () => {
     const store = new MockStore();
     store.addTask(createTask({ id: "FN-675-stale-base", baseCommitSha: "stale123" }));
     mockExecSync.mockImplementation((command) => {
-      if (String(command) === "git merge-base --is-ancestor stale123 HEAD") {
-        throw new Error("not ancestor");
-      }
       if (String(command) === "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main") {
         return "mergebase123\n" as any;
       }
       if (String(command) === "git diff --name-only mergebase123..HEAD") {
         return "packages/engine/src/executor.ts\n" as any;
+      }
+      if (String(command) === "git diff --name-only") {
+        return "" as any;
       }
       throw new Error(`Unexpected command: ${String(command)}`);
     });
@@ -183,17 +190,17 @@ describe("GET /api/tasks/:id/session-files", () => {
     expect(response.body).toEqual(["packages/engine/src/executor.ts"]);
     expect(mockExecSync).toHaveBeenNthCalledWith(
       1,
-      "git merge-base --is-ancestor stale123 HEAD",
-      expect.objectContaining({ cwd: "/tmp/fn-675" }),
-    );
-    expect(mockExecSync).toHaveBeenNthCalledWith(
-      2,
       "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main",
       expect.objectContaining({ cwd: "/tmp/fn-675" }),
     );
     expect(mockExecSync).toHaveBeenNthCalledWith(
-      3,
+      2,
       "git diff --name-only mergebase123..HEAD",
+      expect.objectContaining({ cwd: "/tmp/fn-675" }),
+    );
+    expect(mockExecSync).toHaveBeenNthCalledWith(
+      3,
+      "git diff --name-only",
       expect.objectContaining({ cwd: "/tmp/fn-675" }),
     );
   });
@@ -207,6 +214,9 @@ describe("GET /api/tasks/:id/session-files", () => {
       }
       if (String(command) === "git diff --name-only mergebase123..HEAD") {
         return "packages/dashboard/src/routes.ts\npackages/dashboard/app/components/TaskCard.tsx\n" as any;
+      }
+      if (String(command) === "git diff --name-only") {
+        return "" as any;
       }
       throw new Error(`Unexpected command: ${String(command)}`);
     });
@@ -228,6 +238,11 @@ describe("GET /api/tasks/:id/session-files", () => {
       "git diff --name-only mergebase123..HEAD",
       expect.objectContaining({ cwd: "/tmp/fn-675" }),
     );
+    expect(mockExecSync).toHaveBeenNthCalledWith(
+      3,
+      "git diff --name-only",
+      expect.objectContaining({ cwd: "/tmp/fn-675" }),
+    );
   });
 
   it("falls back to HEAD~1 when merge-base fails", async () => {
@@ -242,6 +257,9 @@ describe("GET /api/tasks/:id/session-files", () => {
       }
       if (String(command) === "git diff --name-only parent123..HEAD") {
         return "src/only.ts\n" as any;
+      }
+      if (String(command) === "git diff --name-only") {
+        return "" as any;
       }
       throw new Error(`Unexpected command: ${String(command)}`);
     });
@@ -267,11 +285,14 @@ describe("GET /api/tasks/:id/session-files", () => {
     const store = new MockStore();
     store.addTask(createTask({ id: "FN-675-cache", baseCommitSha: "cachebase" }));
     mockExecSync.mockImplementation((command) => {
-      if (String(command) === "git merge-base --is-ancestor cachebase HEAD") {
-        return "" as any;
+      if (String(command) === "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main") {
+        return "mergebase123\n" as any;
       }
-      if (String(command) === "git diff --name-only cachebase..HEAD") {
+      if (String(command) === "git diff --name-only mergebase123..HEAD") {
         return "cached/file.ts\n" as any;
+      }
+      if (String(command) === "git diff --name-only") {
+        return "" as any;
       }
       throw new Error(`Unexpected command: ${String(command)}`);
     });
@@ -282,12 +303,12 @@ describe("GET /api/tasks/:id/session-files", () => {
 
     expect(first.body).toEqual(["cached/file.ts"]);
     expect(second.body).toEqual(["cached/file.ts"]);
-    expect(mockExecSync).toHaveBeenCalledTimes(2);
+    expect(mockExecSync).toHaveBeenCalledTimes(3);
 
     vi.advanceTimersByTime(10001);
     const third = await requestSessionFilesWithHandler(handler, "FN-675-cache");
 
     expect(third.body).toEqual(["cached/file.ts"]);
-    expect(mockExecSync).toHaveBeenCalledTimes(4);
+    expect(mockExecSync).toHaveBeenCalledTimes(6);
   });
 });
