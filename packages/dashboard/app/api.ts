@@ -133,7 +133,7 @@ export function createTask(input: TaskCreateInput, projectId?: string): Promise<
   });
 }
 
-export function updateTask(id: string, updates: { title?: string; description?: string; prompt?: string; dependencies?: string[]; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null }, projectId?: string): Promise<Task> {
+export function updateTask(id: string, updates: { title?: string; description?: string; prompt?: string; dependencies?: string[]; enabledWorkflowSteps?: string[]; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null }, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}`, projectId), {
     method: "PATCH",
     body: JSON.stringify(updates),

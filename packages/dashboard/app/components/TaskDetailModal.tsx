@@ -13,6 +13,7 @@ import { PrSection } from "./PrSection";
 import { TaskComments } from "./TaskComments";
 import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
+import { TaskForm, type PendingImage } from "./TaskForm";
 
 interface ModelSelection {
   provider?: string;
@@ -126,8 +127,14 @@ export function TaskDetailModal({
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(task.title || "");
   const [editDescription, setEditDescription] = useState(task.description || "");
+  const [editDependencies, setEditDependencies] = useState<string[]>(task.dependencies || []);
+  const [editExecutorModel, setEditExecutorModel] = useState("");
+  const [editValidatorModel, setEditValidatorModel] = useState("");
+  const [editPresetMode, setEditPresetMode] = useState<"default" | "preset" | "custom">("default");
+  const [editSelectedPresetId, setEditSelectedPresetId] = useState("");
+  const [editSelectedWorkflowSteps, setEditSelectedWorkflowSteps] = useState<string[]>(task.enabledWorkflowSteps || []);
+  const [editPendingImages, setEditPendingImages] = useState<PendingImage[]>([]);
   const [isSaving, setIsSaving] = useState(false);
-  const titleInputRef = useRef<HTMLInputElement>(null);
 
   // Reset edit state when task changes
   useEffect(() => {
@@ -150,82 +157,102 @@ export function TaskDetailModal({
     setSpecFeedback("");
   }, [task.id, task.prompt]);
 
-  // Auto-focus title when entering edit mode
-  useEffect(() => {
-    if (isEditing) {
-      titleInputRef.current?.focus();
-      titleInputRef.current?.select();
-    }
-  }, [isEditing]);
+  // Note: TaskForm handles auto-focus internally via isActive prop
 
   // Check if task can be edited
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isSaving;
-  const hasChanges = editTitle !== (task.title || "") || editDescription !== (task.description || "");
 
   const enterEditMode = useCallback(() => {
     if (!canEdit) return;
     setIsEditing(true);
     setEditTitle(task.title || "");
     setEditDescription(task.description || "");
-  }, [canEdit, task.title, task.description]);
+    setEditDependencies(task.dependencies || []);
+    // Populate model overrides from task
+    const execModel = task.modelProvider && task.modelId ? `${task.modelProvider}/${task.modelId}` : "";
+    const valModel = task.validatorModelProvider && task.validatorModelId ? `${task.validatorModelProvider}/${task.validatorModelId}` : "";
+    setEditExecutorModel(execModel);
+    setEditValidatorModel(valModel);
+    setEditPresetMode(execModel || valModel ? "custom" : "default");
+    setEditSelectedPresetId("");
+    setEditSelectedWorkflowSteps(task.enabledWorkflowSteps || []);
+    setEditPendingImages([]);
+  }, [canEdit, task]);
 
   const exitEditMode = useCallback(() => {
     setIsEditing(false);
     setEditTitle(task.title || "");
     setEditDescription(task.description || "");
-  }, [task.title, task.description]);
+    setEditDependencies(task.dependencies || []);
+    editPendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+    setEditPendingImages([]);
+  }, [task.title, task.description, task.dependencies, editPendingImages]);
 
   const handleSave = useCallback(async () => {
-    if (!hasChanges) {
-      exitEditMode();
-      return;
-    }
-
     setIsSaving(true);
     try {
-      await updateTask(task.id, {
+      // Build update payload with all changed fields
+      const executorSlashIdx = editExecutorModel.indexOf("/");
+      const validatorSlashIdx = editValidatorModel.indexOf("/");
+
+      const updates: Parameters<typeof updateTask>[1] = {
         title: editTitle.trim() || undefined,
         description: editDescription.trim() || undefined,
-      }, projectId);
+        dependencies: editDependencies,
+        enabledWorkflowSteps: editSelectedWorkflowSteps,
+        modelProvider: editExecutorModel && executorSlashIdx !== -1 ? editExecutorModel.slice(0, executorSlashIdx) : null,
+        modelId: editExecutorModel && executorSlashIdx !== -1 ? editExecutorModel.slice(executorSlashIdx + 1) : null,
+        validatorModelProvider: editValidatorModel && validatorSlashIdx !== -1 ? editValidatorModel.slice(0, validatorSlashIdx) : null,
+        validatorModelId: editValidatorModel && validatorSlashIdx !== -1 ? editValidatorModel.slice(validatorSlashIdx + 1) : null,
+      };
+
+      await updateTask(task.id, updates, projectId);
+
+      // Upload pending images as attachments
+      if (editPendingImages.length > 0) {
+        const failures: string[] = [];
+        for (const img of editPendingImages) {
+          try {
+            const attachment = await uploadAttachment(task.id, img.file, projectId);
+            setAttachments((prev) => [...prev, attachment]);
+          } catch {
+            failures.push(img.file.name);
+          }
+        }
+        if (failures.length > 0) {
+          addToast(`Failed to upload: ${failures.join(", ")}`, "error");
+        }
+      }
+
+      // Clean up
+      editPendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+      setEditPendingImages([]);
       addToast(`Updated ${task.id}`, "success");
       setIsEditing(false);
     } catch (err: any) {
       addToast(`Failed to update ${task.id}: ${err.message}`, "error");
-      // Stay in edit mode on error so user can retry
     } finally {
       setIsSaving(false);
     }
-  }, [task.id, editTitle, editDescription, hasChanges, exitEditMode, addToast]);
+  }, [task.id, editTitle, editDescription, editDependencies, editExecutorModel, editValidatorModel, editSelectedWorkflowSteps, editPendingImages, addToast, projectId]);
 
-  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      // Move focus to description textarea
-      const textarea = document.querySelector('.modal-edit-textarea') as HTMLTextAreaElement;
-      textarea?.focus();
-    } else if (e.key === "Escape") {
+  // Handle keyboard shortcuts for edit mode
+  const handleEditKeyDown = useCallback((e: KeyboardEvent) => {
+    if (!isEditing) return;
+    if (e.key === "Escape") {
       e.preventDefault();
       exitEditMode();
-    }
-  }, [exitEditMode]);
-
-  const handleDescKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSave();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      exitEditMode();
     }
-  }, [handleSave, exitEditMode]);
+  }, [isEditing, exitEditMode, handleSave]);
 
-  const handleDescChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setEditDescription(e.target.value);
-    // Auto-resize textarea
-    const el = e.target;
-    el.style.height = "auto";
-    el.style.height = el.scrollHeight + "px";
-  }, []);
+  useEffect(() => {
+    if (!isEditing) return;
+    document.addEventListener("keydown", handleEditKeyDown);
+    return () => document.removeEventListener("keydown", handleEditKeyDown);
+  }, [isEditing, handleEditKeyDown]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { entries: agentLogEntries, loading: agentLogLoading } = useAgentLogs(
@@ -596,24 +623,31 @@ export function TaskDetailModal({
         <div className="detail-body">
           {isEditing ? (
             <div className="modal-edit-form">
-              <input
-                ref={titleInputRef}
-                type="text"
-                className="modal-edit-input"
-                placeholder="Task title"
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                onKeyDown={handleTitleKeyDown}
+              <TaskForm
+                mode="edit"
+                title={editTitle}
+                onTitleChange={setEditTitle}
+                description={editDescription}
+                onDescriptionChange={setEditDescription}
+                dependencies={editDependencies}
+                onDependenciesChange={setEditDependencies}
+                executorModel={editExecutorModel}
+                onExecutorModelChange={setEditExecutorModel}
+                validatorModel={editValidatorModel}
+                onValidatorModelChange={setEditValidatorModel}
+                presetMode={editPresetMode}
+                onPresetModeChange={setEditPresetMode}
+                selectedPresetId={editSelectedPresetId}
+                onSelectedPresetIdChange={setEditSelectedPresetId}
+                selectedWorkflowSteps={editSelectedWorkflowSteps}
+                onWorkflowStepsChange={setEditSelectedWorkflowSteps}
+                pendingImages={editPendingImages}
+                onImagesChange={setEditPendingImages}
+                tasks={tasks.filter((t) => t.id !== task.id)}
+                projectId={projectId}
                 disabled={isSaving}
-              />
-              <textarea
-                className="modal-edit-textarea"
-                placeholder="Task description"
-                value={editDescription}
-                onChange={handleDescChange}
-                onKeyDown={handleDescKeyDown}
-                disabled={isSaving}
-                rows={3}
+                addToast={addToast}
+                isActive={isEditing}
               />
               <div className="modal-edit-actions">
                 <button
@@ -626,7 +660,7 @@ export function TaskDetailModal({
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={handleSave}
-                  disabled={!hasChanges || isSaving}
+                  disabled={isSaving}
                 >
                   {isSaving ? "Saving…" : "Save"}
                 </button>

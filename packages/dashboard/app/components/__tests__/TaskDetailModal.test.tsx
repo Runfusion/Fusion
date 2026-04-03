@@ -14,6 +14,27 @@ vi.mock("../../api", () => ({
   rejectPlan: vi.fn().mockResolvedValue({}),
   duplicateTask: vi.fn().mockResolvedValue({}),
   refineTask: vi.fn().mockResolvedValue({}),
+  // TaskForm dependencies
+  fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [] }),
+  fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
+  fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
+  refineText: vi.fn(),
+  getRefineErrorMessage: vi.fn((err: any) => err?.message || "Failed to refine"),
+  updateGlobalSettings: vi.fn().mockResolvedValue({}),
+  pauseTask: vi.fn().mockResolvedValue({}),
+  unpauseTask: vi.fn().mockResolvedValue({}),
+}));
+
+// Mock lucide-react icons used by TaskDetailModal, TaskForm, PrSection, CustomModelDropdown
+vi.mock("lucide-react", () => ({
+  Pencil: () => null,
+  Sparkles: () => null,
+  Globe: () => null,
+  GitPullRequest: () => null,
+  ExternalLink: () => null,
+  RefreshCw: () => null,
+  Plus: () => null,
+  MessageSquare: () => null,
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({
@@ -2506,8 +2527,8 @@ describe("TaskDetailModal", () => {
 
       // Edit button should be hidden now
       expect(container.querySelector(".modal-edit-btn")).toBeNull();
-      // But input should be visible
-      expect(container.querySelector(".modal-edit-input")).toBeTruthy();
+      // But TaskForm title input should be visible
+      expect(container.querySelector("#task-form-title")).toBeTruthy();
     });
 
     it("entering edit mode shows title input and description textarea", () => {
@@ -2525,15 +2546,15 @@ describe("TaskDetailModal", () => {
 
       // Initially shows title as h2
       expect(container.querySelector("h2.detail-title")).toBeTruthy();
-      expect(container.querySelector(".modal-edit-input")).toBeNull();
+      expect(container.querySelector("#task-form-title")).toBeNull();
 
       // Enter edit mode
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
 
-      // Now shows edit form
+      // Now shows edit form with TaskForm fields
       expect(container.querySelector("h2.detail-title")).toBeNull();
-      expect(container.querySelector(".modal-edit-input")).toBeTruthy();
-      expect(container.querySelector(".modal-edit-textarea")).toBeTruthy();
+      expect(container.querySelector("#task-form-title")).toBeTruthy();
+      expect(container.querySelector("#task-form-description")).toBeTruthy();
     });
 
     it("clicking Cancel exits edit mode without saving", () => {
@@ -2553,14 +2574,14 @@ describe("TaskDetailModal", () => {
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
 
       // Change values
-      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
+      const titleInput = container.querySelector("#task-form-title") as HTMLInputElement;
       fireEvent.change(titleInput, { target: { value: "Modified title" } });
 
       // Click Cancel
       fireEvent.click(screen.getByText("Cancel"));
 
       // Should exit edit mode without saving
-      expect(container.querySelector(".modal-edit-input")).toBeNull();
+      expect(container.querySelector("#task-form-title")).toBeNull();
       expect(container.querySelector("h2.detail-title")?.textContent).toBe("Original title");
     });
 
@@ -2585,8 +2606,8 @@ describe("TaskDetailModal", () => {
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
 
       // Change values
-      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
-      const descTextarea = container.querySelector(".modal-edit-textarea") as HTMLTextAreaElement;
+      const titleInput = container.querySelector("#task-form-title") as HTMLInputElement;
+      const descTextarea = container.querySelector("#task-form-description") as HTMLTextAreaElement;
       fireEvent.change(titleInput, { target: { value: "New title" } });
       fireEvent.change(descTextarea, { target: { value: "New description" } });
 
@@ -2594,14 +2615,14 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalledWith("FN-001", {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", expect.objectContaining({
           title: "New title",
           description: "New description",
-        }, undefined);
+        }), undefined);
       });
     });
 
-    it("Save button is disabled when no changes made", () => {
+    it("Save button is enabled in edit mode", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "triage", title: "Test title", description: "Test description" })}
@@ -2618,7 +2639,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
 
       const saveButton = screen.getByText("Save");
-      expect(saveButton.hasAttribute("disabled")).toBe(true);
+      expect(saveButton.hasAttribute("disabled")).toBe(false);
     });
 
     it("Save button shows 'Saving…' during save operation", async () => {
@@ -2641,10 +2662,6 @@ describe("TaskDetailModal", () => {
 
       // Enter edit mode
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
-
-      // Change value
-      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
-      fireEvent.change(titleInput, { target: { value: "New title" } });
 
       // Click Save
       fireEvent.click(screen.getByText("Save"));
@@ -2675,10 +2692,6 @@ describe("TaskDetailModal", () => {
       // Enter edit mode
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
 
-      // Change value
-      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
-      fireEvent.change(titleInput, { target: { value: "New title" } });
-
       // Click Save
       fireEvent.click(screen.getByText("Save"));
 
@@ -2687,7 +2700,7 @@ describe("TaskDetailModal", () => {
       });
 
       // Should exit edit mode
-      expect(container.querySelector(".modal-edit-input")).toBeNull();
+      expect(container.querySelector("#task-form-title")).toBeNull();
     });
 
     it("failed save shows toast with error and stays in edit mode", async () => {
@@ -2712,10 +2725,6 @@ describe("TaskDetailModal", () => {
       // Enter edit mode
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
 
-      // Change value
-      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
-      fireEvent.change(titleInput, { target: { value: "New title" } });
-
       // Click Save
       fireEvent.click(screen.getByText("Save"));
 
@@ -2724,10 +2733,10 @@ describe("TaskDetailModal", () => {
       });
 
       // Should stay in edit mode
-      expect(container.querySelector(".modal-edit-input")).toBeTruthy();
+      expect(container.querySelector("#task-form-title")).toBeTruthy();
     });
 
-    it("Escape key exits edit mode", () => {
+    it("Escape key exits edit mode", async () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "triage", title: "Test title" })}
@@ -2742,17 +2751,19 @@ describe("TaskDetailModal", () => {
 
       // Enter edit mode
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
-      expect(container.querySelector(".modal-edit-input")).toBeTruthy();
+      expect(container.querySelector("#task-form-title")).toBeTruthy();
 
-      // Press Escape
-      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
-      fireEvent.keyDown(titleInput, { key: "Escape" });
+      // Press Escape (handled via document-level keydown listener)
+      await act(async () => {
+        const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
+        document.dispatchEvent(event);
+      });
 
       // Should exit edit mode
-      expect(container.querySelector(".modal-edit-input")).toBeNull();
+      expect(container.querySelector("#task-form-title")).toBeNull();
     });
 
-    it("Enter in title input moves focus to description textarea", () => {
+    it("edit mode shows both title and description fields", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "triage", title: "Test title", description: "Test description" })}
@@ -2768,13 +2779,86 @@ describe("TaskDetailModal", () => {
       // Enter edit mode
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
 
-      // Press Enter in title input
-      const titleInput = container.querySelector(".modal-edit-input") as HTMLInputElement;
-      fireEvent.keyDown(titleInput, { key: "Enter" });
+      // Both title and description should be present in TaskForm
+      expect(container.querySelector("#task-form-title")).toBeTruthy();
+      expect(container.querySelector("#task-form-description")).toBeTruthy();
+    });
 
-      // Description textarea should be focused (we can check by seeing if the textarea exists)
-      // Note: focus testing is limited in JSDOM, but we verify the handler doesn't error
-      expect(container.querySelector(".modal-edit-textarea")).toBeTruthy();
+    it("edit mode renders model configuration and workflow steps", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // Model configuration and workflow steps should be present via TaskForm
+      expect(screen.getByText(/Model Configuration/i)).toBeTruthy();
+      expect(screen.getByText(/Workflow Steps/i)).toBeTruthy();
+      expect(screen.getByTestId("browser-verification-checkbox")).toBeTruthy();
+    });
+
+    it("save sends all changed fields via updateTask", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValueOnce({ id: "FN-001" } as Task);
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", dependencies: ["FN-002"] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // Click Save
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+          title: "Test",
+          description: "Desc",
+          dependencies: ["FN-002"],
+          enabledWorkflowSteps: [],
+        }), undefined);
+      });
+    });
+
+    it("pre-populates form with existing task values", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "todo", title: "My Task", description: "My Description" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      const titleInput = container.querySelector("#task-form-title") as HTMLInputElement;
+      const descTextarea = container.querySelector("#task-form-description") as HTMLTextAreaElement;
+      expect(titleInput.value).toBe("My Task");
+      expect(descTextarea.value).toBe("My Description");
     });
   });
 });

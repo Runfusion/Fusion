@@ -24,6 +24,7 @@ vi.mock("../../api", () => ({
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err) => err?.message || "Failed to refine text. Please try again."),
+  updateGlobalSettings: vi.fn().mockResolvedValue({}),
 }));
 
 function makeTask(id: string): Task {
@@ -49,6 +50,8 @@ function renderNewTaskModal(props = {}) {
     tasks: [] as Task[],
     onCreateTask: vi.fn().mockResolvedValue({ id: "FN-001" }),
     addToast: vi.fn(),
+    onPlanningMode: vi.fn(),
+    onSubtaskBreakdown: vi.fn(),
   };
   const mergedProps = { ...defaultProps, ...props };
   const result = render(<NewTaskModal {...mergedProps} />);
