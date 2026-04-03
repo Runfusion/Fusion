@@ -1387,6 +1387,53 @@ describe("TaskCard inline editing", () => {
     expect(screen.queryByPlaceholderText(/Task title/i)).toBeNull();
     expect(screen.getByPlaceholderText(/Task description/i)).toBeDefined();
   });
+
+  it("opens the description textarea with 4 visible rows", () => {
+    const task = makeEditableTask({ description: "Some text" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="FN-099"]');
+    fireEvent.doubleClick(card!);
+
+    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
+    expect(descTextarea).toBeDefined();
+    expect(descTextarea.getAttribute("rows")).toBe("4");
+  });
+
+  it("applies mount-time auto-resize for existing long descriptions", () => {
+    // A multi-line description that would exceed the default 4-row height
+    const longDescription = Array(10).fill("This is a line of description text.").join("\n");
+    const task = makeEditableTask({ description: longDescription });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onUpdateTask={noopUpdateTask}
+      />
+    );
+
+    // Enter edit mode
+    const card = document.querySelector('[data-id="FN-099"]');
+    fireEvent.doubleClick(card!);
+
+    const descTextarea = screen.getByPlaceholderText(/Task description/i) as HTMLTextAreaElement;
+    // The mount-time resize effect sets height to scrollHeight + "px".
+    // In JSDOM, scrollHeight is 0 (no real layout), so the style ends up
+    // as "0px" — but the important thing is the effect *did* set the
+    // height property, proving the auto-resize logic runs on mount.
+    expect(descTextarea.style.height).not.toBe("");
+  });
 });
 
 /**

@@ -3974,7 +3974,7 @@ body {
   resize: none;
   overflow: hidden;
   line-height: 1.4;
-  min-height: 38px;
+  min-height: 80px;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 

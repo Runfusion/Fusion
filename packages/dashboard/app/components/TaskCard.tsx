@@ -161,10 +161,16 @@ function TaskCardComponent({
     setEditDescription(task.description || "");
   }, [task.id, task.description]);
 
-  // Auto-focus on description textarea when entering edit mode
+  // Auto-focus and auto-resize description textarea when entering edit mode
   useEffect(() => {
-    if (isEditing) {
-      descTextareaRef.current?.focus();
+    if (isEditing && descTextareaRef.current) {
+      const el = descTextareaRef.current;
+      el.focus();
+      // Apply the same resize logic used in handleDescChange so the textarea
+      // opens at the correct height for existing long descriptions without
+      // requiring the user to type first.
+      el.style.height = "auto";
+      el.style.height = el.scrollHeight + "px";
     }
   }, [isEditing]);
 
@@ -511,7 +517,7 @@ function TaskCardComponent({
             onKeyDown={handleDescKeyDown}
             onBlur={handleBlur}
             disabled={isSaving}
-            rows={1}
+            rows={4}
           />
           {isSaving && (
             <div className="card-edit-loading">
