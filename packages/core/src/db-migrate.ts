@@ -166,13 +166,14 @@ async function migrateTasks(kbDir: string, db: Database): Promise<void> {
       id, title, description, "column", status, size, reviewLevel, currentStep,
       worktree, blockedBy, paused, baseBranch, baseCommitSha, modelPresetId,
       modelProvider, modelId, validatorModelProvider, validatorModelId,
-      mergeRetries, error, summary, thinkingLevel, createdAt, updatedAt,
+      mergeRetries, recoveryRetryCount, nextRecoveryAt,
+      error, summary, thinkingLevel, createdAt, updatedAt,
       columnMovedAt, dependencies, steps, log, attachments, steeringComments,
       comments, workflowStepResults, prInfo, issueInfo, mergeDetails,
       breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, sliceId
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `);
 
@@ -211,6 +212,8 @@ async function migrateTasks(kbDir: string, db: Database): Promise<void> {
         task.validatorModelProvider ?? null,
         task.validatorModelId ?? null,
         task.mergeRetries ?? null,
+        task.recoveryRetryCount ?? null,
+        task.nextRecoveryAt ?? null,
         task.error ?? null,
         task.summary ?? null,
         task.thinkingLevel ?? null,

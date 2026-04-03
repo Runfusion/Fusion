@@ -245,6 +245,15 @@ Each pi agent session gets:
 - In-memory sessions (no persistence needed)
 - The user's existing pi auth (API keys from `~/.pi/agent/auth.json`)
 
+### Error Recovery
+
+The engine automatically recovers from transient infrastructure failures (network blips, proxy errors, connection resets) using bounded exponential backoff:
+
+- **Recoverable failures** — When a transient error is detected during task execution or triage specification, the task is requeued with an increasing backoff delay (60s → 120s → 240s, capped at 5 minutes). Up to 3 retry attempts are made before the task is marked as permanently failed.
+- **Recovery metadata** — Each task stores `recoveryRetryCount` and `nextRecoveryAt` (ISO-8601 timestamp) in SQLite. The scheduler and triage processor skip tasks whose `nextRecoveryAt` is still in the future, ensuring backoff is respected across engine restarts.
+- **Budget exhaustion** — After 3 failed recovery attempts, executor tasks are marked as `failed` and triage tasks receive an error message for manual intervention. Recovery metadata is cleared.
+- **Separate from other retry mechanisms** — Recovery retries are distinct from `mergeRetries` (merge-conflict resolution), `withRateLimitRetry` (in-session rate-limit backoff), and usage-limit global pauses. User pauses, stuck-task-detector kills, and dependency-abort cleanups do not consume the recovery budget.
+
 ## Model System
 
 Fusion provides flexible AI model configuration with support for model presets, per-task overrides, and a hierarchical settings system.

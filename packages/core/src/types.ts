@@ -475,6 +475,15 @@ export interface Task {
   workflowStepResults?: WorkflowStepResult[];
   /** Number of merge retry attempts made for this task (auto-merge conflict recovery) */
   mergeRetries?: number;
+  /** Number of bounded recovery retry attempts for transient executor/triage failures.
+   *  Distinct from `mergeRetries` (merge-conflict-specific). Incremented by the
+   *  recovery-policy module on each recoverable failure; cleared when work restarts
+   *  cleanly or reaches a terminal column (in-review, done, archived). */
+  recoveryRetryCount?: number;
+  /** ISO-8601 timestamp indicating when the task becomes eligible for the next
+   *  recovery retry. Scheduler and triage processor skip tasks whose
+   *  `nextRecoveryAt` is still in the future. Cleared alongside `recoveryRetryCount`. */
+  nextRecoveryAt?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
   /** Error message from the last failure, if the task failed during execution */
@@ -1008,6 +1017,8 @@ export interface ArchivedTaskEntry {
   /** Slice ID this task is linked to */
   sliceId?: string;
   mergeRetries?: number;
+  recoveryRetryCount?: number;
+  nextRecoveryAt?: string;
   error?: string;
 }
 

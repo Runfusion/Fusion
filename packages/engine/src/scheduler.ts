@@ -410,7 +410,13 @@ export class Scheduler {
       );
       if (available <= 0) return;
 
-      const todo = tasks.filter((t) => t.column === "todo" && !t.paused);
+      const now = Date.now();
+      const todo = tasks.filter((t) => {
+        if (t.column !== "todo" || t.paused) return false;
+        // Skip tasks with a recovery backoff that hasn't elapsed yet
+        if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
+        return true;
+      });
       if (todo.length === 0) return;
 
       /**

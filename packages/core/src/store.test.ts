@@ -4630,4 +4630,112 @@ Task with acceptance criteria
       expect(movedEvents[0].to).toBe("todo");
     });
   });
+
+  describe("recovery metadata (recoveryRetryCount / nextRecoveryAt)", () => {
+    async function createTestTask(overrides: Partial<import("./types.js").TaskCreateInput> = {}) {
+      return store.createTask({ description: "recovery test task", ...overrides });
+    }
+
+    it("new tasks have no recovery metadata (defaults to undefined)", async () => {
+      const task = await createTestTask();
+      expect(task.recoveryRetryCount).toBeUndefined();
+      expect(task.nextRecoveryAt).toBeUndefined();
+    });
+
+    it("updateTask can set and clear recoveryRetryCount and nextRecoveryAt", async () => {
+      const task = await createTestTask();
+      const futureTime = new Date(Date.now() + 60_000).toISOString();
+
+      // Set
+      const updated = await store.updateTask(task.id, {
+        recoveryRetryCount: 2,
+        nextRecoveryAt: futureTime,
+      });
+      expect(updated.recoveryRetryCount).toBe(2);
+      expect(updated.nextRecoveryAt).toBe(futureTime);
+
+      // Re-read to verify persistence
+      const reread = await store.getTask(task.id);
+      expect(reread.recoveryRetryCount).toBe(2);
+      expect(reread.nextRecoveryAt).toBe(futureTime);
+
+      // Clear
+      const cleared = await store.updateTask(task.id, {
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      });
+      expect(cleared.recoveryRetryCount).toBeUndefined();
+      expect(cleared.nextRecoveryAt).toBeUndefined();
+    });
+
+    it("moveTask to in-review clears recovery metadata", async () => {
+      const task = await createTestTask();
+      await store.moveTask(task.id, "todo");
+      await store.updateTask(task.id, {
+        recoveryRetryCount: 3,
+        nextRecoveryAt: new Date().toISOString(),
+      });
+      await store.moveTask(task.id, "in-progress");
+      const moved = await store.moveTask(task.id, "in-review");
+      expect(moved.recoveryRetryCount).toBeUndefined();
+      expect(moved.nextRecoveryAt).toBeUndefined();
+    });
+
+    it("moveTask to done clears recovery metadata", async () => {
+      const task = await createTestTask();
+      await store.moveTask(task.id, "todo");
+      await store.updateTask(task.id, {
+        recoveryRetryCount: 1,
+        nextRecoveryAt: new Date().toISOString(),
+      });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      const done = await store.moveTask(task.id, "done");
+      expect(done.recoveryRetryCount).toBeUndefined();
+      expect(done.nextRecoveryAt).toBeUndefined();
+    });
+
+    it("moveTask from in-progress to todo preserves recovery metadata", async () => {
+      const task = await createTestTask();
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      const futureTime = new Date(Date.now() + 60_000).toISOString();
+      await store.updateTask(task.id, {
+        recoveryRetryCount: 2,
+        nextRecoveryAt: futureTime,
+      });
+
+      const moved = await store.moveTask(task.id, "todo");
+      expect(moved.recoveryRetryCount).toBe(2);
+      expect(moved.nextRecoveryAt).toBe(futureTime);
+    });
+
+    it("recovery metadata persists across store re-initialization", async () => {
+      const task = await createTestTask();
+      const futureTime = new Date(Date.now() + 60_000).toISOString();
+      await store.updateTask(task.id, {
+        recoveryRetryCount: 5,
+        nextRecoveryAt: futureTime,
+      });
+
+      // Re-create store to simulate restart
+      store.stopWatching();
+      const store2 = new TaskStore(rootDir, globalDir);
+      await store2.init();
+
+      const reloaded = await store2.getTask(task.id);
+      expect(reloaded.recoveryRetryCount).toBe(5);
+      expect(reloaded.nextRecoveryAt).toBe(futureTime);
+      store2.stopWatching();
+    });
+
+    it("schema migration: existing rows default to NULL (undefined) for recovery fields", async () => {
+      // Tasks created before the migration should have undefined recovery fields
+      const task = await createTestTask();
+      const detail = await store.getTask(task.id);
+      expect(detail.recoveryRetryCount).toBeUndefined();
+      expect(detail.nextRecoveryAt).toBeUndefined();
+    });
+  });
 });

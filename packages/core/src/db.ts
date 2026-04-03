@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   validatorModelProvider TEXT,
   validatorModelId TEXT,
   mergeRetries INTEGER,
+  recoveryRetryCount INTEGER,
+  nextRecoveryAt TEXT,
   error TEXT,
   summary TEXT,
   thinkingLevel TEXT,
@@ -409,8 +411,15 @@ export class Database {
       });
     }
 
+    if (version < 7) {
+      this.applyMigration(7, () => {
+        this.addColumnIfMissing("tasks", "recoveryRetryCount", "INTEGER");
+        this.addColumnIfMissing("tasks", "nextRecoveryAt", "TEXT");
+      });
+    }
+
     // Future migrations go here:
-    // if (version < 7) { this.applyMigration(7, () => { ... }); }
+    // if (version < 8) { this.applyMigration(8, () => { ... }); }
   }
 
   /**

@@ -3551,7 +3551,12 @@ describe("TaskExecutor usage limit detection", () => {
     });
 
     expect(onUsageLimitHitSpy).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Transient error (will retry): connection refused");
+    // Recovery policy: first transient error → retry 1/3 with backoff
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", expect.stringContaining("Transient error (retry 1/3"));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      recoveryRetryCount: 1,
+      nextRecoveryAt: expect.any(String),
+    }));
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
     expect(store.updateTask).not.toHaveBeenCalledWith(
       "FN-001",
@@ -3660,6 +3665,190 @@ describe("TaskExecutor usage limit detection", () => {
       "FN-002",
       "overloaded_error: Overloaded",
     );
+  });
+});
+
+describe("TaskExecutor bounded recovery retries", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("increments recoveryRetryCount on successive transient failures", async () => {
+    const store = createMockStore();
+    const onError = vi.fn();
+
+    mockedCreateHaiAgent.mockRejectedValue(new Error("upstream connect error"));
+
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+
+    // First failure: count goes from undefined to 1
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      recoveryRetryCount: 1,
+      nextRecoveryAt: expect.any(String),
+    }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(onError).not.toHaveBeenCalled();
+
+    // Second failure: count goes from 1 to 2
+    vi.clearAllMocks();
+    mockedCreateHaiAgent.mockRejectedValue(new Error("upstream connect error"));
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      recoveryRetryCount: 1,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      recoveryRetryCount: 2,
+    }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("escalates to failure when recovery retries are exhausted", async () => {
+    const store = createMockStore();
+    const onError = vi.fn();
+
+    mockedCreateHaiAgent.mockRejectedValue(new Error("socket hang up"));
+
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+
+    // Task already has 3 retries (max) — next failure should escalate
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      recoveryRetryCount: 3,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      status: "failed",
+      error: "socket hang up",
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+    }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+    expect(onError).toHaveBeenCalled();
+  });
+
+  it("does NOT consume retry budget for paused tasks", async () => {
+    const store = createMockStore();
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    // Simulate a paused abort — the executor checks pausedAborted set
+    const task = {
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress" as const,
+      recoveryRetryCount: 1,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Simulate: task gets paused mid-execution → abort error
+    mockedCreateHaiAgent.mockRejectedValue(new Error("Aborted"));
+    (executor as any).pausedAborted.add("FN-001");
+
+    await executor.execute(task);
+
+    // Should NOT update recoveryRetryCount
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      recoveryRetryCount: expect.any(Number),
+    }));
+  });
+
+  it("does NOT consume retry budget for stuck-task-detector kills", async () => {
+    const store = createMockStore();
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    mockedCreateHaiAgent.mockRejectedValue(new Error("Aborted"));
+    (executor as any).stuckAborted.add("FN-001");
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      recoveryRetryCount: 2,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Should NOT update recoveryRetryCount
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      recoveryRetryCount: expect.any(Number),
+    }));
+  });
+
+  it("clears recovery metadata after successful run completes", async () => {
+    const store = createMockStore();
+
+    // Mock successful agent session
+    const mockSession = {
+      prompt: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+      state: { error: undefined },
+    };
+    mockedCreateHaiAgent.mockResolvedValue({ session: mockSession } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      recoveryRetryCount: 2,
+      nextRecoveryAt: new Date().toISOString(),
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // moveTask to in-review clears recovery metadata (via store's column transition logic)
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
 });
 

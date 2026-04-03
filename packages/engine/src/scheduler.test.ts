@@ -924,4 +924,86 @@ describe("Scheduler", () => {
       expect(mockMissionStore.activateSlice).not.toHaveBeenCalled();
     });
   });
+
+  describe("recovery due-time gating (nextRecoveryAt)", () => {
+    it("skips todo tasks whose nextRecoveryAt is in the future", async () => {
+      const future = new Date(Date.now() + 60_000).toISOString();
+      const task = createMockTask({
+        id: "FN-010",
+        column: "todo",
+        nextRecoveryAt: future,
+        recoveryRetryCount: 1,
+      });
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+      });
+
+      const onSchedule = vi.fn();
+      const scheduler = new Scheduler(store, { onSchedule });
+      scheduler.start();
+      await scheduler.schedule();
+      scheduler.stop();
+
+      // Should NOT have been started
+      expect(onSchedule).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
+    it("picks up todo tasks whose nextRecoveryAt has elapsed", async () => {
+      const past = new Date(Date.now() - 1000).toISOString();
+      const task = createMockTask({
+        id: "FN-011",
+        column: "todo",
+        nextRecoveryAt: past,
+        recoveryRetryCount: 1,
+      });
+
+      // Mock filesystem validation: task dir exists, PROMPT.md exists and non-empty
+      (existsSync as any).mockReturnValue(true);
+      (readFile as any).mockResolvedValue("# Task\n\nSome content\n## File Scope\n- foo.ts\n");
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+        getTasksDir: vi.fn().mockReturnValue("/test/project/.fusion/tasks"),
+      });
+
+      const onSchedule = vi.fn();
+      const scheduler = new Scheduler(store, { onSchedule });
+      // Call schedule() directly without start() to avoid scheduling guard race
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.moveTask).toHaveBeenCalledWith("FN-011", "in-progress");
+    });
+
+    it("picks up todo tasks without nextRecoveryAt normally", async () => {
+      const task = createMockTask({
+        id: "FN-012",
+        column: "todo",
+        // No nextRecoveryAt — should be picked up normally
+      });
+
+      (existsSync as any).mockReturnValue(true);
+      (readFile as any).mockResolvedValue("# Task\n\nSome content\n## File Scope\n- foo.ts\n");
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+        getTasksDir: vi.fn().mockReturnValue("/test/project/.fusion/tasks"),
+      });
+
+      const onSchedule = vi.fn();
+      const scheduler = new Scheduler(store, { onSchedule });
+      // Call schedule() directly without start() to avoid scheduling guard race
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.moveTask).toHaveBeenCalledWith("FN-012", "in-progress");
+    });
+  });
 });

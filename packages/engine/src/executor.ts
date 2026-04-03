@@ -15,6 +15,7 @@ import { executorLog, reviewerLog } from "./logger.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
 import { isTransientError } from "./transient-error-detector.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
+import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
 import type { StuckTaskDetector } from "./stuck-task-detector.js";
 
 // Re-export for backward compatibility (tests import from executor.ts)
@@ -723,10 +724,35 @@ export class TaskExecutor {
         if (this.options.usageLimitPauser && isUsageLimitError(err.message)) {
           await this.options.usageLimitPauser.onUsageLimitHit("executor", task.id, err.message);
         } else if (isTransientError(err.message)) {
-          // Transient network/infrastructure error — retry instead of failing
-          executorLog.warn(`⚡ ${task.id} transient error — moving to todo for retry: ${err.message}`);
-          await this.store.logEntry(task.id, `Transient error (will retry): ${err.message}`);
-          await this.store.moveTask(task.id, "todo");
+          // Transient network/infrastructure error — use bounded recovery policy
+          const decision = computeRecoveryDecision({
+            recoveryRetryCount: task.recoveryRetryCount,
+            nextRecoveryAt: task.nextRecoveryAt,
+          });
+
+          if (decision.shouldRetry) {
+            const attempt = decision.nextState.recoveryRetryCount;
+            const delay = formatDelay(decision.delayMs);
+            executorLog.warn(`⚡ ${task.id} transient error — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${err.message}`);
+            await this.store.logEntry(task.id, `Transient error (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${err.message}`);
+            await this.store.updateTask(task.id, {
+              recoveryRetryCount: decision.nextState.recoveryRetryCount,
+              nextRecoveryAt: decision.nextState.nextRecoveryAt,
+            });
+            await this.store.moveTask(task.id, "todo");
+            return;
+          }
+
+          // Recovery budget exhausted — escalate to real failure
+          executorLog.error(`✗ ${task.id} transient error retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${err.message}`);
+          await this.store.logEntry(task.id, `Transient error retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${err.message}`);
+          await this.store.updateTask(task.id, {
+            status: "failed",
+            error: err.message,
+            recoveryRetryCount: null,
+            nextRecoveryAt: null,
+          });
+          this.options.onError?.(task, err);
           return;
         }
         executorLog.error(`✗ ${task.id} execution failed:`, err.message);

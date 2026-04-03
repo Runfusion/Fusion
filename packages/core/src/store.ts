@@ -178,6 +178,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       validatorModelProvider: row.validatorModelProvider || undefined,
       validatorModelId: row.validatorModelId || undefined,
       mergeRetries: row.mergeRetries ?? undefined,
+      recoveryRetryCount: row.recoveryRetryCount ?? undefined,
+      nextRecoveryAt: row.nextRecoveryAt || undefined,
       error: row.error || undefined,
       summary: row.summary || undefined,
       thinkingLevel: row.thinkingLevel || undefined,
@@ -225,14 +227,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       INSERT OR REPLACE INTO tasks (
         id, title, description, "column", status, size, reviewLevel, currentStep,
         worktree, blockedBy, paused, baseBranch, branch, baseCommitSha, modelPresetId, modelProvider,
-        modelId, validatorModelProvider, validatorModelId, mergeRetries, error,
+        modelId, validatorModelProvider, validatorModelId, mergeRetries,
+        recoveryRetryCount, nextRecoveryAt, error,
         summary, thinkingLevel, createdAt, updatedAt, columnMovedAt,
         dependencies, steps, log, attachments, steeringComments,
         comments, workflowStepResults, prInfo, issueInfo, mergeDetails,
         breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, missionId, sliceId
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `).run(
       task.id,
@@ -255,6 +258,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.validatorModelProvider ?? null,
       task.validatorModelId ?? null,
       task.mergeRetries ?? null,
+      task.recoveryRetryCount ?? null,
+      task.nextRecoveryAt ?? null,
       task.error ?? null,
       task.summary ?? null,
       task.thinkingLevel ?? null,
@@ -930,15 +935,26 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.error = undefined;
         task.worktree = undefined;
         task.blockedBy = undefined;
+        task.recoveryRetryCount = undefined;
+        task.nextRecoveryAt = undefined;
       }
 
       // Clear transient fields when moving from in-progress to reset columns (todo/triage)
-      // This ensures failed tasks don't show failed status after being moved for retry
+      // This ensures failed tasks don't show failed status after being moved for retry.
+      // Note: recovery metadata (recoveryRetryCount, nextRecoveryAt) is intentionally
+      // preserved here — the recovery-policy module manages those fields. They are
+      // only cleared on terminal transitions (in-review, done, archived).
       if (fromColumn === "in-progress" && (toColumn === "todo" || toColumn === "triage")) {
         task.status = undefined;
         task.error = undefined;
         task.worktree = undefined;
         task.blockedBy = undefined;
+      }
+
+      // Clear recovery metadata when task reaches in-review (successful completion)
+      if (toColumn === "in-review") {
+        task.recoveryRetryCount = undefined;
+        task.nextRecoveryAt = undefined;
       }
 
       // Clear workflow step results when moving from in-review back to todo or in-progress
@@ -959,7 +975,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; branch?: string; baseCommitSha?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; branch?: string; baseCommitSha?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; recoveryRetryCount?: number | null; nextRecoveryAt?: string | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Validate that task doesn't depend on itself
@@ -1014,6 +1030,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (updates.size !== undefined) task.size = updates.size;
       if (updates.reviewLevel !== undefined) task.reviewLevel = updates.reviewLevel;
       if (updates.mergeRetries !== undefined) task.mergeRetries = updates.mergeRetries;
+      if (updates.recoveryRetryCount === null) {
+        task.recoveryRetryCount = undefined;
+      } else if (updates.recoveryRetryCount !== undefined) {
+        task.recoveryRetryCount = updates.recoveryRetryCount;
+      }
+      if (updates.nextRecoveryAt === null) {
+        task.nextRecoveryAt = undefined;
+      } else if (updates.nextRecoveryAt !== undefined) {
+        task.nextRecoveryAt = updates.nextRecoveryAt;
+      }
       if (updates.modelProvider === null) {
         task.modelProvider = undefined;
       } else if (updates.modelProvider !== undefined) {

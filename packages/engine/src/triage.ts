@@ -23,6 +23,7 @@ import {
 } from "./usage-limit-detector.js";
 import { isTransientError } from "./transient-error-detector.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
+import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
 
 export const TRIAGE_SYSTEM_PROMPT = `You are a task specification agent for "kb", an AI-orchestrated task board.
 
@@ -373,8 +374,11 @@ export class TriageProcessor {
       this.wasEnginePaused = false;
 
       const tasks = await this.store.listTasks();
+      const now = Date.now();
       const triageTasks = tasks.filter(
-        (t) => t.column === "triage" && !this.processing.has(t.id) && !t.paused,
+        (t) => t.column === "triage" && !this.processing.has(t.id) && !t.paused
+          // Skip tasks with a recovery backoff that hasn't elapsed yet
+          && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
       );
 
       for (const task of triageTasks) {
@@ -685,12 +689,35 @@ export class TriageProcessor {
             err.message,
           );
         } else if (isTransientError(err.message)) {
-          // Transient network/infrastructure error — don't mark as failed, allow retry
-          triageLog.warn(`⚡ ${task.id} transient error during triage — will retry: ${err.message}`);
-          await this.store.logEntry(task.id, `Transient error during specification (will retry): ${err.message}`).catch(() => {});
-          // Restore status so triage picks it up again on next pass
-          const restoreStatus = task.status === "needs-respecify" ? "needs-respecify" : undefined;
-          await this.store.updateTask(task.id, { status: restoreStatus }).catch(() => {});
+          // Transient network/infrastructure error — use bounded recovery policy
+          const decision = computeRecoveryDecision({
+            recoveryRetryCount: task.recoveryRetryCount,
+            nextRecoveryAt: task.nextRecoveryAt,
+          });
+
+          if (decision.shouldRetry) {
+            const attempt = decision.nextState.recoveryRetryCount;
+            const delay = formatDelay(decision.delayMs);
+            triageLog.warn(`⚡ ${task.id} transient error during triage — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${err.message}`);
+            await this.store.logEntry(task.id, `Transient error during specification (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${err.message}`).catch(() => {});
+            const restoreStatus = task.status === "needs-respecify" ? "needs-respecify" : undefined;
+            await this.store.updateTask(task.id, {
+              status: restoreStatus,
+              recoveryRetryCount: decision.nextState.recoveryRetryCount,
+              nextRecoveryAt: decision.nextState.nextRecoveryAt,
+            }).catch(() => {});
+            return;
+          }
+
+          // Recovery budget exhausted — freeze in triage with error for manual intervention
+          triageLog.error(`✗ ${task.id} transient error retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${err.message}`);
+          await this.store.logEntry(task.id, `Specification failed after ${MAX_RECOVERY_RETRIES} transient errors: ${err.message}`).catch(() => {});
+          await this.store.updateTask(task.id, {
+            error: `Specification failed after ${MAX_RECOVERY_RETRIES} transient errors: ${err.message}`,
+            recoveryRetryCount: null,
+            nextRecoveryAt: null,
+          }).catch(() => {});
+          this.options.onSpecifyError?.(task, err);
           return;
         }
         // For re-specification, restore needs-respecify status so it can be retried

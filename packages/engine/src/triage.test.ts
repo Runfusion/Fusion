@@ -10,12 +10,19 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 
-const { mockReviewStep } = vi.hoisted(() => ({
+const { mockReviewStep, mockCreateKbAgent } = vi.hoisted(() => ({
   mockReviewStep: vi.fn(),
+  mockCreateKbAgent: vi.fn(),
 }));
 
 vi.mock("./reviewer.js", () => ({
   reviewStep: mockReviewStep,
+}));
+
+vi.mock("./pi.js", () => ({
+  createKbAgent: mockCreateKbAgent,
+  describeModel: vi.fn().mockReturnValue("mock-model"),
+  promptWithFallback: vi.fn().mockReturnValue("mock-prompt"),
 }));
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -26,7 +33,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     listTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
     moveTask: vi.fn(),
-    updateTask: vi.fn(),
+    updateTask: vi.fn().mockResolvedValue(undefined),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
     getSettings: vi.fn().mockResolvedValue({
@@ -717,5 +724,148 @@ describe("taskCreate tool model inheritance", () => {
       validatorModelProvider: undefined,
       validatorModelId: undefined,
     }));
+  });
+
+  describe("bounded recovery retries for triage", () => {
+    it("sets recoveryRetryCount and nextRecoveryAt on first transient error via specifyTask", async () => {
+      const task = {
+        id: "FN-200",
+        description: "Test triage task",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+
+      // Mock createKbAgent to throw a transient error
+      mockCreateKbAgent.mockRejectedValue(new Error("upstream connect error"));
+
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-200", expect.objectContaining({
+        recoveryRetryCount: 1,
+        nextRecoveryAt: expect.any(String),
+      }));
+    });
+
+    it("escalates to error state when triage retries are exhausted via specifyTask", async () => {
+      const task = {
+        id: "FN-201",
+        description: "Test triage task",
+        column: "triage",
+        recoveryRetryCount: 3, // Already at max
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+
+      const onSpecifyError = vi.fn();
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+        onSpecifyError,
+      });
+
+      mockCreateKbAgent.mockRejectedValue(new Error("connection reset"));
+
+      await processor.specifyTask(task);
+
+      // Should set error and clear recovery metadata
+      expect(store.updateTask).toHaveBeenCalledWith("FN-201", expect.objectContaining({
+        error: expect.stringContaining("Specification failed after 3 transient errors"),
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }));
+      expect(onSpecifyError).toHaveBeenCalled();
+    });
+  });
+
+  describe("recovery due-time gating (nextRecoveryAt)", () => {
+    it("skips triage tasks whose nextRecoveryAt is in the future", async () => {
+      const future = new Date(Date.now() + 60_000).toISOString();
+      const task = {
+        id: "FN-100",
+        description: "Test triage task",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        nextRecoveryAt: future,
+        recoveryRetryCount: 1,
+      } as unknown as Task;
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+      });
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000, // long interval so only manual poll runs
+      });
+
+      // Spy on specifyTask to ensure it's NOT called for gated tasks
+      const specifySpy = vi.spyOn(processor, "specifyTask");
+
+      processor.start();
+      // Wait a tick for the initial poll
+      await new Promise((r) => setTimeout(r, 50));
+      processor.stop();
+
+      expect(specifySpy).not.toHaveBeenCalled();
+      specifySpy.mockRestore();
+    });
+
+    it("processes triage tasks whose nextRecoveryAt has elapsed", async () => {
+      const past = new Date(Date.now() - 1000).toISOString();
+      const task = {
+        id: "FN-101",
+        description: "Test triage task past",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        nextRecoveryAt: past,
+        recoveryRetryCount: 1,
+      } as unknown as Task;
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+      });
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+
+      const specifySpy = vi.spyOn(processor, "specifyTask").mockResolvedValue(undefined);
+
+      processor.start();
+      await new Promise((r) => setTimeout(r, 50));
+      processor.stop();
+
+      expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-101" }));
+      specifySpy.mockRestore();
+    });
   });
 });
