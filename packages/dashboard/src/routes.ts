@@ -24,6 +24,7 @@ import {
   type BadgeUrlComponents,
 } from "./github-webhooks.js";
 import { createMissionRouter } from "./mission-routes.js";
+import { getOrCreateProjectStore } from "./project-store-resolver.js";
 
 /**
  * Minimal interface matching pi-coding-agent's ModelRegistry API surface
@@ -1090,8 +1091,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     const projectId = getProjectIdFromRequest(req);
     if (!projectId) return store;
 
-    const { TaskStore: TaskStoreClass } = await import("@fusion/core");
-    return TaskStoreClass.getOrCreateForProject(projectId);
+    // Use the shared project-store resolver so mutations emit events
+    // on the same EventEmitter that SSE listeners are attached to.
+    return getOrCreateProjectStore(projectId);
   }
 
   if (process.env.FUSION_DEBUG_PLANNING_ROUTES === "1") {

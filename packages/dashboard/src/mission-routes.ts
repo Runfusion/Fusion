@@ -15,6 +15,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TaskStore } from "@fusion/core";
+import { getOrCreateProjectStore } from "./project-store-resolver.js";
 import type {
   Mission,
   Milestone,
@@ -170,7 +171,7 @@ export function createMissionRouter(store: TaskStore): Router {
   router.use(async (req, _res, next) => {
     try {
       const projectId = getProjectIdFromRequest(req);
-      const scopedStore = projectId ? await TaskStore.getOrCreateForProject(projectId) : store;
+      const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : store;
       requestContext.run(scopedStore.getMissionStore(), next);
     } catch (error) {
       next(error);

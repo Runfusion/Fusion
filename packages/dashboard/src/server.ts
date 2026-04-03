@@ -8,6 +8,7 @@ import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE } from "./sse.js";
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
+import { getOrCreateProjectStore, evictAllProjectStores } from "./project-store-resolver.js";
 import { getTerminalService, type TerminalSession } from "./terminal-service.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import { terminalSessionManager } from "./terminal.js";
@@ -117,8 +118,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }
 
     try {
-      const { TaskStore: TaskStoreClass } = await import("@fusion/core");
-      const scopedStore = await TaskStoreClass.getOrCreateForProject(projectId);
+      // Use the shared project-store resolver so SSE listeners attach to
+      // the same EventEmitter used by project-scoped task API routes.
+      const scopedStore = await getOrCreateProjectStore(projectId);
       createSSE(scopedStore, scopedStore.getMissionStore())(req, res);
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Failed to open project event stream" });
@@ -143,8 +145,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
     void (async () => {
       if (projectId) {
-        const { TaskStore: TaskStoreClass } = await import("@fusion/core");
-        activeStore = await TaskStoreClass.getOrCreateForProject(projectId);
+        activeStore = await getOrCreateProjectStore(projectId);
       }
 
       const onAgentLog = (entry: { taskId: string; text: string; type: string; timestamp: string }) => {
@@ -631,6 +632,8 @@ export function setupBadgeWebSocket(
     wsManager.dispose();
     void badgePubSub.dispose();
     wss.close();
+    // Clean up cached project-scoped stores (stop watchers, close DB connections)
+    evictAllProjectStores();
     dashboardApp.terminalWsServer = null;
     dashboardApp.badgeWsServer = null;
     dashboardApp.badgeWsManager = null;
