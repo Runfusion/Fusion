@@ -29,6 +29,7 @@ vi.mock("../../api", () => ({
   deleteTask: vi.fn(),
   mergeTask: vi.fn(),
   retryTask: vi.fn(),
+  duplicateTask: vi.fn(),
   updateTask: vi.fn(),
   archiveTask: vi.fn(),
   unarchiveTask: vi.fn(),
@@ -41,6 +42,8 @@ async function flushPromises(): Promise<void> {
 }
 
 const mockFetchTasks = vi.mocked(api.fetchTasks);
+const mockCreateTask = vi.mocked(api.createTask);
+const mockDuplicateTask = vi.mocked(api.duplicateTask);
 const mockUpdateTask = vi.mocked(api.updateTask);
 const mockArchiveAllDone = vi.mocked(api.archiveAllDone);
 
@@ -850,6 +853,102 @@ describe("useTasks", () => {
 
       expect(archived).toEqual([]);
       expect(result.current.tasks[0].column).toBe("todo");
+    });
+  });
+
+  describe("createTask optimistic insertion", () => {
+    it("adds task to state immediately", async () => {
+      mockFetchTasks.mockResolvedValueOnce([]);
+      const newTask = createMockTask({ id: "FN-010", column: "triage" });
+      mockCreateTask.mockResolvedValueOnce(newTask);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(1);
+      });
+
+      await act(async () => {
+        await result.current.createTask({ description: "New task" });
+      });
+
+      expect(result.current.tasks).toHaveLength(1);
+      expect(result.current.tasks[0].id).toBe("FN-010");
+    });
+
+    it("does not produce duplicates when SSE event arrives", async () => {
+      mockFetchTasks.mockResolvedValueOnce([]);
+      const newTask = createMockTask({ id: "FN-010", column: "triage" });
+      mockCreateTask.mockResolvedValueOnce(newTask);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(MockEventSource.instances).toHaveLength(1);
+      });
+
+      await act(async () => {
+        await result.current.createTask({ description: "New task" });
+      });
+
+      expect(result.current.tasks).toHaveLength(1);
+
+      // SSE event arrives with the same task
+      act(() => {
+        MockEventSource.instances[0]._emit("task:created", newTask);
+      });
+
+      expect(result.current.tasks).toHaveLength(1);
+      expect(result.current.tasks[0].id).toBe("FN-010");
+    });
+  });
+
+  describe("duplicateTask optimistic insertion", () => {
+    it("adds task to state immediately", async () => {
+      const original = createMockTask({ id: "FN-001", column: "todo" as Column });
+      mockFetchTasks.mockResolvedValueOnce([original]);
+      const duplicated = createMockTask({ id: "FN-011", column: "triage", description: "Test task" });
+      mockDuplicateTask.mockResolvedValueOnce(duplicated);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      await act(async () => {
+        await result.current.duplicateTask("FN-001");
+      });
+
+      expect(result.current.tasks).toHaveLength(2);
+      expect(result.current.tasks.find((t) => t.id === "FN-011")).toBeDefined();
+    });
+
+    it("does not produce duplicates when SSE event arrives", async () => {
+      const original = createMockTask({ id: "FN-001", column: "todo" as Column });
+      mockFetchTasks.mockResolvedValueOnce([original]);
+      const duplicated = createMockTask({ id: "FN-011", column: "triage", description: "Test task" });
+      mockDuplicateTask.mockResolvedValueOnce(duplicated);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks).toHaveLength(1);
+      });
+
+      await act(async () => {
+        await result.current.duplicateTask("FN-001");
+      });
+
+      expect(result.current.tasks).toHaveLength(2);
+
+      // SSE event arrives with the same task
+      act(() => {
+        MockEventSource.instances[0]._emit("task:created", duplicated);
+      });
+
+      expect(result.current.tasks).toHaveLength(2);
+      expect(result.current.tasks.filter((t) => t.id === "FN-011")).toHaveLength(1);
     });
   });
 

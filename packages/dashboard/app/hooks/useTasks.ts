@@ -208,7 +208,12 @@ export function useTasks(options?: UseTasksOptions) {
   }, [connectionNonce, projectId, refreshTasks]);
 
   const createTask = useCallback(async (input: TaskCreateInput): Promise<Task> => {
-    return normalizeTask(await api.createTask(input, projectId));
+    const task = normalizeTask(await api.createTask(input, projectId));
+    setTasks((prev) => {
+      if (prev.some((t) => t.id === task.id)) return prev;
+      return [...prev, task];
+    });
+    return task;
   }, [projectId]);
 
   const moveTask = useCallback(async (id: string, column: Column): Promise<Task> => {
@@ -228,7 +233,12 @@ export function useTasks(options?: UseTasksOptions) {
   }, [projectId]);
 
   const duplicateTask = useCallback(async (id: string): Promise<Task> => {
-    return normalizeTask(await api.duplicateTask(id, projectId));
+    const task = normalizeTask(await api.duplicateTask(id, projectId));
+    setTasks((prev) => {
+      if (prev.some((t) => t.id === task.id)) return prev;
+      return [...prev, task];
+    });
+    return task;
   }, [projectId]);
 
   const updateTask = useCallback(async (
