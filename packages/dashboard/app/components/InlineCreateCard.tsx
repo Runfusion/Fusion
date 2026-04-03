@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp, Globe } from "lucide-react";
 import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings } from "../api";
 import type { ModelInfo } from "../api";
-import { CustomModelDropdown } from "./CustomModelDropdown";
+import { ModelSelectionModal } from "./ModelSelectionModal";
 import { applyPresetToSelection } from "../utils/modelPresets";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -76,7 +77,7 @@ export function InlineCreateCard({
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [showDeps, setShowDeps] = useState(false);
   const [depSearch, setDepSearch] = useState("");
-  const [showModels, setShowModels] = useState(false);
+  const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined);
@@ -188,15 +189,6 @@ export function InlineCreateCard({
   const hasValidatorOverride = Boolean(validatorProvider && validatorModelId);
   const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride);
 
-  const getModelBadgeLabel = useCallback(
-    (provider?: string, modelId?: string) => {
-      if (!provider || !modelId) return "Using default";
-      const matched = loadedModels.find((model) => model.provider === provider && model.id === modelId);
-      return matched ? `${matched.provider}/${matched.id}` : `${provider}/${modelId}`;
-    },
-    [loadedModels],
-  );
-
   // Track focus-out for conditional cancel behavior and justResetRef cleanup.
   useEffect(() => {
     const card = cardRef.current;
@@ -211,7 +203,7 @@ export function InlineCreateCard({
         return;
       }
 
-      const hasOpenOverlay = showDeps || showModels || showPresets;
+      const hasOpenOverlay = showDeps || isModelModalOpen || showPresets;
       const hasDescription = description.trim().length > 0;
       const shouldCancelWhenCollapsed = !isExpanded && !hasDescription && !hasOpenOverlay;
       const shouldCancelWhenExpanded = isExpanded && !hasDescription && !hasOpenOverlay;
@@ -223,7 +215,7 @@ export function InlineCreateCard({
 
     card.addEventListener("focusout", handleFocusOut);
     return () => card.removeEventListener("focusout", handleFocusOut);
-  }, [description, isExpanded, onCancel, showDeps, showModels, showPresets]);
+  }, [description, isExpanded, onCancel, showDeps, isModelModalOpen, showPresets]);
 
   // Clean up object URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -320,7 +312,7 @@ export function InlineCreateCard({
       setValidatorModelId(undefined);
       setDependencies([]);
       setShowDeps(false);
-      setShowModels(false);
+      setIsModelModalOpen(false);
       setShowPresets(false);
       setBrowserVerification(false);
       addToast(`Created ${task.id}`, "success");
@@ -358,9 +350,9 @@ export function InlineCreateCard({
       if (e.key === "Escape") {
         e.preventDefault();
         // Close dropdowns first if open
-        if (showDeps || showModels || showPresets) {
+        if (showDeps || isModelModalOpen || showPresets) {
           setShowDeps(false);
-          setShowModels(false);
+          setIsModelModalOpen(false);
           setShowPresets(false);
           return;
         }
@@ -386,7 +378,7 @@ export function InlineCreateCard({
         handleSubmit();
       }
     },
-    [handleSubmit, onCancel, description, showDeps, showModels, showPresets],
+    [handleSubmit, onCancel, description, showDeps, isModelModalOpen, showPresets],
   );
 
   const toggleDep = useCallback((id: string) => {
@@ -398,17 +390,14 @@ export function InlineCreateCard({
   const toggleDepsDropdown = useCallback(() => {
     setShowDeps((prev) => {
       const next = !prev;
-      if (next) setShowModels(false);
+      if (next) setIsModelModalOpen(false);
       return next;
     });
   }, []);
 
   const toggleModelsDropdown = useCallback(() => {
-    setShowModels((prev) => {
-      const next = !prev;
-      if (next) setShowDeps(false);
-      return next;
-    });
+    setIsModelModalOpen(true);
+    setShowDeps(false);
   }, []);
 
   const handleExecutorChange = useCallback((value: string) => {
@@ -467,7 +456,7 @@ export function InlineCreateCard({
     setValidatorModelId(undefined);
     setSelectedPresetId(undefined);
     setShowDeps(false);
-    setShowModels(false);
+    setIsModelModalOpen(false);
     setShowPresets(false);
     setBrowserVerification(false);
     setIsExpanded(false);
@@ -489,7 +478,7 @@ export function InlineCreateCard({
     setValidatorModelId(undefined);
     setSelectedPresetId(undefined);
     setShowDeps(false);
-    setShowModels(false);
+    setIsModelModalOpen(false);
     setShowPresets(false);
     setBrowserVerification(false);
     setIsExpanded(false);
@@ -620,7 +609,7 @@ export function InlineCreateCard({
                     const next = !prev;
                     if (next) {
                       setShowDeps(false);
-                      setShowModels(false);
+                      setIsModelModalOpen(false);
                     }
                     return next;
                   });
@@ -680,7 +669,7 @@ export function InlineCreateCard({
                 type="button"
                 className="btn btn-sm inline-create-model-trigger"
                 onClick={toggleModelsDropdown}
-                aria-expanded={showModels}
+                aria-expanded={isModelModalOpen}
                 aria-haspopup="dialog"
               >
                 <Brain size={12} style={{ verticalAlign: "middle" }} />
@@ -690,73 +679,7 @@ export function InlineCreateCard({
                     ? ` ${selectedModelCount} model${selectedModelCount === 1 ? "" : "s"}`
                     : " Models"}
               </button>
-              {showModels && (
-                <div
-                  className="inline-create-model-dropdown"
-                  onMouseDown={handleModelDropdownMouseDown}
-                >
-                  {modelsLoading ? (
-                    <div className="inline-create-model-empty">Loading models…</div>
-                  ) : modelsError ? (
-                    <div className="inline-create-model-empty">
-                      <span>Failed to load models.</span>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={() => void loadModels()}
-                      >
-                        Retry
-                      </button>
-                    </div>
-                  ) : loadedModels.length === 0 ? (
-                    <div className="inline-create-model-empty">
-                      No models available. Configure authentication in Settings to enable model selection.
-                    </div>
-                  ) : (
-                    <>
-                      <div className="inline-create-model-row">
-                        <label htmlFor="inline-create-executor-model" className="inline-create-model-label">
-                          Executor Model
-                        </label>
-                        <span className={`model-badge ${hasExecutorOverride ? "model-badge-custom" : "model-badge-default"}`}>
-                          {getModelBadgeLabel(executorProvider, executorModelId)}
-                        </span>
-                        <CustomModelDropdown
-                          id="inline-create-executor-model"
-                          label="Executor Model"
-                          value={executorSelectionValue}
-                          onChange={handleExecutorChange}
-                          models={loadedModels}
-                          disabled={submitting}
-                          placeholder="Select executor model…"
-                          favoriteProviders={favoriteProviders}
-                          onToggleFavorite={handleToggleFavorite}
-                        />
-                      </div>
 
-                      <div className="inline-create-model-row">
-                        <label htmlFor="inline-create-validator-model" className="inline-create-model-label">
-                          Validator Model
-                        </label>
-                        <span className={`model-badge ${hasValidatorOverride ? "model-badge-custom" : "model-badge-default"}`}>
-                          {getModelBadgeLabel(validatorProvider, validatorModelId)}
-                        </span>
-                        <CustomModelDropdown
-                          id="inline-create-validator-model"
-                          label="Validator Model"
-                          value={validatorSelectionValue}
-                          onChange={handleValidatorChange}
-                          models={loadedModels}
-                          disabled={submitting}
-                          placeholder="Select validator model…"
-                          favoriteProviders={favoriteProviders}
-                          onToggleFavorite={handleToggleFavorite}
-                        />
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
             </div>
 
             {!submitting && (
@@ -811,6 +734,26 @@ export function InlineCreateCard({
           </div>
         </div>
       )}
+
+      {typeof document !== "undefined"
+        ? createPortal(
+            <ModelSelectionModal
+              isOpen={isModelModalOpen}
+              onClose={() => setIsModelModalOpen(false)}
+              models={loadedModels}
+              executorValue={executorSelectionValue}
+              validatorValue={validatorSelectionValue}
+              onExecutorChange={handleExecutorChange}
+              onValidatorChange={handleValidatorChange}
+              modelsLoading={modelsLoading}
+              modelsError={modelsError}
+              onRetry={loadModels}
+              favoriteProviders={favoriteProviders}
+              onToggleFavorite={handleToggleFavorite}
+            />,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

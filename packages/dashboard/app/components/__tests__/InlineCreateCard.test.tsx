@@ -22,6 +22,49 @@ vi.mock("lucide-react", () => ({
   Globe: () => null,
 }));
 
+// Mock ModelSelectionModal (renders via portal, so mock for testability)
+vi.mock("../ModelSelectionModal", () => ({
+  ModelSelectionModal: ({
+    isOpen,
+    onClose,
+    models,
+    executorValue,
+    validatorValue,
+    onExecutorChange,
+    onValidatorChange,
+    modelsLoading,
+    modelsError,
+    onRetry,
+  }: {
+    isOpen: boolean;
+    onClose: () => void;
+    models: typeof MOCK_MODELS;
+    executorValue: string;
+    validatorValue: string;
+    onExecutorChange: (value: string) => void;
+    onValidatorChange: (value: string) => void;
+    modelsLoading: boolean;
+    modelsError: string | null;
+    onRetry: () => void;
+  }) => {
+    if (!isOpen) return null;
+    return (
+      <div data-testid="model-selection-modal">
+        <div data-testid="modal-props-executor-value">{executorValue}</div>
+        <div data-testid="modal-props-validator-value">{validatorValue}</div>
+        <div data-testid="modal-props-loading">{modelsLoading ? "loading" : "not-loading"}</div>
+        <div data-testid="modal-props-error">{modelsError || "no-error"}</div>
+        <button data-testid="modal-close" onClick={onClose}>Close</button>
+        <button data-testid="modal-select-executor" onClick={() => onExecutorChange("anthropic/claude-sonnet-4-5")}>Select Executor</button>
+        <button data-testid="modal-select-validator" onClick={() => onValidatorChange("openai/gpt-4o")}>Select Validator</button>
+        <button data-testid="modal-clear-executor" onClick={() => onExecutorChange("")}>Clear Executor</button>
+        <button data-testid="modal-clear-validator" onClick={() => onValidatorChange("")}>Clear Validator</button>
+        <button data-testid="modal-retry" onClick={onRetry}>Retry</button>
+      </div>
+    );
+  },
+}));
+
 // Mock the api module
 vi.mock("../../api", () => ({
   fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
@@ -88,7 +131,7 @@ function renderCard(
   return { ...result, props };
 }
 
-function openModelPanel() {
+function openModelModal() {
   // Models button is inside expanded section - expand first if not already
   const modelsButton = screen.queryByRole("button", { name: /Models/i });
   if (!modelsButton) {
@@ -99,11 +142,6 @@ function openModelPanel() {
 
 function expandCard() {
   fireEvent.click(screen.getByTestId("inline-create-toggle"));
-}
-
-function chooseModel(label: "Executor Model" | "Validator Model", optionText: string) {
-  fireEvent.click(screen.getByRole("button", { name: label }));
-  fireEvent.click(screen.getByText(optionText));
 }
 
 beforeEach(() => {
@@ -200,61 +238,64 @@ describe("InlineCreateCard dep-dropdown focus retention", () => {
 });
 
 describe("InlineCreateCard model selector", () => {
-  it("opens and closes the model disclosure dropdown", () => {
+  it("clicking Models button opens the ModelSelectionModal", () => {
     renderCard();
 
-    openModelPanel();
-    expect(screen.getByText("Executor Model")).toBeTruthy();
-    expect(screen.getByText("Validator Model")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: /Models/i }));
-    expect(screen.queryByText("Executor Model")).toBeNull();
+    openModelModal();
+    expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
   });
 
-  it("updates executor selection and shows the selected model badge", () => {
+  it("closes the model modal via the close button", () => {
     renderCard();
 
-    openModelPanel();
-    chooseModel("Executor Model", "Claude Sonnet 4.5");
+    openModelModal();
+    expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
 
-    expect(screen.getByText("anthropic/claude-sonnet-4-5")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("modal-close"));
+    expect(screen.queryByTestId("model-selection-modal")).toBeNull();
   });
 
-  it("updates validator selection and shows the selected model badge", () => {
+  it("updates executor selection via the modal", () => {
     renderCard();
 
-    openModelPanel();
-    chooseModel("Validator Model", "GPT-4o");
+    openModelModal();
+    fireEvent.click(screen.getByTestId("modal-select-executor"));
 
-    expect(screen.getByText("openai/gpt-4o")).toBeTruthy();
+    // The executor value should be propagated to the modal props
+    expect(screen.getByTestId("modal-props-executor-value").textContent).toBe("anthropic/claude-sonnet-4-5");
   });
 
-  it("clears the model selection when Use default is chosen", () => {
+  it("updates validator selection via the modal", () => {
     renderCard();
 
-    openModelPanel();
-    chooseModel("Executor Model", "Claude Sonnet 4.5");
-    expect(screen.getByText("anthropic/claude-sonnet-4-5")).toBeTruthy();
+    openModelModal();
+    fireEvent.click(screen.getByTestId("modal-select-validator"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Executor Model" }));
-    const defaultOption = document.querySelector(".model-combobox-dropdown .model-combobox-option") as HTMLElement;
-    expect(defaultOption).toBeTruthy();
-    fireEvent.click(defaultOption);
+    expect(screen.getByTestId("modal-props-validator-value").textContent).toBe("openai/gpt-4o");
+  });
 
-    expect(screen.getAllByText("Using default")).toHaveLength(2);
+  it("clears the model selection back to default", () => {
+    renderCard();
+
+    openModelModal();
+    fireEvent.click(screen.getByTestId("modal-select-executor"));
+    expect(screen.getByTestId("modal-props-executor-value").textContent).toBe("anthropic/claude-sonnet-4-5");
+
+    fireEvent.click(screen.getByTestId("modal-clear-executor"));
+    expect(screen.getByTestId("modal-props-executor-value").textContent).toBe("");
   });
 
   it("omits model fields from the submit payload after clearing back to default", async () => {
     const { props } = renderCard();
+    expandCard();
     const textarea = screen.getByPlaceholderText("What needs to be done?");
 
     fireEvent.change(textarea, { target: { value: "Task using defaults again" } });
-    openModelPanel();
-    chooseModel("Executor Model", "Claude Sonnet 4.5");
-    fireEvent.click(screen.getByRole("button", { name: "Executor Model" }));
-    const defaultOption = document.querySelector(".model-combobox-dropdown .model-combobox-option") as HTMLElement;
-    expect(defaultOption).toBeTruthy();
-    fireEvent.click(defaultOption);
+    openModelModal();
+    fireEvent.click(screen.getByTestId("modal-select-executor"));
+    fireEvent.click(screen.getByTestId("modal-clear-executor"));
+    fireEvent.click(screen.getByTestId("modal-close"));
+
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
@@ -276,9 +317,10 @@ describe("InlineCreateCard model selector", () => {
     const textarea = screen.getByPlaceholderText("What needs to be done?");
 
     fireEvent.change(textarea, { target: { value: "Task with model overrides" } });
-    openModelPanel();
-    chooseModel("Executor Model", "Claude Sonnet 4.5");
-    chooseModel("Validator Model", "GPT-4o");
+    openModelModal();
+    fireEvent.click(screen.getByTestId("modal-select-executor"));
+    fireEvent.click(screen.getByTestId("modal-select-validator"));
+    fireEvent.click(screen.getByTestId("modal-close"));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
@@ -294,12 +336,12 @@ describe("InlineCreateCard model selector", () => {
     });
   });
 
-  it("does NOT call onCancel when focus leaves while the model dropdown is open", () => {
+  it("does NOT call onCancel when focus leaves while the model modal is open", () => {
     const { props } = renderCard();
     expandCard();
     const textarea = screen.getByPlaceholderText("What needs to be done?");
 
-    openModelPanel();
+    openModelModal();
     textarea.focus();
     fireEvent.focusOut(textarea, { relatedTarget: null });
 
@@ -363,31 +405,14 @@ describe("InlineCreateCard model selector", () => {
     expandCard();
     const textarea = screen.getByPlaceholderText("What needs to be done?");
 
-    openModelPanel();
-    chooseModel("Executor Model", "Claude Sonnet 4.5");
-    fireEvent.click(screen.getByRole("button", { name: /1 model/i }));
+    openModelModal();
+    fireEvent.click(screen.getByTestId("modal-select-executor"));
+    fireEvent.click(screen.getByTestId("modal-close"));
 
     textarea.focus();
     fireEvent.focusOut(textarea, { relatedTarget: null });
 
     expect(props.onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it("prevents default on model option mouseDown to retain focus while selecting", () => {
-    const { props } = renderCard();
-    expandCard();
-    const textarea = screen.getByPlaceholderText("What needs to be done?");
-
-    textarea.focus();
-    openModelPanel();
-    fireEvent.click(screen.getByRole("button", { name: "Executor Model" }));
-    const option = screen.getByText("Claude Sonnet 4.5");
-    const prevented = !fireEvent.mouseDown(option);
-    fireEvent.click(option);
-
-    expect(prevented).toBe(true);
-    expect(props.onCancel).not.toHaveBeenCalled();
-    expect(screen.getByText("anthropic/claude-sonnet-4-5")).toBeTruthy();
   });
 
   it("uses parent-provided models without fetching again", () => {
@@ -403,24 +428,34 @@ describe("InlineCreateCard model selector", () => {
     });
   });
 
-  it("shows an error state and retries model loading", async () => {
+  it("shows error state in modal and retries model loading", async () => {
     vi.mocked(fetchModels)
       .mockRejectedValueOnce(new Error("no auth"))
       .mockResolvedValueOnce({ models: MOCK_MODELS, favoriteProviders: [], favoriteModels: [] });
 
     renderCard([], { availableModels: undefined });
-    openModelPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("Failed to load models.")).toBeTruthy();
+      // Wait for the failed fetch to complete
+      expect(fetchModels).toHaveBeenCalledTimes(1);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    openModelModal();
+
+    // Modal should show the error state
+    expect(screen.getByTestId("modal-props-error").textContent).toBe("no auth");
+
+    // Click retry in the modal
+    fireEvent.click(screen.getByTestId("modal-retry"));
 
     await waitFor(() => {
-      expect(screen.queryByText("Failed to load models.")).toBeNull();
+      expect(fetchModels).toHaveBeenCalledTimes(2);
     });
-    expect(fetchModels).toHaveBeenCalledTimes(2);
+
+    // After retry, error should be cleared
+    await waitFor(() => {
+      expect(screen.getByTestId("modal-props-error").textContent).toBe("no-error");
+    });
   });
 });
 
