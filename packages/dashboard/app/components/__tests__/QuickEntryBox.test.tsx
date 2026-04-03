@@ -827,6 +827,78 @@ describe("QuickEntryBox", () => {
     });
   });
 
+  describe("State sync between isExpanded and isDisclosureExpanded", () => {
+    it("focus then toggle shows controls without collapsing textarea", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+      const controls = document.getElementById("quick-entry-controls");
+
+      // Focus auto-expands textarea height (isExpanded=true) but NOT disclosure
+      fireEvent.focus(textarea);
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+      expect(controls?.hasAttribute("hidden")).toBe(true); // controls still hidden
+
+      // Now click toggle — should expand disclosure AND keep textarea expanded
+      expandQuickEntry();
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+      expect(controls?.hasAttribute("hidden")).toBe(false);
+    });
+
+    it("toggle twice from focused state returns to collapsed", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+      const controls = document.getElementById("quick-entry-controls");
+
+      // Focus → auto-expand textarea
+      fireEvent.focus(textarea);
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+
+      // Toggle expand
+      expandQuickEntry();
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+      expect(controls?.hasAttribute("hidden")).toBe(false);
+
+      // Toggle collapse — both states should collapse together
+      expandQuickEntry();
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
+      expect(controls?.hasAttribute("hidden")).toBe(true);
+    });
+
+    it("after task creation with autoExpand, focus restore does not show controls unless toggle was used", async () => {
+      const { props } = renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+      const controls = document.getElementById("quick-entry-controls");
+
+      // Type and submit without toggling disclosure
+      fireEvent.change(textarea, { target: { value: "New task" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalled();
+      });
+
+      // After creation, focus is restored → autoExpand triggers isExpanded=true
+      // But disclosure should still be false (controls hidden)
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+      expect(controls?.hasAttribute("hidden")).toBe(true);
+    });
+
+    it("textarea aria-expanded reflects disclosure state, not textarea height", () => {
+      renderQuickEntryBox();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      // Focus auto-expands textarea height but NOT disclosure
+      fireEvent.focus(textarea);
+      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+      // aria-expanded should still be false (reflects disclosure, not height)
+      expect(textarea.getAttribute("aria-expanded")).toBe("false");
+
+      // Toggle expand — now aria-expanded should be true
+      expandQuickEntry();
+      expect(textarea.getAttribute("aria-expanded")).toBe("true");
+    });
+  });
+
   describe("localStorage persistence", () => {
     beforeEach(() => {
       // Clear localStorage before each test

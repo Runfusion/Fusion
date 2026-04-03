@@ -473,8 +473,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const showExpandedControls = isDisclosureExpanded;
 
   const toggleExpanded = useCallback(() => {
-    setIsDisclosureExpanded((prev) => !prev);
-    setIsExpanded((prev) => !prev);
+    setIsDisclosureExpanded((prev) => {
+      const next = !prev;
+      setIsExpanded(next);
+      return next;
+    });
   }, []);
 
   return (
@@ -493,7 +496,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           data-testid="quick-entry-input"
           rows={1}
           aria-controls="quick-entry-controls"
-          aria-expanded={isExpanded}
+          aria-expanded={isDisclosureExpanded}
         />
         <button
           type="button"
