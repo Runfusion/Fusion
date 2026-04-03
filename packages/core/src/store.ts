@@ -87,6 +87,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   /** Last known modification timestamp for change detection */
   private lastKnownModified: number = 0;
+
+  /** Whether the store is actively watching for changes (watcher or polling). */
+  private get isWatching(): boolean {
+    return this.watcher !== null || this.pollInterval !== null;
+  }
   /** Cached MissionStore instance */
   private missionStore: MissionStore | null = null;
 
@@ -697,7 +702,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     await this.atomicWriteTaskJson(dir, task);
 
     // Update cache if watcher is active
-    if (this.watcher) this.taskCache.set(id, { ...task });
+    if (this.isWatching) this.taskCache.set(id, { ...task });
 
     const heading = task.title ? `${id}: ${task.title}` : id;
     const prompt = task.column === "triage"
@@ -751,7 +756,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     await writeFile(join(newDir, "PROMPT.md"), sourcePrompt);
 
     // Update cache if watcher is active
-    if (this.watcher) this.taskCache.set(newId, { ...newTask });
+    if (this.isWatching) this.taskCache.set(newId, { ...newTask });
 
     this.emit("task:created", newTask);
     return newTask;
@@ -826,7 +831,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     // Update cache if watcher is active
-    if (this.watcher) this.taskCache.set(newId, { ...newTask });
+    if (this.isWatching) this.taskCache.set(newId, { ...newTask });
 
     this.emit("task:created", newTask);
     return newTask;
@@ -922,7 +927,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       await this.atomicWriteTaskJson(dir, task);
 
       // Update cache if watcher is active
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       this.emit("task:moved", { task, from: fromColumn, to: toColumn });
       return task;
@@ -1041,7 +1046,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       await this.atomicWriteTaskJson(dir, task);
 
       // Update cache if watcher is active
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       if (updates.prompt !== undefined) {
         await mkdir(dir, { recursive: true });
@@ -1104,7 +1109,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       });
 
       await this.atomicWriteTaskJson(dir, task);
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       this.emit("task:updated", task);
       return task;
@@ -1161,7 +1166,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       });
 
       await this.atomicWriteTaskJson(dir, task);
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       this.emit("task:updated", task);
       return task;
@@ -1189,7 +1194,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.updatedAt = new Date().toISOString();
 
       await this.atomicWriteTaskJson(dir, task);
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       this.emit("task:updated", task);
       return task;
@@ -1296,7 +1301,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.db.bumpLastModified();
 
       // Remove from cache if watcher is active
-      if (this.watcher) this.taskCache.delete(id);
+      if (this.isWatching) this.taskCache.delete(id);
 
       // Delete directory from disk
       const dir = this.taskDir(id);
@@ -1579,7 +1584,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         await rm(dir, { recursive: true, force: true });
 
         // Remove from cache if watcher is active
-        if (this.watcher) {
+        if (this.isWatching) {
           this.taskCache.delete(id);
         }
       } else {
@@ -1587,7 +1592,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         await this.atomicWriteTaskJson(dir, task);
 
         // Update cache if watcher is active
-        if (this.watcher) this.taskCache.set(id, { ...task });
+        if (this.isWatching) this.taskCache.set(id, { ...task });
       }
 
       this.emit("task:moved", { task, from: "done" as Column, to: "archived" as Column });
@@ -1651,7 +1656,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       await this.atomicWriteTaskJson(dir, task);
 
       // Update cache if watcher is active
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       this.emit("task:moved", { task, from: "archived" as Column, to: "done" as Column });
       return task;
@@ -1669,7 +1674,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     await this.atomicWriteTaskJson(dir, task);
 
     // Update cache if watcher is active
-    if (this.watcher) this.taskCache.set(task.id, { ...task });
+    if (this.isWatching) this.taskCache.set(task.id, { ...task });
 
     this.emit("task:moved", { task, from: "in-review" as Column, to: "done" as Column });
   }
@@ -1924,7 +1929,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.updatedAt = new Date().toISOString();
       await this.atomicWriteTaskJson(dir, task);
 
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
       this.emit("task:updated", task);
 
       return attachment;
@@ -1979,7 +1984,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.updatedAt = new Date().toISOString();
       await this.atomicWriteTaskJson(dir, task);
 
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
       this.emit("task:updated", task);
 
       return task;
@@ -2054,7 +2059,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       currentTask.updatedAt = new Date().toISOString();
 
       await this.atomicWriteTaskJson(dir, currentTask);
-      if (this.watcher) this.taskCache.set(id, { ...currentTask });
+      if (this.isWatching) this.taskCache.set(id, { ...currentTask });
 
       this.emit("task:updated", currentTask);
       return currentTask;
@@ -2084,7 +2089,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       });
 
       await this.atomicWriteTaskJson(dir, task);
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       this.emit("task:updated", task);
       return task;
@@ -2110,7 +2115,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       });
 
       await this.atomicWriteTaskJson(dir, task);
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       this.emit("task:updated", task);
       return task;
@@ -2163,7 +2168,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       });
 
       await this.atomicWriteTaskJson(dir, task);
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       this.emit("task:updated", task);
       return task;
@@ -2242,7 +2247,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.updatedAt = new Date().toISOString();
 
       await this.atomicWriteTaskJson(dir, task);
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       if (badgeChanged) {
         this.emit("task:updated", task);
@@ -2306,7 +2311,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.updatedAt = new Date().toISOString();
 
       await this.atomicWriteTaskJson(dir, task);
-      if (this.watcher) this.taskCache.set(id, { ...task });
+      if (this.isWatching) this.taskCache.set(id, { ...task });
 
       if (badgeChanged) {
         this.emit("task:updated", task);
@@ -2425,7 +2430,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       await rm(dir, { recursive: true, force: true });
 
       // Remove from cache if watcher is active
-      if (this.watcher) {
+      if (this.isWatching) {
         this.taskCache.delete(task.id);
       }
 

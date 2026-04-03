@@ -628,6 +628,99 @@ describe("useTasks", () => {
     });
   });
 
+  describe("heartbeat timeout", () => {
+    it("reconnects when no SSE messages arrive within 45 seconds", async () => {
+      vi.useFakeTimers();
+      mockFetchTasks.mockResolvedValue([]);
+
+      const { unmount } = renderHook(() => useTasks());
+
+      expect(MockEventSource.instances).toHaveLength(1);
+      const first = MockEventSource.instances[0];
+
+      // Advance past the 45s heartbeat timeout
+      await act(async () => {
+        vi.advanceTimersByTime(45_000);
+        await flushPromises();
+      });
+
+      // First connection should be closed
+      expect(first.close).toHaveBeenCalled();
+
+      // After reconnect delay (3s), a new connection should be created
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+        await flushPromises();
+      });
+
+      expect(MockEventSource.instances.length).toBeGreaterThan(1);
+
+      unmount();
+    });
+
+    it("does not reconnect when heartbeat events arrive regularly", async () => {
+      vi.useFakeTimers();
+      mockFetchTasks.mockResolvedValue([]);
+
+      const { unmount } = renderHook(() => useTasks());
+
+      expect(MockEventSource.instances).toHaveLength(1);
+      const first = MockEventSource.instances[0];
+
+      // Simulate heartbeat every 30s (before the 45s timeout)
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+        first._emit("heartbeat");
+        await flushPromises();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+        first._emit("heartbeat");
+        await flushPromises();
+      });
+
+      // Should still be on the first connection
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(first.close).not.toHaveBeenCalled();
+
+      unmount();
+    });
+
+    it("resets heartbeat timeout on task events", async () => {
+      vi.useFakeTimers();
+      mockFetchTasks.mockResolvedValue([]);
+
+      const { unmount } = renderHook(() => useTasks());
+
+      expect(MockEventSource.instances).toHaveLength(1);
+      const first = MockEventSource.instances[0];
+
+      // Advance 40s (close to timeout)
+      await act(async () => {
+        vi.advanceTimersByTime(40_000);
+        await flushPromises();
+      });
+
+      // Send a task event to reset the watchdog
+      act(() => {
+        first._emit("task:updated", createMockTask({ id: "FN-001" }));
+      });
+
+      // Advance another 40s (would have timed out without the reset)
+      await act(async () => {
+        vi.advanceTimersByTime(40_000);
+        await flushPromises();
+      });
+
+      // Should still be on the first connection
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(first.close).not.toHaveBeenCalled();
+
+      unmount();
+    });
+  });
+
   describe("cleanup", () => {
     it("closes EventSource on unmount", async () => {
       mockFetchTasks.mockResolvedValueOnce([]);

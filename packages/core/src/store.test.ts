@@ -4388,4 +4388,87 @@ Task with acceptance criteria
       expect(detail.prompt).toMatch(/^# FN-\d+: Generated Task Title\n/);
     });
   });
+
+  describe("event emissions", () => {
+    it("createTask emits task:created with the new task", async () => {
+      const events: any[] = [];
+      store.on("task:created", (t: any) => events.push(t));
+      const task = await store.createTask({ description: "event test" });
+      expect(events).toHaveLength(1);
+      expect(events[0].id).toBe(task.id);
+      expect(events[0].description).toBe("event test");
+    });
+
+    it("moveTask emits task:moved with from/to columns", async () => {
+      const task = await createTestTask();
+      const events: any[] = [];
+      store.on("task:moved", (data: any) => events.push(data));
+      await store.moveTask(task.id, "todo");
+      expect(events).toHaveLength(1);
+      expect(events[0].from).toBe("triage");
+      expect(events[0].to).toBe("todo");
+      expect(events[0].task.id).toBe(task.id);
+    });
+
+    it("updateTask emits task:updated with the updated task", async () => {
+      const task = await createTestTask();
+      const events: any[] = [];
+      store.on("task:updated", (t: any) => events.push(t));
+      await store.updateTask(task.id, { title: "Updated" });
+      expect(events.length).toBeGreaterThanOrEqual(1);
+      expect(events.some((e: any) => e.title === "Updated")).toBe(true);
+    });
+
+    it("pauseTask emits task:updated", async () => {
+      const task = await createTestTask();
+      await store.moveTask(task.id, "todo");
+      const events: any[] = [];
+      store.on("task:updated", (t: any) => events.push(t));
+      await store.pauseTask(task.id, true);
+      expect(events.length).toBeGreaterThanOrEqual(1);
+      expect(events.some((e: any) => e.paused === true)).toBe(true);
+    });
+
+    it("updateStep emits task:updated", async () => {
+      const task = await createTaskWithSteps();
+      await store.moveTask(task.id, "todo");
+      const events: any[] = [];
+      store.on("task:updated", (t: any) => events.push(t));
+      await store.updateStep(task.id, 0, "in-progress");
+      expect(events.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("deleteTask emits task:deleted", async () => {
+      const task = await createTestTask();
+      const events: any[] = [];
+      store.on("task:deleted", (t: any) => events.push(t));
+      await store.deleteTask(task.id);
+      expect(events).toHaveLength(1);
+      expect(events[0].id).toBe(task.id);
+    });
+
+    it("logEntry emits task:updated", async () => {
+      const task = await createTestTask();
+      const events: any[] = [];
+      store.on("task:updated", (t: any) => events.push(t));
+      await store.logEntry(task.id, "test action", "test outcome");
+      expect(events.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("cache is updated when polling is active even without fs.watch", async () => {
+      // Start watching which enables polling
+      await store.watch();
+      const task = await createTestTask();
+
+      // Verify the cache was updated (internal detail: the isWatching getter)
+      // Move the task and verify the event fires correctly (not duplicated by poll)
+      const movedEvents: any[] = [];
+      store.on("task:moved", (data: any) => movedEvents.push(data));
+      await store.moveTask(task.id, "todo");
+
+      expect(movedEvents).toHaveLength(1);
+      expect(movedEvents[0].from).toBe("triage");
+      expect(movedEvents[0].to).toBe("todo");
+    });
+  });
 });

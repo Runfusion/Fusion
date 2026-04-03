@@ -3,6 +3,8 @@ import type { Task, Column, TaskCreateInput, MergeResult } from "@fusion/core";
 import * as api from "../api";
 
 const RECONNECT_DELAY_MS = 3000;
+/** If no SSE message (including heartbeat events) arrives within this window, force reconnect. */
+const HEARTBEAT_TIMEOUT_MS = 45_000;
 
 function normalizeTask(task: Task): Task {
   return {
@@ -98,13 +100,29 @@ export function useTasks(options?: UseTasksOptions) {
   useEffect(() => {
     let closedByCleanup = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
     if (connectionNonce > 0) {
       void refreshTasks();
     }
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
     const es = new EventSource(`/api/events${query}`);
 
+    /** Reset the heartbeat watchdog. Called on every incoming SSE message. */
+    const resetHeartbeat = () => {
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      heartbeatTimer = setTimeout(() => {
+        // No message received within the timeout — connection is likely dead.
+        if (!closedByCleanup) {
+          handleError();
+        }
+      }, HEARTBEAT_TIMEOUT_MS);
+    };
+
+    // Start the watchdog immediately — if the connection never opens we still want to time out.
+    resetHeartbeat();
+
     const handleCreated = (e: MessageEvent) => {
+      resetHeartbeat();
       const task = normalizeTask(JSON.parse(e.data) as Task);
       // In project mode, only add if this task belongs to our project
       // Since we can't determine project from event, we add and let subsequent
@@ -117,6 +135,7 @@ export function useTasks(options?: UseTasksOptions) {
     };
 
     const handleMoved = (e: MessageEvent) => {
+      resetHeartbeat();
       const { task, to }: { task: Task; from: Column; to: Column } = JSON.parse(e.data);
       const normalizedTask = normalizeTask(task);
       setTasks((prev) =>
@@ -127,6 +146,7 @@ export function useTasks(options?: UseTasksOptions) {
     };
 
     const handleUpdated = (e: MessageEvent) => {
+      resetHeartbeat();
       const incoming = normalizeTask(JSON.parse(e.data) as Task);
       setTasks((prev) =>
         prev.map((t) => {
@@ -156,11 +176,13 @@ export function useTasks(options?: UseTasksOptions) {
     };
 
     const handleDeleted = (e: MessageEvent) => {
+      resetHeartbeat();
       const task = normalizeTask(JSON.parse(e.data) as Task);
       setTasks((prev) => prev.filter((t) => t.id !== task.id));
     };
 
     const handleMerged = (e: MessageEvent) => {
+      resetHeartbeat();
       const { task }: { task: Task } = JSON.parse(e.data);
       const normalizedTask = normalizeTask(task);
       setTasks((prev) =>
@@ -175,7 +197,12 @@ export function useTasks(options?: UseTasksOptions) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
+      if (heartbeatTimer) {
+        clearTimeout(heartbeatTimer);
+        heartbeatTimer = null;
+      }
 
+      es.removeEventListener("heartbeat", handleHeartbeat);
       es.removeEventListener("task:created", handleCreated);
       es.removeEventListener("task:moved", handleMoved);
       es.removeEventListener("task:updated", handleUpdated);
@@ -194,6 +221,11 @@ export function useTasks(options?: UseTasksOptions) {
       }, RECONNECT_DELAY_MS);
     };
 
+    /** Server heartbeat (named event, not comment) — just resets the watchdog. */
+    const handleHeartbeat = () => { resetHeartbeat(); };
+
+    es.addEventListener("open", () => resetHeartbeat());
+    es.addEventListener("heartbeat", handleHeartbeat);
     es.addEventListener("task:created", handleCreated);
     es.addEventListener("task:moved", handleMoved);
     es.addEventListener("task:updated", handleUpdated);
