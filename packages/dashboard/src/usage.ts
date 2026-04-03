@@ -745,16 +745,12 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
       if (newToken) {
         activeToken = newToken;
       } else {
-        // Refresh failed — return actionable error immediately
-        usage.status = "error";
-        usage.error = "Claude token expired — run `claude` to re-login";
-        return usage;
+        // Refresh failed — fall back to CLI which has its own auth mechanism
+        return fetchClaudeUsageViaCli();
       }
     } else {
-      // No refresh token available
-      usage.status = "error";
-      usage.error = "Claude token expired — run `claude` to re-login";
-      return usage;
+      // No refresh token available — fall back to CLI which has its own auth
+      return fetchClaudeUsageViaCli();
     }
   }
 
@@ -783,9 +779,8 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
             continue; // Retry with refreshed token
           }
         }
-        usage.status = "error";
-        usage.error = "Claude token expired — run `claude` to re-login";
-        return usage;
+        // All refresh attempts exhausted — fall back to CLI which has its own auth
+        return fetchClaudeUsageViaCli();
       }
 
       // 429 is potentially transient — retry with exponential backoff

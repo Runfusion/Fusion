@@ -401,8 +401,8 @@ describe("usage", () => {
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
+      // Auth failure falls back to CLI (which fails in test env due to mocked node-pty)
       expect(claude.status).toBe("error");
-      expect(claude!.error).toContain("Claude token expired");
     });
 
     it("handles 403 auth error", async () => {
@@ -430,8 +430,8 @@ describe("usage", () => {
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
+      // Auth failure falls back to CLI (which fails in test env due to mocked node-pty)
       expect(claude.status).toBe("error");
-      expect(claude!.error).toContain("Claude token expired");
     });
 
     it("does not send anthropic-beta header in requests", async () => {
@@ -813,8 +813,8 @@ describe("usage", () => {
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
+      // Auth failure falls back to CLI (which fails in test env due to mocked node-pty)
       expect(claude.status).toBe("error");
-      expect(claude!.error).toContain("Claude token expired");
       // No retries should happen for auth errors
       expect(noopSleep).not.toHaveBeenCalled();
 
@@ -883,8 +883,8 @@ describe("usage", () => {
       const providers = await fetchAllProviderUsage();
       const claude = providers.find((p) => p.name === "Claude")!;
 
+      // Auth failure falls back to CLI (which fails in test env due to mocked node-pty)
       expect(claude.status).toBe("error");
-      expect(claude!.error).toContain("Claude token expired");
       // No retries should happen for auth errors
       expect(noopSleep).not.toHaveBeenCalled();
 
@@ -1024,7 +1024,7 @@ describe("usage", () => {
         expect(params.get("client_id")).toBe("9d1c250a-e61b-44d9-88ed-5944d1962f5e");
       });
 
-      it("returns actionable error when refresh fails for expired token", async () => {
+      it("falls back to CLI when refresh fails for expired token", async () => {
         const expiredAt = Date.now() - 60_000;
         setupClaudeMocks({
           credFileContent: {
@@ -1054,12 +1054,13 @@ describe("usage", () => {
         const providers = await fetchAllProviderUsage();
         const claude = providers.find((p) => p.name === "Claude")!;
 
+        // Auth failure falls back to CLI (which fails in test env due to mocked node-pty)
         expect(claude.status).toBe("error");
-        expect(claude.error).toContain("Claude token expired");
-        expect(claude.error).toContain("re-login");
+        // Should NOT show "Claude token expired" — CLI fallback was attempted
+        expect(claude.error).not.toContain("Claude token expired");
       });
 
-      it("returns actionable error when no refresh token and token is expired", async () => {
+      it("falls back to CLI when no refresh token and token is expired", async () => {
         const expiredAt = Date.now() - 60_000;
         setupClaudeMocks({
           credFileContent: {
@@ -1075,8 +1076,10 @@ describe("usage", () => {
         const providers = await fetchAllProviderUsage();
         const claude = providers.find((p) => p.name === "Claude")!;
 
+        // Auth failure falls back to CLI (which fails in test env due to mocked node-pty)
         expect(claude.status).toBe("error");
-        expect(claude.error).toContain("Claude token expired");
+        // Should NOT show "Claude token expired" — CLI fallback was attempted
+        expect(claude.error).not.toContain("Claude token expired");
       });
 
       it("does not refresh when token is not expired", async () => {
@@ -1218,6 +1221,117 @@ describe("usage", () => {
         expect(claude.status).toBe("ok");
         // Token should have been refreshed (within 60s buffer)
         expect(requestUrls[0]).toContain("oauth/token");
+      });
+    });
+
+    describe("CLI fallback on auth failures", () => {
+      it("falls back to CLI when expired token refresh fails", async () => {
+        const expiredAt = Date.now() - 60_000;
+        setupClaudeMocks({
+          credFileContent: {
+            claudeAiOauth: {
+              accessToken: "expired-token",
+              expiresAt: expiredAt,
+              refreshToken: "bad-refresh-token",
+              scopes: ["user:profile"],
+            },
+          },
+        });
+
+        // Mock refresh endpoint to return failure
+        const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+        mockRequest.mockImplementation((_options: any, callback: any) => {
+          const mockRes = {
+            statusCode: 400,
+            headers: {},
+            on: vi.fn((event: string, handler: any) => {
+              if (event === "data") handler(Buffer.from('{"error":"invalid_grant"}'));
+              if (event === "end") handler();
+            }),
+          };
+          callback(mockRes);
+          return mockReq;
+        });
+
+        const providers = await fetchAllProviderUsage();
+        const claude = providers.find((p) => p.name === "Claude")!;
+
+        // Should fall back to CLI instead of showing "Claude token expired"
+        expect(claude.status).toBe("error");
+        expect(claude.error).not.toContain("Claude token expired");
+      });
+
+      it("falls back to CLI when no refresh token is available", async () => {
+        const expiredAt = Date.now() - 60_000;
+        setupClaudeMocks({
+          credFileContent: {
+            claudeAiOauth: {
+              accessToken: "expired-token",
+              expiresAt: expiredAt,
+              // No refreshToken
+              scopes: ["user:profile"],
+            },
+          },
+        });
+
+        const providers = await fetchAllProviderUsage();
+        const claude = providers.find((p) => p.name === "Claude")!;
+
+        // Should fall back to CLI instead of showing "Claude token expired"
+        expect(claude.status).toBe("error");
+        expect(claude.error).not.toContain("Claude token expired");
+      });
+
+      it("falls back to CLI when API returns 401 and refresh fails", async () => {
+        setupClaudeMocks({
+          credFileContent: {
+            claudeAiOauth: {
+              accessToken: "stale-token",
+              // No expiresAt — so won't pre-refresh
+              refreshToken: "bad-refresh-token",
+              scopes: ["user:profile"],
+            },
+          },
+        });
+
+        let callCount = 0;
+        const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+        mockRequest.mockImplementation((options: any, callback: any) => {
+          callCount++;
+          const url = `https://${options.hostname}${options.path}`;
+
+          if (url.includes("oauth/token")) {
+            // Refresh fails
+            const mockRes = {
+              statusCode: 400,
+              headers: {},
+              on: vi.fn((event: string, handler: any) => {
+                if (event === "data") handler(Buffer.from('{"error":"invalid_grant"}'));
+                if (event === "end") handler();
+              }),
+            };
+            callback(mockRes);
+          } else {
+            // Usage API returns 401
+            const mockRes = {
+              statusCode: 401,
+              headers: {},
+              on: vi.fn((event: string, handler: any) => {
+                if (event === "data") handler(Buffer.from('{"error":"unauthorized"}'));
+                if (event === "end") handler();
+              }),
+            };
+            callback(mockRes);
+          }
+          return mockReq;
+        });
+
+        const providers = await fetchAllProviderUsage();
+        const claude = providers.find((p) => p.name === "Claude")!;
+
+        // Should fall back to CLI instead of showing "Claude token expired"
+        expect(claude.status).toBe("error");
+        expect(claude.error).not.toContain("Claude token expired");
       });
     });
   });
