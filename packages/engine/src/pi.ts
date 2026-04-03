@@ -5,12 +5,18 @@
  * Provides factory functions for creating triage and executor agent sessions.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   AuthStorage,
   createAgentSession,
   createCodingTools,
+  createExtensionRuntime,
   createReadOnlyTools,
   DefaultResourceLoader,
+  DefaultPackageManager,
+  discoverAndLoadExtensions,
+  getAgentDir,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -73,6 +79,27 @@ export interface AgentOptions {
   defaultThinkingLevel?: string;
 }
 
+function resolveConfiguredModel(
+  modelRegistry: ModelRegistry,
+  kind: "primary" | "fallback",
+  provider?: string,
+  modelId?: string,
+) {
+  if (!provider || !modelId) {
+    return undefined;
+  }
+
+  const model = modelRegistry.find(provider, modelId);
+  if (model) {
+    return model;
+  }
+
+  throw new Error(
+    `Configured ${kind} model ${provider}/${modelId} was not found in the pi model registry. ` +
+    "Open Settings and choose a model from /api/models, or update your pi model configuration.",
+  );
+}
+
 function isRetryableModelSelectionError(message: string): boolean {
   const normalized = message.toLowerCase();
   return normalized.includes("rate limit")
@@ -84,6 +111,77 @@ function isRetryableModelSelectionError(message: string): boolean {
     || normalized.includes("temporarily unavailable");
 }
 
+interface PackageManagerSettingsView {
+  getGlobalSettings(): Record<string, any>;
+  getProjectSettings(): Record<string, any>;
+  getNpmCommand(): string[] | undefined;
+}
+
+function readJsonObject(path: string): Record<string, any> {
+  if (!existsSync(path)) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8"));
+    return parsed && typeof parsed === "object" ? parsed as Record<string, any> : {};
+  } catch {
+    return {};
+  }
+}
+
+function createReadOnlyPiSettingsView(cwd: string, agentDir: string): PackageManagerSettingsView {
+  const globalSettings = readJsonObject(join(agentDir, "settings.json"));
+  const projectSettings = readJsonObject(join(cwd, ".pi", "settings.json"));
+  const mergedSettings = { ...globalSettings, ...projectSettings };
+
+  return {
+    getGlobalSettings: () => structuredClone(globalSettings),
+    getProjectSettings: () => structuredClone(projectSettings),
+    getNpmCommand: () => Array.isArray(mergedSettings.npmCommand)
+      ? [...mergedSettings.npmCommand]
+      : undefined,
+  };
+}
+
+async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegistry): Promise<void> {
+  try {
+    const agentDir = getAgentDir();
+    const packageManager = new DefaultPackageManager({
+      cwd,
+      agentDir,
+      settingsManager: createReadOnlyPiSettingsView(cwd, agentDir) as any,
+    });
+    const resolvedPaths = await packageManager.resolve();
+    const packageExtensionPaths = resolvedPaths.extensions
+      .filter((resource) => resource.enabled)
+      .map((resource) => resource.path);
+
+    const extensionsResult = await discoverAndLoadExtensions(packageExtensionPaths, cwd, undefined);
+
+    for (const { path, error } of extensionsResult.errors) {
+      console.log(`[extensions] Failed to load ${path}: ${error}`);
+    }
+
+    for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
+      try {
+        modelRegistry.registerProvider(name, config);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`[extensions] Failed to register provider from ${extensionPath}: ${message}`);
+      }
+    }
+
+    extensionsResult.runtime.pendingProviderRegistrations = [];
+    modelRegistry.refresh();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`[extensions] Failed to discover extensions: ${message}`);
+    createExtensionRuntime();
+    modelRegistry.refresh();
+  }
+}
+
 /**
  * Create a pi agent session configured for kb.
  * Reuses the user's existing pi auth and model configuration.
@@ -91,6 +189,7 @@ function isRetryableModelSelectionError(message: string): boolean {
 export async function createKbAgent(options: AgentOptions): Promise<AgentResult> {
   const authStorage = AuthStorage.create();
   const modelRegistry = new ModelRegistry(authStorage);
+  await registerExtensionProviders(options.cwd, modelRegistry);
 
   const tools =
     options.tools === "readonly"
@@ -103,12 +202,18 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
   });
 
   // Resolve explicit model selection if provider and model ID are specified
-  const selectedModel = options.defaultProvider && options.defaultModelId
-    ? modelRegistry.find(options.defaultProvider, options.defaultModelId)
-    : undefined;
-  const fallbackModel = options.fallbackProvider && options.fallbackModelId
-    ? modelRegistry.find(options.fallbackProvider, options.fallbackModelId)
-    : undefined;
+  const selectedModel = resolveConfiguredModel(
+    modelRegistry,
+    "primary",
+    options.defaultProvider,
+    options.defaultModelId,
+  );
+  const fallbackModel = resolveConfiguredModel(
+    modelRegistry,
+    "fallback",
+    options.fallbackProvider,
+    options.fallbackModelId,
+  );
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
