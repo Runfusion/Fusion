@@ -18,7 +18,7 @@ describe("useChangedFiles", () => {
     vi.clearAllMocks();
   });
 
-  it("fetches changed files for active tasks with a worktree and auto-selects first file", async () => {
+  it("fetches changed files for active tasks with a worktree", async () => {
     mockFetchTaskFileDiffs.mockResolvedValueOnce([
       { path: "src/a.ts", status: "modified", diff: "diff --git a/src/a.ts b/src/a.ts" },
       { path: "src/b.ts", status: "added", diff: "diff --git a/src/b.ts b/src/b.ts" },
@@ -30,7 +30,8 @@ describe("useChangedFiles", () => {
 
     expect(result.current.error).toBeNull();
     expect(result.current.files).toHaveLength(2);
-    expect(result.current.selectedFile?.path).toBe("src/a.ts");
+    // Hook no longer auto-selects; component handles selection
+    expect(result.current.selectedFile).toBeNull();
     expect(mockFetchTaskFileDiffs).toHaveBeenCalledWith("KB-651", undefined);
   });
 
@@ -75,5 +76,56 @@ describe("useChangedFiles", () => {
     });
 
     expect(result.current.selectedFile?.path).toBe("src/b.ts");
+  });
+
+  it("preserves selection when refetching finds a matching file", async () => {
+    const fileA = { path: "src/a.ts", status: "modified" as const, diff: "first" };
+    const fileB = { path: "src/b.ts", status: "added" as const, diff: "second" };
+
+    mockFetchTaskFileDiffs.mockResolvedValueOnce([fileA, fileB]);
+
+    const { result } = renderHook(() => useChangedFiles("KB-651", "/repo/.worktrees/kb-651", "in-progress"));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Manually select file B
+    act(() => {
+      result.current.setSelectedFile(fileB);
+    });
+
+    expect(result.current.selectedFile?.path).toBe("src/b.ts");
+  });
+
+  it("provides resetSelection that clears selectedFile", async () => {
+    mockFetchTaskFileDiffs.mockResolvedValueOnce([
+      { path: "src/a.ts", status: "modified", diff: "first" },
+    ]);
+
+    const { result } = renderHook(() => useChangedFiles("KB-651", "/repo/.worktrees/kb-651", "in-progress"));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Select a file
+    act(() => {
+      result.current.setSelectedFile(result.current.files[0]!);
+    });
+
+    expect(result.current.selectedFile?.path).toBe("src/a.ts");
+
+    // Reset selection
+    act(() => {
+      result.current.resetSelection();
+    });
+
+    expect(result.current.selectedFile).toBeNull();
+  });
+
+  it("returns empty files and null selection when column is inactive", () => {
+    const { result } = renderHook(() => useChangedFiles("KB-651", "/repo/.worktrees/kb-651", "done"));
+
+    expect(result.current.files).toEqual([]);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.selectedFile).toBeNull();
+    expect(result.current.error).toBeNull();
   });
 });

@@ -47,7 +47,7 @@ AI-guided interactive planning for creating well-specified tasks from high-level
 - **Layered Model Dropdowns**: Shared model combobox menus render in a top-level portal attached to `document.body`, so they stay above board columns and scrollable modal content instead of being clipped behind surrounding dashboard surfaces.
 - **Bulk Model Editing**: Update AI model configuration for multiple tasks at once in the list view. Select tasks via checkboxes (archived tasks excluded), then use the "Bulk Edit Models" toolbar to apply executor and/or validator model changes to all selected tasks. Selection persists in localStorage across page reloads.
 - **Task Details**: View full task specifications, agent logs, and attachments. The Agent Log tab header shows the effective executor and validator model names resolved from task-level overrides or project/global settings fallbacks, matching the same resolution order the engine uses at runtime.
-- **Changed Files Viewer**: Click a task card's "files changed" button to open a dedicated diff viewer showing only files changed in that task worktree, with per-file statuses and sidebar navigation
+- **Changed Files Viewer**: Click a task card's "files changed" button to open a dedicated diff viewer showing only files changed in that task worktree, with per-file statuses and sidebar navigation. On mobile (≤768px), the viewer switches to a single-pane flow: the file list and diff are shown one at a time with a back button for navigation between them
 - **GitHub Import**: Import issues directly from GitHub repositories
 - **PR Management**: Create, monitor, and merge pull requests for in-review tasks
 

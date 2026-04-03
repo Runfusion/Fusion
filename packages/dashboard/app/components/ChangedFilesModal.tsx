@@ -1,8 +1,18 @@
-import { useEffect, useMemo } from "react";
-import { FileEdit, FileMinus, FilePlus, FileSymlink, FolderGit2, X } from "lucide-react";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import {
+  FileEdit,
+  FileMinus,
+  FilePlus,
+  FileSymlink,
+  FolderGit2,
+  ArrowLeft,
+  X,
+} from "lucide-react";
 import { useChangedFiles } from "../hooks/useChangedFiles";
 import { highlightDiff } from "../utils/highlightDiff";
 import type { TaskFileDiff } from "../api";
+
+const MOBILE_BREAKPOINT = 768;
 
 interface ChangedFilesModalProps {
   taskId: string;
@@ -41,13 +51,74 @@ function getStatusIcon(status: TaskFileDiff["status"]) {
 
 function getDiffStat(diff: string): string {
   const lines = diff.split("\n");
-  const statLines = lines.filter((line) => line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ "));
+  const statLines = lines.filter(
+    (line) =>
+      line.startsWith("diff --git") ||
+      line.startsWith("index ") ||
+      line.startsWith("--- ") ||
+      line.startsWith("+++ "),
+  );
   return statLines.join("\n").trim();
 }
 
-export function ChangedFilesModal({ taskId, worktree, column, projectId, isOpen, onClose }: ChangedFilesModalProps) {
-  const { files, loading, error, selectedFile, setSelectedFile } = useChangedFiles(taskId, worktree, column, projectId);
+export function ChangedFilesModal({
+  taskId,
+  worktree,
+  column,
+  projectId,
+  isOpen,
+  onClose,
+}: ChangedFilesModalProps) {
+  const { files, loading, error, selectedFile, setSelectedFile, resetSelection } = useChangedFiles(
+    taskId,
+    worktree,
+    column,
+    projectId,
+  );
 
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileView, setMobileView] = useState<"list" | "diff">("list");
+
+  // Detect mobile viewport
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    };
+
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, [isOpen]);
+
+  // When resizing from desktop to mobile with a file selected, show diff pane
+  // When resizing from mobile to desktop, no special action needed (both panes visible)
+  useEffect(() => {
+    if (!isOpen || !isMobile) return;
+    // If we just became mobile and have a selected file, show diff
+    if (selectedFile) {
+      setMobileView("diff");
+    }
+  }, [isOpen, isMobile, selectedFile]);
+
+  // Auto-select first file on desktop when files load
+  useEffect(() => {
+    if (!isOpen || isMobile) return;
+    if (!loading && files.length > 0 && !selectedFile) {
+      setSelectedFile(files[0]);
+    }
+  }, [isOpen, isMobile, loading, files, selectedFile, setSelectedFile]);
+
+  // Reset mobile view and selection when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setMobileView("list");
+      resetSelection();
+    }
+  }, [isOpen, resetSelection]);
+
+  // Escape key handler
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -59,17 +130,60 @@ export function ChangedFilesModal({ taskId, worktree, column, projectId, isOpen,
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  const selectedStat = useMemo(() => (selectedFile ? getDiffStat(selectedFile.diff) : ""), [selectedFile]);
+  const handleSelectFile = useCallback(
+    (file: TaskFileDiff) => {
+      setSelectedFile(file);
+      if (isMobile) {
+        setMobileView("diff");
+      }
+    },
+    [isMobile, setSelectedFile],
+  );
+
+  const handleBackToList = useCallback(() => {
+    setMobileView("list");
+  }, []);
+
+  const selectedStat = useMemo(
+    () => (selectedFile ? getDiffStat(selectedFile.diff) : ""),
+    [selectedFile],
+  );
 
   if (!isOpen) return null;
 
+  const sidebarClasses = [
+    "file-browser-sidebar",
+    "changed-files-sidebar",
+    isMobile ? "mobile" : "",
+    isMobile && mobileView === "list" ? "active" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const contentClasses = [
+    "file-browser-content",
+    "changed-files-content",
+    isMobile ? "mobile" : "",
+    isMobile && mobileView === "diff" ? "active" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const showBackButton = isMobile && mobileView === "diff";
+
   return (
     <div className="modal-overlay open" onClick={onClose}>
-      <div className="modal file-browser-modal changed-files-modal" onClick={(event) => event.stopPropagation()}>
+      <div
+        className="modal file-browser-modal changed-files-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="modal-header file-browser-modal-header">
           <div className="file-browser-header-title">
             <FolderGit2 size={18} />
             <span>Changed Files — {taskId}</span>
+            {showBackButton && selectedFile ? (
+              <span className="file-browser-header-path">{selectedFile.path}</span>
+            ) : null}
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close changed files viewer">
             <X size={20} />
@@ -77,7 +191,7 @@ export function ChangedFilesModal({ taskId, worktree, column, projectId, isOpen,
         </div>
 
         <div className="file-browser-body changed-files-layout">
-          <aside className="file-browser-sidebar changed-files-sidebar">
+          <aside className={sidebarClasses}>
             {loading ? (
               <div className="gm-diff-loading">Loading changed files…</div>
             ) : error ? (
@@ -87,7 +201,8 @@ export function ChangedFilesModal({ taskId, worktree, column, projectId, isOpen,
             ) : (
               <div className="file-browser-list" role="list" aria-label="Changed files list">
                 {files.map((file) => {
-                  const active = selectedFile?.path === file.path && selectedFile?.oldPath === file.oldPath;
+                  const active =
+                    selectedFile?.path === file.path && selectedFile?.oldPath === file.oldPath;
                   return (
                     <button
                       key={`${file.oldPath ?? ""}:${file.path}`}
@@ -95,11 +210,13 @@ export function ChangedFilesModal({ taskId, worktree, column, projectId, isOpen,
                       role="listitem"
                       aria-label={file.path}
                       className={`file-node file-node--file changed-files-entry ${active ? "active" : ""}`}
-                      onClick={() => setSelectedFile(file)}
+                      onClick={() => handleSelectFile(file)}
                     >
                       <span className="file-node-icon">{getStatusIcon(file.status)}</span>
                       <span className="file-node-name">{file.path}</span>
-                      <span className="detail-column-badge changed-files-badge">{getStatusLabel(file.status)}</span>
+                      <span className="detail-column-badge changed-files-badge">
+                        {getStatusLabel(file.status)}
+                      </span>
                     </button>
                   );
                 })}
@@ -107,18 +224,31 @@ export function ChangedFilesModal({ taskId, worktree, column, projectId, isOpen,
             )}
           </aside>
 
-          <section className="file-browser-content changed-files-content">
-            {!loading && !error && files.length > 0 && !selectedFile ? (
-              <div className="file-browser-empty">Select a file to view changes</div>
-            ) : null}
-
+          <section className={contentClasses}>
             {selectedFile ? (
-              <div className="gm-diff-section changed-files-diff-section" aria-label={`Diff for ${selectedFile.path}`}>
+              <div
+                className="gm-diff-section changed-files-diff-section"
+                aria-label={`Diff for ${selectedFile.path}`}
+              >
                 <div className="file-browser-toolbar">
                   <div className="file-browser-file-info">
+                    {showBackButton && (
+                      <button
+                        className="changed-files-back-button"
+                        onClick={handleBackToList}
+                        aria-label="Back to file list"
+                      >
+                        <ArrowLeft size={16} />
+                        <span>Back</span>
+                      </button>
+                    )}
                     <strong>{selectedFile.path}</strong>
-                    <span className="detail-column-badge changed-files-badge">{getStatusLabel(selectedFile.status)}</span>
-                    {selectedFile.oldPath ? <span>Renamed from {selectedFile.oldPath}</span> : null}
+                    <span className="detail-column-badge changed-files-badge">
+                      {getStatusLabel(selectedFile.status)}
+                    </span>
+                    {selectedFile.oldPath ? (
+                      <span>Renamed from {selectedFile.oldPath}</span>
+                    ) : null}
                   </div>
                 </div>
                 <div className="gm-diff-viewer">
@@ -128,6 +258,8 @@ export function ChangedFilesModal({ taskId, worktree, column, projectId, isOpen,
                   </pre>
                 </div>
               </div>
+            ) : !loading && !error && files.length > 0 ? (
+              <div className="file-browser-empty">Select a file to view changes</div>
             ) : null}
           </section>
         </div>

@@ -3410,34 +3410,81 @@ body {
   margin-top: 0;
 }
 
-/* Mobile responsive for spec tab */
+/* Back button for changed-files modal - hidden on desktop */
+.changed-files-back-button {
+  display: none;
+}
+
+/* Mobile responsive for changed-files modal */
 @media (max-width: 768px) {
   .changed-files-modal .changed-files-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
   }
 
-  .changed-files-modal .changed-files-sidebar {
+  /* Mobile two-state view: show only list or diff at a time */
+  .changed-files-sidebar.mobile {
+    display: none;
+  }
+
+  .changed-files-sidebar.mobile.active {
+    display: flex;
+    flex: 1;
     border-right: none;
-    border-bottom: 1px solid var(--border);
-    max-height: 35vh;
+    border-bottom: none;
+    max-height: none;
+    overflow-y: auto;
+    padding: 0;
   }
 
-  .changed-files-modal .changed-files-content {
+  .changed-files-sidebar.mobile.active .file-browser-list {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .changed-files-content.mobile {
+    display: none;
+  }
+
+  .changed-files-content.mobile.active {
+    display: flex;
+    flex: 1;
     padding: var(--space-sm);
   }
 
-  .changed-files-layout .changes-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .changed-files-layout .changes-file-header {
+  .changed-files-modal .file-browser-file-info {
     flex-wrap: wrap;
+    gap: var(--space-sm);
   }
 
-  .changed-files-layout .changes-file-stat {
-    width: 100%;
-    padding-left: 30px;
+  .changed-files-modal .file-browser-file-info strong {
+    font-size: 12px;
+    word-break: break-all;
+  }
+
+  /* Back button styles for mobile */
+  .changed-files-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    margin-right: 8px;
+  }
+
+  .changed-files-back-button:hover {
+    background: var(--card-hover);
+  }
+
+  .changed-files-back-button:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
   .detail-section--spec {
@@ -12526,7 +12573,7 @@ html .column.drag-over * {
 
 .gm-diff-stat {
   padding: var(--space-sm) var(--space-md);
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--surface);
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
@@ -12552,16 +12599,23 @@ html .column.drag-over * {
 .gm-diff-loading {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-sm);
   padding: var(--space-lg);
   color: var(--text-muted);
   font-size: 13px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
 }
 
 .gm-diff-error {
   padding: var(--space-md);
   color: var(--color-error);
   font-size: 13px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
 }
 
 .changed-files-layout {
@@ -12578,6 +12632,9 @@ html .column.drag-over * {
 .changed-files-content {
   padding: var(--space-md);
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
 }
 
 .changed-files-entry {
