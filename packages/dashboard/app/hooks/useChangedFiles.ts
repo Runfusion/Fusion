@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { fetchTaskFileDiffs, type TaskFileDiff } from "../api";
 
 const ACTIVE_COLUMNS = new Set(["in-progress", "in-review"]);
@@ -9,9 +9,15 @@ interface UseChangedFilesResult {
   error: string | null;
   selectedFile: TaskFileDiff | null;
   setSelectedFile: (file: TaskFileDiff) => void;
+  resetSelection: () => void;
 }
 
-export function useChangedFiles(taskId: string, worktree: string | undefined, column: string, projectId?: string): UseChangedFilesResult {
+export function useChangedFiles(
+  taskId: string,
+  worktree: string | undefined,
+  column: string,
+  projectId?: string,
+): UseChangedFilesResult {
   const [files, setFiles] = useState<TaskFileDiff[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,10 +44,12 @@ export function useChangedFiles(taskId: string, worktree: string | undefined, co
         setSelectedFile((current) => {
           if (result.length === 0) return null;
           if (current) {
-            const match = result.find((file) => file.path === current.path && file.oldPath === current.oldPath);
+            const match = result.find(
+              (file) => file.path === current.path && file.oldPath === current.oldPath,
+            );
             if (match) return match;
           }
-          return result[0] ?? null;
+          return null;
         });
       } catch (err) {
         if (cancelled) return;
@@ -62,5 +70,9 @@ export function useChangedFiles(taskId: string, worktree: string | undefined, co
     };
   }, [taskId, worktree, column, projectId]);
 
-  return { files, loading, error, selectedFile, setSelectedFile };
+  const resetSelection = useCallback(() => {
+    setSelectedFile(null);
+  }, []);
+
+  return { files, loading, error, selectedFile, setSelectedFile, resetSelection };
 }
