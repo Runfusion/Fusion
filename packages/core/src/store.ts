@@ -793,10 +793,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const newId = await this.allocateId();
     const now = new Date().toISOString();
 
+    // Derive a readable source label for the refinement title.
+    // Precedence: title → first non-empty line of description (collapsed) → task ID
+    let sourceLabel: string;
+    if (sourceTask.title?.trim()) {
+      sourceLabel = sourceTask.title.trim();
+    } else {
+      const firstLine = sourceTask.description
+        .split("\n")
+        .map((line: string) => line.trim())
+        .find((line: string) => line.length > 0);
+      if (firstLine) {
+        sourceLabel = firstLine.replace(/\s+/g, " ");
+      } else {
+        sourceLabel = sourceTask.id;
+      }
+    }
+
     // Create new refinement task
     const newTask: Task = {
       id: newId,
-      title: `Refinement: ${sourceTask.title || sourceTask.id}`,
+      title: `Refinement: ${sourceLabel}`,
       description: `${feedback.trim()}\n\nRefines: ${id}`,
       column: "triage",
       dependencies: [id], // Refinement depends on the original being complete

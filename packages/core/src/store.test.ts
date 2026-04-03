@@ -2910,7 +2910,8 @@ Task with acceptance criteria
       expect(refined.id).not.toBe(task.id);
       expect(refined.id).toMatch(/^FN-\d+$/);
       expect(refined.column).toBe("triage");
-      expect(refined.title).toBe(`Refinement: ${task.id}`);
+      // Untitled source: uses first line of description as readable label
+      expect(refined.title).toBe("Refinement: Original task");
     });
 
     it("creates refinement from in-review task", async () => {
@@ -2922,7 +2923,8 @@ Task with acceptance criteria
       const refined = await store.refineTask(task.id, "Need improvements");
 
       expect(refined.column).toBe("triage");
-      expect(refined.title).toBe(`Refinement: ${task.id}`);
+      // Untitled source: uses first line of description as readable label
+      expect(refined.title).toBe("Refinement: Original task");
     });
 
     it("throws error when refining task in triage", async () => {
@@ -2979,8 +2981,8 @@ Task with acceptance criteria
       expect(refined.title).toBe("Refinement: My Feature");
     });
 
-    it("sets correct title format without original title (uses ID)", async () => {
-      const task = await store.createTask({ description: "Original task" });
+    it("sets correct title format without original title (uses description fallback)", async () => {
+      const task = await store.createTask({ description: "Fix the login bug" });
       await store.moveTask(task.id, "todo");
       await store.moveTask(task.id, "in-progress");
       await store.moveTask(task.id, "in-review");
@@ -2988,7 +2990,8 @@ Task with acceptance criteria
 
       const refined = await store.refineTask(task.id, "Add more tests");
 
-      expect(refined.title).toBe(`Refinement: ${task.id}`);
+      // Falls back to first line of description when no title
+      expect(refined.title).toBe("Refinement: Fix the login bug");
     });
 
     it("description includes feedback and refines reference", async () => {
@@ -3120,9 +3123,100 @@ Task with acceptance criteria
       const refined = await store.refineTask(task.id, "Need improvements");
 
       const detail = await store.getTask(refined.id);
-      expect(detail.prompt).toContain(`Refinement: ${task.id}`);
+      // Untitled source: uses first line of description
+      expect(detail.prompt).toContain("Refinement: Original task");
       expect(detail.prompt).toContain("Need improvements");
       expect(detail.prompt).toContain(`Refines: ${task.id}`);
+    });
+
+    it("uses first non-empty line of description when title is absent", async () => {
+      const task = await store.createTask({
+        description: "Use source task labels for refinement titles\n\nThis is a longer description.",
+      });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Add more tests");
+
+      expect(refined.title).toBe("Refinement: Use source task labels for refinement titles");
+    });
+
+    it("collapses internal whitespace in description fallback", async () => {
+      const task = await store.createTask({
+        description: "Fix the  \t  spacing   issue   in UI",
+      });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "More feedback");
+
+      expect(refined.title).toBe("Refinement: Fix the spacing issue in UI");
+    });
+
+    it("skips leading blank lines in multi-line description", async () => {
+      const task = await store.createTask({
+        description: "\n  \n  \nFirst real line of description\nSecond line",
+      });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Feedback");
+
+      expect(refined.title).toBe("Refinement: First real line of description");
+    });
+
+    it("falls back to task ID when description has no non-empty lines", async () => {
+      // Create a task with a valid description, then update to all-whitespace
+      // (createTask rejects all-whitespace descriptions, but updates could produce this edge case)
+      const task = await store.createTask({ description: "Valid description" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.updateTask(task.id, { description: "   \n  \n\t\n" });
+
+      const refined = await store.refineTask(task.id, "Feedback");
+
+      expect(refined.title).toBe(`Refinement: ${task.id}`);
+    });
+
+    it("PROMPT.md heading matches the refinement title", async () => {
+      const task = await store.createTask({
+        title: "My Feature",
+        description: "Some description",
+      });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+      const detail = await store.getTask(refined.id);
+
+      expect(refined.title).toBe("Refinement: My Feature");
+      expect(detail.prompt).toMatch(/^# Refinement: My Feature\n/);
+    });
+
+    it("PROMPT.md heading uses description fallback when untitled", async () => {
+      const task = await store.createTask({
+        description: "Fix the login bug on settings page",
+      });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const refined = await store.refineTask(task.id, "Need improvements");
+      const detail = await store.getTask(refined.id);
+
+      expect(refined.title).toBe("Refinement: Fix the login bug on settings page");
+      expect(detail.prompt).toMatch(/^# Refinement: Fix the login bug on settings page\n/);
     });
 
     it("throws ENOENT when source task does not exist", async () => {

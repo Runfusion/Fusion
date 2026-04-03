@@ -145,6 +145,8 @@ fn task pause FN-001                     # Pause automation for task
 fn task unpause FN-001                   # Resume automation for task
 ```
 
+**Refinement tasks** created with `fn task refine` inherit a readable label from the source task. The title follows the format `Refinement: {source label}` where the source label is the original task's title (if set), otherwise the first line of the original description. This keeps refinement task names meaningful even when the source task has no explicit title.
+
 **GitHub Integration:**
 ```bash
 fn task import owner/repo                  # Import all open issues
