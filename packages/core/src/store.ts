@@ -193,11 +193,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         return sc && sc.length > 0 ? sc : undefined;
       })(),
       comments: (() => {
-        // Merge legacy steeringComments and comments into unified comments field
-        const legacySteering = fromJson<Array<{ id: string; text: string; createdAt: string; author: string }>>(row.steeringComments) || [];
-        const regularComments = fromJson<import("./types.js").TaskComment[]>(row.comments) || [];
-        const merged = [...legacySteering, ...regularComments];
-        return merged.length > 0 ? merged : undefined;
+        // Comments column already contains steering comments (addSteeringComment calls addComment).
+        // Do NOT merge steeringComments here — that caused duplication on every read-write cycle.
+        const c = fromJson<import("./types.js").TaskComment[]>(row.comments) || [];
+        // Deduplicate by id to recover from prior corruption
+        const seen = new Set<string>();
+        const deduped = c.filter(entry => {
+          if (seen.has(entry.id)) return false;
+          seen.add(entry.id);
+          return true;
+        });
+        return deduped.length > 0 ? deduped : undefined;
       })(),
       workflowStepResults: (() => { const w = fromJson<import("./types.js").WorkflowStepResult[]>(row.workflowStepResults); return w && w.length > 0 ? w : undefined; })(),
       prInfo: fromJson<import("./types.js").PrInfo>(row.prInfo),

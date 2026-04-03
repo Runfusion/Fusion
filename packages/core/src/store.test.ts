@@ -1976,6 +1976,71 @@ Task with acceptance criteria
       expect(fetched.steeringComments![0].text).toBe("Focus on error handling");
     });
 
+    it("steering comments do not duplicate in comments across read-write cycles", async () => {
+      const task = await createTestTask();
+
+      // Add a steering comment (writes to both comments and steeringComments columns)
+      await store.addSteeringComment(task.id, "Focus on error handling");
+
+      // Read the task back — comments should have exactly 1 entry
+      const read1 = await store.getTask(task.id);
+      expect(read1.comments).toHaveLength(1);
+      expect(read1.steeringComments).toHaveLength(1);
+
+      // Simulate a write-back (updateTask writes via upsertTask)
+      await store.updateTask(task.id, { status: "specifying" });
+
+      // Read again — should still have exactly 1 comment, not 2
+      const read2 = await store.getTask(task.id);
+      expect(read2.comments).toHaveLength(1);
+      expect(read2.comments![0].text).toBe("Focus on error handling");
+    });
+
+    it("no duplication accumulation over multiple read-write cycles with steering comments", async () => {
+      const task = await createTestTask();
+
+      await store.addSteeringComment(task.id, "Comment A");
+      await store.addSteeringComment(task.id, "Comment B");
+
+      // Perform 5 read-write cycles
+      for (let i = 0; i < 5; i++) {
+        const fetched = await store.getTask(task.id);
+        expect(fetched.comments).toHaveLength(2);
+        expect(fetched.steeringComments).toHaveLength(2);
+        // Write back via an innocuous update
+        await store.updateTask(task.id, { status: "specifying" });
+      }
+
+      // Final read — still exactly 2 comments
+      const final = await store.getTask(task.id);
+      expect(final.comments).toHaveLength(2);
+      expect(final.comments!.map(c => c.text).sort()).toEqual(["Comment A", "Comment B"]);
+    });
+
+    it("mixed regular and steering comments maintain correct counts through cycles", async () => {
+      const task = await createTestTask();
+
+      // Add 1 regular comment and 1 steering comment
+      await store.addTaskComment(task.id, "Regular note", "alice");
+      await store.addSteeringComment(task.id, "Steering note");
+
+      // Should have 2 comments total, 1 steering comment
+      const read1 = await store.getTask(task.id);
+      expect(read1.comments).toHaveLength(2);
+      expect(read1.steeringComments).toHaveLength(1);
+
+      // Perform 3 read-write cycles
+      for (let i = 0; i < 3; i++) {
+        const fetched = await store.getTask(task.id);
+        expect(fetched.comments).toHaveLength(2);
+        await store.updateTask(task.id, { status: "specifying" });
+      }
+
+      const final = await store.getTask(task.id);
+      expect(final.comments).toHaveLength(2);
+      expect(final.steeringComments).toHaveLength(1);
+    });
+
     it("regular addComment on done task still creates refinement", async () => {
       const task = await store.createTask({ description: "Original task" });
       await store.moveTask(task.id, "todo");
