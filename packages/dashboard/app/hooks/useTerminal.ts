@@ -199,6 +199,11 @@ export function useTerminal(sessionId: string | null): UseTerminalReturn {
               onExitCallbacksRef.current.forEach((cb) => cb(msg.exitCode!));
             }
             break;
+          case "ping":
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "pong" }));
+            }
+            break;
           case "pong":
             // Heartbeat response
             break;

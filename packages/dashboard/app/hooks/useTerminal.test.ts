@@ -123,6 +123,59 @@ describe("useTerminal", () => {
     unsubScrollback();
   });
 
+  it("responds with pong when server sends ping", () => {
+    renderHook(() => useTerminal("test-session-123"));
+    const ws = MockWebSocket.instances[0];
+
+    act(() => {
+      ws.emitOpen();
+    });
+
+    act(() => {
+      ws.emitMessage({ type: "ping" });
+    });
+
+    const pongSent = ws.sent.find((m) => JSON.parse(m).type === "pong");
+    expect(pongSent).toBeDefined();
+    expect(JSON.parse(pongSent!)).toEqual({ type: "pong" });
+  });
+
+  it("does not send pong when websocket is not open", () => {
+    renderHook(() => useTerminal("test-session-123"));
+    const ws = MockWebSocket.instances[0];
+
+    act(() => {
+      ws.emitOpen();
+    });
+
+    // Simulate WS in CLOSING state
+    ws.readyState = MockWebSocket.CLOSING;
+
+    act(() => {
+      ws.emitMessage({ type: "ping" });
+    });
+
+    const pongMessages = ws.sent.filter((m) => JSON.parse(m).type === "pong");
+    expect(pongMessages).toHaveLength(0);
+  });
+
+  it("stays connected after receiving a ping", () => {
+    const { result } = renderHook(() => useTerminal("test-session-123"));
+    const ws = MockWebSocket.instances[0];
+
+    act(() => {
+      ws.emitOpen();
+    });
+
+    expect(result.current.connectionStatus).toBe("connected");
+
+    act(() => {
+      ws.emitMessage({ type: "ping" });
+    });
+
+    expect(result.current.connectionStatus).toBe("connected");
+  });
+
   it("does not reconnect for terminal-not-found closes", () => {
     const { result } = renderHook(() => useTerminal("test-session-123"));
 
