@@ -66,10 +66,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [isDisclosureExpanded, setIsDisclosureExpanded] = useState(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem(DISCLOSURE_STORAGE_KEY);
-      // Default to true (expanded) for backward compatibility - only collapse if explicitly set to "false"
-      return saved !== "false";
+      // Default to collapsed — only expand if user explicitly saved "true"
+      return saved === "true";
     }
-    return true;
+    return false;
   });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const justResetRef = useRef(false);
