@@ -2861,4 +2861,81 @@ describe("TaskDetailModal", () => {
       expect(descTextarea.value).toBe("My Description");
     });
   });
+
+  describe("Commits tab visibility", () => {
+    it("shows Commits tab for done tasks with mergeDetails.commitSha", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "done",
+            mergeDetails: { commitSha: "abc1234567890", filesChanged: 3, insertions: 10, deletions: 2 },
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Commits")).toBeTruthy();
+    });
+
+    it("does NOT show Commits tab for non-done tasks", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "in-progress",
+            mergeDetails: { commitSha: "abc1234567890" },
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Commits")).toBeNull();
+    });
+
+    it("does NOT show Commits tab for done tasks without commitSha", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "done",
+            mergeDetails: { filesChanged: 3 },
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Commits")).toBeNull();
+    });
+
+    it("does NOT show Commits tab for done tasks without mergeDetails", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "done",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Commits")).toBeNull();
+    });
+  });
 });

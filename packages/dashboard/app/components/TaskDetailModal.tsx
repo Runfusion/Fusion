@@ -13,6 +13,7 @@ import { PrSection } from "./PrSection";
 import { TaskComments } from "./TaskComments";
 import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
+import { CommitDiffTab } from "./CommitDiffTab";
 import { TaskForm, type PendingImage } from "./TaskForm";
 
 interface ModelSelection {
@@ -108,7 +109,7 @@ export function TaskDetailModal({
   addToast,
   githubTokenConfigured,
 }: TaskDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "changes" | "comments" | "model">("definition");
+  const [activeTab, setActiveTab] = useState<"definition" | "activity" | "agent-log" | "changes" | "commits" | "comments" | "model">("definition");
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
@@ -716,6 +717,14 @@ export function TaskDetailModal({
                 Changes
               </button>
             )}
+            {task.column === "done" && task.mergeDetails?.commitSha && (
+              <button
+                className={`detail-tab${activeTab === "commits" ? " detail-tab-active" : ""}`}
+                onClick={() => setActiveTab("commits")}
+              >
+                Commits
+              </button>
+            )}
             <button
               className={`detail-tab${activeTab === "comments" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("comments")}
@@ -744,6 +753,8 @@ export function TaskDetailModal({
             </div>
           ) : activeTab === "changes" ? (
             <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} />
+          ) : activeTab === "commits" ? (
+            <CommitDiffTab commitSha={task.mergeDetails?.commitSha ?? ""} mergeDetails={task.mergeDetails} />
           ) : activeTab === "comments" ? (
             <TaskComments task={task} addToast={addToast} projectId={projectId} />
           ) : activeTab === "activity" ? (
