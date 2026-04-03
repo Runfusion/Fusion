@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Task, TaskComment } from "@fusion/core";
-import { addSteeringComment, addTaskComment, updateTaskComment, deleteTaskComment } from "../api";
+import { addSteeringComment, updateTaskComment, deleteTaskComment } from "../api";
 import type { ToastType } from "../hooks/useToast";
 
 const MAX_COMMENT_LENGTH = 2000;
@@ -12,8 +12,6 @@ interface TaskCommentsProps {
   currentAuthor?: string;
   projectId?: string;
 }
-
-type CommentType = "comment" | "guidance";
 
 function formatCommentTimestamp(comment: TaskComment): string {
   const timestamp = comment.updatedAt || comment.createdAt;
@@ -31,8 +29,6 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
   const [editingText, setEditingText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [commentType, setCommentType] = useState<CommentType>("comment");
-
   // Sort comments by createdAt descending (newest first)
   const comments = useMemo(() => {
     return [...(task.comments || [])].sort(
@@ -47,17 +43,10 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
     if (!text) return;
     setSubmitting(true);
     try {
-      if (commentType === "guidance") {
-        const updated = await addSteeringComment(task.id, text, projectId);
-        setDraft("");
-        onTaskUpdated?.(updated);
-        addToast("AI Guidance added", "success");
-      } else {
-        const updated = await addTaskComment(task.id, text, currentAuthor, projectId);
-        setDraft("");
-        onTaskUpdated?.(updated);
-        addToast("Comment added", "success");
-      }
+      const updated = await addSteeringComment(task.id, text, projectId);
+      setDraft("");
+      onTaskUpdated?.(updated);
+      addToast("Comment added", "success");
     } catch (error: any) {
       addToast(error.message || "Failed to add comment", "error");
     } finally {
@@ -102,8 +91,8 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
     }
   }
 
-  const placeholder = commentType === "guidance" ? "Add guidance for the AI agent" : "Add a comment";
-  const buttonLabel = commentType === "guidance" ? "Add Guidance" : "Add Comment";
+  const placeholder = "Add a comment";
+  const buttonLabel = "Add Comment";
 
   return (
     <div className="detail-section">
@@ -187,25 +176,6 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
       )}
 
       <div className="comments-compose-form">
-        <div className="comments-type-toggle">
-          <button
-            className={`btn btn-sm ${commentType === "comment" ? "btn-primary" : ""}`}
-            onClick={() => setCommentType("comment")}
-          >
-            Comment
-          </button>
-          <button
-            className={`btn btn-sm ${commentType === "guidance" ? "btn-primary" : ""}`}
-            onClick={() => setCommentType("guidance")}
-          >
-            AI Guidance
-          </button>
-        </div>
-        {commentType === "guidance" && (
-          <div className="comments-guidance-hint">
-            AI Guidance comments are injected into the task execution context
-          </div>
-        )}
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}

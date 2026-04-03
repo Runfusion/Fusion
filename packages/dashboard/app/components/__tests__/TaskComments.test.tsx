@@ -4,12 +4,11 @@ import { TaskComments } from "../TaskComments";
 
 vi.mock("../../api", () => ({
   addSteeringComment: vi.fn(),
-  addTaskComment: vi.fn(),
   updateTaskComment: vi.fn(),
   deleteTaskComment: vi.fn(),
 }));
 
-import { addSteeringComment, addTaskComment, updateTaskComment, deleteTaskComment } from "../../api";
+import { addSteeringComment, updateTaskComment, deleteTaskComment } from "../../api";
 
 const makeTask = (overrides: any = {}) => ({
   id: "FN-001",
@@ -34,15 +33,15 @@ describe("TaskComments", () => {
     expect(screen.getByText("No comments yet.")).toBeTruthy();
   });
 
-  it("adds a user comment via addTaskComment API", async () => {
+  it("adds a comment via addSteeringComment API", async () => {
     const onTaskUpdated = vi.fn();
-    vi.mocked(addTaskComment).mockResolvedValue(makeTask({ comments: [{ id: "c1", text: "Hello", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }] }));
+    vi.mocked(addSteeringComment).mockResolvedValue(makeTask({ comments: [{ id: "c1", text: "Hello", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }] }));
 
     render(<TaskComments task={makeTask()} addToast={vi.fn()} onTaskUpdated={onTaskUpdated} />);
     fireEvent.change(screen.getByPlaceholderText(/Add a comment/), { target: { value: "Hello" } });
     fireEvent.click(screen.getByText("Add Comment"));
 
-    await waitFor(() => expect(addTaskComment).toHaveBeenCalledWith("FN-001", "Hello", "user", undefined));
+    await waitFor(() => expect(addSteeringComment).toHaveBeenCalledWith("FN-001", "Hello", undefined));
     expect(onTaskUpdated).toHaveBeenCalled();
   });
 
@@ -131,93 +130,6 @@ describe("TaskComments", () => {
     });
   });
 
-  describe("comment type selector", () => {
-    it("shows Comment and AI Guidance type selector buttons", () => {
-      render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
-
-      expect(screen.getByText("Comment")).toBeTruthy();
-      expect(screen.getByText("AI Guidance")).toBeTruthy();
-    });
-
-    it("defaults to Comment type", () => {
-      render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
-
-      const commentBtn = screen.getByText("Comment");
-      expect(commentBtn.className).toContain("btn-primary");
-    });
-
-    it("shows helper text when AI Guidance type is selected", () => {
-      render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
-
-      // Click AI Guidance button
-      fireEvent.click(screen.getByText("AI Guidance"));
-
-      expect(screen.getByText(/AI Guidance comments are injected into the task execution context/)).toBeTruthy();
-    });
-
-    it("uses addSteeringComment API when AI Guidance type is selected", async () => {
-      vi.mocked(addSteeringComment).mockResolvedValue(makeTask({
-        comments: [{ id: "c1", text: "Guidance text", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
-      }));
-
-      render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
-
-      // Select AI Guidance type
-      fireEvent.click(screen.getByText("AI Guidance"));
-
-      // Enter text and submit
-      fireEvent.change(screen.getByPlaceholderText(/Add guidance/), { target: { value: "Guidance text" } });
-      fireEvent.click(screen.getByText("Add Guidance"));
-
-      await waitFor(() => {
-        expect(addSteeringComment).toHaveBeenCalledWith("FN-001", "Guidance text", undefined);
-        expect(addTaskComment).not.toHaveBeenCalled();
-      });
-    });
-
-    it("uses addTaskComment API when Comment type is selected", async () => {
-      vi.mocked(addTaskComment).mockResolvedValue(makeTask({
-        comments: [{ id: "c1", text: "User text", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
-      }));
-
-      render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
-
-      // Comment type is default
-      fireEvent.change(screen.getByPlaceholderText(/Add a comment/), { target: { value: "User text" } });
-      fireEvent.click(screen.getByText("Add Comment"));
-
-      await waitFor(() => {
-        expect(addTaskComment).toHaveBeenCalledWith("FN-001", "User text", "user", undefined);
-        expect(addSteeringComment).not.toHaveBeenCalled();
-      });
-    });
-
-    it("changes placeholder text based on selected type", () => {
-      render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
-
-      // Default: Comment type
-      expect(screen.getByPlaceholderText(/Add a comment/)).toBeTruthy();
-
-      // Switch to AI Guidance
-      fireEvent.click(screen.getByText("AI Guidance"));
-      expect(screen.getByPlaceholderText(/Add guidance for the AI agent/)).toBeTruthy();
-    });
-
-    it("changes submit button label based on selected type", () => {
-      render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
-
-      // Default: "Add Comment" button
-      expect(screen.getByText("Add Comment")).toBeTruthy();
-
-      // Enable submit
-      fireEvent.change(screen.getByPlaceholderText(/Add a comment/), { target: { value: "text" } });
-
-      // Switch to AI Guidance
-      fireEvent.click(screen.getByText("AI Guidance"));
-      expect(screen.getByText("Add Guidance")).toBeTruthy();
-    });
-  });
-
   describe("character count", () => {
     it("shows character count", () => {
       render(<TaskComments task={makeTask()} addToast={vi.fn()} />);
@@ -241,7 +153,7 @@ describe("TaskComments", () => {
 
   describe("keyboard shortcuts", () => {
     it("submits comment on Ctrl+Enter", async () => {
-      vi.mocked(addTaskComment).mockResolvedValue(makeTask({
+      vi.mocked(addSteeringComment).mockResolvedValue(makeTask({
         comments: [{ id: "c1", text: "Keyboard", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
       }));
 
@@ -252,12 +164,12 @@ describe("TaskComments", () => {
       fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
 
       await waitFor(() => {
-        expect(addTaskComment).toHaveBeenCalledWith("FN-001", "Keyboard", "user", undefined);
+        expect(addSteeringComment).toHaveBeenCalledWith("FN-001", "Keyboard", undefined);
       });
     });
 
     it("submits comment on Cmd+Enter", async () => {
-      vi.mocked(addTaskComment).mockResolvedValue(makeTask({
+      vi.mocked(addSteeringComment).mockResolvedValue(makeTask({
         comments: [{ id: "c1", text: "Mac", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
       }));
 
@@ -268,7 +180,7 @@ describe("TaskComments", () => {
       fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
 
       await waitFor(() => {
-        expect(addTaskComment).toHaveBeenCalledWith("FN-001", "Mac", "user", undefined);
+        expect(addSteeringComment).toHaveBeenCalledWith("FN-001", "Mac", undefined);
       });
     });
   });
