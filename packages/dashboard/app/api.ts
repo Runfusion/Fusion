@@ -370,6 +370,7 @@ export interface UsageWindow {
   percentLeft: number; // 0-100
   resetText: string | null; // e.g., "resets in 2h"
   resetMs?: number; // ms until reset
+  resetAt?: string; // ISO 8601 timestamp of when the window resets (machine-readable)
   windowDurationMs?: number; // total window length
   pace?: UsagePace; // pace indicator for weekly windows
 }

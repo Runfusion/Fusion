@@ -22,6 +22,7 @@ export interface UsageWindow {
   percentLeft: number; // 0-100
   resetText: string | null; // e.g., "resets in 2h"
   resetMs?: number; // ms until reset
+  resetAt?: string; // ISO 8601 timestamp of when the window resets (machine-readable)
   windowDurationMs?: number; // total window length
   pace?: UsagePace; // pace indicator for weekly windows
 }
@@ -651,6 +652,7 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
           if (iso) {
             const msLeft = new Date(iso).getTime() - Date.now();
             window.resetMs = msLeft > 0 ? msLeft : 0;
+            window.resetAt = iso;
             if (!window.resetText) {
               window.resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
             }
@@ -833,9 +835,9 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
       let resetText: string | null = null;
       let resetMs: number | undefined;
 
-      const resetAt = w.resets_at || w.reset_at || w.resetAt;
-      if (resetAt) {
-        const msLeft = new Date(resetAt).getTime() - Date.now();
+      const resetAtValue = w.resets_at || w.reset_at || w.resetAt;
+      if (resetAtValue) {
+        const msLeft = new Date(resetAtValue).getTime() - Date.now();
         resetMs = msLeft > 0 ? msLeft : 0;
         resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
       }
@@ -847,6 +849,7 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
         resetText,
         windowDurationMs,
         resetMs,
+        resetAt: resetAtValue || undefined,
       };
     };
 

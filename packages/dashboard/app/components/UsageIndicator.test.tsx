@@ -1184,4 +1184,101 @@ describe("UsageIndicator", () => {
     expect(progressBar).toBeInTheDocument();
     expect(progressBar.style.width).toBe("46%"); // 45.678 rounds to 46
   });
+
+  // resetAt timestamp display tests
+  it("shows absolute reset time when resetAt is provided", () => {
+    const resetAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "Claude",
+          icon: "🟠",
+          status: "ok",
+          windows: [
+            {
+              label: "Session (5h)",
+              percentUsed: 45,
+              percentLeft: 55,
+              resetText: "resets in 2h",
+              resetMs: 7200000,
+              resetAt: resetAt.toISOString(),
+            },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    // Should show both relative text and absolute time
+    expect(screen.getByText("resets in 2h")).toBeInTheDocument();
+    expect(document.querySelector(".usage-window-reset-at")).toBeInTheDocument();
+  });
+
+  it("does not show absolute reset time when resetAt is absent", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "Claude",
+          icon: "🟠",
+          status: "ok",
+          windows: [
+            {
+              label: "Session (5h)",
+              percentUsed: 45,
+              percentLeft: 55,
+              resetText: "resets in 2h",
+              resetMs: 7200000,
+              // no resetAt
+            },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByText("resets in 2h")).toBeInTheDocument();
+    expect(document.querySelector(".usage-window-reset-at")).not.toBeInTheDocument();
+  });
+
+  it("shows reset time for weekly window when resetAt is provided", () => {
+    const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "Claude",
+          icon: "🟠",
+          status: "ok",
+          windows: [
+            {
+              label: "Weekly",
+              percentUsed: 30,
+              percentLeft: 70,
+              resetText: "resets in 3d",
+              resetMs: 259200000,
+              resetAt: resetAt.toISOString(),
+            },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByText("resets in 3d")).toBeInTheDocument();
+    expect(document.querySelector(".usage-window-reset-at")).toBeInTheDocument();
+  });
 });

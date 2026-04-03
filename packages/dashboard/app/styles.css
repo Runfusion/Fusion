@@ -10322,6 +10322,19 @@ html .column.drag-over * {
   font-style: italic;
 }
 
+.usage-window-reset-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.usage-window-reset-at {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 /* Pace marker and text */
 .usage-progress-wrapper {
   position: relative;

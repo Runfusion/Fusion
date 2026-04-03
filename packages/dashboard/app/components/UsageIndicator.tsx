@@ -10,6 +10,48 @@ interface UsageIndicatorProps {
 }
 
 /**
+ * Format an ISO 8601 timestamp into a user-friendly absolute time string.
+ * Shows time like "2:30 PM" for today, "Tue 2:30 PM" for this week,
+ * or "Jan 15, 2:30 PM" for later dates.
+ *
+ * Used by UsageWindowRow to display the absolute reset time next to the
+ * relative "resets in X" text when the backend provides a canonical resetAt
+ * timestamp. Currently populated only for Claude session/windows where the
+ * reset timestamp is available from the API or CLI fallback parser.
+ */
+function formatResetAt(isoTimestamp: string): string {
+  const date = new Date(isoTimestamp);
+  const now = new Date();
+
+  const timeStr = date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  const isToday = date.toDateString() === now.toDateString();
+  if (isToday) {
+    return timeStr;
+  }
+
+  // Check if within the next 7 days — show short weekday
+  const daysUntil = Math.round(
+    (date.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)
+  );
+  if (daysUntil > 0 && daysUntil <= 6) {
+    const weekday = date.toLocaleDateString(undefined, { weekday: "short" });
+    return `${weekday} ${timeStr}`;
+  }
+
+  // Beyond a week — show full date
+  const dateStr = date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${dateStr}, ${timeStr}`;
+}
+
+/**
  * Get color class for usage percentage
  * - >90%: high (red/error color)
  * - >70%: medium (yellow/triage color)
@@ -83,9 +125,21 @@ function UsageWindowRow({ window, viewMode }: UsageWindowRowProps) {
       </div>
       <div className="usage-window-footer">
         <span className="usage-window-left">{footerText}</span>
-        {window.resetText && (
-          <span className="usage-window-reset">{window.resetText}</span>
-        )}
+        {/* Reset group: shows relative text ("resets in 2h") and, when available,
+            the absolute reset time derived from the canonical resetAt timestamp.
+            The absolute time is populated by the backend for Claude session/windows
+            where the reset timestamp is known. Other providers will only show
+            the relative text unless they also provide resetAt. */}
+        <span className="usage-window-reset-group">
+          {window.resetText && (
+            <span className="usage-window-reset">{window.resetText}</span>
+          )}
+          {window.resetAt && (
+            <span className="usage-window-reset-at">
+              {formatResetAt(window.resetAt)}
+            </span>
+          )}
+        </span>
       </div>
       {shouldShowPace && (
         <div className="usage-pace-row" data-testid="pace-row">

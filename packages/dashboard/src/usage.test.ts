@@ -734,6 +734,66 @@ describe("usage", () => {
       _resetSleepFn();
     });
 
+    it("populates resetAt timestamp for session window from API response", async () => {
+      const resetTime = new Date(Date.now() + 2 * 60 * 60 * 1000);
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 45.5,
+          resets_at: resetTime.toISOString(),
+        },
+        seven_day: {
+          utilization: 23.0,
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      expect(claude.windows).toHaveLength(2);
+
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow.resetAt).toBe(resetTime.toISOString());
+      expect(sessionWindow.resetText).toContain("resets in");
+
+      const weeklyWindow = claude.windows.find((w) => w.label === "Weekly")!;
+      expect(weeklyWindow.resetAt).toBeDefined();
+    });
+
+    it("omits resetAt when API response has no resets_at field", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "pro",
+        },
+      });
+
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 30.0,
+          // no resets_at field
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      const sessionWindow = claude.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow.resetAt).toBeUndefined();
+      expect(sessionWindow.resetText).toBeNull();
+    });
+
     it("handles empty JSON object from API gracefully", async () => {
       setupClaudeMocks({
         credFileContent: {
