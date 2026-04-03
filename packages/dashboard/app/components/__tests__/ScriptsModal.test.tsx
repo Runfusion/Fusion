@@ -30,6 +30,18 @@ beforeEach(() => {
 });
 
 describe("ScriptsModal", () => {
+  it("has the 'open' class on the modal overlay when visible", async () => {
+    vi.mocked(fetchScripts).mockResolvedValueOnce(mockScripts);
+
+    render(
+      <ScriptsModal isOpen={true} onClose={onClose} addToast={addToast} onRunScript={onRunScript} />
+    );
+
+    const overlay = screen.getByTestId("scripts-modal");
+    expect(overlay.classList.contains("modal-overlay")).toBe(true);
+    expect(overlay.classList.contains("open")).toBe(true);
+  });
+
   it("does not render when closed", () => {
     const { container } = render(
       <ScriptsModal isOpen={false} onClose={onClose} addToast={addToast} onRunScript={onRunScript} />
