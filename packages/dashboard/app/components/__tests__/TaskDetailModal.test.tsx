@@ -900,6 +900,266 @@ describe("TaskDetailModal", () => {
     });
   });
 
+  describe("Agent Log model resolution", () => {
+    // AgentLogViewer only renders the model header when entries.length > 0,
+    // so we mock useAgentLogs to return at least one entry.
+    const mockLogEntry = { timestamp: "2026-01-01T00:00:00Z", taskId: "FN-099", text: "hello", type: "text" as const };
+
+    async function setupModelTest(settingsOverrides: Record<string, any> = {}) {
+      const { fetchSettings } = await import("../../api");
+      const { useAgentLogs } = await import("../../hooks/useAgentLogs");
+
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        modelPresets: [],
+        autoSelectModelPreset: false,
+        defaultPresetBySize: {},
+        ...settingsOverrides,
+      } as any);
+
+      vi.mocked(useAgentLogs).mockReturnValue({
+        entries: [mockLogEntry],
+        loading: false,
+        clear: vi.fn(),
+      });
+
+      return render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+    }
+
+    async function setupModelTestWithTask(taskOverrides: Partial<TaskDetail>, settingsOverrides: Record<string, any> = {}) {
+      const { fetchSettings } = await import("../../api");
+      const { useAgentLogs } = await import("../../hooks/useAgentLogs");
+
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        modelPresets: [],
+        autoSelectModelPreset: false,
+        defaultPresetBySize: {},
+        ...settingsOverrides,
+      } as any);
+
+      vi.mocked(useAgentLogs).mockReturnValue({
+        entries: [mockLogEntry],
+        loading: false,
+        clear: vi.fn(),
+      });
+
+      return render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent", ...taskOverrides })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+    }
+
+    it("shows resolved executor from settings when task has no explicit executor override", async () => {
+      const { container } = await setupModelTest({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+      });
+
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      await waitFor(() => {
+        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        expect(header).toBeTruthy();
+        expect(header!.textContent).toContain("anthropic/claude-sonnet-4-5");
+      });
+
+      // Validator should also fall back to the default
+      const header = container.querySelector("[data-testid='agent-log-model-header']")!;
+      expect(header.textContent).toContain("anthropic/claude-sonnet-4-5");
+    });
+
+    it("shows resolved validator from project validator settings when task has no validator override", async () => {
+      const { container } = await setupModelTest({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        validatorProvider: "openai",
+        validatorModelId: "gpt-4o",
+      });
+
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      await waitFor(() => {
+        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        expect(header).toBeTruthy();
+        expect(header!.textContent).toContain("openai/gpt-4o");
+      });
+
+      const header = container.querySelector("[data-testid='agent-log-model-header']")!;
+      // Executor falls back to default
+      expect(header.textContent).toContain("anthropic/claude-sonnet-4-5");
+      // Validator uses the validator-specific setting
+      expect(header.textContent).toContain("openai/gpt-4o");
+    });
+
+    it("falls back to default settings for validator when no validator-specific setting exists", async () => {
+      const { container } = await setupModelTest({
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        // No validatorProvider or validatorModelId
+      });
+
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      await waitFor(() => {
+        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        expect(header).toBeTruthy();
+        // Both executor and validator should resolve to the default
+        expect(header!.textContent).toContain("anthropic/claude-sonnet-4-5");
+      });
+
+      // Count occurrences - should appear twice (once for executor, once for validator)
+      const header = container.querySelector("[data-testid='agent-log-model-header']")!;
+      const matches = header.textContent!.match(/anthropic\/claude-sonnet-4-5/g);
+      expect(matches).toHaveLength(2);
+    });
+
+    it("shows task executor override even when settings provide a default", async () => {
+      const { container } = await setupModelTestWithTask(
+        { modelProvider: "openai", modelId: "gpt-4o" },
+        { defaultProvider: "anthropic", defaultModelId: "claude-sonnet-4-5" },
+      );
+
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      await waitFor(() => {
+        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        expect(header).toBeTruthy();
+        // Task override should win
+        expect(header!.textContent).toContain("openai/gpt-4o");
+      });
+
+      // Default model should not appear for executor
+      const header = container.querySelector("[data-testid='agent-log-model-header']")!;
+      expect(header.textContent).toContain("openai/gpt-4o");
+      // Validator falls back to default
+      expect(header.textContent).toContain("anthropic/claude-sonnet-4-5");
+    });
+
+    it("shows task validator override even when settings provide a validator default", async () => {
+      const { container } = await setupModelTestWithTask(
+        { validatorModelProvider: "google", validatorModelId: "gemini-pro" },
+        { defaultProvider: "anthropic", defaultModelId: "claude-sonnet-4-5", validatorProvider: "openai", validatorModelId: "gpt-4o" },
+      );
+
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      await waitFor(() => {
+        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        expect(header).toBeTruthy();
+        // Task validator override should win
+        expect(header!.textContent).toContain("google/gemini-pro");
+      });
+
+      const header = container.querySelector("[data-testid='agent-log-model-header']")!;
+      // Executor falls back to default
+      expect(header.textContent).toContain("anthropic/claude-sonnet-4-5");
+      // Settings validator should not appear (task override wins)
+      expect(header.textContent).not.toContain("openai/gpt-4o");
+    });
+
+    it("shows 'Using default' for both when no models can be resolved", async () => {
+      const { container } = await setupModelTest({
+        // No defaultProvider/defaultModelId
+      });
+
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      await waitFor(() => {
+        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        expect(header).toBeTruthy();
+      });
+
+      const header = container.querySelector("[data-testid='agent-log-model-header']")!;
+      expect(header.textContent).toContain("Using default");
+      // Should show "Using default" for both executor and validator
+      const defaultBadges = header.querySelectorAll(".model-badge-default");
+      expect(defaultBadges).toHaveLength(2);
+    });
+
+    it("shows 'Using default' for both when settings fetch fails", async () => {
+      const { fetchSettings } = await import("../../api");
+      const { useAgentLogs } = await import("../../hooks/useAgentLogs");
+
+      vi.mocked(fetchSettings).mockRejectedValueOnce(new Error("Network error"));
+      vi.mocked(useAgentLogs).mockReturnValue({
+        entries: [mockLogEntry],
+        loading: false,
+        clear: vi.fn(),
+      });
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      // Wait for the failed fetch to settle
+      await waitFor(() => {
+        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        expect(header).toBeTruthy();
+      });
+
+      const header = container.querySelector("[data-testid='agent-log-model-header']")!;
+      expect(header.textContent).toContain("Using default");
+      const defaultBadges = header.querySelectorAll(".model-badge-default");
+      expect(defaultBadges).toHaveLength(2);
+    });
+
+    it("shows partial override: task executor with settings-based validator", async () => {
+      const { container } = await setupModelTestWithTask(
+        {
+          modelProvider: "google",
+          modelId: "gemini-pro",
+          // No validator override — should use settings validator
+        },
+        {
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4-5",
+          validatorProvider: "openai",
+          validatorModelId: "gpt-4o",
+        },
+      );
+
+      fireEvent.click(screen.getByText("Agent Log"));
+
+      await waitFor(() => {
+        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        expect(header).toBeTruthy();
+        expect(header!.textContent).toContain("google/gemini-pro");
+      });
+
+      const header = container.querySelector("[data-testid='agent-log-model-header']")!;
+      // Executor uses task override
+      expect(header.textContent).toContain("google/gemini-pro");
+      // Validator uses settings-specific validator
+      expect(header.textContent).toContain("openai/gpt-4o");
+    });
+  });
+
   describe("step progress", () => {
     it("renders step progress section when steps exist", () => {
       const { container } = render(

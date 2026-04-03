@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Pencil } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo, Settings } from "@fusion/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@fusion/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, requestSpecRevision, approvePlan, rejectPlan, refineTask } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, requestSpecRevision, approvePlan, rejectPlan, refineTask } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -37,6 +37,46 @@ function getValidatorSelection(task: Task | TaskDetail): ModelSelection {
     provider: normalizeModelField(task.validatorModelProvider),
     modelId: normalizeModelField(task.validatorModelId),
   };
+}
+
+/**
+ * Resolve the effective executor model following the engine's resolution order:
+ * 1. Per-task modelProvider/modelId (both must be set)
+ * 2. Global settings defaultProvider/defaultModelId
+ */
+function resolveEffectiveExecutor(
+  task: Task | TaskDetail,
+  settings?: Settings,
+): ModelSelection {
+  if (task.modelProvider && task.modelId) {
+    return { provider: task.modelProvider, modelId: task.modelId };
+  }
+  if (settings?.defaultProvider && settings.defaultModelId) {
+    return { provider: settings.defaultProvider, modelId: settings.defaultModelId };
+  }
+  return {};
+}
+
+/**
+ * Resolve the effective validator model following the engine's resolution order:
+ * 1. Per-task validatorModelProvider/validatorModelId (both must be set)
+ * 2. Project settings validatorProvider/validatorModelId
+ * 3. Global settings defaultProvider/defaultModelId
+ */
+function resolveEffectiveValidator(
+  task: Task | TaskDetail,
+  settings?: Settings,
+): ModelSelection {
+  if (task.validatorModelProvider && task.validatorModelId) {
+    return { provider: task.validatorModelProvider, modelId: task.validatorModelId };
+  }
+  if (settings?.validatorProvider && settings.validatorModelId) {
+    return { provider: settings.validatorProvider, modelId: settings.validatorModelId };
+  }
+  if (settings?.defaultProvider && settings.defaultModelId) {
+    return { provider: settings.defaultProvider, modelId: settings.defaultModelId };
+  }
+  return {};
 }
 
 function getStepStatusColor(status: string): string {
@@ -137,12 +177,28 @@ export function TaskDetailModal({
   const [editPendingImages, setEditPendingImages] = useState<PendingImage[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Merged project settings for effective model resolution in Agent Log header
+  const [settings, setSettings] = useState<Settings | undefined>(undefined);
+
   // Reset edit state when task changes
   useEffect(() => {
     setEditTitle(task.title || "");
     setEditDescription(task.description || "");
     setIsEditing(false);
   }, [task.id, task.title, task.description]);
+
+  // Load merged settings for effective model resolution
+  useEffect(() => {
+    let cancelled = false;
+    fetchSettings(projectId)
+      .then((s) => {
+        if (!cancelled) setSettings(s);
+      })
+      .catch(() => {
+        // Settings fetch failure is non-blocking; fallback to "Using default"
+      });
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   // Reset dependency search when dropdown closes
   useEffect(() => {
@@ -747,8 +803,8 @@ export function TaskDetailModal({
               <AgentLogViewer
                 entries={agentLogEntries}
                 loading={agentLogLoading}
-                executorModel={getExecutorSelection(task)}
-                validatorModel={getValidatorSelection(task)}
+                executorModel={resolveEffectiveExecutor(task, settings)}
+                validatorModel={resolveEffectiveValidator(task, settings)}
               />
             </div>
           ) : activeTab === "changes" ? (

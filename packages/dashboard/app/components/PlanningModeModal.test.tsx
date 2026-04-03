@@ -39,6 +39,13 @@ vi.mock("../api", () => ({
   approvePlan: (...args: any[]) => mockApprovePlan(...args),
   rejectPlan: (...args: any[]) => mockRejectPlan(...args),
   refineTask: (...args: any[]) => mockRefineTask(...args),
+  fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
+  fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [] }),
+  fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
+  refineText: vi.fn(),
+  getRefineErrorMessage: vi.fn((err: any) => err?.message || "Failed to refine"),
+  updateGlobalSettings: vi.fn().mockResolvedValue({}),
+  duplicateTask: vi.fn().mockResolvedValue({}),
 }));
 
 const mockTasks: Task[] = [
