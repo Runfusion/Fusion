@@ -1584,6 +1584,16 @@ If issues are found that need attention, describe them clearly.`;
             `Worktree conflict at ${fallbackConflictInfo.path}: automatic cleanup failed`,
           );
         }
+
+        // Handle stale reference in fallback path too
+        if (fallbackConflictInfo.type === "invalid-reference") {
+          const branchCleaned = await this.cleanupStaleBranch(branch, taskId);
+          if (branchCleaned) {
+            await this.store.logEntry(taskId, `Cleaned up stale reference in fallback, retrying`);
+            return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber);
+          }
+        }
+
         throw new Error(`Failed to create worktree: ${fallbackError.message}`);
       }
     }
@@ -1721,9 +1731,27 @@ If issues are found that need attention, describe them clearly.`;
 
   /**
    * Clean up a stale branch that no longer has a valid reference.
-   * Returns true if cleanup succeeded.
+   *
+   * Recovery strategy (in order):
+   * 1. `git worktree prune` — remove stale worktree metadata that may
+   *    hold a lock on the branch reference
+   * 2. `git branch -D` — delete the branch normally
+   * 3. `git update-ref -d refs/heads/<branch>` — force-remove a corrupted
+   *    or dangling reference when `git branch -D` fails
+   *
+   * Each step is logged so operators can trace the recovery path.
+   * Returns true if the branch reference was successfully removed.
    */
   private async cleanupStaleBranch(branch: string, taskId: string): Promise<boolean> {
+    // Step 1: Prune stale worktree metadata that may hold a lock on the branch
+    try {
+      execSync("git worktree prune", { cwd: this.rootDir, stdio: "pipe" });
+      await this.store.logEntry(taskId, `Pruned stale worktree metadata`, branch);
+    } catch {
+      // Prune is best-effort — continue even if it fails
+    }
+
+    // Step 2: Try normal branch deletion
     try {
       execSync(`git branch -D "${branch}"`, {
         cwd: this.rootDir,
@@ -1731,11 +1759,28 @@ If issues are found that need attention, describe them clearly.`;
       });
       await this.store.logEntry(taskId, `Removed stale branch`, branch);
       return true;
-    } catch (error: any) {
+    } catch (branchDeleteError: any) {
       await this.store.logEntry(
         taskId,
-        `Failed to remove stale branch`,
-        `${branch}: ${error.message}`,
+        `git branch -D failed for stale branch, trying update-ref`,
+        `${branch}: ${branchDeleteError.message}`,
+      );
+    }
+
+    // Step 3: Force-remove the reference directly
+    try {
+      const refPath = `refs/heads/${branch}`;
+      execSync(`git update-ref -d "${refPath}"`, {
+        cwd: this.rootDir,
+        stdio: "pipe",
+      });
+      await this.store.logEntry(taskId, `Force-removed stale branch reference via update-ref`, refPath);
+      return true;
+    } catch (updateRefError: any) {
+      await this.store.logEntry(
+        taskId,
+        `Failed to remove stale branch reference`,
+        `${branch}: ${updateRefError.message}`,
       );
       return false;
     }
@@ -1745,7 +1790,7 @@ If issues are found that need attention, describe them clearly.`;
    * Extract conflict information from git worktree error output.
    * Handles multiple error patterns:
    * - "already used by worktree at '...'"
-   * - "invalid reference"
+   * - "invalid reference" / "unable to resolve reference" / "stale file handle"
    * - "could not create leading directories"
    * - "working tree already exists"
    */
@@ -1765,7 +1810,14 @@ If issues are found that need attention, describe them clearly.`;
     }
 
     // Pattern: invalid reference: 'branch-name'
-    if (output.match(/invalid reference/i)) {
+    // Also covers: unable to resolve reference, stale file handle, not a valid ref
+    if (
+      output.match(/invalid reference/i) ||
+      output.match(/unable to resolve reference/i) ||
+      output.match(/stale file handle/i) ||
+      output.match(/not a valid ref/i) ||
+      output.match(/unable to delete.*ref/i)
+    ) {
       return { type: "invalid-reference", message: output };
     }
 
