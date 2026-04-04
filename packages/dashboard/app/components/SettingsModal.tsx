@@ -955,6 +955,25 @@ export function SettingsModal({
               </>
             ) : null}
 
+            {/* --- OpenRouter Model Sync --- */}
+            <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>OpenRouter Models</h4>
+            <div className="form-group">
+              <label htmlFor="openrouterModelSync" className="checkbox-label">
+                <input
+                  id="openrouterModelSync"
+                  type="checkbox"
+                  checked={form.openrouterModelSync !== false}
+                  onChange={(e) => setForm((f) => ({ ...f, openrouterModelSync: e.target.checked }))}
+                />
+                Sync OpenRouter model list at dashboard startup
+              </label>
+              <small>
+                When enabled, the dashboard fetches the latest available models from the OpenRouter
+                API on startup, so the model picker always shows the most up-to-date catalog. Disable
+                to skip the initial API call and use only the built-in model list.
+              </small>
+            </div>
+
             {/* --- AI Summarization --- */}
             <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>AI Summarization</h4>
             <div className="form-group">

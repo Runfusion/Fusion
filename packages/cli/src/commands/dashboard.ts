@@ -504,6 +504,49 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
     extensionsResult.runtime.pendingProviderRegistrations = [];
     modelRegistry.refresh();
+
+    // Eagerly sync OpenRouter models — the pi-openrouter-realtime extension
+    // only registers providers on session_start (TUI-only event), so kick off
+    // a fetch here so the dashboard model list is populated. Respects the
+    // openrouterModelSync setting (defaults to true).
+    (async () => {
+      try {
+        const settings = await store.getSettings();
+        if (settings.openrouterModelSync === false) return;
+        const hasOrAuth = await authStorage.getApiKey("openrouter");
+        const headers: Record<string, string> = {};
+        if (hasOrAuth) headers["Authorization"] = `Bearer ${hasOrAuth}`;
+        const res = await fetch("https://openrouter.ai/api/v1/models", { headers });
+        if (!res.ok) return;
+        const json = await res.json() as { data?: Array<{ id: string; name: string; context_length?: number; top_provider?: { max_completion_tokens?: number }; pricing?: Record<string, string>; architecture?: { modality?: string; input_modalities?: string[] } }> };
+        const orModels = (json.data || []).map((m: any) => {
+          const id = (m.id || "").toLowerCase();
+          const name = (m.name || "").toLowerCase();
+          const reasoning = id.includes(":thinking") || id.includes("-r1") || id.includes("/r1") || id.includes("o1-") || id.includes("o3-") || id.includes("o4-") || id.includes("reasoner") || name.includes("thinking") || name.includes("reasoner");
+          const hasVision = m.architecture?.input_modalities?.includes("image") ?? m.architecture?.modality?.includes("multimodal") ?? false;
+          function parseCost(v?: string) { const n = parseFloat(v || "0"); return isNaN(n) ? 0 : n * 1_000_000; }
+          return {
+            id: m.id,
+            name: m.name || m.id,
+            reasoning,
+            input: (hasVision ? ["text", "image"] : ["text"]) as ("text" | "image")[],
+            cost: { input: parseCost(m.pricing?.prompt), output: parseCost(m.pricing?.completion), cacheRead: parseCost(m.pricing?.input_cache_read), cacheWrite: parseCost(m.pricing?.input_cache_write) },
+            contextWindow: m.context_length || 128000,
+            maxTokens: m.top_provider?.max_completion_tokens || 16384,
+          };
+        });
+        modelRegistry.registerProvider("openrouter", {
+          baseUrl: "https://openrouter.ai/api/v1",
+          apiKey: "OPENROUTER_API_KEY",
+          api: "openai-completions",
+          models: orModels,
+        });
+        console.log(`[openrouter] Synced ${orModels.length} models from OpenRouter API`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.log(`[openrouter] Failed to sync models: ${message}`);
+      }
+    })();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.log(`[extensions] Failed to discover extensions: ${message}`);

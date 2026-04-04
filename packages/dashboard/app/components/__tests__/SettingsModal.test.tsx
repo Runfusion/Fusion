@@ -1139,6 +1139,25 @@ describe("SettingsModal", () => {
     expect(payload.ntfyEnabled).toBe(true);
   });
 
+  it("openrouterModelSync checkbox defaults to enabled and sends false when toggled off", async () => {
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Models"));
+    const checkbox = screen.getByLabelText("Sync OpenRouter model list at dashboard startup");
+    expect(checkbox).toBeTruthy();
+    expect((checkbox as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(checkbox);
+    expect((checkbox as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateGlobalSettings).toHaveBeenCalledTimes(1));
+
+    const payload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.openrouterModelSync).toBe(false);
+  });
+
   it("ntfy topic field saves correctly when set", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());

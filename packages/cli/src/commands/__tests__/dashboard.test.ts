@@ -16,6 +16,7 @@ function makeMockStore() {
       maxWorktrees: 2,
       autoMerge: false,
       pollIntervalMs: 60_000,
+      openrouterModelSync: true,
     }),
     listTasks: vi.fn().mockResolvedValue([]),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
@@ -104,7 +105,7 @@ vi.mock("@fusion/engine", async (importOriginal) => {
 
 // ── Mock @mariozechner/pi-coding-agent ──────────────────────────────
 
-const mockAuthStorage = { getAuth: vi.fn(), setAuth: vi.fn() };
+const mockAuthStorage = { getAuth: vi.fn(), setAuth: vi.fn(), getApiKey: vi.fn() };
 const mockModelRegistry = {
   getModels: vi.fn().mockResolvedValue([]),
   registerProvider: vi.fn(),
@@ -251,5 +252,23 @@ describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
     );
     expect(mockModelRegistry.refresh).toHaveBeenCalled();
     consoleSpy.mockRestore();
+  });
+
+  it("skips OpenRouter model sync when openrouterModelSync is false", async () => {
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      ...makeMockStore(),
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 1,
+        maxWorktrees: 2,
+        autoMerge: false,
+        pollIntervalMs: 60_000,
+        openrouterModelSync: false,
+      }),
+    }));
+
+    await runDashboard(0, {});
+
+    expect(mockAuthStorage.getApiKey).not.toHaveBeenCalled();
   });
 });
