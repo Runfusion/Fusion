@@ -589,11 +589,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     const trimmed = description.trim();
     if (!trimmed || isRefining) return;
 
+    setIsRefineMenuOpen(false);
     setIsRefining(true);
     try {
       const refined = await refineText(trimmed, type);
       setDescription(refined);
-      setIsRefineMenuOpen(false);
       addToast("Description refined with AI", "success");
       // Auto-resize textarea after content update
       if (textareaRef.current) {

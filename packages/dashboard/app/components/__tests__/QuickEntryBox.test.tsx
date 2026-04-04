@@ -1321,6 +1321,34 @@ describe("QuickEntryBox", () => {
       });
     });
 
+    it("closes refine menu immediately when option is clicked (before API response)", async () => {
+      const { refineText } = await import("../../api");
+      // Use a slow promise to ensure we can check the menu is closed before it resolves
+      vi.mocked(refineText).mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve("Refined"), 500)),
+      );
+
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Original text" } });
+      fireEvent.click(screen.getByTestId("refine-button"));
+
+      // Menu should be open
+      expect(screen.getByTestId("refine-clarify")).toBeTruthy();
+
+      // Click on an option
+      fireEvent.click(screen.getByTestId("refine-clarify"));
+
+      // Menu should close IMMEDIATELY (before the slow promise resolves)
+      expect(screen.queryByTestId("refine-clarify")).toBeNull();
+
+      // The loading state should still be shown
+      const refineButton = screen.getByTestId("refine-button");
+      expect(refineButton.textContent).toContain("Refining...");
+    });
+
     it("successful refinement updates textarea content", async () => {
       const { refineText } = await import("../../api");
       vi.mocked(refineText).mockResolvedValueOnce("Refined description");
