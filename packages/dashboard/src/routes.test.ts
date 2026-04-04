@@ -5450,7 +5450,7 @@ describe("PUT /settings", () => {
     }));
   });
 
-  it("rejects duplicate preset ids", async () => {
+  it("resolves duplicate preset ids by auto-generating unique ids", async () => {
     const res = await REQUEST(
       buildApp(),
       "PUT",
@@ -5459,8 +5459,56 @@ describe("PUT /settings", () => {
       { "Content-Type": "application/json" },
     );
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("duplicate id");
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      modelPresets: [
+        expect.objectContaining({ id: "budget", name: "Budget" }),
+        // "budget" collides; falls back to slug of name "Budget 2" → "budget-2"
+        expect.objectContaining({ id: "budget-2", name: "Budget 2" }),
+      ],
+    }));
+  });
+
+  it("auto-generates preset id from name when id is omitted", async () => {
+    const updatedSettings = {
+      ...DEFAULT_SETTINGS,
+      modelPresets: [{ id: "my-custom-preset", name: "My Custom Preset" }],
+    };
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ modelPresets: [{ name: "My Custom Preset" }] }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      modelPresets: [expect.objectContaining({ id: "my-custom-preset", name: "My Custom Preset" })],
+    }));
+  });
+
+  it("preserves explicit preset id when provided", async () => {
+    const updatedSettings = {
+      ...DEFAULT_SETTINGS,
+      modelPresets: [{ id: "custom-id", name: "My Preset" }],
+    };
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ modelPresets: [{ id: "custom-id", name: "My Preset" }] }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      modelPresets: [expect.objectContaining({ id: "custom-id", name: "My Preset" })],
+    }));
   });
 
   it("rejects incomplete model provider/modelId pairs", async () => {

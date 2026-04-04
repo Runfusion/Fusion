@@ -97,6 +97,17 @@ function assertConsistentOptionalPair(
   };
 }
 
+function slugifyPresetName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .slice(0, 32);
+  return slug || "preset";
+}
+
 function validateModelPresets(value: unknown): ModelPreset[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
@@ -111,17 +122,31 @@ function validateModelPresets(value: unknown): ModelPreset[] | undefined {
     }
 
     const candidate = preset as Record<string, unknown>;
-    const id = validateOptionalModelField(candidate.id, `modelPresets[${index}].id`);
+    const rawId = validateOptionalModelField(candidate.id, `modelPresets[${index}].id`);
     const name = validateOptionalModelField(candidate.name, `modelPresets[${index}].name`);
 
-    if (!id) {
-      throw new Error(`modelPresets[${index}].id is required`);
-    }
     if (!name) {
       throw new Error(`modelPresets[${index}].name is required`);
     }
+
+    // Auto-generate ID from name when not provided
+    let id = rawId || slugifyPresetName(name);
+
+    // If the explicit ID collides, fall back to the slugified name
     if (seenIds.has(id)) {
-      throw new Error(`modelPresets contains duplicate id: ${id}`);
+      const slugId = slugifyPresetName(name);
+      if (!seenIds.has(slugId)) {
+        id = slugId;
+      } else {
+        // Both explicit ID and slug collide — append -1, -2, etc.
+        const maxBase = 30;
+        let idx = 1;
+        while (seenIds.has(id) && idx < 100) {
+          const suffix = `-${idx}`;
+          id = `${slugId.slice(0, maxBase - suffix.length)}${suffix}`;
+          idx++;
+        }
+      }
     }
     seenIds.add(id);
 

@@ -3,6 +3,7 @@ import type { ModelPreset } from "@fusion/core";
 import {
   applyPresetToSelection,
   generatePresetId,
+  generateUniquePresetId,
   getPresetByName,
   getRecommendedPresetForSize,
   validatePresetId,
@@ -69,5 +70,51 @@ describe("modelPresets utils", () => {
     expect(generatePresetId("Complex / Reviewer")).toBe("complex-reviewer");
     expect(generatePresetId("!!!")).toBe("preset");
     expect(generatePresetId("a".repeat(40))).toBe("a".repeat(32));
+  });
+
+  describe("generateUniquePresetId", () => {
+    it("returns the base slug when no collision", () => {
+      // "standard" is not in the presets fixture
+      expect(generateUniquePresetId("Standard", presets)).toBe("standard");
+    });
+
+    it("returns base slug when existing list is empty", () => {
+      expect(generateUniquePresetId("Budget", [])).toBe("budget");
+    });
+
+    it("appends suffix when base slug is already taken", () => {
+      // "budget" is already used in presets, so should get "budget-1"
+      expect(generateUniquePresetId("Budget", presets)).toBe("budget-1");
+      // "complex" is also taken, so should get "complex-1"
+      expect(generateUniquePresetId("Complex", presets)).toBe("complex-1");
+    });
+
+    it("increments suffix until finding a free id", () => {
+      const crowded: ModelPreset[] = [
+        { id: "budget", name: "Budget" },
+        { id: "budget-1", name: "Budget Copy" },
+        { id: "budget-2", name: "Budget Copy 2" },
+      ];
+      expect(generateUniquePresetId("Budget", crowded)).toBe("budget-3");
+    });
+
+    it("truncates base slug to leave room for suffix", () => {
+      const longName = "a".repeat(40);
+      const existing: ModelPreset[] = [
+        { id: generatePresetId(longName), name: longName },
+      ];
+      const result = generateUniquePresetId(longName, existing);
+      // baseId is 32 a's, collision → truncate to 28 a's + "-1" = 30 chars
+      expect(result).toBe(`${"a".repeat(28)}-1`);
+      expect(result.length).toBeLessThanOrEqual(32);
+      expect(validatePresetId(result)).toBe(true);
+    });
+
+    it("handles fallback 'preset' slug collisions", () => {
+      const existing: ModelPreset[] = [
+        { id: "preset", name: "!!!" },
+      ];
+      expect(generateUniquePresetId("!!!", existing)).toBe("preset-1");
+    });
   });
 });

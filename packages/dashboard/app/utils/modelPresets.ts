@@ -45,3 +45,26 @@ export function generatePresetId(name: string): string {
 
   return slug || "preset";
 }
+
+/**
+ * Generate a unique preset ID derived from the preset name, avoiding collisions
+ * with existing preset IDs. If the base slug is already taken, appends `-1`,
+ * `-2`, etc. until a unique ID is found.
+ */
+export function generateUniquePresetId(name: string, existingPresets: ModelPreset[]): string {
+  const baseId = generatePresetId(name);
+  const takenIds = new Set(existingPresets.map((p) => p.id));
+
+  if (!takenIds.has(baseId)) return baseId;
+
+  // Leave room for the numeric suffix (-N)
+  const maxBase = 30;
+  let candidate = baseId;
+  let idx = 1;
+  while (takenIds.has(candidate) && idx < 100) {
+    const suffix = `-${idx}`;
+    candidate = `${baseId.slice(0, maxBase - suffix.length)}${suffix}`;
+    idx++;
+  }
+  return candidate;
+}

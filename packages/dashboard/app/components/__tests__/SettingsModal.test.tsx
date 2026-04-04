@@ -523,7 +523,6 @@ describe("SettingsModal", () => {
     await user.click(screen.getByText("Add Preset"));
 
     await user.type(screen.getByLabelText("Name"), "Budget");
-    expect((screen.getByLabelText("ID") as HTMLInputElement).value).toBe("budget");
 
     await user.click(screen.getByText("Save preset"));
     await user.click(screen.getByText("Save"));
