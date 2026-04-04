@@ -145,7 +145,7 @@ describe("ActivityLogModal", () => {
     });
   });
 
-  it("calls unified feed API when projects are provided (multi-project mode)", async () => {
+  it("calls unified feed API when projects are provided but no currentProject (overview mode)", async () => {
     const mockProjects = [
       { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
     ];
@@ -161,8 +161,99 @@ describe("ActivityLogModal", () => {
     );
 
     await waitFor(() => {
-      // Multi-project mode: uses fetchActivityFeed (not fetchActivityLog)
+      // Overview mode (no currentProject): uses fetchActivityFeed
       expect(mockFetchActivityFeed).toHaveBeenCalled();
+    });
+  });
+
+  // ── Regression Tests for FN-820 ────────────────────────────────────
+  // The bug was that the modal used the unified central feed whenever projects
+  // existed, even in normal project view where per-project activity log should be used.
+
+  it("uses per-project log when currentProject is set even with multiple projects registered", async () => {
+    const mockProjects = [
+      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+    ];
+    const mockCurrentProject = { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+
+    render(
+      <ActivityLogModal
+        isOpen={true}
+        onClose={mockOnClose}
+        tasks={mockTasks}
+        projects={mockProjects}
+        currentProject={mockCurrentProject}
+        onOpenTaskDetail={mockOnOpenTaskDetail}
+      />
+    );
+
+    await waitFor(() => {
+      // Project view (currentProject set): uses per-project log even with multiple projects
+      expect(mockFetchActivityLog).toHaveBeenCalled();
+      expect(mockFetchActivityFeed).not.toHaveBeenCalled();
+    });
+  });
+
+  it("uses per-project log when currentProject is set and projects list is empty", async () => {
+    const mockCurrentProject = { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+
+    render(
+      <ActivityLogModal
+        isOpen={true}
+        onClose={mockOnClose}
+        tasks={mockTasks}
+        currentProject={mockCurrentProject}
+        onOpenTaskDetail={mockOnOpenTaskDetail}
+      />
+    );
+
+    await waitFor(() => {
+      // Project view: uses per-project log
+      expect(mockFetchActivityLog).toHaveBeenCalled();
+      expect(mockFetchActivityFeed).not.toHaveBeenCalled();
+    });
+  });
+
+  it("uses unified feed in overview mode with multiple projects but no currentProject", async () => {
+    const mockProjects = [
+      { id: "proj_1", name: "Project One", path: "/path/1", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+      { id: "proj_2", name: "Project Two", path: "/path/2", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+    ];
+
+    render(
+      <ActivityLogModal
+        isOpen={true}
+        onClose={mockOnClose}
+        tasks={mockTasks}
+        projects={mockProjects}
+        // No currentProject - overview mode
+        onOpenTaskDetail={mockOnOpenTaskDetail}
+      />
+    );
+
+    await waitFor(() => {
+      // Overview mode: uses unified feed
+      expect(mockFetchActivityFeed).toHaveBeenCalled();
+      expect(mockFetchActivityLog).not.toHaveBeenCalled();
+    });
+  });
+
+  it("uses per-project log by default when only projectId is passed (backward compatible)", async () => {
+    render(
+      <ActivityLogModal
+        isOpen={true}
+        onClose={mockOnClose}
+        tasks={mockTasks}
+        projectId="proj_1"
+        onOpenTaskDetail={mockOnOpenTaskDetail}
+      />
+    );
+
+    await waitFor(() => {
+      // Default behavior without projects: uses per-project log
+      expect(mockFetchActivityLog).toHaveBeenCalled();
+      expect(mockFetchActivityFeed).not.toHaveBeenCalled();
     });
   });
 

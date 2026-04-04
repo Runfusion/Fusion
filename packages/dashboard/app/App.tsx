@@ -732,6 +732,7 @@ function AppInner() {
         tasks={tasks}
         projectId={currentProject?.id}
         projects={projects}
+        currentProject={currentProject}
         onOpenTaskDetail={(taskId) => {
           const task = tasks.find((t) => t.id === taskId);
           if (task) {

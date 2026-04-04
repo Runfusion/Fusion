@@ -15,6 +15,8 @@ interface ActivityLogModalProps {
   projects?: ProjectInfo[];
   /** Called when project filter changes */
   onProjectFilterChange?: (projectId: string | undefined) => void;
+  /** Current project context - when set, uses per-project activity log */
+  currentProject?: ProjectInfo | null;
 }
 
 const EVENT_TYPE_LABELS: Record<ActivityEventType, string> = {
@@ -57,10 +59,11 @@ function formatTimestamp(timestamp: string): string {
  * ActivityLogModal - Activity log with project attribution and filtering
  *
  * Data source selection:
- * - Single-project mode (no projects list): reads from the per-project activity
+ * - Project view (currentProject set): reads from the per-project activity
  *   log via /api/activity, which is always populated with task lifecycle events.
- * - Multi-project mode (projects list provided): reads from the unified central
+ * - Overview mode (no currentProject): reads from the unified central
  *   feed via /api/activity-feed, which aggregates activity across all projects.
+ *   The project filter dropdown allows narrowing results to a specific project.
  *
  * Features:
  * - Project name badge for each activity entry
@@ -76,6 +79,7 @@ export function ActivityLogModal({
   projectId,
   projects = [],
   onProjectFilterChange,
+  currentProject,
 }: ActivityLogModalProps) {
   const [filteredType, setFilteredType] = useState<ActivityEventType | "all">("all");
   const [filteredProjectId, setFilteredProjectId] = useState<string | "all">(projectId || "all");
@@ -90,10 +94,14 @@ export function ActivityLogModal({
   const activityType = filteredType === "all" ? undefined : filteredType;
   const activeProjectId = filteredProjectId === "all" ? undefined : filteredProjectId;
   
-  // Determine data source: use unified central feed only when projects list
-  // is provided (multi-project context). In single-project mode the hook reads
-  // from the per-project activity log which is always populated.
-  const useCentralFeed = projects.length > 0;
+  // Determine data source:
+  // - In project view (currentProject set): use per-project activity log (/api/activity)
+  //   which is always populated with task lifecycle events for the current project.
+  // - In overview mode (no currentProject): use unified central feed (/api/activity-feed)
+  //   which aggregates activity across all registered projects.
+  // The project filter dropdown (projects prop) still appears to filter by project,
+  // but the default data source is the per-project log in project view.
+  const useCentralFeed = !currentProject && projects.length > 0;
 
   // Use the hook for data fetching
   const { 
