@@ -604,7 +604,7 @@ export class TaskExecutor {
         const executorFallbackProvider = settings.fallbackProvider;
         const executorFallbackModelId = settings.fallbackModelId;
 
-        const { session } = await createKbAgent({
+        let { session } = await createKbAgent({
           cwd: worktreePath,
           systemPrompt: EXECUTOR_SYSTEM_PROMPT,
           tools: "coding",
@@ -692,12 +692,78 @@ export class TaskExecutor {
             executorLog.log(`✓ ${task.id} completed → in-review`);
             this.options.onComplete?.(task);
           } else {
-            const errorMessage = "Agent finished without calling task_done";
-            await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
-            await this.store.logEntry(task.id, `${errorMessage} — moved to in-review for inspection`);
-            await this.store.moveTask(task.id, "in-review");
-            executorLog.log(`⚠ ${task.id} finished without task_done → in-review`);
-            this.options.onError?.(task, new Error(errorMessage));
+            // Agent finished without calling task_done — retry once with a fresh session
+            executorLog.log(`⚠ ${task.id} finished without task_done — retrying with new session`);
+            await this.store.logEntry(task.id, "Agent finished without calling task_done — retrying with new session");
+
+            // Dispose old session and create a fresh one
+            this.activeSessions.delete(task.id);
+            session.dispose();
+
+            const { session: retrySession } = await createKbAgent({
+              cwd: worktreePath,
+              systemPrompt: EXECUTOR_SYSTEM_PROMPT,
+              tools: "coding",
+              customTools,
+              onText: agentLogger.onText,
+              onThinking: agentLogger.onThinking,
+              onToolStart: agentLogger.onToolStart,
+              onToolEnd: agentLogger.onToolEnd,
+              defaultProvider: executorProvider,
+              defaultModelId: executorModelId,
+              fallbackProvider: executorFallbackProvider,
+              fallbackModelId: executorFallbackModelId,
+              defaultThinkingLevel: settings.defaultThinkingLevel,
+            });
+
+            // Reassign so finally{} disposes the correct session
+            session = retrySession;
+            sessionRef.current = retrySession;
+            this.activeSessions.set(task.id, { session: retrySession, seenSteeringIds });
+            stuckDetector?.trackTask(task.id, retrySession);
+
+            const retryPrompt = [
+              "Your previous session ended without calling the task_done tool.",
+              "The task may already be complete — review the current state of the worktree and either:",
+              "1. If the work is done, call task_done with a summary of what was accomplished.",
+              "2. If there is remaining work, finish it and then call task_done.",
+              "",
+              "Original task:",
+              buildExecutionPrompt(detail, this.rootDir, settings),
+            ].join("\n");
+
+            stuckDetector?.recordActivity(task.id);
+            await promptWithFallback(retrySession, retryPrompt);
+            checkSessionError(retrySession);
+
+            if (taskDone) {
+              const updatedTask = await this.store.getTask(task.id);
+              const modifiedFiles = this.captureModifiedFiles(worktreePath, updatedTask.baseCommitSha);
+              if (modifiedFiles.length > 0) {
+                await this.store.updateTask(task.id, { modifiedFiles });
+                executorLog.log(`${task.id}: captured ${modifiedFiles.length} modified files`);
+              }
+
+              const workflowSuccess = await this.runWorkflowSteps(task, worktreePath, settings);
+              if (!workflowSuccess) {
+                await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed" });
+                await this.store.moveTask(task.id, "in-review");
+                executorLog.log(`✗ ${task.id} workflow step failed on retry → in-review`);
+                this.options.onError?.(task, new Error("Workflow step failed"));
+                return;
+              }
+
+              await this.store.moveTask(task.id, "in-review");
+              executorLog.log(`✓ ${task.id} completed on retry → in-review`);
+              this.options.onComplete?.(task);
+            } else {
+              const errorMessage = "Agent finished without calling task_done (after retry)";
+              await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
+              await this.store.logEntry(task.id, `${errorMessage} — moved to in-review for inspection`);
+              await this.store.moveTask(task.id, "in-review");
+              executorLog.log(`✗ ${task.id} failed after retry — no task_done → in-review`);
+              this.options.onError?.(task, new Error(errorMessage));
+            }
           }
         } finally {
           this.activeSessions.delete(task.id);

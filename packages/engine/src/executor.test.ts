@@ -370,10 +370,10 @@ describe("TaskExecutor worktreeInitCommand", () => {
     );
 
     // The init command failure itself does not abort execution, but the mocked
-    // agent still exits without task_done, which now reports an execution error.
+    // agent still exits without task_done. After the retry also fails, it reports an error.
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ id: "FN-010" }),
-      expect.objectContaining({ message: "Agent finished without calling task_done" }),
+      expect.objectContaining({ message: "Agent finished without calling task_done (after retry)" }),
     );
 
     // Agent should still have been created
@@ -4549,13 +4549,15 @@ describe("Invalid transition error handling", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // A missing task_done is now treated as a failure before the transition is attempted.
+    // A missing task_done triggers a retry. Both attempts fail to call task_done,
+    // then the moveTask in the retry path throws the Invalid transition error,
+    // which is caught by the outer handler.
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "failed",
-      error: "Agent finished without calling task_done",
+      error: "Agent finished without calling task_done (after retry)",
     });
 
-    // Should log informative message
+    // Should log informative message from the outer catch for Invalid transition
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       "Task already moved from 'done' — skipping transition to 'in-review'",
@@ -4779,18 +4781,22 @@ describe("Workflow Steps Execution", () => {
       updatedAt: new Date().toISOString(),
     });
 
+    // Should have been called twice: initial + retry
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(2);
+
+    // Retry still didn't call task_done, so it fails with the retry message
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "failed",
-      error: "Agent finished without calling task_done",
+      error: "Agent finished without calling task_done (after retry)",
     });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      "Agent finished without calling task_done — moved to in-review for inspection",
+      "Agent finished without calling task_done (after retry) — moved to in-review for inspection",
     );
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ id: "FN-001" }),
-      expect.objectContaining({ message: "Agent finished without calling task_done" }),
+      expect.objectContaining({ message: "Agent finished without calling task_done (after retry)" }),
     );
     expect(onComplete).not.toHaveBeenCalled();
   });
