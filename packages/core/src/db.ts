@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -424,8 +424,32 @@ export class Database {
       });
     }
 
+    if (version < 9) {
+      this.applyMigration(9, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS ai_sessions (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            title TEXT NOT NULL,
+            inputPayload TEXT NOT NULL,
+            conversationHistory TEXT DEFAULT '[]',
+            currentQuestion TEXT,
+            result TEXT,
+            thinkingOutput TEXT DEFAULT '',
+            error TEXT,
+            projectId TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxAiSessionsStatus ON ai_sessions(status)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxAiSessionsType ON ai_sessions(type)`);
+      });
+    }
+
     // Future migrations go here:
-    // if (version < 9) { this.applyMigration(9, () => { ... }); }
+    // if (version < 10) { this.applyMigration(10, () => { ... }); }
   }
 
   /**

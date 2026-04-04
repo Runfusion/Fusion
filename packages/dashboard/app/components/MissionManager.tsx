@@ -60,6 +60,7 @@ interface MissionManagerProps {
   projectId?: string;
   onSelectTask?: (taskId: string) => void;
   availableTasks?: Array<{ id: string; title?: string }>;
+  resumeSessionId?: string;
 }
 
 // Status badge colors — use CSS custom-property-compatible tokens
@@ -146,7 +147,7 @@ const EMPTY_FEATURE_FORM: FeatureFormData = {
   status: "defined",
 };
 
-export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectTask, availableTasks = [] }: MissionManagerProps) {
+export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId }: MissionManagerProps) {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [selectedMission, setSelectedMission] = useState<MissionWithHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -182,6 +183,13 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
 
   // AI Interview modal
   const [showInterviewModal, setShowInterviewModal] = useState(false);
+
+  // Auto-open interview modal when resuming a session
+  useEffect(() => {
+    if (isOpen && resumeSessionId) {
+      setShowInterviewModal(true);
+    }
+  }, [isOpen, resumeSessionId]);
 
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<{ type: string; id: string } | null>(null);
@@ -1418,6 +1426,7 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
           addToast("Mission created from AI interview", "success");
         }}
         projectId={projectId}
+        resumeSessionId={resumeSessionId}
       />
     </div>
   );

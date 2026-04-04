@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import type { Task } from "@fusion/core";
 import { Activity, AlertTriangle, Clock, Pause, Play, Zap } from "lucide-react";
 import { useExecutorStats } from "../hooks/useExecutorStats";
-import type { ExecutorState } from "../api";
+import type { ExecutorState, AiSessionSummary } from "../api";
+import { BackgroundTasksIndicator } from "./BackgroundTasksIndicator";
 
 interface ExecutorStatusBarProps {
   /** Task list (shared with the board to keep counts in sync) */
@@ -11,6 +12,12 @@ interface ExecutorStatusBarProps {
   projectId?: string;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
+  /** Background AI sessions */
+  backgroundSessions?: AiSessionSummary[];
+  backgroundGenerating?: number;
+  backgroundNeedsInput?: number;
+  onOpenBackgroundSession?: (session: AiSessionSummary) => void;
+  onDismissBackgroundSession?: (id: string) => void;
 }
 
 /**
@@ -60,7 +67,7 @@ function getStateDisplay(state: ExecutorState): { label: string; color: string; 
  * - Executor state badge (idle/running/paused)
  * - Last activity timestamp
  */
-export function ExecutorStatusBar({ tasks, projectId, taskStuckTimeoutMs }: ExecutorStatusBarProps) {
+export function ExecutorStatusBar({ tasks, projectId, taskStuckTimeoutMs, backgroundSessions, backgroundGenerating, backgroundNeedsInput, onOpenBackgroundSession, onDismissBackgroundSession }: ExecutorStatusBarProps) {
   const { stats, loading, error } = useExecutorStats(tasks, projectId, taskStuckTimeoutMs);
 
   const stateDisplay = useMemo(() => getStateDisplay(stats.executorState), [stats.executorState]);
@@ -94,6 +101,20 @@ export function ExecutorStatusBar({ tasks, projectId, taskStuckTimeoutMs }: Exec
       role="status"
       aria-label="Executor status"
     >
+      {/* Background AI tasks indicator */}
+      {backgroundSessions && backgroundSessions.length > 0 && onOpenBackgroundSession && onDismissBackgroundSession && (
+        <>
+          <BackgroundTasksIndicator
+            sessions={backgroundSessions}
+            generating={backgroundGenerating ?? 0}
+            needsInput={backgroundNeedsInput ?? 0}
+            onOpenSession={onOpenBackgroundSession}
+            onDismissSession={onDismissBackgroundSession}
+          />
+          <span className="executor-status-bar__divider" aria-hidden="true" />
+        </>
+      )}
+
       {/* Running tasks */}
       <div className="executor-status-bar__segment">
         <span

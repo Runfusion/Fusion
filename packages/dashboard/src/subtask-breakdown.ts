@@ -1,6 +1,7 @@
 import type { TaskStore } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createKbAgent: any;
@@ -48,6 +49,46 @@ const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
 const sessions = new Map<string, SubtaskSession & { updatedAt: Date; agent?: any; thinkingOutput: string }>();
+
+// ── AI Session Persistence ────────────────────────────────────────────────
+
+let _aiSessionStore: AiSessionStore | undefined;
+
+export function setAiSessionStore(store: AiSessionStore): void {
+  _aiSessionStore = store;
+}
+
+type SubtaskInternalSession = SubtaskSession & { updatedAt: Date; agent?: any; thinkingOutput: string };
+
+function persistSubtaskSession(session: SubtaskInternalSession, status: "generating" | "complete" | "error", error?: string): void {
+  if (!_aiSessionStore) return;
+  const row: AiSessionRow = {
+    id: session.sessionId,
+    type: "subtask",
+    status,
+    title: session.initialDescription.slice(0, 120),
+    inputPayload: JSON.stringify({ initialDescription: session.initialDescription }),
+    conversationHistory: "[]",
+    currentQuestion: null,
+    result: session.subtasks.length > 0 ? JSON.stringify(session.subtasks) : null,
+    thinkingOutput: session.thinkingOutput,
+    error: error ?? session.error ?? null,
+    projectId: null,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  _aiSessionStore.upsert(row);
+}
+
+function persistSubtaskThinking(sessionId: string, thinkingOutput: string): void {
+  if (!_aiSessionStore) return;
+  _aiSessionStore.updateThinking(sessionId, thinkingOutput);
+}
+
+function unpersistSubtaskSession(sessionId: string): void {
+  if (!_aiSessionStore) return;
+  _aiSessionStore.delete(sessionId);
+}
 
 export const SUBTASK_BREAKDOWN_PROMPT = `You are a task decomposition assistant for the kb task board system.
 
@@ -147,6 +188,7 @@ export async function createSubtaskSession(initialDescription: string, _store?: 
     thinkingOutput: "",
   };
   sessions.set(sessionId, session);
+  persistSubtaskSession(session, "generating");
 
   const cwd = rootDir ?? process.cwd();
   generateSubtasks(sessionId, cwd).catch((err) => {
@@ -155,6 +197,7 @@ export async function createSubtaskSession(initialDescription: string, _store?: 
     existing.status = "error";
     existing.error = err instanceof Error ? err.message : "Failed to generate subtasks";
     existing.updatedAt = new Date();
+    persistSubtaskSession(existing, "error", existing.error);
     subtaskStreamManager.broadcast(sessionId, { type: "error", data: existing.error });
   });
 
@@ -183,6 +226,7 @@ async function generateSubtasks(sessionId: string, cwd: string): Promise<void> {
         if (!current) return;
         current.thinkingOutput += delta;
         current.updatedAt = new Date();
+        persistSubtaskThinking(sessionId, current.thinkingOutput);
         subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: delta });
       },
       onText: (delta: string) => {
@@ -269,6 +313,7 @@ function completeSession(sessionId: string, subtasks: SubtaskItem[]): void {
   session.status = "complete";
   session.error = undefined;
   session.updatedAt = new Date();
+  persistSubtaskSession(session, "complete");
   subtaskStreamManager.broadcast(sessionId, { type: "subtasks", data: session.subtasks });
   subtaskStreamManager.broadcast(sessionId, { type: "complete" });
 }
@@ -298,6 +343,7 @@ export async function cancelSubtaskSession(sessionId: string): Promise<void> {
   }
   subtaskStreamManager.cleanupSession(sessionId);
   sessions.delete(sessionId);
+  unpersistSubtaskSession(sessionId);
 }
 
 export function cleanupSubtaskSession(sessionId: string): void {
@@ -309,6 +355,7 @@ export function cleanupSubtaskSession(sessionId: string): void {
   }
   subtaskStreamManager.cleanupSession(sessionId);
   sessions.delete(sessionId);
+  unpersistSubtaskSession(sessionId);
 }
 
 export function __resetSubtaskBreakdownState(): void {

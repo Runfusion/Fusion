@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import type { TaskStore, MissionStore } from "@fusion/core";
+import type { AiSessionStore } from "./ai-session-store.js";
 
 let activeConnections = 0;
 
@@ -23,7 +24,7 @@ function safeWrite(res: Response, data: string): boolean {
   }
 }
 
-export function createSSE(store: TaskStore, missionStore?: MissionStore) {
+export function createSSE(store: TaskStore, missionStore?: MissionStore, aiSessionStore?: AiSessionStore) {
   return (_req: Request, res: Response) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -36,40 +37,12 @@ export function createSSE(store: TaskStore, missionStore?: MissionStore) {
     // Send initial heartbeat
     res.write(": connected\n\n");
 
-    /** Detach all listeners and clean up. Idempotent. */
-    let cleaned = false;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      activeConnections--;
-      clearInterval(heartbeat);
-      store.off("task:created", onCreated);
-      store.off("task:moved", onMoved);
-      store.off("task:updated", onUpdated);
-      store.off("task:deleted", onDeleted);
-      store.off("task:merged", onMerged);
-      if (missionStore) {
-        missionStore.off("mission:created", onMissionCreated);
-        missionStore.off("mission:updated", onMissionUpdated);
-        missionStore.off("mission:deleted", onMissionDeleted);
-        missionStore.off("milestone:created", onMilestoneCreated);
-        missionStore.off("milestone:updated", onMilestoneUpdated);
-        missionStore.off("milestone:deleted", onMilestoneDeleted);
-        missionStore.off("slice:created", onSliceCreated);
-        missionStore.off("slice:updated", onSliceUpdated);
-        missionStore.off("slice:deleted", onSliceDeleted);
-        missionStore.off("slice:activated", onSliceActivated);
-        missionStore.off("feature:created", onFeatureCreated);
-        missionStore.off("feature:updated", onFeatureUpdated);
-        missionStore.off("feature:deleted", onFeatureDeleted);
-        missionStore.off("feature:linked", onFeatureLinked);
-      }
-    };
-
     /** Write an SSE message; clean up on failure. */
     const send = (data: string) => {
       if (!safeWrite(res, data)) cleanup();
     };
+
+    // --- Event handler definitions ---
 
     const onCreated = (task: any) => {
       send(`event: task:created\ndata: ${JSON.stringify(task)}\n\n`);
@@ -87,13 +60,6 @@ export function createSSE(store: TaskStore, missionStore?: MissionStore) {
       send(`event: task:merged\ndata: ${JSON.stringify(result)}\n\n`);
     };
 
-    store.on("task:created", onCreated);
-    store.on("task:moved", onMoved);
-    store.on("task:updated", onUpdated);
-    store.on("task:deleted", onDeleted);
-    store.on("task:merged", onMerged);
-
-    // Mission store event listeners (only wired up when missionStore is provided)
     const onMissionCreated = (data: any) => {
       send(`event: mission:created\ndata: ${JSON.stringify(data)}\n\n`);
     };
@@ -137,6 +103,56 @@ export function createSSE(store: TaskStore, missionStore?: MissionStore) {
       send(`event: feature:linked\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    const onAiSessionUpdated = (data: any) => {
+      send(`event: ai_session:updated\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const onAiSessionDeleted = (data: any) => {
+      send(`event: ai_session:deleted\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    // --- Cleanup (all handlers are defined above, safe to reference) ---
+
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      activeConnections--;
+      clearInterval(heartbeat);
+      store.off("task:created", onCreated);
+      store.off("task:moved", onMoved);
+      store.off("task:updated", onUpdated);
+      store.off("task:deleted", onDeleted);
+      store.off("task:merged", onMerged);
+      if (missionStore) {
+        missionStore.off("mission:created", onMissionCreated);
+        missionStore.off("mission:updated", onMissionUpdated);
+        missionStore.off("mission:deleted", onMissionDeleted);
+        missionStore.off("milestone:created", onMilestoneCreated);
+        missionStore.off("milestone:updated", onMilestoneUpdated);
+        missionStore.off("milestone:deleted", onMilestoneDeleted);
+        missionStore.off("slice:created", onSliceCreated);
+        missionStore.off("slice:updated", onSliceUpdated);
+        missionStore.off("slice:deleted", onSliceDeleted);
+        missionStore.off("slice:activated", onSliceActivated);
+        missionStore.off("feature:created", onFeatureCreated);
+        missionStore.off("feature:updated", onFeatureUpdated);
+        missionStore.off("feature:deleted", onFeatureDeleted);
+        missionStore.off("feature:linked", onFeatureLinked);
+      }
+      if (aiSessionStore) {
+        aiSessionStore.off("ai_session:updated", onAiSessionUpdated);
+        aiSessionStore.off("ai_session:deleted", onAiSessionDeleted);
+      }
+    };
+
+    // --- Subscribe ---
+
+    store.on("task:created", onCreated);
+    store.on("task:moved", onMoved);
+    store.on("task:updated", onUpdated);
+    store.on("task:deleted", onDeleted);
+    store.on("task:merged", onMerged);
+
     if (missionStore) {
       missionStore.on("mission:created", onMissionCreated);
       missionStore.on("mission:updated", onMissionUpdated);
@@ -152,6 +168,11 @@ export function createSSE(store: TaskStore, missionStore?: MissionStore) {
       missionStore.on("feature:updated", onFeatureUpdated);
       missionStore.on("feature:deleted", onFeatureDeleted);
       missionStore.on("feature:linked", onFeatureLinked);
+    }
+
+    if (aiSessionStore) {
+      aiSessionStore.on("ai_session:updated", onAiSessionUpdated);
+      aiSessionStore.on("ai_session:deleted", onAiSessionDeleted);
     }
 
     // Heartbeat every 30s to keep connection alive.

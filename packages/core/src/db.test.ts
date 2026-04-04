@@ -69,6 +69,7 @@ describe("Database", () => {
       expect(tableNames).toContain("milestones");
       expect(tableNames).toContain("slices");
       expect(tableNames).toContain("mission_features");
+      expect(tableNames).toContain("ai_sessions");
     });
 
     it("creates all expected indexes", () => {
@@ -83,10 +84,12 @@ describe("Database", () => {
       expect(indexNames).toContain("idxArchivedTasksId");
       expect(indexNames).toContain("idxAgentHeartbeatsAgentId");
       expect(indexNames).toContain("idxAgentHeartbeatsRunId");
+      expect(indexNames).toContain("idxAiSessionsStatus");
+      expect(indexNames).toContain("idxAiSessionsType");
     });
 
     it("seeds schema version", () => {
-      expect(db.getSchemaVersion()).toBe(8);
+      expect(db.getSchemaVersion()).toBe(9);
     });
 
     it("seeds lastModified", () => {
@@ -109,7 +112,7 @@ describe("Database", () => {
 
     it("is idempotent - calling init() twice does not fail", () => {
       expect(() => db.init()).not.toThrow();
-      expect(db.getSchemaVersion()).toBe(8);
+      expect(db.getSchemaVersion()).toBe(9);
     });
 
     it("does not overwrite existing config on re-init", () => {
@@ -716,7 +719,7 @@ describe("schema migrations", () => {
     db.init();
 
     // Verify version bumped to 5 (includes v1→v2, v2→v3, v3→v4, and v4→v5 migrations)
-    expect(db.getSchemaVersion()).toBe(8);
+    expect(db.getSchemaVersion()).toBe(9);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -741,11 +744,11 @@ describe("schema migrations", () => {
     const db = new Database(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(8);
+    expect(db.getSchemaVersion()).toBe(9);
 
     // Re-init should not fail
     db.init();
-    expect(db.getSchemaVersion()).toBe(8);
+    expect(db.getSchemaVersion()).toBe(9);
 
     db.close();
   });
@@ -840,7 +843,7 @@ describe("schema migrations", () => {
     db.init();
 
     // Verify version bumped to 5
-    expect(db.getSchemaVersion()).toBe(8);
+    expect(db.getSchemaVersion()).toBe(9);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -1050,7 +1053,7 @@ describe("createDatabase factory", () => {
     const db = createDatabase(kbDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(8);
+    expect(db.getSchemaVersion()).toBe(9);
     expect(db.getLastModified()).toBeGreaterThan(0);
 
     db.close();

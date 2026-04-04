@@ -7,6 +7,7 @@ import {
   cancelPlanning,
   createTaskFromPlanning,
   connectPlanningStream,
+  fetchAiSession,
   type PlanningSession,
 } from "../api";
 import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles } from "lucide-react";
@@ -18,6 +19,8 @@ interface PlanningModeModalProps {
   tasks: Task[];
   initialPlan?: string;
   projectId?: string;
+  /** When set, reconnect to a persisted background session instead of starting fresh */
+  resumeSessionId?: string;
 }
 
 interface QuestionResponse {
@@ -37,7 +40,7 @@ const EXAMPLE_PLANS = [
   "Refactor the task card component for better performance",
 ];
 
-export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initialPlan: initialPlanProp, projectId }: PlanningModeModalProps) {
+export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initialPlan: initialPlanProp, projectId, resumeSessionId }: PlanningModeModalProps) {
   const [initialPlan, setInitialPlan] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
@@ -131,6 +134,59 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, tasks, initi
       return () => clearTimeout(timer);
     }
   }, [isOpen, initialPlanProp, view.type, handleStartPlanning]);
+
+  // Resume a persisted background session
+  useEffect(() => {
+    if (!isOpen || !resumeSessionId || view.type !== "initial") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const session = await fetchAiSession(resumeSessionId);
+        if (cancelled || !session) return;
+
+        currentSessionIdRef.current = resumeSessionId;
+
+        if (session.status === "awaiting_input" && session.currentQuestion) {
+          const question = JSON.parse(session.currentQuestion);
+          setView({ type: "question", session: { sessionId: resumeSessionId, currentQuestion: question, summary: null } });
+          if (session.thinkingOutput) setStreamingOutput(session.thinkingOutput);
+          setHasProgress(true);
+        } else if (session.status === "complete" && session.result) {
+          const summary = JSON.parse(session.result);
+          setView({ type: "summary", session: { sessionId: resumeSessionId, currentQuestion: null, summary }, summary });
+          setEditedSummary(summary);
+          setHasProgress(true);
+        } else if (session.status === "generating") {
+          setView({ type: "loading" });
+          if (session.thinkingOutput) setStreamingOutput(session.thinkingOutput);
+          // Connect to live SSE stream to pick up new events
+          const connection = connectPlanningStream(resumeSessionId, projectId, {
+            onThinking: (data) => setStreamingOutput((prev) => prev + data),
+            onQuestion: (question) => {
+              setView({ type: "question", session: { sessionId: resumeSessionId, currentQuestion: question, summary: null } });
+              setStreamingOutput("");
+              setHasProgress(true);
+            },
+            onSummary: (summary) => {
+              setView({ type: "summary", session: { sessionId: resumeSessionId, currentQuestion: null, summary }, summary });
+              setEditedSummary(summary);
+              setStreamingOutput("");
+              setHasProgress(true);
+            },
+            onError: (message) => { setError(message); setView({ type: "initial" }); },
+            onComplete: () => { currentSessionIdRef.current = null; },
+          });
+          streamConnectionRef.current = connection;
+        } else if (session.status === "error") {
+          setError(session.error || "Session failed");
+          setView({ type: "initial" });
+        }
+      } catch {
+        setError("Failed to resume session");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isOpen, resumeSessionId, view.type, projectId]);
 
   // Reset hasAutoStarted when modal closes
   useEffect(() => {

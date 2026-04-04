@@ -25,6 +25,10 @@ import {
 } from "./github-webhooks.js";
 import { createMissionRouter } from "./mission-routes.js";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
+import { AiSessionStore } from "./ai-session-store.js";
+import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession } from "./planning.js";
+import { getSubtaskSession, cleanupSubtaskSession } from "./subtask-breakdown.js";
+import { getMissionInterviewSession, cleanupMissionInterviewSession } from "./mission-interview.js";
 
 /**
  * Minimal interface matching pi-coding-agent's ModelRegistry API surface
@@ -6541,6 +6545,80 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   // ── Mission Routes ─────────────────────────────────────────────────────────
   // Mount mission routes at /api/missions
   router.use("/missions", createMissionRouter(store));
+
+  // ── AI Session Routes (Background Tasks) ─────────────────────────────────
+
+  const aiSessionStore = options?.aiSessionStore;
+
+  /**
+   * GET /api/ai-sessions
+   * List active background AI sessions (generating or awaiting_input).
+   * Query: { projectId?: string }
+   */
+  router.get("/ai-sessions", (req, res) => {
+    if (!aiSessionStore) {
+      res.json({ sessions: [] });
+      return;
+    }
+    const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+    const sessions = aiSessionStore.listActive(projectId);
+    res.json({ sessions });
+  });
+
+  /**
+   * GET /api/ai-sessions/:id
+   * Get full session state for modal reconnection.
+   */
+  router.get("/ai-sessions/:id", (req, res) => {
+    if (!aiSessionStore) {
+      res.status(404).json({ error: "AI sessions not available" });
+      return;
+    }
+    const session = aiSessionStore.get(req.params.id);
+    if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+    res.json(session);
+  });
+
+  /**
+   * DELETE /api/ai-sessions/:id
+   * Dismiss/cancel a background AI session.
+   * Also cleans up the in-memory agent if still alive.
+   */
+  router.delete("/ai-sessions/:id", (req, res) => {
+    if (!aiSessionStore) {
+      res.status(404).json({ error: "AI sessions not available" });
+      return;
+    }
+    const { id } = req.params;
+    const session = aiSessionStore.get(id);
+    if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    // Clean up the in-memory agent based on session type
+    try {
+      switch (session.type) {
+        case "planning":
+          if (getPlanningSession(id)) cleanupPlanningSession(id);
+          break;
+        case "subtask":
+          if (getSubtaskSession(id)) cleanupSubtaskSession(id);
+          break;
+        case "mission_interview":
+          if (getMissionInterviewSession(id)) cleanupMissionInterviewSession(id);
+          break;
+      }
+    } catch {
+      // Agent may already be cleaned up — that's fine
+    }
+
+    aiSessionStore.delete(id);
+    res.json({ ok: true });
+  });
 
   // ── Directory Browsing ────────────────────────────────────────────────────────
 

@@ -16,6 +16,10 @@ import { getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
 import { WebSocketManager, type BadgeSnapshot } from "./websocket.js";
 import type { BadgePubSub } from "./badge-pubsub.js";
 import { createBadgePubSub, type BadgePubSubMessage } from "./badge-pubsub.js";
+import { AiSessionStore } from "./ai-session-store.js";
+import { setAiSessionStore as setPlanningAiSessionStore } from "./planning.js";
+import { setAiSessionStore as setSubtaskAiSessionStore } from "./subtask-breakdown.js";
+import { setAiSessionStore as setMissionAiSessionStore } from "./mission-interview.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -34,6 +38,8 @@ export interface ServerOptions {
   badgePubSub?: BadgePubSub;
   /** Optional AutomationStore for scheduled task management */
   automationStore?: AutomationStore;
+  /** Optional AiSessionStore — if not provided, one is created from the default store's database */
+  aiSessionStore?: AiSessionStore;
 }
 
 type DashboardExpressApp = ReturnType<typeof express> & {
@@ -113,7 +119,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   app.get("/api/events", rateLimit(RATE_LIMITS.sse), async (req, res) => {
     const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
     if (!projectId) {
-      createSSE(store, store.getMissionStore())(req, res);
+      createSSE(store, store.getMissionStore(), aiSessionStore)(req, res);
       return;
     }
 
@@ -121,7 +127,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       // Use the shared project-store resolver so SSE listeners attach to
       // the same EventEmitter used by project-scoped task API routes.
       const scopedStore = await getOrCreateProjectStore(projectId);
-      createSSE(scopedStore, scopedStore.getMissionStore())(req, res);
+      createSSE(scopedStore, scopedStore.getMissionStore(), aiSessionStore)(req, res);
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Failed to open project event stream" });
     }
@@ -274,8 +280,15 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     });
   }
 
+  // Create AiSessionStore for background task persistence
+  const aiSessionStore = options?.aiSessionStore ?? new AiSessionStore(store.getDatabase());
+  aiSessionStore.recoverStaleSessions();
+  setPlanningAiSessionStore(aiSessionStore);
+  setSubtaskAiSessionStore(aiSessionStore);
+  setMissionAiSessionStore(aiSessionStore);
+
   // REST API
-  app.use("/api", createApiRoutes(store, options));
+  app.use("/api", createApiRoutes(store, { ...options, aiSessionStore }));
 
   // API 404 Handler - Return JSON for unmatched API routes (instead of falling through to SPA)
   app.use("/api", (_req: express.Request, res: express.Response) => {

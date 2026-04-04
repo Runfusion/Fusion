@@ -370,6 +370,7 @@ When enabled, tasks stay in **Triage** with "awaiting-approval" status after AI 
 
 ```bash
 pnpm install
+pnpm dev:ui                     # Dashboard only; builds and typechecks first
 pnpm dev dashboard              # Board + AI engine
 pnpm dev task list              # CLI commands
 ```

@@ -28,6 +28,7 @@ import { AgentListModal } from "./components/AgentListModal";
 import { AgentsView } from "./components/AgentsView";
 import { ScriptsModal } from "./components/ScriptsModal";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
+import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
 import { useTasks } from "./hooks/useTasks";
 import { useProjects } from "./hooks/useProjects";
 import { useCurrentProject } from "./hooks/useCurrentProject";
@@ -51,6 +52,9 @@ function AppInner() {
 
   // Theme management
   const { themeMode, colorTheme, setThemeMode, setColorTheme } = useTheme();
+
+  // Background AI sessions
+  const { sessions: bgSessions, generating: bgGenerating, needsInput: bgNeedsInput, dismissSession: bgDismiss } = useBackgroundSessions(currentProject?.id);
 
   // View state
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -90,6 +94,9 @@ function AppInner() {
   const [missionsOpen, setMissionsOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [scriptsOpen, setScriptsOpen] = useState(false);
+  const [planningResumeSessionId, setPlanningResumeSessionId] = useState<string | undefined>(undefined);
+  const [subtaskResumeSessionId, setSubtaskResumeSessionId] = useState<string | undefined>(undefined);
+  const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
   const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
@@ -366,6 +373,7 @@ function AppInner() {
   const handlePlanningClose = useCallback(() => {
     setIsPlanningOpen(false);
     setPlanningInitialPlan(null);
+    setPlanningResumeSessionId(undefined);
   }, []);
   const handlePlanningTaskCreated = useCallback((task: Task) => {
     addToast(`Created ${task.id} from planning mode`, "success");
@@ -388,6 +396,7 @@ function AppInner() {
   const handleSubtaskClose = useCallback(() => {
     setIsSubtaskOpen(false);
     setSubtaskInitialDescription(null);
+    setSubtaskResumeSessionId(undefined);
   }, []);
 
   const handleSubtaskTasksCreated = useCallback((createdTasks: Task[]) => {
@@ -626,7 +635,27 @@ function AppInner() {
         {renderMainContent()}
       </div>
       {viewMode === "project" && currentProject && (
-        <ExecutorStatusBar tasks={tasks} projectId={currentProject.id} taskStuckTimeoutMs={taskStuckTimeoutMs} />
+        <ExecutorStatusBar
+          tasks={tasks}
+          projectId={currentProject.id}
+          taskStuckTimeoutMs={taskStuckTimeoutMs}
+          backgroundSessions={bgSessions}
+          backgroundGenerating={bgGenerating}
+          backgroundNeedsInput={bgNeedsInput}
+          onOpenBackgroundSession={(session) => {
+            if (session.type === "planning") {
+              setPlanningResumeSessionId(session.id);
+              setIsPlanningOpen(true);
+            } else if (session.type === "subtask") {
+              setSubtaskResumeSessionId(session.id);
+              setIsSubtaskOpen(true);
+            } else if (session.type === "mission_interview") {
+              setMissionResumeSessionId(session.id);
+              setMissionsOpen(true);
+            }
+          }}
+          onDismissBackgroundSession={bgDismiss}
+        />
       )}
       {detailTask && (
         <TaskDetailModal
@@ -673,6 +702,7 @@ function AppInner() {
         tasks={tasks}
         initialPlan={planningInitialPlan ?? undefined}
         projectId={currentProject?.id}
+        resumeSessionId={planningResumeSessionId}
       />
       <SubtaskBreakdownModal
         isOpen={isSubtaskOpen}
@@ -680,6 +710,7 @@ function AppInner() {
         initialDescription={subtaskInitialDescription ?? ""}
         onTasksCreated={handleSubtaskTasksCreated}
         projectId={currentProject?.id}
+        resumeSessionId={subtaskResumeSessionId}
       />
       <TerminalModal
         isOpen={terminalOpen}
@@ -759,9 +790,10 @@ function AppInner() {
       />
       <MissionManager
         isOpen={missionsOpen}
-        onClose={() => setMissionsOpen(false)}
+        onClose={() => { setMissionsOpen(false); setMissionResumeSessionId(undefined); }}
         addToast={addToast}
         projectId={currentProject?.id}
+        resumeSessionId={missionResumeSessionId}
         availableTasks={tasks.map((t) => ({ id: t.id, title: t.title }))}
         onSelectTask={(taskId) => {
           const task = tasks.find((t) => t.id === taskId);

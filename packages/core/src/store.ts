@@ -2753,6 +2753,11 @@ ${stepsSection}`;
     return this.tasksDir;
   }
 
+  /** Expose the shared Database instance for co-located stores (e.g. AiSessionStore). */
+  getDatabase(): Database {
+    return this.db;
+  }
+
   private generateSpecifiedPrompt(task: Task): string {
     const deps =
       task.dependencies.length > 0

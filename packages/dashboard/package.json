@@ -22,7 +22,8 @@
   "scripts": {
     "build": "vite build && tsc",
     "build:client": "vite build",
-    "dev": "vite build && tsc && tsc --noEmit -p tsconfig.app.json && vite dev",
+    "dev": "pnpm build && pnpm typecheck && pnpm dev:serve",
+    "dev:serve": "vite dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json",
     "postinstall": "chmod +x node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/spawn-helper node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/*.node 2>/dev/null || true"

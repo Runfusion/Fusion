@@ -5,6 +5,7 @@ import {
   connectSubtaskStream,
   createTasksFromBreakdown,
   cancelSubtaskBreakdown,
+  fetchAiSession,
   type SubtaskItem,
 } from "../api";
 import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown } from "lucide-react";
@@ -16,6 +17,7 @@ interface SubtaskBreakdownModalProps {
   onTasksCreated: (tasks: Task[]) => void;
   parentTaskId?: string;
   projectId?: string;
+  resumeSessionId?: string;
 }
 
 type ViewState =
@@ -54,7 +56,7 @@ function hasDependencyCycle(subtasks: SubtaskItem[]): boolean {
   return subtasks.some((item) => visit(item.id));
 }
 
-export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onTasksCreated, parentTaskId, projectId }: SubtaskBreakdownModalProps) {
+export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onTasksCreated, parentTaskId, projectId, resumeSessionId }: SubtaskBreakdownModalProps) {
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [subtasks, setSubtasks] = useState<SubtaskItem[]>([]);
   const [thinkingOutput, setThinkingOutput] = useState("");
@@ -146,6 +148,42 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
       void beginBreakdown();
     }
   }, [isOpen, initialDescription, beginBreakdown, resetState]);
+
+  useEffect(() => {
+    if (!isOpen || !resumeSessionId || view.type !== "initial") return;
+
+    void (async () => {
+      try {
+        const session = await fetchAiSession(resumeSessionId);
+        if (!session) return;
+        if (session.status === "generating" || session.status === "awaiting_input") {
+          setThinkingOutput(session.thinkingOutput ?? "");
+          setView({ type: "generating", sessionId: resumeSessionId });
+          streamRef.current?.close();
+          streamRef.current = connectSubtaskStream(resumeSessionId, projectId, {
+            onThinking: (data) => setThinkingOutput((prev) => prev + data),
+            onSubtasks: (items) => {
+              setSubtasks(items);
+              setView({ type: "editing", sessionId: resumeSessionId });
+              setDirty(false);
+            },
+            onError: (message) => {
+              setError(message);
+              setView({ type: "initial" });
+            },
+          });
+        } else if (session.status === "complete" && session.result) {
+          const items = JSON.parse(session.result) as SubtaskItem[];
+          setSubtasks(items);
+          setView({ type: "editing", sessionId: resumeSessionId });
+        } else if (session.status === "error") {
+          setError(session.error ?? "Session encountered an error");
+        }
+      } catch (err: any) {
+        setError(err.message || "Failed to resume session");
+      }
+    })();
+  }, [isOpen, resumeSessionId, view.type, projectId]);
 
   useEffect(() => {
     return () => {

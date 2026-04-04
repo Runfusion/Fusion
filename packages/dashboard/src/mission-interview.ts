@@ -17,6 +17,7 @@
 import type { PlanningQuestion } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports, @typescript-eslint/no-explicit-any
@@ -176,6 +177,44 @@ interface RateLimitEntry {
 
 const sessions = new Map<string, MissionInterviewSession>();
 const rateLimits = new Map<string, RateLimitEntry>();
+
+// ── AI Session Persistence ────────────────────────────────────────────────
+
+let _aiSessionStore: AiSessionStore | undefined;
+
+export function setAiSessionStore(store: AiSessionStore): void {
+  _aiSessionStore = store;
+}
+
+function persistMissionSession(session: MissionInterviewSession, status: "generating" | "awaiting_input" | "complete" | "error", error?: string): void {
+  if (!_aiSessionStore) return;
+  const row: AiSessionRow = {
+    id: session.id,
+    type: "mission_interview",
+    status,
+    title: session.missionTitle.slice(0, 120),
+    inputPayload: JSON.stringify({ missionTitle: session.missionTitle }),
+    conversationHistory: JSON.stringify(session.history),
+    currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
+    result: session.summary ? JSON.stringify(session.summary) : null,
+    thinkingOutput: session.thinkingOutput,
+    error: error ?? null,
+    projectId: null,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  _aiSessionStore.upsert(row);
+}
+
+function persistMissionThinking(sessionId: string, thinkingOutput: string): void {
+  if (!_aiSessionStore) return;
+  _aiSessionStore.updateThinking(sessionId, thinkingOutput);
+}
+
+function unpersistMissionSession(sessionId: string): void {
+  if (!_aiSessionStore) return;
+  _aiSessionStore.delete(sessionId);
+}
 
 // ── Cleanup Interval ────────────────────────────────────────────────────────
 
@@ -474,6 +513,7 @@ async function initializeAgent(session: MissionInterviewSession, rootDir: string
       tools: "readonly",
       onThinking: (delta: string) => {
         session.thinkingOutput += delta;
+        persistMissionThinking(session.id, session.thinkingOutput);
         missionInterviewStreamManager.broadcast(session.id, {
           type: "thinking",
           data: delta,
@@ -597,6 +637,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
     if (parsed.type === "question") {
       session.currentQuestion = parsed.data;
       session.updatedAt = new Date();
+      persistMissionSession(session, "awaiting_input");
       missionInterviewStreamManager.broadcast(session.id, {
         type: "question",
         data: parsed.data,
@@ -605,6 +646,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
       session.summary = parsed.data;
       session.currentQuestion = undefined;
       session.updatedAt = new Date();
+      persistMissionSession(session, "complete");
       missionInterviewStreamManager.broadcast(session.id, {
         type: "summary",
         data: parsed.data,
@@ -613,6 +655,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
     }
   } catch (err) {
     console.error(`[mission-interview] Agent conversation error for session ${session.id}:`, err);
+    persistMissionSession(session, "error", err instanceof Error ? err.message : "AI processing failed");
     missionInterviewStreamManager.broadcast(session.id, {
       type: "error",
       data: err instanceof Error ? err.message : "AI processing failed",
@@ -653,10 +696,12 @@ export async function createMissionInterviewSession(
   };
 
   sessions.set(sessionId, session);
+  persistMissionSession(session, "generating");
 
   // Initialize AI agent in background
   initializeAgent(session, rootDir).catch((err) => {
     console.error(`[mission-interview] Failed to initialize agent for session ${sessionId}:`, err);
+    persistMissionSession(session, "error", err.message || "Failed to initialize AI agent");
     missionInterviewStreamManager.broadcast(sessionId, {
       type: "error",
       data: err.message || "Failed to initialize AI agent",
@@ -688,6 +733,7 @@ export async function submitMissionInterviewResponse(
     question: session.currentQuestion,
     response: responses,
   });
+  persistMissionSession(session, "generating");
 
   // If AI agent is active, use it for next question
   if (session.agent) {
@@ -729,6 +775,7 @@ export async function cancelMissionInterviewSession(sessionId: string): Promise<
 
   missionInterviewStreamManager.cleanupSession(sessionId);
   sessions.delete(sessionId);
+  unpersistMissionSession(sessionId);
 }
 
 export function getMissionInterviewSession(sessionId: string): MissionInterviewSession | undefined {
@@ -746,6 +793,7 @@ export function cleanupMissionInterviewSession(sessionId: string): void {
   }
   missionInterviewStreamManager.cleanupSession(sessionId);
   sessions.delete(sessionId);
+  unpersistMissionSession(sessionId);
 }
 
 /**

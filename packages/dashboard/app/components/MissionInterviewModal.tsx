@@ -6,6 +6,7 @@ import {
   cancelMissionInterview,
   createMissionFromInterview,
   connectMissionInterviewStream,
+  fetchAiSession,
   type MissionPlanSummary,
   type MissionPlanMilestone,
   type MissionPlanSlice,
@@ -35,6 +36,7 @@ interface MissionInterviewModalProps {
   onMissionCreated: (mission: MissionWithHierarchy) => void;
   projectId?: string;
   initialGoal?: string;
+  resumeSessionId?: string;
 }
 
 interface QuestionResponse {
@@ -60,6 +62,7 @@ export function MissionInterviewModal({
   onMissionCreated,
   projectId,
   initialGoal: initialGoalProp,
+  resumeSessionId,
 }: MissionInterviewModalProps) {
   const [missionGoal, setMissionGoal] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
@@ -149,6 +152,79 @@ export function MissionInterviewModal({
       hasAutoStartedRef.current = false;
     }
   }, [isOpen]);
+
+  // Reconnect to a persisted session when resumeSessionId is provided
+  useEffect(() => {
+    if (!isOpen || !resumeSessionId || view.type !== "initial") return;
+
+    let cancelled = false;
+
+    fetchAiSession(resumeSessionId).then((session) => {
+      if (cancelled || !session) return;
+
+      if (session.status === "awaiting_input" && session.currentQuestion) {
+        try {
+          const question = JSON.parse(session.currentQuestion) as import("@fusion/core").PlanningQuestion;
+          currentSessionIdRef.current = session.id;
+          setHasProgress(true);
+          setView({ type: "question", sessionId: session.id, question });
+        } catch {
+          setError("Failed to restore session question.");
+        }
+      } else if (session.status === "complete" && session.result) {
+        try {
+          const summary = JSON.parse(session.result) as MissionPlanSummary;
+          currentSessionIdRef.current = session.id;
+          setHasProgress(true);
+          setEditedSummary(summary);
+          setView({ type: "summary", sessionId: session.id, summary });
+        } catch {
+          setError("Failed to restore session result.");
+        }
+      } else if (session.status === "generating") {
+        currentSessionIdRef.current = session.id;
+        setHasProgress(true);
+        if (session.thinkingOutput) {
+          setStreamingOutput(session.thinkingOutput);
+        }
+        setView({ type: "loading" });
+
+        const connection = connectMissionInterviewStream(session.id, projectId, {
+          onThinking: (data) => {
+            setStreamingOutput((prev) => prev + data);
+          },
+          onQuestion: (question) => {
+            setView({ type: "question", sessionId: session.id, question });
+            setStreamingOutput("");
+          },
+          onSummary: (summary) => {
+            setView({ type: "summary", sessionId: session.id, summary });
+            setEditedSummary(summary);
+            setStreamingOutput("");
+          },
+          onError: (message) => {
+            setError(message);
+            setView({ type: "initial" });
+            setStreamingOutput("");
+            currentSessionIdRef.current = null;
+          },
+          onComplete: () => {
+            currentSessionIdRef.current = null;
+          },
+        });
+
+        streamConnectionRef.current = connection;
+      } else if (session.status === "error") {
+        setError(session.error ?? "The session encountered an error.");
+      }
+    }).catch(() => {
+      if (!cancelled) setError("Failed to resume session.");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, resumeSessionId, view.type, projectId]);
 
   // Cleanup stream on unmount
   useEffect(() => {

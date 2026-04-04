@@ -2593,3 +2593,42 @@ export function connectMissionInterviewStream(
     isConnected: () => !isClosed && eventSource.readyState === EventSource.OPEN,
   };
 }
+
+// ── AI Sessions (Background Tasks) ─────────────────────────────────────────
+
+export interface AiSessionSummary {
+  id: string;
+  type: "planning" | "subtask" | "mission_interview";
+  status: "generating" | "awaiting_input" | "complete" | "error";
+  title: string;
+  projectId: string | null;
+  updatedAt: string;
+}
+
+export interface AiSessionDetail extends AiSessionSummary {
+  inputPayload: string;
+  conversationHistory: string;
+  currentQuestion: string | null;
+  result: string | null;
+  thinkingOutput: string;
+  error: string | null;
+  createdAt: string;
+}
+
+export async function fetchAiSessions(projectId?: string): Promise<AiSessionSummary[]> {
+  const params = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+  const res = await fetch(buildApiUrl(`/ai-sessions${params}`));
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.sessions ?? [];
+}
+
+export async function fetchAiSession(id: string): Promise<AiSessionDetail | null> {
+  const res = await fetch(buildApiUrl(`/ai-sessions/${encodeURIComponent(id)}`));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function deleteAiSession(id: string): Promise<void> {
+  await fetch(buildApiUrl(`/ai-sessions/${encodeURIComponent(id)}`), { method: "DELETE" });
+}

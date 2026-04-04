@@ -21,6 +21,7 @@ import type {
 } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports, @typescript-eslint/no-explicit-any
@@ -143,6 +144,49 @@ const sessions = new Map<string, Session>();
 
 /** Rate limiting state indexed by IP */
 const rateLimits = new Map<string, RateLimitEntry>();
+
+// ── AI Session Persistence ────────────────────────────────────────────────
+
+/** Optional store for persisting session state across reloads/browsers. */
+let _aiSessionStore: AiSessionStore | undefined;
+
+/** Wire up the AI session persistence store. Called once from server.ts. */
+export function setAiSessionStore(store: AiSessionStore): void {
+  _aiSessionStore = store;
+}
+
+/** Persist the current session state to SQLite (no-op if store not wired). */
+function persistSession(session: Session, status: "generating" | "awaiting_input" | "complete" | "error", projectId?: string, error?: string): void {
+  if (!_aiSessionStore) return;
+  const row: AiSessionRow = {
+    id: session.id,
+    type: "planning",
+    status,
+    title: session.initialPlan.slice(0, 120),
+    inputPayload: JSON.stringify({ initialPlan: session.initialPlan }),
+    conversationHistory: JSON.stringify(session.history),
+    currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
+    result: session.summary ? JSON.stringify(session.summary) : null,
+    thinkingOutput: session.thinkingOutput,
+    error: error ?? null,
+    projectId: projectId ?? null,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  _aiSessionStore.upsert(row);
+}
+
+/** Persist only thinking output (debounced). */
+function persistThinking(sessionId: string, thinkingOutput: string): void {
+  if (!_aiSessionStore) return;
+  _aiSessionStore.updateThinking(sessionId, thinkingOutput);
+}
+
+/** Remove session from persistence. */
+function unpersistSession(sessionId: string): void {
+  if (!_aiSessionStore) return;
+  _aiSessionStore.delete(sessionId);
+}
 
 // ── Cleanup Interval ────────────────────────────────────────────────────────
 
@@ -598,10 +642,12 @@ export async function createSessionWithAgent(
   };
 
   sessions.set(sessionId, session);
+  persistSession(session, "generating");
 
   // Initialize AI agent in background - it will stream via planningStreamManager
   initializeAgent(session, rootDir).catch((err) => {
     console.error(`[planning] Failed to initialize agent for session ${sessionId}:`, err);
+    persistSession(session, "error", undefined, err.message || "Failed to initialize AI agent");
     planningStreamManager.broadcast(sessionId, {
       type: "error",
       data: err.message || "Failed to initialize AI agent",
@@ -625,6 +671,7 @@ async function initializeAgent(session: Session, rootDir: string): Promise<void>
       tools: "readonly",
       onThinking: (delta: string) => {
         session.thinkingOutput += delta;
+        persistThinking(session.id, session.thinkingOutput);
         planningStreamManager.broadcast(session.id, {
           type: "thinking",
           data: delta,
@@ -765,6 +812,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
     if (parsed.type === "question") {
       session.currentQuestion = parsed.data;
       session.updatedAt = new Date();
+      persistSession(session, "awaiting_input");
       planningStreamManager.broadcast(session.id, {
         type: "question",
         data: parsed.data,
@@ -773,6 +821,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
       session.summary = parsed.data;
       session.currentQuestion = undefined;
       session.updatedAt = new Date();
+      persistSession(session, "complete");
       planningStreamManager.broadcast(session.id, {
         type: "summary",
         data: parsed.data,
@@ -781,6 +830,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
     }
   } catch (err) {
     console.error(`[planning] Agent conversation error for session ${session.id}:`, err);
+    persistSession(session, "error", undefined, err instanceof Error ? err.message : "AI processing failed");
     planningStreamManager.broadcast(session.id, {
       type: "error",
       data: err instanceof Error ? err.message : "AI processing failed",
@@ -997,6 +1047,7 @@ export async function submitResponse(
     question: session.currentQuestion,
     response: responses,
   });
+  persistSession(session, "generating");
 
   // If AI agent is active, use it for next question
   if (session.agent) {
@@ -1089,6 +1140,7 @@ export async function cancelSession(sessionId: string): Promise<void> {
   planningStreamManager.cleanupSession(sessionId);
 
   sessions.delete(sessionId);
+  unpersistSession(sessionId);
 }
 
 /**
@@ -1126,6 +1178,7 @@ export function cleanupSession(sessionId: string): void {
   }
   planningStreamManager.cleanupSession(sessionId);
   sessions.delete(sessionId);
+  unpersistSession(sessionId);
 }
 
 /**
