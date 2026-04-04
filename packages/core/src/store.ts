@@ -693,6 +693,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
     }
 
+    // Determine enabledWorkflowSteps: explicit input takes precedence, otherwise auto-apply default-on steps
+    let resolvedWorkflowSteps: string[] | undefined = input.enabledWorkflowSteps?.length ? input.enabledWorkflowSteps : undefined;
+
+    // When enabledWorkflowSteps is not provided at all (undefined), auto-apply default-on workflow steps
+    if (input.enabledWorkflowSteps === undefined) {
+      try {
+        const config = await this.readConfig();
+        const defaultOnSteps = (config.workflowSteps || [])
+          .filter((ws) => ws.enabled && ws.defaultOn)
+          .map((ws) => ws.id);
+        if (defaultOnSteps.length > 0) {
+          resolvedWorkflowSteps = defaultOnSteps;
+        }
+      } catch {
+        // Non-fatal: default-on resolution is best-effort
+      }
+    } else if (input.enabledWorkflowSteps.length === 0) {
+      // Explicitly empty array — user intentionally selected no steps
+      resolvedWorkflowSteps = undefined;
+    }
+
     const now = new Date().toISOString();
     const task: Task = {
       id,
@@ -701,7 +722,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       column: input.column || "triage",
       dependencies: input.dependencies || [],
       breakIntoSubtasks: input.breakIntoSubtasks === true ? true : undefined,
-      enabledWorkflowSteps: input.enabledWorkflowSteps?.length ? input.enabledWorkflowSteps : undefined,
+      enabledWorkflowSteps: resolvedWorkflowSteps,
       modelPresetId: input.modelPresetId,
       modelProvider: input.modelProvider,
       modelId: input.modelId,
@@ -2547,6 +2568,7 @@ ${stepsSection}`;
         prompt: mode === "prompt" ? (input.prompt || "") : "",
         scriptName: mode === "script" ? input.scriptName : undefined,
         enabled: input.enabled !== undefined ? input.enabled : true,
+        defaultOn: input.defaultOn === true ? true : undefined,
         modelProvider: mode === "prompt" ? input.modelProvider : undefined,
         modelId: mode === "prompt" ? input.modelId : undefined,
         createdAt: now,
@@ -2621,6 +2643,7 @@ ${stepsSection}`;
       if (updates.prompt !== undefined && step.mode === "prompt") step.prompt = updates.prompt;
       if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
       if (updates.enabled !== undefined) step.enabled = updates.enabled;
+      if (updates.defaultOn !== undefined) step.defaultOn = updates.defaultOn;
       if (step.mode === "prompt") {
         if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
         if ("modelId" in updates) step.modelId = updates.modelId;
