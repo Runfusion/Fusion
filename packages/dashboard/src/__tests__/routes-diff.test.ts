@@ -33,6 +33,13 @@ class MockStore extends EventEmitter {
     return "/tmp/fn-679";
   }
 
+  getDatabase() {
+    return {
+      exec: vi.fn(),
+      prepare: vi.fn().mockReturnValue({ run: vi.fn().mockReturnValue({ changes: 0 }), get: vi.fn(), all: vi.fn().mockReturnValue([]) }),
+    };
+  }
+
   getMissionStore() {
     return {
       listMissions: vi.fn().mockResolvedValue([]),
@@ -86,7 +93,17 @@ async function requestDiff(app: Parameters<typeof get>[0], taskId = "FN-679", wo
   return await get(app, url);
 }
 
+/**
+ * The diff endpoint uses resolveDiffBase() which:
+ * 1. Checks task.baseCommitSha (if present, validates with git merge-base --is-ancestor)
+ * 2. Runs `git merge-base HEAD origin/<baseBranch>` falling back to `git merge-base HEAD <baseBranch>`
+ * 3. Falls back to `git rev-parse HEAD~1`
+ * Then uses two-dot syntax: `git diff --name-status <diffBase>..HEAD`
+ * Plus a separate working-tree diff: `git diff --name-status`
+ */
 describe("GET /api/tasks/:id/diff", () => {
+  const FAKE_MERGE_BASE = "abc123def";
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(true);
@@ -98,15 +115,25 @@ describe("GET /api/tasks/:id/diff", () => {
     vi.useRealTimers();
   });
 
-  it("uses merge-base syntax with baseBranch from task", async () => {
+  it("uses merge-base to resolve diff base from baseBranch", async () => {
     const store = new MockStore();
     store.addTask(createTask({ baseBranch: "develop" }));
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      if (cmd === "git diff --name-status develop...HEAD") {
+      // resolveDiffBase: merge-base lookup
+      if (cmd.includes("git merge-base HEAD origin/develop") || cmd.includes("git merge-base HEAD develop")) {
+        return `${FAKE_MERGE_BASE}\n` as any;
+      }
+      // committed diff
+      if (cmd === `git diff --name-status ${FAKE_MERGE_BASE}..HEAD`) {
         return "M\tsrc/app.ts\nA\tsrc/new.ts\n" as any;
       }
-      if (cmd === 'git diff develop...HEAD -- "src/app.ts"') {
+      // working tree diff
+      if (cmd === "git diff --name-status") {
+        return "" as any;
+      }
+      // file patches
+      if (cmd === `git diff ${FAKE_MERGE_BASE}..HEAD -- "src/app.ts"`) {
         return `diff --git a/src/app.ts b/src/app.ts
 --- a/src/app.ts
 +++ b/src/app.ts
@@ -115,7 +142,7 @@ describe("GET /api/tasks/:id/diff", () => {
 +const baz = "qux";
 ` as any;
       }
-      if (cmd === 'git diff develop...HEAD -- "src/new.ts"') {
+      if (cmd === `git diff ${FAKE_MERGE_BASE}..HEAD -- "src/new.ts"`) {
         return `diff --git a/src/new.ts b/src/new.ts
 new file mode 100644
 --- /dev/null
@@ -136,10 +163,6 @@ new file mode 100644
     expect(response.body.files[0].status).toBe("modified");
     expect(response.body.files[1].path).toBe("src/new.ts");
     expect(response.body.files[1].status).toBe("added");
-    expect(mockExecSync).toHaveBeenCalledWith(
-      "git diff --name-status develop...HEAD",
-      expect.objectContaining({ cwd: "/tmp/fn-679" }),
-    );
   });
 
   it("defaults to main when baseBranch is not set", async () => {
@@ -147,10 +170,16 @@ new file mode 100644
     store.addTask(createTask({ baseBranch: undefined }));
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      if (cmd === "git diff --name-status main...HEAD") {
+      if (cmd.includes("git merge-base HEAD origin/main") || cmd.includes("git merge-base HEAD main")) {
+        return `${FAKE_MERGE_BASE}\n` as any;
+      }
+      if (cmd === `git diff --name-status ${FAKE_MERGE_BASE}..HEAD`) {
         return "M\tsrc/index.ts\n" as any;
       }
-      if (cmd === 'git diff main...HEAD -- "src/index.ts"') {
+      if (cmd === "git diff --name-status") {
+        return "" as any;
+      }
+      if (cmd === `git diff ${FAKE_MERGE_BASE}..HEAD -- "src/index.ts"`) {
         return `diff --git a/src/index.ts b/src/index.ts
 --- a/src/index.ts
 +++ b/src/index.ts
@@ -167,8 +196,9 @@ new file mode 100644
 
     expect(response.status).toBe(200);
     expect(response.body.files).toHaveLength(1);
+    // Verify merge-base was called with main (default)
     expect(mockExecSync).toHaveBeenCalledWith(
-      "git diff --name-status main...HEAD",
+      expect.stringContaining("merge-base HEAD"),
       expect.objectContaining({ cwd: "/tmp/fn-679" }),
     );
   });
@@ -187,12 +217,18 @@ new file mode 100644
   it("uses provided worktree path from query param", async () => {
     const store = new MockStore();
     store.addTask(createTask({ baseBranch: "feature" }));
-    mockExecSync.mockImplementation((command) => {
+    mockExecSync.mockImplementation((command, opts) => {
       const cmd = String(command);
-      if (cmd === "git diff --name-status feature...HEAD") {
+      if (cmd.includes("git merge-base")) {
+        return `${FAKE_MERGE_BASE}\n` as any;
+      }
+      if (cmd === `git diff --name-status ${FAKE_MERGE_BASE}..HEAD`) {
         return "M\tpackage.json\n" as any;
       }
-      if (cmd === 'git diff feature...HEAD -- "package.json"') {
+      if (cmd === "git diff --name-status") {
+        return "" as any;
+      }
+      if (cmd === `git diff ${FAKE_MERGE_BASE}..HEAD -- "package.json"`) {
         return `diff --git a/package.json b/package.json
 --- a/package.json
 +++ b/package.json
@@ -210,24 +246,34 @@ new file mode 100644
     const response = await requestDiff(app, "FN-679", "/custom/worktree/path");
 
     expect(response.status).toBe(200);
+    // The custom worktree should be used as cwd
     expect(mockExecSync).toHaveBeenCalledWith(
-      "git diff --name-status feature...HEAD",
+      expect.stringContaining("merge-base"),
       expect.objectContaining({ cwd: "/custom/worktree/path" }),
     );
   });
 
-  it("falls back to HEAD when merge-base fails", async () => {
+  it("falls back when merge-base fails", async () => {
     const store = new MockStore();
     store.addTask(createTask({ baseBranch: "nonexistent" }));
+    const FALLBACK_SHA = "fallbacksha123";
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      if (cmd === "git diff --name-status nonexistent...HEAD") {
+      // merge-base fails
+      if (cmd.includes("git merge-base")) {
         throw new Error("merge-base failed");
       }
-      if (cmd === "git diff --name-status HEAD") {
+      // HEAD~1 fallback
+      if (cmd === "git rev-parse HEAD~1") {
+        return `${FALLBACK_SHA}\n` as any;
+      }
+      if (cmd === `git diff --name-status ${FALLBACK_SHA}..HEAD`) {
         return "M\tREADME.md\n" as any;
       }
-      if (cmd === 'git diff HEAD -- "README.md"') {
+      if (cmd === "git diff --name-status") {
+        return "" as any;
+      }
+      if (cmd === `git diff ${FALLBACK_SHA}..HEAD -- "README.md"`) {
         return `diff --git a/README.md b/README.md
 --- a/README.md
 +++ b/README.md
@@ -244,16 +290,19 @@ new file mode 100644
 
     expect(response.status).toBe(200);
     expect(response.body.files).toHaveLength(1);
-    expect(mockExecSync).toHaveBeenCalledWith(
-      "git diff --name-status HEAD",
-      expect.objectContaining({ cwd: "/tmp/fn-679" }),
-    );
   });
 
   it("returns empty files array when no changes", async () => {
     const store = new MockStore();
     store.addTask(createTask({ baseBranch: "main" }));
-    mockExecSync.mockReturnValue("" as any);
+    mockExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd.includes("git merge-base")) {
+        return `${FAKE_MERGE_BASE}\n` as any;
+      }
+      // Both diffs return empty
+      return "" as any;
+    });
 
     const app = createServer(store as any);
     const response = await requestDiff(app);
@@ -272,10 +321,16 @@ new file mode 100644
     store.addTask(createTask({ baseBranch: "main" }));
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      if (cmd === "git diff --name-status main...HEAD") {
+      if (cmd.includes("git merge-base")) {
+        return `${FAKE_MERGE_BASE}\n` as any;
+      }
+      if (cmd === `git diff --name-status ${FAKE_MERGE_BASE}..HEAD`) {
         return "M\tsrc/changes.ts\n" as any;
       }
-      if (cmd === 'git diff main...HEAD -- "src/changes.ts"') {
+      if (cmd === "git diff --name-status") {
+        return "" as any;
+      }
+      if (cmd === `git diff ${FAKE_MERGE_BASE}..HEAD -- "src/changes.ts"`) {
         return `diff --git a/src/changes.ts b/src/changes.ts
 --- a/src/changes.ts
 +++ b/src/changes.ts

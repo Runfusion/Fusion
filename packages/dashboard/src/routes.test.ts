@@ -3686,9 +3686,12 @@ describe("POST /tasks/:id/spec/revise", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
-  it("returns 400 when task is in done", async () => {
+  it("allows spec revision when task is in done (done can transition to triage)", async () => {
     const doneTask = { ...FAKE_TASK_DETAIL, column: "done" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
 
     const res = await REQUEST(
       buildApp(),
@@ -3698,9 +3701,8 @@ describe("POST /tasks/:id/spec/revise", () => {
       { "Content-Type": "application/json" }
     );
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("done");
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
   });
 
   it("returns 400 when feedback is missing", async () => {

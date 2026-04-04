@@ -2068,7 +2068,7 @@ body {
   gap: var(--space-xs);
   font-size: 11px;
   color: var(--todo);
-  background: rgba(88, 166, 255, 0.1);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
   padding: 2px 8px;
   border-radius: var(--radius-sm);
 }
@@ -2173,7 +2173,7 @@ body {
   flex-direction: column;
   align-items: center;
   gap: var(--space-md);
-  color: var(--error);
+  color: var(--color-error);
   text-align: center;
 }
 

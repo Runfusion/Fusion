@@ -48,6 +48,13 @@ class MockStore extends EventEmitter {
     return process.cwd();
   }
 
+  getDatabase() {
+    return {
+      exec: vi.fn(),
+      prepare: vi.fn().mockReturnValue({ run: vi.fn().mockReturnValue({ changes: 0 }), get: vi.fn(), all: vi.fn().mockReturnValue([]) }),
+    };
+  }
+
   async listTasks(): Promise<Task[]> {
     return [this.task];
   }
