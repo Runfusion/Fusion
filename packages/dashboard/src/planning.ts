@@ -650,8 +650,15 @@ async function initializeAgent(session: Session, rootDir: string): Promise<void>
   }
 }
 
+/** Max number of retry attempts when AI returns unparseable output */
+const MAX_PARSE_RETRIES = 1;
+
 /**
  * Continue the AI conversation with a user message.
+ *
+ * Includes a bounded recovery path: if the AI response cannot be parsed,
+ * one retry attempt is made with a reformat prompt before emitting a
+ * terminal session error.
  */
 async function continueAgentConversation(session: Session, message: string): Promise<void> {
   if (!session.agent) {
@@ -688,8 +695,72 @@ async function continueAgentConversation(session: Session, message: string): Pro
       }
     }
 
-    // Parse the JSON response
-    const parsed = parseAgentResponse(responseText);
+    // Parse the JSON response with retry
+    let parsed: PlanningResponse | undefined;
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= MAX_PARSE_RETRIES; attempt++) {
+      try {
+        parsed = parseAgentResponse(responseText);
+        break; // success
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        
+        if (attempt < MAX_PARSE_RETRIES) {
+          // Retry: ask the AI to reformat as clean JSON
+          console.warn(
+            `[planning] Parse attempt ${attempt + 1} failed for session ${session.id}, requesting reformat`
+          );
+          try {
+            session.thinkingOutput = "";
+            await session.agent.session.prompt(
+              "Your previous response could not be parsed as JSON. " +
+              'Please respond with ONLY a valid JSON object: either {"type":"question","data":{...}} ' +
+              'or {"type":"complete","data":{...}}. No markdown, no explanation, just the JSON.'
+            );
+            
+            // Get the new response text
+            const retryMessage = (session.agent.session.state.messages as AgentMessage[])
+              .filter((m: AgentMessage) => m.role === "assistant")
+              .pop();
+            
+            let retryText = session.thinkingOutput;
+            if (retryMessage?.content) {
+              if (typeof retryMessage.content === "string") {
+                retryText = retryMessage.content;
+              } else if (Array.isArray(retryMessage.content)) {
+                retryText = retryMessage.content
+                  .filter((c: { type: string; text: string }): c is { type: "text"; text: string } => c.type === "text")
+                  .map((c: { type: string; text: string }) => c.text)
+                  .join("");
+              }
+            }
+            responseText = retryText;
+          } catch (retryErr) {
+            // Retry prompt itself failed — give up
+            console.error(
+              `[planning] Retry prompt failed for session ${session.id}:`,
+              retryErr
+            );
+            break;
+          }
+        }
+      }
+    }
+
+    if (!parsed) {
+      // All attempts exhausted — emit actionable error
+      const errorMsg = lastError?.message || "Failed to parse AI response";
+      console.error(
+        `[planning] All parse attempts exhausted for session ${session.id}:`,
+        errorMsg
+      );
+      planningStreamManager.broadcast(session.id, {
+        type: "error",
+        data: `${errorMsg} You can try responding again or start a new planning session.`,
+      });
+      return;
+    }
 
     if (parsed.type === "question") {
       session.currentQuestion = parsed.data;
@@ -718,32 +789,190 @@ async function continueAgentConversation(session: Session, message: string): Pro
 }
 
 /**
- * Parse agent response JSON, with error handling.
+ * Extract the best JSON candidate from AI response text.
+ *
+ * Handles:
+ * - Markdown-wrapped JSON (```json ... ```)
+ * - JSON embedded in leading/trailing prose
+ * - Multiple JSON objects (picks the largest balanced one)
+ *
+ * Returns the extracted JSON string or null if nothing usable is found.
  */
-function parseAgentResponse(text: string): PlanningResponse {
-  // Try to extract JSON from the response (AI might wrap in markdown code blocks)
-  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || 
-                    text.match(/\{[\s\S]*\}/);
-  
-  const jsonText = jsonMatch ? jsonMatch[1] || jsonMatch[0] : text;
-  
-  try {
-    const parsed = JSON.parse(jsonText.trim());
-    
-    // Validate structure
-    if (parsed.type === "question" && parsed.data) {
-      return parsed as PlanningResponse;
-    }
-    if (parsed.type === "complete" && parsed.data) {
-      return parsed as PlanningResponse;
-    }
-    
-    // If structure is invalid, treat as error
-    throw new Error("Invalid response structure from AI");
-  } catch (err) {
-    console.error("[planning] Failed to parse agent response:", text);
-    throw new Error(`Failed to parse AI response: ${err instanceof Error ? err.message : "Unknown error"}`);
+function extractJsonCandidate(text: string): string | null {
+  if (!text || !text.trim()) return null;
+
+  // 1. Try markdown code blocks first (most reliable)
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (codeBlockMatch?.[1]) {
+    const candidate = codeBlockMatch[1].trim();
+    if (candidate.startsWith("{")) return candidate;
   }
+
+  // 2. Find all top-level brace-delimited objects using balanced brace counting
+  const candidates: Array<{ start: number; end: number; text: string }> = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "{") {
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      for (let j = i; j < text.length; j++) {
+        const ch = text[j];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escape = true;
+          continue;
+        }
+        if (ch === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (inString) continue;
+        if (ch === "{") depth++;
+        if (ch === "}") depth--;
+        if (depth === 0) {
+          const candidate = text.slice(i, j + 1).trim();
+          // Only accept candidates that parse as valid JSON
+          try {
+            JSON.parse(candidate);
+            candidates.push({ start: i, end: j, text: candidate });
+          } catch {
+            // Not valid JSON, skip
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  // Pick the largest valid candidate (most likely the full response)
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => b.text.length - a.text.length);
+    return candidates[0].text;
+  }
+
+  // 3. Last resort: try the full trimmed text
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) return trimmed;
+
+  return null;
+}
+
+/**
+ * Attempt to repair common JSON issues:
+ * - Truncated JSON (missing closing braces)
+ * - Trailing commas before closing braces
+ * - Missing closing quotes
+ *
+ * Returns the repaired string, or the original if no repair was possible.
+ */
+function repairJson(text: string): string {
+  let repaired = text;
+
+  // Fix trailing commas before } or ]
+  repaired = repaired.replace(/,\s*([}\]])/g, "$1");
+
+  // Count open/close braces and brackets
+  let openBraces = 0;
+  let openBrackets = 0;
+  let inString = false;
+  let escape = false;
+  for (const ch of repaired) {
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") openBraces++;
+    if (ch === "}") openBraces--;
+    if (ch === "[") openBrackets++;
+    if (ch === "]") openBrackets--;
+  }
+
+  // If we're in an unclosed string, close it
+  if (inString) {
+    repaired += '"';
+  }
+
+  // Re-count after potential string fix
+  openBraces = 0;
+  openBrackets = 0;
+  inString = false;
+  escape = false;
+  for (const ch of repaired) {
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") openBraces++;
+    if (ch === "}") openBraces--;
+    if (ch === "[") openBrackets++;
+    if (ch === "]") openBrackets--;
+  }
+
+  // Close unclosed brackets and braces
+  repaired += "]".repeat(Math.max(0, openBrackets));
+  repaired += "}".repeat(Math.max(0, openBraces));
+
+  return repaired;
+}
+
+/**
+ * Parse agent response JSON with robust extraction and recovery.
+ *
+ * Strategy:
+ * 1. Extract JSON candidate from text (handles markdown wrapping, prose)
+ * 2. Try parsing directly
+ * 3. If parse fails, attempt repair (truncated JSON, trailing commas)
+ * 4. Validate the resulting structure
+ */
+export function parseAgentResponse(text: string): PlanningResponse {
+  const candidate = extractJsonCandidate(text);
+
+  if (!candidate) {
+    console.error("[planning] No JSON candidate found in agent response:", text.slice(0, 500));
+    throw new Error("AI returned no valid JSON. Please try again.");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    // Attempt repair for truncated/malformed JSON
+    try {
+      const repaired = repairJson(candidate);
+      parsed = JSON.parse(repaired);
+    } catch (repairErr) {
+      console.error(
+        "[planning] Failed to parse agent response (repair also failed):",
+        candidate.slice(0, 500)
+      );
+      throw new Error(
+        `Failed to parse AI response: ${repairErr instanceof Error ? repairErr.message : "Unknown error"}. Please try again.`
+      );
+    }
+  }
+
+  // Validate structure
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "type" in parsed &&
+    "data" in parsed
+  ) {
+    const typed = parsed as { type: string; data: unknown };
+    if (
+      (typed.type === "question" || typed.type === "complete") &&
+      typed.data !== null &&
+      typed.data !== undefined
+    ) {
+      return parsed as PlanningResponse;
+    }
+  }
+
+  console.error("[planning] Invalid response structure from AI:", JSON.stringify(parsed).slice(0, 500));
+  throw new Error("AI returned an invalid response structure. Please try again.");
 }
 
 /**

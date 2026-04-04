@@ -25,6 +25,9 @@ AI-guided interactive planning for creating well-specified tasks from high-level
 **Features**:
 - **Rate Limiting**: Maximum 5 planning sessions per hour per IP
 - **Session Persistence**: 30-minute TTL with automatic cleanup
+- **Robust AI Response Parsing**: Handles malformed or partial AI output gracefully — extracts JSON from markdown code blocks, prose-surrounded responses, and truncated output. Automatically repairs common issues (missing closing braces, trailing commas) before retrying.
+- **Automatic Recovery**: When the AI returns unparseable output, the system makes one retry attempt prompting the AI for clean JSON before surfacing an actionable error to the user
+- **Actionable Errors**: If parsing fails after recovery, the error message includes guidance (e.g., "Please try again" or "start a new planning session") rather than raw JSON parse errors
 - **Progress Tracking**: Visual progress indicator showing question number
 - **Back Navigation**: Revisit previous answers during the session
 - **Example Suggestions**: Quick-start chips with common task templates

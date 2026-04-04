@@ -13,6 +13,7 @@ import {
   RateLimitError,
   SessionNotFoundError,
   InvalidSessionStateError,
+  parseAgentResponse,
 } from "./planning.js";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 
@@ -269,6 +270,106 @@ describe("planning module", () => {
 
       // Note: Session should be expired after cleanup runs
       // We can't directly verify as cleanup is async
+    });
+  });
+
+  describe("parseAgentResponse", () => {
+    it("parses clean JSON question response", () => {
+      const input = '{"type":"question","data":{"id":"q-1","type":"text","question":"What scope?"}}';
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("question");
+      if (result.type === "question") {
+        expect(result.data.id).toBe("q-1");
+        expect(result.data.question).toBe("What scope?");
+      }
+    });
+
+    it("parses clean JSON complete response", () => {
+      const input = '{"type":"complete","data":{"title":"My Task","description":"A task","suggestedSize":"M","suggestedDependencies":[],"keyDeliverables":["Code"]}}';
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("complete");
+      if (result.type === "complete") {
+        expect(result.data.title).toBe("My Task");
+      }
+    });
+
+    it("extracts JSON from markdown code block", () => {
+      const input = 'Here is the question:\n```json\n{"type":"question","data":{"id":"q-1","type":"text","question":"What scope?"}}\n```\nLet me know!';
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("question");
+    });
+
+    it("extracts JSON from markdown code block without language tag", () => {
+      const input = 'Some preamble\n```\n{"type":"question","data":{"id":"q-1","type":"text","question":"Hello?"}}\n```\nPostamble';
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("question");
+    });
+
+    it("extracts JSON surrounded by prose", () => {
+      const input = 'I think the best question is:\n{"type":"question","data":{"id":"q-1","type":"text","question":"What is the scope?"}}\nThat should help clarify.';
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("question");
+    });
+
+    it("repairs truncated JSON with missing closing braces", () => {
+      const input = '{"type":"question","data":{"id":"q-1","type":"text","question":"What scope?"';
+      // Missing closing "}} at the end — repairJson should add them
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("question");
+    });
+
+    it("repairs JSON with trailing comma", () => {
+      const input = '{"type":"question","data":{"id":"q-1","type":"text","question":"Scope?",},}';
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("question");
+    });
+
+    it("repairs truncated JSON causing Unexpected end of JSON input", () => {
+      // Simulate the exact error described in the issue:
+      // "Failed to parse AI response: Unexpected end of JSON input"
+      const input = '{"type":"question","data":{"id":"q-1","type":"text","question":"What is the overall';
+      // The string value is incomplete (missing closing quote and braces)
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("question");
+      if (result.type === "question") {
+        expect(result.data.id).toBe("q-1");
+      }
+    });
+
+    it("throws with actionable error for non-JSON text", () => {
+      const input = "I'm not sure what to ask about this project.";
+      expect(() => parseAgentResponse(input)).toThrow("no valid JSON");
+    });
+
+    it("throws with actionable error for invalid structure", () => {
+      const input = '{"type":"unknown","data":null}';
+      expect(() => parseAgentResponse(input)).toThrow("invalid response structure");
+    });
+
+    it("throws with actionable error for missing data field", () => {
+      const input = '{"type":"question"}';
+      expect(() => parseAgentResponse(input)).toThrow("invalid response structure");
+    });
+
+    it("handles JSON embedded inside a longer text with multiple braces", () => {
+      const input =
+        "Here's my analysis:\n" +
+        "Some text with {nested} braces that aren't JSON\n" +
+        '{"type":"complete","data":{"title":"Auth System","description":"Build auth","suggestedSize":"M","suggestedDependencies":[],"keyDeliverables":["Login"]}}' +
+        "\nThat should work!";
+
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("complete");
+    });
+
+    it("picks the largest valid JSON object when multiple exist", () => {
+      // Two valid JSON objects — the larger (complete) one should win
+      const input =
+        '{"type":"question","data":{"id":"q-1","type":"text","question":"Hi?"}} ' +
+        'and then {"type":"complete","data":{"title":"Full Task","description":"Do everything","suggestedSize":"L","suggestedDependencies":[],"keyDeliverables":["All the things"]}}';
+
+      const result = parseAgentResponse(input);
+      expect(result.type).toBe("complete");
     });
   });
 });
