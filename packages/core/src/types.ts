@@ -632,6 +632,11 @@ export interface GlobalSettings {
    *  the OpenRouter API at startup so the model picker shows all available
    *  OpenRouter models (not just the static built-in list). Default: true. */
   openrouterModelSync?: boolean;
+  /** When true, indicates the user has completed the AI model onboarding flow
+   *  (connected at least one provider and selected a default model). When
+   *  false/undefined, the dashboard will auto-open the onboarding modal.
+   *  Also set to true when the user explicitly dismisses onboarding. */
+  modelOnboardingComplete?: boolean;
 }
 
 /**
@@ -847,6 +852,7 @@ export const DEFAULT_GLOBAL_SETTINGS: Required<Pick<GlobalSettings, "themeMode" 
   ntfyEvents: ["in-review", "merged", "failed"],
   ntfyDashboardHost: undefined,
   openrouterModelSync: true,
+  modelOnboardingComplete: undefined,
 };
 
 /** Default values for project-level settings. */
@@ -925,6 +931,7 @@ export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<keyof GlobalSettings> = [
   "ntfyDashboardHost",
   "defaultProjectId",
   "openrouterModelSync",
+  "modelOnboardingComplete",
 ] as const;
 
 /** Keys that belong to the project settings scope. */

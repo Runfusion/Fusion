@@ -55,6 +55,14 @@ export interface AuthStorageLike {
     },
   ): Promise<void>;
   logout(provider: string): void;
+  /** Get providers that accept API keys (non-OAuth). Returns provider id and name. */
+  getApiKeyProviders?(): Array<{ id: string; name: string }>;
+  /** Save an API key for a provider. Creates or overwrites the existing key. */
+  setApiKey?(providerId: string, apiKey: string): void;
+  /** Remove the stored API key for a provider. No-op if not set. */
+  clearApiKey?(providerId: string): void;
+  /** Check if a provider has an API key configured. */
+  hasApiKey?(providerId: string): boolean;
 }
 
 const upload = multer({
@@ -7576,19 +7584,37 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
 
   /**
    * GET /api/auth/status
-   * Returns list of OAuth providers with their authentication status.
-   * Response: { providers: [{ id: string, name: string, authenticated: boolean }] }
+   * Returns list of all providers with their authentication status and type.
+   * Includes both OAuth-backed and API-key-backed providers.
+   * Response: { providers: [{ id, name, authenticated, type }] }
    */
   router.get("/auth/status", (_req, res) => {
     try {
       const storage = getAuthStorage();
       storage.reload();
       const oauthProviders = storage.getOAuthProviders();
-      const providers = oauthProviders.map((p) => ({
+      const providers: { id: string; name: string; authenticated: boolean; type: "oauth" | "api_key" }[] = oauthProviders.map((p) => ({
         id: p.id,
         name: p.name,
         authenticated: storage.hasAuth(p.id),
+        type: "oauth" as const,
       }));
+
+      // Include API-key-backed providers if supported
+      if (storage.getApiKeyProviders) {
+        const apiKeyProviders = storage.getApiKeyProviders();
+        for (const p of apiKeyProviders) {
+          // Skip if already listed as an OAuth provider (avoid duplicates)
+          if (providers.some((existing) => existing.id === p.id)) continue;
+          providers.push({
+            id: p.id,
+            name: p.name,
+            authenticated: storage.hasApiKey ? storage.hasApiKey(p.id) : false,
+            type: "api_key" as const,
+          });
+        }
+      }
+
       res.json({ providers });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -7698,6 +7724,77 @@ function registerAuthRoutes(router: Router, authStorage?: AuthStorageLike): void
 
       const storage = getAuthStorage();
       storage.logout(provider);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/auth/api-key
+   * Save an API key for an API-key-backed provider.
+   * Body: { provider: string, apiKey: string }
+   * Response: { success: true }
+   *
+   * Validates the provider exists, is API-key-backed, and the key is non-empty.
+   * Never returns the key in any response.
+   */
+  router.post("/auth/api-key", (req, res) => {
+    try {
+      const { provider, apiKey } = req.body;
+      if (!provider || typeof provider !== "string") {
+        res.status(400).json({ error: "provider is required" });
+        return;
+      }
+      if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
+        res.status(400).json({ error: "apiKey is required and must be a non-empty string" });
+        return;
+      }
+
+      const storage = getAuthStorage();
+
+      // Check that the storage supports API key management
+      if (!storage.setApiKey) {
+        res.status(400).json({ error: "API key management is not supported" });
+        return;
+      }
+
+      // Validate the provider is an API-key-backed provider
+      const apiKeyProviders = storage.getApiKeyProviders?.() ?? [];
+      const found = apiKeyProviders.find((p) => p.id === provider);
+      if (!found) {
+        res.status(400).json({ error: `Unknown API key provider: ${provider}` });
+        return;
+      }
+
+      storage.setApiKey(provider, apiKey.trim());
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/auth/api-key
+   * Remove an API key for a provider.
+   * Body: { provider: string }
+   * Response: { success: true }
+   */
+  router.delete("/auth/api-key", (req, res) => {
+    try {
+      const { provider } = req.body;
+      if (!provider || typeof provider !== "string") {
+        res.status(400).json({ error: "provider is required" });
+        return;
+      }
+
+      const storage = getAuthStorage();
+      if (!storage.clearApiKey) {
+        res.status(400).json({ error: "API key management is not supported" });
+        return;
+      }
+
+      storage.clearApiKey(provider);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

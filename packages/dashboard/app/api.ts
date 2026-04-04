@@ -408,6 +408,8 @@ export interface AuthProvider {
   id: string;
   name: string;
   authenticated: boolean;
+  /** Whether this provider uses OAuth or API key authentication */
+  type?: "oauth" | "api_key";
 }
 
 /** Fetch authentication status for all OAuth providers */
@@ -427,6 +429,22 @@ export function loginProvider(provider: string): Promise<{ url: string; instruct
 export function logoutProvider(provider: string): Promise<{ success: boolean }> {
   return api<{ success: boolean }>("/auth/logout", {
     method: "POST",
+    body: JSON.stringify({ provider }),
+  });
+}
+
+/** Save an API key for an API-key-backed provider. */
+export function saveApiKey(provider: string, apiKey: string): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>("/auth/api-key", {
+    method: "POST",
+    body: JSON.stringify({ provider, apiKey }),
+  });
+}
+
+/** Remove an API key for an API-key-backed provider. */
+export function clearApiKey(provider: string): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>("/auth/api-key", {
+    method: "DELETE",
     body: JSON.stringify({ provider }),
   });
 }

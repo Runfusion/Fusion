@@ -1689,6 +1689,13 @@ function createMockAuthStorage(overrides: Partial<AuthStorageLike> = {}): AuthSt
       return Promise.resolve();
     }),
     logout: vi.fn(),
+    getApiKeyProviders: vi.fn().mockReturnValue([
+      { id: "openrouter", name: "OpenRouter" },
+      { id: "kimi-coding", name: "Kimi" },
+    ]),
+    hasApiKey: vi.fn().mockReturnValue(false),
+    setApiKey: vi.fn(),
+    clearApiKey: vi.fn(),
     ...overrides,
   } as unknown as AuthStorageLike;
 }
@@ -1716,7 +1723,9 @@ describe("GET /auth/status", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.providers).toEqual([
-      { id: "anthropic", name: "Anthropic", authenticated: true },
+      { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+      { id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" },
+      { id: "kimi-coding", name: "Kimi", authenticated: false, type: "api_key" },
     ]);
     expect(authStorage.reload).toHaveBeenCalled();
   });
@@ -1728,6 +1737,19 @@ describe("GET /auth/status", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.providers[0].authenticated).toBe(false);
+  });
+
+  it("returns authenticated true for API-key provider when hasApiKey is true", async () => {
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (authStorage.hasApiKey as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+    const res = await GET(buildApp(), "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const openrouter = res.body.providers.find((p: any) => p.id === "openrouter");
+    expect(openrouter).toBeDefined();
+    expect(openrouter.authenticated).toBe(true);
+    expect(openrouter.type).toBe("api_key");
   });
 
   it("returns 500 on error", async () => {
@@ -1846,6 +1868,168 @@ describe("POST /auth/logout", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("logout failed");
+  });
+});
+
+describe("POST /auth/api-key", () => {
+  let store: TaskStore;
+  let authStorage: AuthStorageLike;
+
+  beforeEach(() => {
+    store = createMockStore();
+    authStorage = createMockAuthStorage();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { authStorage }));
+    return app;
+  }
+
+  it("saves an API key for a valid provider", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "openrouter",
+      apiKey: "sk-or-v1-test-key",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(authStorage.setApiKey).toHaveBeenCalledWith("openrouter", "sk-or-v1-test-key");
+  });
+
+  it("trims whitespace from API key", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "openrouter",
+      apiKey: "  sk-or-v1-test-key  ",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(authStorage.setApiKey).toHaveBeenCalledWith("openrouter", "sk-or-v1-test-key");
+  });
+
+  it("returns 400 when provider is missing", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/api-key", JSON.stringify({
+      apiKey: "sk-test",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("provider is required");
+  });
+
+  it("returns 400 when apiKey is missing", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "openrouter",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("apiKey is required");
+  });
+
+  it("returns 400 when apiKey is empty", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "openrouter",
+      apiKey: "   ",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("apiKey is required");
+  });
+
+  it("returns 400 for unknown provider", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "unknown-provider",
+      apiKey: "sk-test",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Unknown API key provider");
+  });
+
+  it("returns 400 when storage does not support API keys", async () => {
+    const storageWithoutApiKeys = createMockAuthStorage({
+      setApiKey: undefined,
+      getApiKeyProviders: undefined,
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { authStorage: storageWithoutApiKeys }));
+
+    const res = await REQUEST(app, "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "openrouter",
+      apiKey: "sk-test",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("not supported");
+  });
+
+  it("returns 500 on storage error", async () => {
+    (authStorage.setApiKey as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "openrouter",
+      apiKey: "sk-test",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("disk full");
+  });
+});
+
+describe("DELETE /auth/api-key", () => {
+  let store: TaskStore;
+  let authStorage: AuthStorageLike;
+
+  beforeEach(() => {
+    store = createMockStore();
+    authStorage = createMockAuthStorage();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { authStorage }));
+    return app;
+  }
+
+  it("clears an API key for a provider", async () => {
+    const res = await REQUEST(buildApp(), "DELETE", "/api/auth/api-key", JSON.stringify({
+      provider: "openrouter",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(authStorage.clearApiKey).toHaveBeenCalledWith("openrouter");
+  });
+
+  it("returns 400 when provider is missing", async () => {
+    const res = await REQUEST(buildApp(), "DELETE", "/api/auth/api-key", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("provider is required");
+  });
+
+  it("returns 400 when storage does not support API keys", async () => {
+    const storageWithoutApiKeys = createMockAuthStorage({
+      clearApiKey: undefined,
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { authStorage: storageWithoutApiKeys }));
+
+    const res = await REQUEST(app, "DELETE", "/api/auth/api-key", JSON.stringify({
+      provider: "openrouter",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("not supported");
   });
 });
 
@@ -5846,6 +6030,34 @@ describe("PUT /settings/global", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toContain("Write failed");
+  });
+
+  it("persists modelOnboardingComplete flag", async () => {
+    const updated = { modelOnboardingComplete: true };
+    (store.updateGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updated);
+
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings/global",
+      JSON.stringify(updated),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith({ modelOnboardingComplete: true });
+    expect(res.body.modelOnboardingComplete).toBe(true);
+  });
+
+  it("GET /settings/global returns modelOnboardingComplete value", async () => {
+    const mockGlobalStore = createMockGlobalSettingsStore();
+    mockGlobalStore.getSettings.mockResolvedValue({ modelOnboardingComplete: true, themeMode: "dark" });
+    (store.getGlobalSettingsStore as ReturnType<typeof vi.fn>).mockReturnValue(mockGlobalStore);
+
+    const res = await GET(buildApp(), "/api/settings/global");
+
+    expect(res.status).toBe(200);
+    expect(res.body.modelOnboardingComplete).toBe(true);
   });
 });
 
