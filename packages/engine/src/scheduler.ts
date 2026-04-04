@@ -326,7 +326,7 @@ export class Scheduler {
     for (const depId of task.dependencies) {
       const dep = allTasks.find((t) => t.id === depId);
       if (dep && dep.column === "in-review" && dep.worktree) {
-        return `fusion/${dep.id.toLowerCase()}`;
+        return dep.branch || `fusion/${dep.id.toLowerCase()}`;
       }
     }
 
@@ -334,7 +334,7 @@ export class Scheduler {
     if (task.blockedBy) {
       const blocker = allTasks.find((t) => t.id === task.blockedBy);
       if (blocker && blocker.column === "in-review" && blocker.worktree) {
-        return `kb/${blocker.id.toLowerCase()}`;
+        return blocker.branch || `fusion/${blocker.id.toLowerCase()}`;
       }
     }
 

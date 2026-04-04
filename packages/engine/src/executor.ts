@@ -7,7 +7,7 @@ import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
-import type { ToolDefinition, AgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
@@ -431,7 +431,7 @@ export class TaskExecutor {
       }
 
       // Create or reuse worktree — try pool first when recycling is enabled
-      const branchName = `kb/${task.id.toLowerCase()}`;
+      const branchName = `fusion/${task.id.toLowerCase()}`;
       // Use generateWorktreeName for human-friendly directory names (adjective-noun pattern)
       // instead of task.id, so worktrees are named like ".worktrees/swift-falcon"
       let isResume = existsSync(worktreePath);
@@ -563,6 +563,7 @@ export class TaskExecutor {
       const codeReviewVerdicts = new Map<number, ReviewVerdict>();
 
       let taskDone = false;
+      let wasPaused = false;
       // Mutable ref — populated after createKbAgent, tools access lazily via closure
       const sessionRef: { current: AgentSession | null } = { current: null };
       const stepCheckpoints = new Map<number, string>();
@@ -604,7 +605,15 @@ export class TaskExecutor {
         const executorFallbackProvider = settings.fallbackProvider;
         const executorFallbackModelId = settings.fallbackModelId;
 
-        let { session } = await createKbAgent({
+        // Determine whether we're resuming a previous session (pause/resume)
+        // or starting fresh. Use file-based sessions so conversation state
+        // persists across pause/unpause cycles.
+        const isResuming = !!task.sessionFile && existsSync(task.sessionFile);
+        const sessionManager = isResuming
+          ? SessionManager.open(task.sessionFile!)
+          : SessionManager.create(worktreePath);
+
+        let { session, sessionFile } = await createKbAgent({
           cwd: worktreePath,
           systemPrompt: EXECUTOR_SYSTEM_PROMPT,
           tools: "coding",
@@ -618,10 +627,20 @@ export class TaskExecutor {
           fallbackProvider: executorFallbackProvider,
           fallbackModelId: executorFallbackModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,
+          sessionManager,
         });
 
-        executorLog.log(`${task.id}: using model ${describeModel(session)}`);
-        await this.store.logEntry(task.id, `Executor using model: ${describeModel(session)}`);
+        if (isResuming) {
+          executorLog.log(`${task.id}: resumed session from ${task.sessionFile}`);
+          await this.store.logEntry(task.id, `Resumed agent session after unpause (model: ${describeModel(session)})`);
+        } else {
+          executorLog.log(`${task.id}: using model ${describeModel(session)}`);
+          await this.store.logEntry(task.id, `Executor using model: ${describeModel(session)}`);
+          // Persist session file path so pause/resume can reopen it
+          if (sessionFile) {
+            await this.store.updateTask(task.id, { sessionFile });
+          }
+        }
 
         // Make session available to custom tools (task_update checkpoint capture, review_step rewind)
         sessionRef.current = session;
@@ -640,10 +659,21 @@ export class TaskExecutor {
         stuckDetector?.trackTask(task.id, session);
 
         try {
-          const agentPrompt = buildExecutionPrompt(detail, this.rootDir, settings);
           // Record activity on prompt start (heartbeat for stuck detection)
           stuckDetector?.recordActivity(task.id);
-          await promptWithFallback(session, agentPrompt);
+
+          if (isResuming) {
+            // Session already has full conversation history — just tell the
+            // agent it was paused and should pick up where it left off.
+            await promptWithFallback(session, [
+              "Your session was paused and has now been resumed.",
+              "Continue working on the task from where you left off.",
+              "Review the current state of your worktree and proceed with the next pending step.",
+            ].join("\n"));
+          } else {
+            const agentPrompt = buildExecutionPrompt(detail, this.rootDir, settings);
+            await promptWithFallback(session, agentPrompt);
+          }
 
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           // session.prompt() resolves normally even when retries are exhausted —
@@ -662,8 +692,9 @@ export class TaskExecutor {
           // prompt to resolve gracefully instead of throwing.
           if (this.pausedAborted.has(task.id)) {
             this.pausedAborted.delete(task.id);
+            wasPaused = true;
             executorLog.log(`${task.id} paused (graceful session exit) — moving to todo`);
-            await this.store.logEntry(task.id, "Execution paused — agent terminated, moved to todo");
+            await this.store.logEntry(task.id, "Execution paused — session preserved for resume, moved to todo");
             await this.store.moveTask(task.id, "todo");
             return;
           }
@@ -708,7 +739,7 @@ export class TaskExecutor {
             this.activeSessions.delete(task.id);
             session.dispose();
 
-            const { session: retrySession } = await createKbAgent({
+            const { session: retrySession, sessionFile: retrySessionFile } = await createKbAgent({
               cwd: worktreePath,
               systemPrompt: EXECUTOR_SYSTEM_PROMPT,
               tools: "coding",
@@ -722,7 +753,12 @@ export class TaskExecutor {
               fallbackProvider: executorFallbackProvider,
               fallbackModelId: executorFallbackModelId,
               defaultThinkingLevel: settings.defaultThinkingLevel,
+              sessionManager: SessionManager.create(worktreePath),
             });
+            // Update session file for the retry session (so pause/resume works)
+            if (retrySessionFile) {
+              this.store.updateTask(task.id, { sessionFile: retrySessionFile }).catch(() => {});
+            }
 
             // Reassign so finally{} disposes the correct session
             session = retrySession;
@@ -778,6 +814,13 @@ export class TaskExecutor {
           stuckDetector?.untrackTask(task.id);
           await agentLogger.flush();
           session.dispose();
+          // Clear session file when task completes or fails (not when paused —
+          // the file is preserved so unpause can resume the conversation).
+          // Check both the local flag (graceful exit) and the instance set
+          // (error path where dispose caused prompt to throw).
+          if (!wasPaused && !this.pausedAborted.has(task.id)) {
+            this.store.updateTask(task.id, { sessionFile: null }).catch(() => {});
+          }
         }
       };
 
@@ -1282,7 +1325,7 @@ export class TaskExecutor {
 
     // Delete the branch — use stored branch name if available, fall back to convention
     const task = await this.store.getTask(taskId);
-    const branch = task.branch || `kb/${taskId.toLowerCase()}`;
+    const branch = task.branch || `fusion/${taskId.toLowerCase()}`;
     try {
       execSync(`git branch -D "${branch}"`, { cwd: this.rootDir, stdio: "pipe" });
     } catch {

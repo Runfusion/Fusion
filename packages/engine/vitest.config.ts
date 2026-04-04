@@ -7,6 +7,7 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     maxWorkers,
     fileParallelism: true,
+    pool: "vmThreads",
     coverage: {
       enabled: false,
       reporter: ["text", "html", "json"],

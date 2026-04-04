@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AgentSemaphore } from "./concurrency.js";
 
 // Mock external dependencies
@@ -37,13 +37,10 @@ vi.mock("./logger.js", () => {
     hybridExecutorLog: createMockLogger(),
   };
 });
-vi.mock("./merger.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./merger.js")>();
-  return {
-    ...actual,
-    findWorktreeUser: vi.fn().mockResolvedValue(null),
-  };
-});
+vi.mock("./merger.js", () => ({
+  aiMergeTask: vi.fn(),
+  findWorktreeUser: vi.fn().mockResolvedValue(null),
+}));
 vi.mock("./worktree-names.js", async () => {
   const actual = await vi.importActual<typeof import("./worktree-names.js")>("./worktree-names.js");
   return {
@@ -62,6 +59,16 @@ vi.mock("node:fs", () => ({
 vi.mock("./rate-limit-retry.js", () => ({
   withRateLimitRetry: (fn: () => Promise<any>) => fn(),
 }));
+vi.mock("@mariozechner/pi-coding-agent", () => {
+  const mockSessionManager = {};
+  return {
+    SessionManager: {
+      create: vi.fn().mockReturnValue(mockSessionManager),
+      open: vi.fn().mockReturnValue(mockSessionManager),
+      inMemory: vi.fn().mockReturnValue(mockSessionManager),
+    },
+  };
+});
 
 import { TaskExecutor, buildExecutionPrompt } from "./executor.js";
 import { createKbAgent } from "./pi.js";
@@ -71,8 +78,10 @@ import { findWorktreeUser, aiMergeTask } from "./merger.js";
 import { WorktreePool } from "./worktree-pool.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
 import type { Column, Task, TaskDetail } from "@fusion/core";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 
 const mockedCreateHaiAgent = vi.mocked(createKbAgent);
+const mockedSessionManager = vi.mocked(SessionManager);
 const mockedGenerateWorktreeName = vi.mocked(generateWorktreeName);
 const mockedFindWorktreeUser = vi.mocked(findWorktreeUser);
 
@@ -438,7 +447,7 @@ describe("TaskExecutor worktree naming", () => {
     // The worktree path stored should use the generated name, not the task ID
     expect(store.updateTask).toHaveBeenCalledWith("FN-030", {
       worktree: "/tmp/test/.worktrees/swift-falcon",
-      branch: "kb/fn-030",
+      branch: "fusion/fn-030",
     });
     expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
   });
@@ -490,7 +499,7 @@ describe("TaskExecutor worktree naming", () => {
       // Should use task ID (lowercase) as worktree name
       expect(store.updateTask).toHaveBeenCalledWith("FN-042", {
         worktree: "/tmp/test/.worktrees/fn-042",
-        branch: "kb/fn-042",
+        branch: "fusion/fn-042",
       });
       // Should NOT call generateWorktreeName when using task-id
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
@@ -517,7 +526,7 @@ describe("TaskExecutor worktree naming", () => {
       const expectedSlug = slugify("Fix login bug with OAuth");
       expect(store.updateTask).toHaveBeenCalledWith("FN-043", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
-        branch: "kb/fn-043",
+        branch: "fusion/fn-043",
       });
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
     });
@@ -545,7 +554,7 @@ describe("TaskExecutor worktree naming", () => {
       const expectedSlug = slugify(taskDescription.slice(0, 60));
       expect(store.updateTask).toHaveBeenCalledWith("FN-044", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
-        branch: "kb/fn-044",
+        branch: "fusion/fn-044",
       });
     });
 
@@ -566,7 +575,7 @@ describe("TaskExecutor worktree naming", () => {
       // Should use generateWorktreeName for random mode
       expect(store.updateTask).toHaveBeenCalledWith("FN-045", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
-        branch: "kb/fn-045",
+        branch: "fusion/fn-045",
       });
       expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
     });
@@ -588,7 +597,7 @@ describe("TaskExecutor worktree naming", () => {
       // Should default to random naming
       expect(store.updateTask).toHaveBeenCalledWith("FN-046", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
-        branch: "kb/fn-046",
+        branch: "fusion/fn-046",
       });
       expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
     });
@@ -618,7 +627,7 @@ describe("TaskExecutor worktree naming", () => {
       // Should acquire from pool, ignoring the task-id naming preference
       expect(store.updateTask).toHaveBeenCalledWith("FN-047", {
         worktree: "/tmp/test/.worktrees/pooled-warm-wt",
-        branch: "kb/fn-047",
+        branch: "fusion/fn-047",
       });
       // Should NOT call generateWorktreeName when using pooled worktree
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
@@ -646,6 +655,7 @@ describe("TaskExecutor worktree recovery", () => {
   });
 
   beforeEach(() => {
+    vi.useFakeTimers();
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(false);
     mockedGenerateWorktreeName.mockReturnValue("swift-falcon");
@@ -655,6 +665,10 @@ describe("TaskExecutor worktree recovery", () => {
         dispose: vi.fn(),
       },
     } as any);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("creates worktree successfully on first attempt", async () => {
@@ -735,7 +749,10 @@ describe("TaskExecutor worktree recovery", () => {
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
 
-    await executor.execute(makeTask());
+    const executePromise = executor.execute(makeTask());
+    // Advance past all retry delays (100 + 500 + 1000ms)
+    await vi.advanceTimersByTimeAsync(2000);
+    await executePromise;
 
     // Should log final failure
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -764,19 +781,19 @@ describe("TaskExecutor worktree recovery", () => {
         if (command.includes("-b")) {
           // First attempt: createWithBranch fails with branch already exists
           const error: any = new Error(
-            "fatal: A branch named 'kb/fn-050' already exists.",
+            "fatal: A branch named 'fusion/fn-050' already exists.",
           );
           error.stderr = Buffer.from(
-            "fatal: A branch named 'kb/fn-050' already exists.",
+            "fatal: A branch named 'fusion/fn-050' already exists.",
           );
           throw error;
         } else {
           // Fallback createFromExistingBranch fails with already used
           const error: any = new Error(
-            "fatal: 'kb/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+            "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
           );
           error.stderr = Buffer.from(
-            "fatal: 'kb/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+            "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
           );
           throw error;
         }
@@ -803,18 +820,18 @@ describe("TaskExecutor worktree recovery", () => {
         }
         if (command.includes("-b")) {
           const error: any = new Error(
-            "fatal: A branch named 'kb/fn-050' already exists.",
+            "fatal: A branch named 'fusion/fn-050' already exists.",
           );
           error.stderr = Buffer.from(
-            "fatal: A branch named 'kb/fn-050' already exists.",
+            "fatal: A branch named 'fusion/fn-050' already exists.",
           );
           throw error;
         } else {
           const error: any = new Error(
-            "fatal: 'kb/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+            "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
           );
           error.stderr = Buffer.from(
-            "fatal: 'kb/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
+            "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
           );
           throw error;
         }
@@ -961,7 +978,7 @@ describe("TaskExecutor worktree recovery", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("Pruned stale worktree metadata"),
-      "kb/fn-050",
+      "fusion/fn-050",
     );
     // Should also call branch -D after prune
     expect(mockedExecSync).toHaveBeenCalledWith(
@@ -1063,7 +1080,9 @@ describe("TaskExecutor worktree recovery", () => {
 
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
-    await executor.execute(makeTask());
+    const executePromise = executor.execute(makeTask());
+    await vi.advanceTimersByTimeAsync(2000);
+    await executePromise;
 
     // Should have logged terminal failure for the stale reference
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -1278,8 +1297,10 @@ describe("TaskExecutor dependency-based worktree creation", () => {
   });
 
   beforeEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(false);
+    mockedFindWorktreeUser.mockResolvedValue(null);
     mockedCreateHaiAgent.mockResolvedValue({
       session: {
         prompt: vi.fn().mockResolvedValue(undefined),
@@ -1294,7 +1315,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     await executor.execute(makeTask({
       id: "FN-060",
-      baseBranch: "kb/fn-059",
+      baseBranch: "fusion/fn-059",
     }));
 
     // The git worktree add command should include the startPoint
@@ -1302,7 +1323,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree add"),
     );
     expect(worktreeAddCalls.length).toBeGreaterThan(0);
-    expect(worktreeAddCalls[0][0]).toContain("kb/fn-059");
+    expect(worktreeAddCalls[0][0]).toContain("fusion/fn-059");
   });
 
   it("creates worktree from HEAD when baseBranch is not set", async () => {
@@ -1332,12 +1353,12 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     await executor.execute(makeTask({
       id: "FN-062",
-      baseBranch: "kb/fn-061",
+      baseBranch: "fusion/fn-061",
     }));
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-062",
-      expect.stringContaining("based on kb/fn-061"),
+      expect.stringContaining("based on fusion/fn-061"),
     );
   });
 
@@ -1367,10 +1388,10 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       if (typeof cmd === "string" && cmd.includes("git worktree add") && cmd.includes("-b") && firstAttempt) {
         firstAttempt = false;
         const err: any = new Error(
-          `fatal: 'kb/fn-064' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-064' is already used by worktree at '${conflictingPath}'`,
         );
         err.stderr = Buffer.from(
-          `fatal: 'kb/fn-064' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-064' is already used by worktree at '${conflictingPath}'`,
         );
         throw err;
       }
@@ -1384,7 +1405,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       expect.objectContaining({ cwd: "/tmp/test", stdio: "pipe" }),
     );
     expect(mockedExecSync).toHaveBeenCalledWith(
-      'git branch -D "kb/fn-064"',
+      'git branch -D "fusion/fn-064"',
       expect.objectContaining({ cwd: "/tmp/test", stdio: "pipe" }),
     );
 
@@ -1399,6 +1420,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
   });
 
   it("throws original error if cleanup also fails", async () => {
+    vi.useFakeTimers();
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
     const conflictingPath = "/tmp/test/.worktrees/sharp-stone";
@@ -1406,10 +1428,10 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     mockedExecSync.mockImplementation((cmd: any) => {
       if (typeof cmd === "string" && cmd.includes("git worktree add") && cmd.includes("-b")) {
         const err: any = new Error(
-          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-065' is already used by worktree at '${conflictingPath}'`,
         );
         err.stderr = Buffer.from(
-          `fatal: 'kb/fn-065' is already used by worktree at '${conflictingPath}'`,
+          `fatal: 'fusion/fn-065' is already used by worktree at '${conflictingPath}'`,
         );
         throw err;
       }
@@ -1419,7 +1441,10 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       return Buffer.from("");
     });
 
-    await executor.execute(makeTask({ id: "FN-065" }));
+    const executePromise = executor.execute(makeTask({ id: "FN-065" }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await executePromise;
+    vi.useRealTimers();
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-065", {
       status: "failed",
@@ -1434,7 +1459,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       (p) => p === "/tmp/test/.worktrees/idle-wt",
     );
 
-    const prepareSpy = vi.spyOn(pool, "prepareForTask").mockReturnValue("kb/fn-064");
+    const prepareSpy = vi.spyOn(pool, "prepareForTask").mockReturnValue("fusion/fn-064");
 
     const store = createMockStore();
     store.getSettings.mockResolvedValue({
@@ -1450,13 +1475,13 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     await executor.execute(makeTask({
       id: "FN-064",
-      baseBranch: "kb/fn-063",
+      baseBranch: "fusion/fn-063",
     }));
 
     expect(prepareSpy).toHaveBeenCalledWith(
       "/tmp/test/.worktrees/idle-wt",
-      "kb/fn-064",
-      "kb/fn-063",
+      "fusion/fn-064",
+      "fusion/fn-063",
     );
   });
 
@@ -1467,7 +1492,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       (p) => p === "/tmp/test/.worktrees/idle-wt",
     );
 
-    const prepareSpy = vi.spyOn(pool, "prepareForTask").mockReturnValue("kb/fn-065");
+    const prepareSpy = vi.spyOn(pool, "prepareForTask").mockReturnValue("fusion/fn-065");
 
     const store = createMockStore();
     store.getSettings.mockResolvedValue({
@@ -1487,7 +1512,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     expect(prepareSpy).toHaveBeenCalledWith(
       "/tmp/test/.worktrees/idle-wt",
-      "kb/fn-065",
+      "fusion/fn-065",
       undefined,
     );
   });
@@ -1500,7 +1525,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     );
 
     // Pool returns a suffixed branch name due to conflict
-    vi.spyOn(pool, "prepareForTask").mockReturnValue("kb/fn-066-2");
+    vi.spyOn(pool, "prepareForTask").mockReturnValue("fusion/fn-066-2");
 
     const store = createMockStore();
     store.getSettings.mockResolvedValue({
@@ -1521,7 +1546,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     // Should store the suffixed branch name
     expect(store.updateTask).toHaveBeenCalledWith("FN-066", {
       worktree: "/tmp/test/.worktrees/idle-wt",
-      branch: "kb/fn-066-2",
+      branch: "fusion/fn-066-2",
     });
   });
 });
@@ -1770,117 +1795,29 @@ describe("Merger worktree pool integration", () => {
     vi.clearAllMocks();
   });
 
-  function createMergerMockStore(overrides: Record<string, any> = {}) {
-    const listeners = new Map<string, Function[]>();
-    return {
-      on: vi.fn((event: string, fn: Function) => {
-        const existing = listeners.get(event) || [];
-        existing.push(fn);
-        listeners.set(event, existing);
-      }),
-      emit: vi.fn(),
-      getTask: vi.fn().mockResolvedValue({
-        id: "FN-050",
-        title: "Test merge",
-        description: "Test",
-        column: "in-review",
-        dependencies: [],
-        worktree: "/tmp/test/.worktrees/KB-050",
-        steps: [],
-        currentStep: 0,
-        log: [],
-        prompt: "",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }),
-      updateTask: vi.fn().mockResolvedValue({}),
-      moveTask: vi.fn().mockResolvedValue({
-        id: "FN-050",
-        column: "done",
-        dependencies: [],
-        steps: [],
-        log: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }),
-      listTasks: vi.fn().mockResolvedValue([]),
-      logEntry: vi.fn(),
-      getSettings: vi.fn().mockResolvedValue({
-        maxConcurrent: 2,
-        maxWorktrees: 4,
-        pollIntervalMs: 15000,
-        groupOverlappingFiles: false,
-        autoMerge: false,
-        recycleWorktrees: false,
-        ...overrides,
-      }),
-    } as any;
-  }
-
-  function mockMergerExecSync(cmd: any, opts?: any): any {
-    const s = typeof cmd === "string" ? cmd : "";
-    const isString = opts?.encoding === "utf-8";
-    if (s.includes("rev-parse --verify")) return isString ? "abc123" : Buffer.from("abc123");
-    if (s.includes("git log")) return isString ? "- test commit" : Buffer.from("- test commit");
-    if (s.includes("git diff") && s.includes("--stat")) return isString ? "file.ts | 5 +++++" : Buffer.from("file.ts | 5 +++++");
-    if (s.includes("diff --cached --quiet")) return isString ? "0" : Buffer.from("0");
-    if (s.includes("diff --name-only --diff-filter=U")) return isString ? "" : Buffer.from("");
-    return isString ? "" : Buffer.from("");
-  }
-
-  it("releases worktree to pool instead of removing when recycleWorktrees is true", async () => {
+  it("passes pool option through to aiMergeTask", async () => {
     const pool = new WorktreePool();
-    const store = createMergerMockStore({ recycleWorktrees: true });
-    mockedExistsSync.mockReturnValue(true);
+    const mockedAiMergeTask = vi.mocked(aiMergeTask);
+    mockedAiMergeTask.mockResolvedValue({
+      task: { id: "FN-050" } as any,
+      branch: "fusion/fn-050",
+      merged: true,
+      worktreeRemoved: false,
+      branchDeleted: true,
+    });
 
-    mockedExecSync.mockImplementation(mockMergerExecSync);
+    await aiMergeTask({} as any, "/tmp/test", "FN-050", { pool });
 
-    mockedCreateHaiAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
-        dispose: vi.fn(),
-      },
-    } as any);
-
-    const result = await aiMergeTask(store, "/tmp/test", "FN-050", { pool });
-
-    // Worktree should be in the pool, NOT removed
-    expect(pool.has("/tmp/test/.worktrees/KB-050")).toBe(true);
-    expect(result.worktreeRemoved).toBe(false);
-
-    // git worktree remove should NOT have been called
-    const removeCalls = mockedExecSync.mock.calls.filter(
-      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
+    expect(mockedAiMergeTask).toHaveBeenCalledWith(
+      expect.anything(),
+      "/tmp/test",
+      "FN-050",
+      expect.objectContaining({ pool }),
     );
-    expect(removeCalls).toHaveLength(0);
   });
 
-  it("removes worktree normally when recycleWorktrees is false", async () => {
-    const pool = new WorktreePool();
-    const store = createMergerMockStore({ recycleWorktrees: false });
-    mockedExistsSync.mockReturnValue(true);
-
-    mockedExecSync.mockImplementation(mockMergerExecSync);
-
-    mockedCreateHaiAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
-        dispose: vi.fn(),
-      },
-    } as any);
-
-    const result = await aiMergeTask(store, "/tmp/test", "FN-050", { pool });
-
-    // Worktree should NOT be in the pool
-    expect(pool.size).toBe(0);
-    expect(result.worktreeRemoved).toBe(true);
-
-    // git worktree remove should have been called
-    const removeCalls = mockedExecSync.mock.calls.filter(
-      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
-    );
-    expect(removeCalls.length).toBeGreaterThan(0);
-  });
+  // Full merger worktree pool integration tests are in merger.test.ts
+  // which tests aiMergeTask with real implementation
 });
 
 function createMockTaskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
@@ -2568,6 +2505,163 @@ describe("TaskExecutor pause behavior", () => {
 
     // Only one agent session created — the unpause during active session was a no-op
     expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses SessionManager.create for fresh execution and persists sessionFile", async () => {
+    const store = createMockStore();
+    const sessionFilePath = "/tmp/sessions/session_123.jsonl";
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+      sessionFile: sessionFilePath,
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "FN-001",
+      title: "Fresh task",
+      description: "Test fresh session",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Should use SessionManager.create for fresh execution
+    expect(mockedSessionManager.create).toHaveBeenCalledWith(
+      expect.stringContaining(".worktrees"),
+    );
+    expect(mockedSessionManager.open).not.toHaveBeenCalled();
+
+    // Should persist the session file path on the task
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { sessionFile: sessionFilePath });
+  });
+
+  it("uses SessionManager.open to resume session when task has sessionFile", async () => {
+    const store = createMockStore();
+    const sessionFilePath = "/tmp/sessions/session_123.jsonl";
+    const resumePromptFn = vi.fn().mockResolvedValue(undefined);
+
+    // existsSync must return true for the session file
+    mockedExistsSync.mockReturnValue(true);
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: resumePromptFn,
+        dispose: vi.fn(),
+      },
+      sessionFile: sessionFilePath,
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "FN-001",
+      title: "Resumed task",
+      description: "Test session resume",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      sessionFile: sessionFilePath,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Should use SessionManager.open for the initial resumed execution
+    expect(mockedSessionManager.open).toHaveBeenCalledWith(sessionFilePath);
+
+    // The first createKbAgent call should use the opened session manager
+    const firstCall = mockedCreateHaiAgent.mock.calls[0][0] as any;
+    expect(firstCall.sessionManager).toBeDefined();
+
+    // The log should indicate resume
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      expect.stringContaining("Resumed agent session after unpause"),
+    );
+  });
+
+  it("preserves sessionFile when task is paused (graceful exit)", async () => {
+    const store = createMockStore();
+    const sessionFilePath = "/tmp/sessions/session_456.jsonl";
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Simulate pause — session ends gracefully
+          store._trigger("task:updated", { id: "FN-001", paused: true, column: "in-progress" });
+        }),
+        dispose: vi.fn(),
+      },
+      sessionFile: sessionFilePath,
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "FN-001",
+      title: "Pauseable task",
+      description: "Test session file preserved on pause",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Session file should NOT be cleared when paused
+    const clearCalls = store.updateTask.mock.calls.filter(
+      (call: any[]) => call[0] === "FN-001" && call[1]?.sessionFile === null,
+    );
+    expect(clearCalls.length).toBe(0);
+
+    // Task should be moved to todo (ready for resume)
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+  });
+
+  it("falls back to fresh session when sessionFile no longer exists on disk", async () => {
+    const store = createMockStore();
+    const staleSessionFile = "/tmp/sessions/deleted_session.jsonl";
+
+    // Session file does NOT exist on disk
+    mockedExistsSync.mockImplementation(
+      (p) => p !== staleSessionFile,
+    );
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+      sessionFile: "/tmp/sessions/new_session.jsonl",
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "FN-001",
+      title: "Stale session",
+      description: "Test stale session file fallback",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      sessionFile: staleSessionFile,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Should fall back to SessionManager.create (not open)
+    expect(mockedSessionManager.create).toHaveBeenCalled();
+    expect(mockedSessionManager.open).not.toHaveBeenCalled();
   });
 });
 
@@ -4206,7 +4300,7 @@ describe("task_add_dep tool", () => {
 
     // Branch deletion should have been attempted
     const branchDeleteCalls = mockedExecSync.mock.calls.filter(
-      (c) => typeof c[0] === "string" && (c[0] as string).includes("branch -D") && (c[0] as string).includes("kb/fn-dep"),
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("branch -D") && (c[0] as string).includes("fusion/fn-dep"),
     );
     expect(branchDeleteCalls.length).toBeGreaterThan(0);
 

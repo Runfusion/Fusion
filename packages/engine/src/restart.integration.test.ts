@@ -38,6 +38,16 @@ vi.mock("node:fs", () => ({
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn().mockResolvedValue("# Task prompt content"),
 }));
+vi.mock("@mariozechner/pi-coding-agent", () => {
+  const mockSessionManager = {};
+  return {
+    SessionManager: {
+      create: vi.fn().mockReturnValue(mockSessionManager),
+      open: vi.fn().mockReturnValue(mockSessionManager),
+      inMemory: vi.fn().mockReturnValue(mockSessionManager),
+    },
+  };
+});
 
 import { TaskExecutor } from "./executor.js";
 import { TriageProcessor } from "./triage.js";

@@ -1016,7 +1016,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; branch?: string; baseCommitSha?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; stuckKillCount?: number | null; recoveryRetryCount?: number | null; nextRecoveryAt?: string | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; branch?: string; baseCommitSha?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; stuckKillCount?: number | null; recoveryRetryCount?: number | null; nextRecoveryAt?: string | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Validate that task doesn't depend on itself
@@ -1114,6 +1114,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.summary = undefined;
       } else if (updates.summary !== undefined) {
         task.summary = updates.summary;
+      }
+      if (updates.sessionFile === null) {
+        task.sessionFile = undefined;
+      } else if (updates.sessionFile !== undefined) {
+        task.sessionFile = updates.sessionFile;
       }
       if (updates.workflowStepResults === null) {
         task.workflowStepResults = undefined;
@@ -1475,7 +1480,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         throw new Error(`Cannot merge ${id}: ${mergeBlocker}`);
       }
 
-      const branch = `kb/${id.toLowerCase()}`;
+      const branch = `fusion/${id.toLowerCase()}`;
       const worktreePath = task.worktree;
       const result: MergeResult = {
         task,
