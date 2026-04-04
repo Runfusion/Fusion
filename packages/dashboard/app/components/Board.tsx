@@ -62,6 +62,8 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const { fetchBatch } = useBatchBadgeFetch(projectId);
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Normalized search-active signal: trimmed and non-empty
+  const isSearchActive = searchQuery.trim() !== "";
   const tasksByColumnCacheRef = useRef<Record<ColumnType, Task[]>>({
     triage: [],
     todo: [],
@@ -172,6 +174,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
             favoriteModels={favoriteModels}
             onToggleFavorite={onToggleFavorite}
             onToggleModelFavorite={onToggleModelFavorite}
+            isSearchActive={isSearchActive}
             {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
             {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
             {...(col === "done" ? { onArchiveAllDone } : {})}

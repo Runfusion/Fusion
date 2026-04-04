@@ -187,6 +187,38 @@ describe("Column pagination", () => {
 
     expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
   });
+
+  it("disables pagination when isSearchActive is true, showing all tasks", () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
+    render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
+
+    // All 110 tasks should be visible — no pagination applied during active search
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(110);
+    expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
+  });
+
+  it("restores pagination when isSearchActive changes back to false", () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
+    const { rerender } = render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);
+
+    // All tasks visible during search
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(110);
+
+    // Search cleared — pagination resumes
+    rerender(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={false} />);
+
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
+    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
+  });
+
+  it("preserves non-search pagination behavior when isSearchActive is not provided", () => {
+    const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
+    render(<Column {...defaultProps} column="todo" tasks={tasks} />);
+
+    // Default (undefined isSearchActive) should still paginate
+    expect(screen.getAllByTestId(/task-/)).toHaveLength(50);
+    expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
+  });
 });
 
 describe("Column QuickEntryBox", () => {

@@ -51,9 +51,11 @@ interface ColumnProps {
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;
   onToggleModelFavorite?: (modelId: string) => void;
+  /** When true, search is active — bypass pagination so all matching tasks are visible. */
+  isSearchActive?: boolean;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
@@ -61,7 +63,8 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
   // Archived column is collapsed by default - don't show drag state when collapsed
   const isArchived = column === "archived";
   const isCollapsed = isArchived && collapsed;
-  const shouldPaginate = !isArchived && column !== "in-progress" && tasks.length > PAGINATED_COLUMN_THRESHOLD;
+  // When search is active, skip pagination so all matching tasks are visible
+  const shouldPaginate = !isArchived && !isSearchActive && column !== "in-progress" && tasks.length > PAGINATED_COLUMN_THRESHOLD;
 
   useEffect(() => {
     setVisibleTaskCount((current) => {

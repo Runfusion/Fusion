@@ -405,7 +405,8 @@ Built-in file browser for viewing and editing project files directly from the da
 ### Board Search & Views
 
 **Board View:**
-- Real-time search across task titles and descriptions
+- Real-time search across task IDs, titles, and descriptions
+- Search bypasses per-column pagination so all matching tasks are visible
 - Drag-and-drop between columns
 - Column visibility toggle (show/hide columns)
 

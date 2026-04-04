@@ -10,10 +10,10 @@ const columnRenderCounts: Record<string, number> = {};
 
 // Mock child components so we only test Board's own rendering
 vi.mock("../Column", () => ({
-  Column: React.memo(({ column, tasks, onToggleCollapse, availableModels, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite }: { column: string; tasks: Task[]; onToggleCollapse?: () => void; availableModels?: unknown; favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void }) => {
+  Column: React.memo(({ column, tasks, onToggleCollapse, availableModels, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive }: { column: string; tasks: Task[]; onToggleCollapse?: () => void; availableModels?: unknown; favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; isSearchActive?: boolean }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
-      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"}>
+      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"}>
         {onToggleCollapse && <button onClick={onToggleCollapse}>toggle-{column}</button>}
       </div>
     );
@@ -328,6 +328,37 @@ describe("Board", () => {
 
       // Whitespace-only query should be treated as empty, showing all tasks
       expect(todoTasks).toHaveLength(1);
+    });
+
+    it("passes isSearchActive=true to columns when search query is non-empty", () => {
+      const tasks: Task[] = [
+        createTask({ id: "FN-001", description: "First task", column: "todo" }),
+      ];
+
+      renderBoard({ tasks, searchQuery: "first" });
+
+      for (const col of COLUMNS) {
+        const columnEl = screen.getByTestId(`column-${col}`);
+        expect(columnEl.getAttribute("data-is-search-active")).toBe("true");
+      }
+    });
+
+    it("passes isSearchActive=false to columns when search query is empty", () => {
+      renderBoard({ searchQuery: "" });
+
+      for (const col of COLUMNS) {
+        const columnEl = screen.getByTestId(`column-${col}`);
+        expect(columnEl.getAttribute("data-is-search-active")).toBe("false");
+      }
+    });
+
+    it("passes isSearchActive=false to columns when search query is whitespace-only", () => {
+      renderBoard({ searchQuery: "   " });
+
+      for (const col of COLUMNS) {
+        const columnEl = screen.getByTestId(`column-${col}`);
+        expect(columnEl.getAttribute("data-is-search-active")).toBe("false");
+      }
     });
   });
 
