@@ -699,7 +699,74 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                     {selectedMission.milestones.length} milestones
                   </span>
                 </div>
+                <div className="mission-detail__actions">
+                  <button
+                    className="mission-icon-btn"
+                    onClick={() => handleEditMission(selectedMission)}
+                    title="Edit mission"
+                    aria-label="Edit mission"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    className="mission-icon-btn mission-icon-btn--danger"
+                    onClick={() => setDeleteConfirmId({ type: "mission", id: selectedMission.id })}
+                    title="Delete mission"
+                    aria-label="Delete mission"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
+
+              {/* Inline edit mission form (detail view) */}
+              {editingMissionId === selectedMission.id && (
+                <div className="mission-form-card">
+                  <input
+                    type="text"
+                    placeholder="Mission title"
+                    value={missionForm.title}
+                    onChange={(e) => setMissionForm({ ...missionForm, title: e.target.value })}
+                    onKeyDown={handleMissionFormKeyDown}
+                    autoFocus
+                  />
+                  <textarea
+                    placeholder="Description (optional)"
+                    value={missionForm.description}
+                    onChange={(e) => setMissionForm({ ...missionForm, description: e.target.value })}
+                    rows={2}
+                  />
+                  <div className="mission-form-card__row">
+                    <select
+                      value={missionForm.status}
+                      onChange={(e) => setMissionForm({ ...missionForm, status: e.target.value as MissionStatus })}
+                    >
+                      <option value="planning">Planning</option>
+                      <option value="active">Active</option>
+                      <option value="blocked">Blocked</option>
+                      <option value="complete">Complete</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                    <label className="mission-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={missionForm.autoAdvance}
+                        onChange={(e) => setMissionForm({ ...missionForm, autoAdvance: e.target.checked })}
+                      />
+                      Auto-advance slices
+                    </label>
+                  </div>
+                  <div className="mission-form-card__actions">
+                    <button className="mission-btn mission-btn--primary" onClick={handleSaveMission} disabled={saving}>
+                      {saving ? <Loader2 size={14} className="spinner" /> : <Check size={14} />}
+                      Update
+                    </button>
+                    <button className="mission-btn mission-btn--ghost" onClick={handleCancelMission}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="mission-detail__milestones">
                 {selectedMission.milestones.map((milestone) => (
@@ -1261,7 +1328,7 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
 
         {/* ── Delete confirmation panel ── */}
         {deleteConfirmId && (
-          <div className="mission-confirm-panel">
+          <div className="mission-confirm-panel mission-confirm-panel--danger">
             <div className="mission-confirm-panel__content">
               <p>
                 Delete this {deleteConfirmId.type}? This cannot be undone.
@@ -1293,7 +1360,7 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
 
         {/* ── Link task panel ── */}
         {linkTaskFeatureId && (
-          <div className="mission-confirm-panel">
+          <div className="mission-confirm-panel mission-confirm-panel--link">
             <div className="mission-confirm-panel__content">
               <p>Link feature to task:</p>
               <input

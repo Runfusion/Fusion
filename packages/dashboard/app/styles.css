@@ -16327,8 +16327,21 @@ html .column.drag-over * {
 
 /* ── Confirm & Link Panels ── */
 .mission-confirm-panel {
+  flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--card);
+}
+
+/* Delete-confirmation variant — danger tint */
+.mission-confirm-panel--danger {
+  background: rgba(248, 81, 73, 0.05);
+  border-top-color: var(--color-error);
+}
+
+/* Link-task variant — accent tint */
+.mission-confirm-panel--link {
+  background: rgba(88, 166, 255, 0.04);
+  border-top-color: var(--todo);
 }
 
 .mission-confirm-panel__content {
@@ -16478,12 +16491,15 @@ html .column.drag-over * {
 /* ================================================================
    Mission Detail View
    ================================================================ */
+
+/* ── Detail root ── */
 .mission-detail {
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
 }
 
+/* ── Detail header (title + meta + actions) ── */
 .mission-detail__header {
   display: flex;
   flex-direction: column;
@@ -16536,6 +16552,14 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
+/* ── Detail-level action bar (edit / delete the mission itself) ── */
+.mission-detail__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-top: var(--space-xs);
+}
+
 /* ── Milestones ── */
 .mission-detail__milestones {
   display: flex;
@@ -16546,8 +16570,14 @@ html .column.drag-over * {
 .mission-milestone {
   background: var(--card);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--text-dim);
   border-radius: var(--radius-md);
   overflow: hidden;
+  transition: border-color var(--transition-fast);
+}
+
+.mission-milestone:hover {
+  border-left-color: var(--text-muted);
 }
 
 .mission-milestone__header {
@@ -16606,6 +16636,7 @@ html .column.drag-over * {
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
+  margin-left: var(--space-xs);
 }
 
 .mission-milestone__body {
@@ -16613,7 +16644,7 @@ html .column.drag-over * {
   border-top: 1px solid var(--border);
 }
 
-/* ── Slices ── */
+/* ── Slices (nested inside milestones) ── */
 .mission-slices {
   display: flex;
   flex-direction: column;
@@ -16624,6 +16655,7 @@ html .column.drag-over * {
 .mission-slice {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--todo);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
@@ -16686,6 +16718,7 @@ html .column.drag-over * {
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
+  margin-left: var(--space-xs);
 }
 
 .mission-slice__body {
@@ -16693,7 +16726,7 @@ html .column.drag-over * {
   border-top: 1px solid var(--border);
 }
 
-/* ── Features ── */
+/* ── Features (nested inside slices) ── */
 .mission-features {
   display: flex;
   flex-direction: column;
@@ -16704,6 +16737,7 @@ html .column.drag-over * {
 .mission-feature {
   background: var(--card);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--text-dim);
   border-radius: var(--radius-sm);
   padding: var(--space-sm) var(--space-md);
 }
@@ -16801,25 +16835,47 @@ html .column.drag-over * {
     font-size: 16px;
   }
 
+  /* Detail header actions stack on mobile */
+  .mission-detail__actions {
+    flex-wrap: wrap;
+  }
+
+  /* Milestone headers wrap actions below title row */
   .mission-milestone__header {
     padding: var(--space-sm) var(--space-md);
     flex-wrap: wrap;
     gap: var(--space-xs);
   }
 
+  .mission-milestone__actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+    padding-top: var(--space-xs);
+  }
+
   .mission-milestone__body {
     padding: 0 var(--space-sm) var(--space-sm);
   }
 
+  /* Slice headers wrap similarly */
   .mission-slice__header {
     padding: var(--space-sm);
     gap: var(--space-xs);
+  }
+
+  .mission-slice__actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+    padding-top: var(--space-xs);
   }
 
   .mission-slice__body {
     padding: 0 var(--space-sm) var(--space-sm);
   }
 
+  /* Feature actions wrap cleanly */
   .mission-feature {
     padding: var(--space-sm);
   }
@@ -16854,6 +16910,11 @@ html .column.drag-over * {
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-sm);
+  }
+
+  /* Confirm panels: full-width, no horizontal overflow */
+  .mission-confirm-panel__content {
+    padding: var(--space-md);
   }
 }
 

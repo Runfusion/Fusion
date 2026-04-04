@@ -502,4 +502,176 @@ describe("MissionManager", () => {
       });
     });
   });
+
+  // ── Step 2: Detail hierarchy, action layout, confirm panels ──────────
+  describe("detail view hierarchy and action layout", () => {
+    it("renders full milestone → slice → feature hierarchy in detail", async () => {
+      globalThis.fetch = createDetailFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+
+      await waitFor(() => {
+        // Milestone auto-expanded
+        expect(screen.getByText("Database Schema")).toBeDefined();
+        // Slice auto-expanded
+        expect(screen.getByText("User Tables")).toBeDefined();
+        // Feature visible
+        expect(screen.getByText("User model")).toBeDefined();
+        // Feature status badge
+        expect(screen.getByText("defined")).toBeDefined();
+        // Acceptance criteria
+        expect(screen.getByText(/Model exists with required fields/)).toBeDefined();
+      });
+    });
+
+    it("shows edit and delete mission buttons in detail header", async () => {
+      globalThis.fetch = createDetailFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mission-back-btn")).toBeDefined();
+      });
+
+      // Detail header should have edit/delete buttons
+      const editBtns = screen.getAllByLabelText("Edit mission");
+      const deleteBtns = screen.getAllByLabelText("Delete mission");
+      // At least one of each in the detail header area
+      expect(editBtns.length).toBeGreaterThanOrEqual(1);
+      expect(deleteBtns.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("opens inline edit form when edit mission is clicked in detail view", async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve(mockApiResponse(mockMissions));
+        return Promise.resolve(mockApiResponse(mockMissionDetail));
+      });
+
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mission-back-btn")).toBeDefined();
+      });
+
+      // Click edit mission in detail header
+      const editBtns = screen.getAllByLabelText("Edit mission");
+      fireEvent.click(editBtns[0]);
+
+      // Should show inline form with pre-filled title
+      await waitFor(() => {
+        const input = screen.getByDisplayValue("Build Auth System");
+        expect(input).toBeDefined();
+        expect(screen.getByText("Update")).toBeDefined();
+        expect(screen.getByText("Cancel")).toBeDefined();
+      });
+    });
+
+    it("shows delete confirmation with danger variant class", async () => {
+      globalThis.fetch = createDetailFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mission-back-btn")).toBeDefined();
+      });
+
+      // Click delete mission in detail header
+      const deleteBtns = screen.getAllByLabelText("Delete mission");
+      fireEvent.click(deleteBtns[0]);
+
+      // Confirmation panel should show
+      await waitFor(() => {
+        const confirmPanel = screen.getByText(/Delete this mission/).closest(".mission-confirm-panel");
+        expect(confirmPanel).toBeDefined();
+        expect(confirmPanel!.className).toContain("mission-confirm-panel--danger");
+      });
+    });
+
+    it("shows milestone count in detail header meta", async () => {
+      globalThis.fetch = createDetailFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+
+      await waitFor(() => {
+        expect(screen.getByText("1 milestones")).toBeDefined();
+      });
+    });
+
+    it("shows slice and feature counts in hierarchy headers", async () => {
+      globalThis.fetch = createDetailFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+
+      await waitFor(() => {
+        expect(screen.getByText("1 slices")).toBeDefined();
+        expect(screen.getByText("1 features")).toBeDefined();
+      });
+    });
+
+    it("renders milestone expand/collapse chevrons", async () => {
+      globalThis.fetch = createDetailFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+
+      await waitFor(() => {
+        // Milestone is auto-expanded — should see the title visible
+        expect(screen.getByText("Database Schema")).toBeDefined();
+        // Slice visible (auto-expanded)
+        expect(screen.getByText("User Tables")).toBeDefined();
+      });
+    });
+
+    it("shows add milestone button in detail view", async () => {
+      globalThis.fetch = createDetailFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      // Navigate to detail
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Add Milestone")).toBeDefined();
+      });
+    });
+  });
 });

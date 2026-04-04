@@ -81,7 +81,7 @@ fn mission delete M-LZ7DN0-A2B5 [--force]                                # Delet
 fn mission activate-slice SL-P4T2WX-D5E8                                  # Manually activate slice
 ```
 
-**Dashboard:** Click the Target icon in the dashboard header to open the Mission Manager, then create missions, add milestones, slices, and features. Link features to tasks for automatic progress tracking. On mobile devices, the Mission Manager opens as a full-screen overlay with touch-friendly controls and stacked hierarchy cards.
+**Dashboard:** Click the Target icon in the dashboard header to open the Mission Manager, then create missions, add milestones, slices, and features. Link features to tasks for automatic progress tracking. The detail view shows a visual hierarchy with left-border accents distinguishing milestones, slices, and features, with inline edit and delete controls. On mobile devices (≤768px), the Mission Manager opens as a full-screen overlay with touch-friendly controls, stacked action rows, and no horizontal overflow.
 
 ## Quick Start
 
