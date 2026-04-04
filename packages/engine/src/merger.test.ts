@@ -94,6 +94,7 @@ function setupHappyPathExecSync() {
     const cmdStr = String(cmd);
     if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
     if (cmdStr.includes("git log")) return "- feat: something" as any;
+    if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
     if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
     if (cmdStr.includes("merge --squash")) return Buffer.from("");
     // Post-squash check: --quiet means "did squash stage anything?" → "1" = yes
@@ -280,6 +281,7 @@ describe("aiMergeTask — empty squash merge (branch already merged via dep)", (
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
       if (cmdStr.includes("merge --squash")) return Buffer.from("");
       // Squash staged nothing → "0"
@@ -304,6 +306,7 @@ describe("aiMergeTask — empty squash merge (branch already merged via dep)", (
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
       if (cmdStr.includes("merge --squash")) return Buffer.from("");
       if (cmdStr.includes("diff --cached --quiet")) return "0" as any;
@@ -381,6 +384,7 @@ describe("aiMergeTask — includeTaskIdInCommit setting", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
       if (cmdStr.includes("merge --squash")) return Buffer.from("");
       if (cmdStr.includes("diff --cached")) return "1" as any;
@@ -409,6 +413,7 @@ describe("aiMergeTask — includeTaskIdInCommit setting", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
       if (cmdStr.includes("merge --squash")) return Buffer.from("");
       if (cmdStr.includes("diff --cached")) return "1" as any;
@@ -1102,6 +1107,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
       if (cmdStr.includes("merge --squash") || cmdStr.includes("merge -X")) return Buffer.from("");
       // Post-squash check: "1" = has staged changes
@@ -1133,6 +1139,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("--stat")) return "1 file changed";
       if (cmdStr.includes("merge --squash")) return Buffer.from("");
       // No conflicts
@@ -1169,6 +1176,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("--stat")) return "1 file changed";
 
       if (cmdStr.includes("merge --squash")) {
@@ -1218,6 +1226,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("--stat")) return "1 file changed";
 
       if (cmdStr.includes("merge --squash")) {
@@ -1268,6 +1277,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("--stat")) return "1 file changed";
 
       // First two regular squash merges fail with conflicts
@@ -1339,6 +1349,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("--stat")) return "1 file changed";
 
       if (cmdStr.includes("merge --squash") || cmdStr.includes("merge -X theirs")) {
@@ -1385,6 +1396,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("--stat")) return "1 file changed";
       if (cmdStr.includes("merge --squash")) return Buffer.from("");
       if (cmdStr.includes("diff --name-only --diff-filter=U")) return ""; // No conflicts
@@ -1693,6 +1705,7 @@ describe("aiMergeTask — build verification", () => {
       const cmdStr = String(cmd);
       if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
       if (cmdStr.includes("merge --squash")) return Buffer.from("");
       if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
@@ -1740,6 +1753,7 @@ describe("aiMergeTask — build verification", () => {
               const cmdStr = String(cmd);
               if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
               if (cmdStr.includes("git log")) return "- feat: something" as any;
+              if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
               if (cmdStr.includes("--stat")) return "1 file changed" as any;
               if (cmdStr.includes("merge --squash")) return Buffer.from("");
               // After commit, diff shows clean
@@ -1784,6 +1798,7 @@ describe("aiMergeTask — build verification", () => {
               const cmdStr = String(cmd);
               if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
               if (cmdStr.includes("git log")) return "- feat: something" as any;
+              if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
               if (cmdStr.includes("--stat")) return "1 file changed" as any;
               if (cmdStr.includes("merge --squash")) return Buffer.from("");
               // After commit, diff shows clean
@@ -1840,6 +1855,7 @@ describe("aiMergeTask — build verification", () => {
       // Default happy path for other commands
       if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
       if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
       if (cmdStr.includes("--stat")) return "1 file changed" as any;
       if (cmdStr.includes("merge --squash")) return Buffer.from("");
       // Staged changes present (agent didn't commit due to build failure)

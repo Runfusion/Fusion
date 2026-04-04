@@ -19,6 +19,7 @@ interface ChangedFilesModalProps {
   worktree: string | undefined;
   column: string;
   projectId?: string;
+  commitSha?: string;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -66,6 +67,7 @@ export function ChangedFilesModal({
   worktree,
   column,
   projectId,
+  commitSha,
   isOpen,
   onClose,
 }: ChangedFilesModalProps) {
@@ -74,6 +76,7 @@ export function ChangedFilesModal({
     worktree,
     column,
     projectId,
+    commitSha,
   );
 
   const [isMobile, setIsMobile] = useState(false);

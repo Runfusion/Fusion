@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import type { TaskStore, MergeResult } from "@fusion/core";
+import { getTaskMergeBlocker, type TaskStore, type MergeResult } from "@fusion/core";
 import { createKbAgent, promptWithFallback } from "./pi.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
@@ -585,10 +585,9 @@ export async function aiMergeTask(
 ): Promise<MergeResult> {
   // 1. Validate task state
   const task = await store.getTask(taskId);
-  if (task.column !== "in-review") {
-    throw new Error(
-      `Cannot merge ${taskId}: task is in '${task.column}', must be in 'in-review'`,
-    );
+  const mergeBlocker = getTaskMergeBlocker(task);
+  if (mergeBlocker) {
+    throw new Error(`Cannot merge ${taskId}: ${mergeBlocker}`);
   }
 
   const branch = task.branch || `kb/${taskId.toLowerCase()}`;
@@ -635,7 +634,11 @@ export async function aiMergeTask(
     commitLog = "(unable to read commit log)";
   }
   try {
-    diffStat = execSync(`git diff HEAD..${branch} --stat`, {
+    const mergeBase = execSync(`git merge-base HEAD ${branch}`, {
+      cwd: rootDir,
+      encoding: "utf-8",
+    }).trim();
+    diffStat = execSync(`git diff ${mergeBase}..${branch} --stat`, {
       cwd: rootDir,
       encoding: "utf-8",
     }).trim();
