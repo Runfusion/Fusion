@@ -2744,6 +2744,11 @@ ${stepsSection}`;
     return this.rootDir;
   }
 
+  /** Return the `.fusion` directory path (e.g. `/project/.fusion`). */
+  getFusionDir(): string {
+    return this.kbDir;
+  }
+
   getTasksDir(): string {
     return this.tasksDir;
   }

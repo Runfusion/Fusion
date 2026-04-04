@@ -6273,7 +6273,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const agents = await agentStore.listAgents(filter as { state?: "idle" | "active" | "paused" | "terminated"; role?: import("@fusion/core").AgentCapability });
@@ -6302,7 +6302,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const agent = await agentStore.createAgent({ name, role: role as import("@fusion/core").AgentCapability, metadata });
@@ -6321,7 +6321,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const agents = await agentStore.listAgents();
@@ -6352,7 +6352,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const agent = await agentStore.getAgentDetail(req.params.id, 50);
@@ -6376,7 +6376,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const agent = await agentStore.updateAgent(req.params.id, { name, role, metadata });
@@ -6405,7 +6405,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const agent = await agentStore.updateAgentState(req.params.id, state as import("@fusion/core").AgentState);
@@ -6429,7 +6429,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       await agentStore.deleteAgent(req.params.id);
@@ -6453,7 +6453,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const event = await agentStore.recordHeartbeat(req.params.id, status as "ok" | "missed" | "recovered");
@@ -6478,7 +6478,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const history = await agentStore.getHeartbeatHistory(req.params.id, limit);
@@ -6497,7 +6497,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 20;
@@ -6520,7 +6520,7 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     try {
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
       const run = await agentStore.getRunDetail(req.params.id, req.params.runId);

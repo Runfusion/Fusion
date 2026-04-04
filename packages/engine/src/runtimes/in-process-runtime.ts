@@ -208,7 +208,7 @@ export class InProcessRuntime
       // 6. Initialize AgentStore and HeartbeatMonitor
       try {
         const { AgentStore: AgentStoreClass } = await import("@fusion/core");
-        this.agentStore = new AgentStoreClass({ rootDir: this.taskStore.getRootDir() });
+        this.agentStore = new AgentStoreClass({ rootDir: this.taskStore.getFusionDir() });
         await this.agentStore.init();
 
         this.heartbeatMonitor = new HeartbeatMonitor({

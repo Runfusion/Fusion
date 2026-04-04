@@ -13,6 +13,7 @@ vi.mock("@fusion/core", async () => {
     TaskStore: vi.fn().mockImplementation(function(this: TaskStore, rootDir: string) {
       const self = this as unknown as Record<string, unknown>;
       self.getRootDir = () => rootDir;
+      self.getFusionDir = () => rootDir + "/.fusion";
       self.init = vi.fn().mockResolvedValue(undefined);
       self.listTasks = vi.fn().mockResolvedValue([]);
       self.getSettings = vi.fn().mockResolvedValue({});
