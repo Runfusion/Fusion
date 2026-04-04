@@ -1,6 +1,8 @@
-import { useState } from "react";
-import type { AgentCapability } from "../api";
-import { createAgent } from "../api";
+import { useState, useEffect, useCallback } from "react";
+import type { AgentCapability, ModelInfo } from "../api";
+import { createAgent, fetchModels } from "../api";
+import { CustomModelDropdown } from "./CustomModelDropdown";
+import { ProviderIcon } from "./ProviderIcon";
 
 export interface NewAgentDialogProps {
   isOpen: boolean;
@@ -39,6 +41,55 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Model dropdown state
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+
+  // Load models on mount (global data, not per-agent)
+  useEffect(() => {
+    setModelsLoading(true);
+    fetchModels()
+      .then((response) => {
+        setAvailableModels(response.models);
+        setFavoriteProviders(response.favoriteProviders);
+        setFavoriteModels(response.favoriteModels);
+      })
+      .catch(() => {
+        // Gracefully handle — dropdown will show empty list
+      })
+      .finally(() => setModelsLoading(false));
+  }, []);
+
+  // Selected model in "provider/modelId" format, or "" for default
+  const selectedModel = runtimeConfig.model.includes("/")
+    ? runtimeConfig.model
+    : "";
+
+  const handleModelChange = useCallback((value: string) => {
+    // value is "provider/modelId" or "" for default
+    setRuntimeConfig(c => ({ ...c, model: value }));
+  }, []);
+
+  const handleToggleFavorite = useCallback(async (provider: string) => {
+    const currentFavorites = favoriteProviders;
+    const isFavorite = currentFavorites.includes(provider);
+    const newFavorites = isFavorite
+      ? currentFavorites.filter(p => p !== provider)
+      : [provider, ...currentFavorites];
+    setFavoriteProviders(newFavorites);
+  }, [favoriteProviders]);
+
+  const handleToggleModelFavorite = useCallback(async (modelId: string) => {
+    const currentFavorites = favoriteModels;
+    const isFavorite = currentFavorites.includes(modelId);
+    const newFavorites = isFavorite
+      ? currentFavorites.filter(m => m !== modelId)
+      : [modelId, ...currentFavorites];
+    setFavoriteModels(newFavorites);
+  }, [favoriteModels]);
 
   if (!isOpen) return null;
 
@@ -156,16 +207,23 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
           {step === 1 && (
             <div>
               <div className="agent-dialog-field">
-                <label htmlFor="agent-model">Model ID</label>
-                <input
-                  id="agent-model"
-                  type="text"
-                  className="input"
-                  placeholder="e.g. claude-sonnet-4-5"
-                  value={runtimeConfig.model}
-                  onChange={e => setRuntimeConfig(c => ({ ...c, model: e.target.value }))}
-                  style={{ width: "100%", boxSizing: "border-box" }}
-                />
+                <label>Model</label>
+                {modelsLoading ? (
+                  <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "8px 0" }}>Loading models…</div>
+                ) : (
+                  <CustomModelDropdown
+                    id="agent-model"
+                    label="Model"
+                    value={selectedModel}
+                    onChange={handleModelChange}
+                    models={availableModels}
+                    placeholder="Select a model…"
+                    favoriteProviders={favoriteProviders}
+                    onToggleFavorite={handleToggleFavorite}
+                    favoriteModels={favoriteModels}
+                    onToggleModelFavorite={handleToggleModelFavorite}
+                  />
+                )}
               </div>
               <div className="agent-dialog-field">
                 <label htmlFor="agent-thinking">Thinking Level</label>
@@ -221,7 +279,23 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                 </div>
                 <div className="agent-dialog-summary-row">
                   <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Model</span>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{runtimeConfig.model || <em style={{ color: "var(--text-muted)" }}>default</em>}</span>
+                  <span style={{ fontSize: 13 }}>
+                    {selectedModel ? (
+                      <>
+                        <ProviderIcon provider={selectedModel.split("/")[0]} size="sm" />
+                        {" "}
+                        {(() => {
+                          const slashIdx = selectedModel.indexOf("/");
+                          const provider = selectedModel.slice(0, slashIdx);
+                          const modelId = selectedModel.slice(slashIdx + 1);
+                          const model = availableModels.find(m => m.provider === provider && m.id === modelId);
+                          return model?.name || selectedModel;
+                        })()}
+                      </>
+                    ) : (
+                      <em style={{ color: "var(--text-muted)" }}>default</em>
+                    )}
+                  </span>
                 </div>
                 <div className="agent-dialog-summary-row">
                   <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Thinking</span>
