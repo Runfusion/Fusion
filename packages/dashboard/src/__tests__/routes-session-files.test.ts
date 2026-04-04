@@ -281,6 +281,28 @@ describe("GET /api/tasks/:id/session-files", () => {
     expect(mockExecSync).not.toHaveBeenCalled();
   });
 
+  it("returns empty array when there are no committed or working-tree changes", async () => {
+    const store = new MockStore();
+    store.addTask(createTask({ id: "FN-675-empty", baseCommitSha: undefined }));
+    mockExecSync.mockImplementation((command) => {
+      if (String(command) === "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main") {
+        return "mergebase123\n" as any;
+      }
+      if (String(command) === "git diff --name-only mergebase123..HEAD") {
+        return "" as any;
+      }
+      if (String(command) === "git diff --name-only") {
+        return "" as any;
+      }
+      throw new Error(`Unexpected command: ${String(command)}`);
+    });
+
+    const response = await requestSessionFiles(store, "FN-675-empty");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([]);
+  });
+
   it("uses the 10-second cache before recomputing", async () => {
     const store = new MockStore();
     store.addTask(createTask({ id: "FN-675-cache", baseCommitSha: "cachebase" }));

@@ -6770,13 +6770,15 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   /**
    * GET /api/tasks/:id/file-diffs
    * Fetch changed files with individual git diffs for a task worktree.
+   * Uses the same merge-base resolution strategy as the session-files route
+   * so the board card count and the changed-files viewer always agree.
    * Returns: Array<{ path, status, diff, oldPath? }>
    */
   router.get("/tasks/:id/file-diffs", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
       const task = await scopedStore.getTask(req.params.id);
-      if (!task.worktree || !existsSync(task.worktree)) {
+      if (!task.worktree || !nodeFs.existsSync(task.worktree)) {
         res.json([]);
         return;
       }
@@ -6789,56 +6791,99 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       const baseBranch = task.baseBranch ?? "main";
       const cwd = task.worktree;
-      let filesOutput = "";
-      let diffBase = `${baseBranch}...HEAD`;
+
+      // Resolve a diff base using the same merge-base strategy as session-files
+      // so both endpoints always agree on which files have changed.
+      let diffBase: string | undefined;
 
       try {
-        filesOutput = execSync(`git diff --name-status ${diffBase}`, {
-          cwd,
-          encoding: "utf-8",
-          timeout: 5000,
-        }).trim();
+        diffBase = nodeChildProcess.execSync(
+          `git merge-base HEAD origin/${baseBranch} 2>/dev/null || git merge-base HEAD ${baseBranch}`,
+          { cwd, encoding: "utf-8", timeout: 5000 },
+        ).trim();
       } catch {
-        diffBase = "HEAD";
-        filesOutput = execSync("git diff --name-status HEAD", {
-          cwd,
-          encoding: "utf-8",
-          timeout: 5000,
-        }).trim();
+        try {
+          diffBase = nodeChildProcess.execSync("git rev-parse HEAD~1", {
+            cwd,
+            encoding: "utf-8",
+            timeout: 5000,
+          }).trim();
+        } catch {
+          diffBase = undefined;
+        }
       }
 
-      const files = filesOutput
-        ? filesOutput.split("\n").filter(Boolean).map((line) => {
+      // Collect file statuses from both committed changes (against diffBase)
+      // and working-tree changes, deduplicating by path to match session-files.
+      const fileMap = new Map<string, { statusCode: string; oldPath?: string }>();
+
+      if (diffBase) {
+        try {
+          const committedOutput = nodeChildProcess.execSync(
+            `git diff --name-status ${diffBase}..HEAD`,
+            { cwd, encoding: "utf-8", timeout: 5000 },
+          ).trim();
+          for (const line of committedOutput.split("\n").filter(Boolean)) {
             const parts = line.split("\t");
             const statusCode = parts[0] ?? "M";
-            let status: "added" | "modified" | "deleted" | "renamed" = "modified";
-            let path = parts[1] ?? "";
-            let oldPath: string | undefined;
-
-            if (statusCode.startsWith("A")) {
-              status = "added";
-            } else if (statusCode.startsWith("D")) {
-              status = "deleted";
-            } else if (statusCode.startsWith("R")) {
-              status = "renamed";
-              oldPath = parts[1];
-              path = parts[2] ?? parts[1] ?? "";
+            if (statusCode.startsWith("R")) {
+              fileMap.set(parts[2] ?? parts[1] ?? "", { statusCode, oldPath: parts[1] });
+            } else {
+              fileMap.set(parts[1] ?? "", { statusCode });
             }
+          }
+        } catch {
+          // committed diff failed — continue with working-tree only
+        }
+      }
 
-            let diff = "";
-            try {
-              diff = execSync(`git diff ${diffBase} -- "${path}"`, {
-                cwd,
-                encoding: "utf-8",
-                timeout: 5000,
-              });
-            } catch {
-              diff = "";
-            }
+      try {
+        const workingTreeOutput = nodeChildProcess.execSync("git diff --name-status", {
+          cwd,
+          encoding: "utf-8",
+          timeout: 5000,
+        }).trim();
+        for (const line of workingTreeOutput.split("\n").filter(Boolean)) {
+          const parts = line.split("\t");
+          const statusCode = parts[0] ?? "M";
+          if (statusCode.startsWith("R")) {
+            fileMap.set(parts[2] ?? parts[1] ?? "", { statusCode, oldPath: parts[1] });
+          } else {
+            fileMap.set(parts[1] ?? "", { statusCode });
+          }
+        }
+      } catch {
+        // working tree diff failed — continue with committed only
+      }
 
-            return oldPath ? { path, status, diff, oldPath } : { path, status, diff };
-          })
-        : [];
+      // Build the result array with per-file diffs using the two-dot range
+      // against the resolved merge-base.
+      const diffRange = diffBase ? `${diffBase}..HEAD` : "HEAD";
+
+      const files = Array.from(fileMap.entries()).map(([filePath, { statusCode, oldPath }]) => {
+        let status: "added" | "modified" | "deleted" | "renamed" = "modified";
+
+        if (statusCode.startsWith("A")) {
+          status = "added";
+        } else if (statusCode.startsWith("D")) {
+          status = "deleted";
+        } else if (statusCode.startsWith("R")) {
+          status = "renamed";
+        }
+
+        let diff = "";
+        try {
+          diff = nodeChildProcess.execSync(`git diff ${diffRange} -- "${filePath}"`, {
+            cwd,
+            encoding: "utf-8",
+            timeout: 5000,
+          });
+        } catch {
+          diff = "";
+        }
+
+        return oldPath ? { path: filePath, status, diff, oldPath } : { path: filePath, status, diff };
+      });
 
       fileDiffsCache.set(task.id, {
         files,
