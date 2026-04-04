@@ -1308,11 +1308,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const response = await fetch(url, {
         method: "POST",
         headers: {
-          "Title": "kb test notification",
+          "Title": "Fusion test notification",
           "Priority": "default",
           "Content-Type": "text/plain",
         },
-        body: "kb test notification — your notifications are working!",
+        body: "Fusion test notification — your notifications are working!",
       });
 
       if (!response.ok) {

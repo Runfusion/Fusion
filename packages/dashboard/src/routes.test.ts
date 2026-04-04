@@ -5778,6 +5778,84 @@ describe("GET /settings/scopes", () => {
   });
 });
 
+describe("POST /settings/test-ntfy", () => {
+  let store: TaskStore;
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    store = createMockStore();
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("sends Fusion-branded test notification", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ntfyEnabled: true,
+      ntfyTopic: "test-topic",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/settings/test-ntfy");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+
+    // Verify the ntfy request uses Fusion branding
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchSpy.mock.calls[0];
+    expect(url).toBe("https://ntfy.sh/test-topic");
+    expect(options?.method).toBe("POST");
+    expect(options?.headers).toHaveProperty("Title", "Fusion test notification");
+  });
+
+  it("sends Fusion-branded body text", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ntfyEnabled: true,
+      ntfyTopic: "my-topic",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/settings/test-ntfy");
+
+    expect(res.status).toBe(200);
+    const [_, options] = fetchSpy.mock.calls[0];
+    expect(options?.body).toBe("Fusion test notification — your notifications are working!");
+  });
+
+  it("returns 400 when ntfy is not enabled", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ntfyEnabled: false,
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/settings/test-ntfy");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("not enabled");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when topic is missing", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ntfyEnabled: true,
+      ntfyTopic: undefined,
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/settings/test-ntfy");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("not configured or invalid");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 // ── Workflow Step Routes ─────────────────────────────────────────────
 
 describe("GET /workflow-steps", () => {
