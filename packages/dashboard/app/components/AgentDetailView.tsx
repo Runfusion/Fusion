@@ -5,7 +5,7 @@ import {
   ExternalLink, CheckCircle, XCircle, Loader2
 } from "lucide-react";
 import type { AgentDetail, AgentState, AgentHeartbeatRun } from "../api";
-import { fetchAgent, updateAgentState, deleteAgent, fetchAgentLogs } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs } from "../api";
 import type { AgentLogEntry } from "@fusion/core";
 
 /**
@@ -342,6 +342,9 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast }: Agent
           {activeTab === "config" && (
             <ConfigTab 
               agent={agent}
+              projectId={projectId}
+              addToast={addToast}
+              onSaved={loadAgent}
             />
           )}
         </div>
@@ -1171,11 +1174,192 @@ function formatDuration(start: Date, end: Date): string {
 
 // ── Config Tab ─────────────────────────────────────────────────────────────
 
+/** Shape of a single advanced setting field stored in agent.metadata */
+interface AdvancedSettingField {
+  key: string;
+  label: string;
+  type: "text" | "number" | "select";
+  placeholder?: string;
+  hint?: string;
+  options?: Array<{ value: string; label: string }>;
+  /** Minimum value for number fields */
+  min?: number;
+  /** Maximum value for number fields */
+  max?: number;
+}
+
+/** Well-known advanced setting definitions backed by agent.metadata */
+const ADVANCED_SETTINGS: AdvancedSettingField[] = [
+  {
+    key: "heartbeatIntervalMs",
+    label: "Heartbeat Interval (ms)",
+    type: "number",
+    placeholder: "30000",
+    hint: "How often the agent sends heartbeats (minimum 1000ms, default 30000ms)",
+    min: 1000,
+    max: 600000,
+  },
+  {
+    key: "maxRetries",
+    label: "Max Retries",
+    type: "number",
+    placeholder: "3",
+    hint: "Maximum number of automatic retries on task failure (0–10, default 3)",
+    min: 0,
+    max: 10,
+  },
+  {
+    key: "timeoutMs",
+    label: "Task Timeout (ms)",
+    type: "number",
+    placeholder: "600000",
+    hint: "Maximum time in ms before a task is considered timed out (minimum 60000ms, default 600000ms)",
+    min: 60000,
+    max: 86400000,
+  },
+  {
+    key: "logLevel",
+    label: "Log Level",
+    type: "select",
+    hint: "Verbosity of agent log output",
+    options: [
+      { value: "debug", label: "Debug" },
+      { value: "info", label: "Info" },
+      { value: "warn", label: "Warning" },
+      { value: "error", label: "Error" },
+    ],
+  },
+];
+
+/** Validation errors keyed by setting key */
+type ValidationErrors = Record<string, string>;
+
+function validateAdvancedSettings(
+  values: Record<string, string>,
+): ValidationErrors {
+  const errors: ValidationErrors = {};
+
+  for (const field of ADVANCED_SETTINGS) {
+    const raw = values[field.key]?.trim();
+
+    // Empty is fine — it means "use default"
+    if (!raw) continue;
+
+    if (field.type === "number") {
+      const num = Number(raw);
+      if (Number.isNaN(num) || !Number.isFinite(num)) {
+        errors[field.key] = `"${field.label}" must be a valid number`;
+        continue;
+      }
+      if (field.min !== undefined && num < field.min) {
+        errors[field.key] = `"${field.label}" must be at least ${field.min.toLocaleString()}`;
+      }
+      if (field.max !== undefined && num > field.max) {
+        errors[field.key] = `"${field.label}" must be at most ${field.max.toLocaleString()}`;
+      }
+    }
+
+    if (field.type === "select") {
+      const validOptions = field.options?.map((o) => o.value) ?? [];
+      if (validOptions.length > 0 && !validOptions.includes(raw)) {
+        errors[field.key] = `"${field.label}" must be one of: ${validOptions.join(", ")}`;
+      }
+    }
+  }
+
+  return errors;
+}
+
 function ConfigTab({ 
-  agent
+  agent,
+  projectId,
+  addToast,
+  onSaved,
 }: { 
   agent: AgentDetail;
+  projectId?: string;
+  addToast: (message: string, type?: "success" | "error") => void;
+  onSaved: () => Promise<void>;
 }) {
+  // Local form state initialised from agent.metadata
+  const [formValues, setFormValues] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    for (const field of ADVANCED_SETTINGS) {
+      const raw = agent.metadata[field.key];
+      if (raw !== undefined && raw !== null) {
+        initial[field.key] = String(raw);
+      }
+    }
+    return initial;
+  });
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [errors, setErrors] = useState<ValidationErrors>({});
+  const [justSaved, setJustSaved] = useState(false);
+
+  /** Detect whether any local value differs from the persisted metadata */
+  const hasChanges = (() => {
+    for (const field of ADVANCED_SETTINGS) {
+      const current = formValues[field.key]?.trim() ?? "";
+      const persisted = agent.metadata[field.key] !== undefined && agent.metadata[field.key] !== null
+        ? String(agent.metadata[field.key])
+        : "";
+      if (current !== persisted) return true;
+    }
+    return false;
+  })();
+
+  const handleFieldChange = (key: string, value: string) => {
+    setFormValues((prev) => ({ ...prev, [key]: value }));
+    setJustSaved(false);
+    // Clear individual field error on change
+    if (errors[key]) {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+  };
+
+  const handleSave = async () => {
+    // Validate before save
+    const validationErrors = validateAdvancedSettings(formValues);
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      addToast("Please fix validation errors before saving", "error");
+      return;
+    }
+
+    // Build the metadata payload — only include non-empty values
+    const newMetadata: Record<string, unknown> = { ...agent.metadata };
+    for (const field of ADVANCED_SETTINGS) {
+      const raw = formValues[field.key]?.trim();
+      if (!raw) {
+        // Remove the key to use system default
+        delete newMetadata[field.key];
+      } else if (field.type === "number") {
+        newMetadata[field.key] = Number(raw);
+      } else {
+        newMetadata[field.key] = raw;
+      }
+    }
+
+    setIsSaving(true);
+    try {
+      await updateAgent(agent.id, { metadata: newMetadata }, projectId);
+      addToast("Advanced settings saved", "success");
+      setJustSaved(true);
+      // Auto-hide the saved indicator after 3 seconds
+      setTimeout(() => setJustSaved(false), 3000);
+      await onSaved();
+    } catch (err: any) {
+      addToast(`Failed to save settings: ${err.message}`, "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="config-tab">
       <div className="config-section">
@@ -1214,15 +1398,75 @@ function ConfigTab({
       <div className="config-section">
         <h3>Advanced Settings</h3>
         <p className="config-description">
-          Advanced configuration options for power users.
+          Advanced configuration options for this agent. Leave a field empty to use system defaults.
         </p>
-        
-        <div className="config-placeholder">
-          <Settings size={32} opacity={0.3} />
-          <p>Advanced configuration options will be available in a future update.</p>
-          <p className="text-muted">
-            This will include model selection, heartbeat intervals, and environment variables.
-          </p>
+
+        <div className="config-fields">
+          {ADVANCED_SETTINGS.map((field) => {
+            const hasError = !!errors[field.key];
+            return (
+              <div className="config-field" key={field.key}>
+                <label htmlFor={`adv-${field.key}`}>{field.label}</label>
+                {field.type === "select" ? (
+                  <select
+                    id={`adv-${field.key}`}
+                    className={cn("select", hasError && "input--error")}
+                    value={formValues[field.key] ?? ""}
+                    onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                  >
+                    <option value="">System Default</option>
+                    {field.options?.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id={`adv-${field.key}`}
+                    type="text"
+                    inputMode={field.type === "number" ? "numeric" : undefined}
+                    className={cn("input", hasError && "input--error")}
+                    placeholder={field.placeholder}
+                    value={formValues[field.key] ?? ""}
+                    onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                  />
+                )}
+                {hasError && (
+                  <span className="config-error">{errors[field.key]}</span>
+                )}
+                {!hasError && field.hint && (
+                  <span className="config-hint">{field.hint}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="config-actions">
+          <button
+            className="btn btn--primary"
+            disabled={!hasChanges || isSaving}
+            onClick={() => void handleSave()}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <CheckCircle size={16} />
+                Save Settings
+              </>
+            )}
+          </button>
+          {!hasChanges && justSaved && (
+            <span className="config-saved-indicator">
+              <CheckCircle size={14} />
+              Settings saved
+            </span>
+          )}
         </div>
       </div>
 
@@ -1274,17 +1518,30 @@ function ConfigTab({
           font-style: italic;
         }
 
-        .config-placeholder {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          padding: 32px;
-          color: var(--text-muted);
-          text-align: center;
+        .config-error {
+          font-size: 11px;
+          color: var(--error, #f85149);
         }
 
-        .config-placeholder p {
-          margin: 8px 0 0 0;
+        .input--error {
+          border-color: var(--error, #f85149) !important;
+        }
+
+        .config-actions {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-top: 20px;
+          padding-top: 16px;
+          border-top: 1px solid var(--border);
+        }
+
+        .config-saved-indicator {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 13px;
+          color: var(--success, #3fb950);
         }
       `}</style>
     </div>

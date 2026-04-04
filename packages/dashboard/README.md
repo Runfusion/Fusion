@@ -104,7 +104,7 @@ Manage AI agents with a dedicated control surface accessible from the main dashb
 - **View Modes**: Board (compact grid) and list (detailed card) layouts, persisted to localStorage
 - **Agent CRUD**: Create agents with name and role (create form uses dashboard radius tokens for consistent styling), change state, update roles inline, delete terminated agents
 - **Health Monitoring**: Heartbeat-based health status (Healthy, Unresponsive, Starting, Paused, Terminated)
-- **Agent Detail**: Click any agent card to open a detail modal with full agent information
+- **Agent Detail**: Click any agent card to open a detail modal with full agent information. The **Settings** tab now includes **editable advanced settings** (heartbeat interval, max retries, task timeout, log level) persisted through `agent.metadata`. Empty fields revert to system defaults, invalid values block save with inline error messages
 
 ### Interactive Terminal
 Access a fully functional PTY (pseudo-terminal) shell directly from the dashboard. Click the terminal icon in the header to open the interactive terminal modal.
