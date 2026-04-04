@@ -164,7 +164,7 @@ describe("useExecutorStats", () => {
   });
 
   describe("stuck task detection", () => {
-    it("detects tasks in in-progress with no activity for > 10 minutes as stuck", async () => {
+    it("detects tasks in in-progress with no activity beyond threshold as stuck", async () => {
       // Set updatedAt to 11 minutes ago
       const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
       const tasks: Task[] = [
@@ -172,7 +172,8 @@ describe("useExecutorStats", () => {
         { ...createMockTask("FN-002", "in-progress") }, // just updated
       ];
 
-      const { result } = renderHook(() => useExecutorStats(tasks));
+      // Pass 10-minute (600000ms) threshold
+      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 600000));
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(100);
@@ -181,13 +182,13 @@ describe("useExecutorStats", () => {
       expect(result.current.stats.stuckTaskCount).toBe(1);
     });
 
-    it("does not count non-in-progress tasks as stuck even if old", async () => {
-      // Set updatedAt to 11 minutes ago for a todo task
+    it("returns 0 stuck tasks when taskStuckTimeoutMs is undefined (disabled)", async () => {
       const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
       const tasks: Task[] = [
-        { ...createMockTask("FN-001", "todo"), updatedAt: elevenMinutesAgo },
+        { ...createMockTask("FN-001", "in-progress"), updatedAt: elevenMinutesAgo },
       ];
 
+      // No threshold = stuck detection disabled
       const { result } = renderHook(() => useExecutorStats(tasks));
 
       await act(async () => {
@@ -197,14 +198,62 @@ describe("useExecutorStats", () => {
       expect(result.current.stats.stuckTaskCount).toBe(0);
     });
 
+    it("does not count non-in-progress tasks as stuck even if old", async () => {
+      // Set updatedAt to 11 minutes ago for a todo task
+      const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+      const tasks: Task[] = [
+        { ...createMockTask("FN-001", "todo"), updatedAt: elevenMinutesAgo },
+      ];
+
+      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 600000));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+
+      expect(result.current.stats.stuckTaskCount).toBe(0);
+    });
+
     it("does not count recent in-progress tasks as stuck", async () => {
-      // Set updatedAt to 5 minutes ago
+      // Set updatedAt to 5 minutes ago — below the 10-minute threshold
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       const tasks: Task[] = [
         { ...createMockTask("FN-001", "in-progress"), updatedAt: fiveMinutesAgo },
       ];
 
-      const { result } = renderHook(() => useExecutorStats(tasks));
+      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 600000));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+
+      expect(result.current.stats.stuckTaskCount).toBe(0);
+    });
+
+    it("respects custom threshold values", async () => {
+      // Set updatedAt to 3 minutes ago
+      const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+      const tasks: Task[] = [
+        { ...createMockTask("FN-001", "in-progress"), updatedAt: threeMinutesAgo },
+      ];
+
+      // With a 2-minute threshold, it should be stuck
+      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 120000));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+
+      expect(result.current.stats.stuckTaskCount).toBe(1);
+    });
+
+    it("returns 0 when taskStuckTimeoutMs is 0", async () => {
+      const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+      const tasks: Task[] = [
+        { ...createMockTask("FN-001", "in-progress"), updatedAt: elevenMinutesAgo },
+      ];
+
+      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 0));
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(100);

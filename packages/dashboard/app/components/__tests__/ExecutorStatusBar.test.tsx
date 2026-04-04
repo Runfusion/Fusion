@@ -328,13 +328,13 @@ describe("ExecutorStatusBar", () => {
       const tasks: any[] = [{ id: "FN-001" }];
       render(<ExecutorStatusBar tasks={tasks} projectId="proj_abc123" />);
 
-      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, "proj_abc123");
+      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, "proj_abc123", undefined);
     });
 
     it("passes tasks and undefined to useExecutorStats when projectId not provided", () => {
       render(<ExecutorStatusBar tasks={emptyTasks} />);
 
-      expect(mockUseExecutorStats).toHaveBeenCalledWith(emptyTasks, undefined);
+      expect(mockUseExecutorStats).toHaveBeenCalledWith(emptyTasks, undefined, undefined);
     });
   });
 
@@ -377,7 +377,7 @@ describe("ExecutorStatusBar", () => {
       render(<ExecutorStatusBar tasks={tasks} />);
 
       // useExecutorStats receives the tasks array as first argument
-      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, undefined);
+      expect(mockUseExecutorStats).toHaveBeenCalledWith(tasks, undefined, undefined);
     });
 
     it("renders stuck segment with correct count when stuck tasks detected", () => {

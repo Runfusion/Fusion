@@ -9,6 +9,8 @@ interface ExecutorStatusBarProps {
   tasks: Task[];
   /** Project ID for fetching project-specific stats */
   projectId?: string;
+  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
+  taskStuckTimeoutMs?: number;
 }
 
 /**
@@ -58,8 +60,8 @@ function getStateDisplay(state: ExecutorState): { label: string; color: string; 
  * - Executor state badge (idle/running/paused)
  * - Last activity timestamp
  */
-export function ExecutorStatusBar({ tasks, projectId }: ExecutorStatusBarProps) {
-  const { stats, loading, error } = useExecutorStats(tasks, projectId);
+export function ExecutorStatusBar({ tasks, projectId, taskStuckTimeoutMs }: ExecutorStatusBarProps) {
+  const { stats, loading, error } = useExecutorStats(tasks, projectId, taskStuckTimeoutMs);
 
   const stateDisplay = useMemo(() => getStateDisplay(stats.executorState), [stats.executorState]);
 
