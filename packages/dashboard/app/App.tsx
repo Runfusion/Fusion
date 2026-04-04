@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@fusion/core";
-import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, updateGlobalSettings, fetchModels, fetchTaskDetail, updateProject, unregisterProject, runScript as runScriptApi } from "./api";
+import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, updateGlobalSettings, fetchModels, fetchTaskDetail, updateProject, unregisterProject } from "./api";
 import type { ModelInfo, ProjectInfo } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
@@ -9,7 +9,6 @@ import { ProjectOverview } from "./components/ProjectOverview";
 import { SetupWizardModal } from "./components/SetupWizardModal";
 import { TaskDetailModal } from "./components/TaskDetailModal";
 import { TerminalModal } from "./components/TerminalModal";
-import { ScriptRunDialog } from "./components/ScriptRunDialog";
 import { FileBrowserModal } from "./components/FileBrowserModal";
 import { ChangedFilesModal } from "./components/ChangedFilesModal";
 import { SettingsModal } from "./components/SettingsModal";
@@ -92,12 +91,6 @@ function AppInner() {
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [scriptsOpen, setScriptsOpen] = useState(false);
   const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
-  const [scriptRunDialog, setScriptRunDialog] = useState<{
-    open: boolean;
-    scriptName: string;
-    sessionId: string;
-    command: string;
-  }>({ open: false, scriptName: "", sessionId: "", command: "" });
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
 
@@ -465,34 +458,22 @@ function AppInner() {
   // Scripts handlers
   const handleOpenScripts = useCallback(() => setScriptsOpen(true), []);
   const handleCloseScripts = useCallback(() => setScriptsOpen(false), []);
-  const handleRunScript = useCallback(async (name: string, _command: string) => {
+  const handleRunScript = useCallback(async (name: string, command: string) => {
     // Close the scripts modal immediately so the terminal becomes the
-    // topmost surface once it opens (avoids the modal stacking on top
-    // of the script-run dialog during the async API call).
+    // topmost surface once it opens.
     setScriptsOpen(false);
 
-    try {
-      const result = await runScriptApi(name, undefined, currentProject?.id);
-      setScriptRunDialog({
-        open: true,
-        scriptName: name,
-        sessionId: result.sessionId,
-        command: result.command,
-      });
-    } catch (err: any) {
-      addToast(err.message || `Failed to run script: ${name}`, "error");
-    }
-  }, [addToast, currentProject?.id]);
+    // Launch the script command in the interactive terminal modal.
+    // Reset the initial command ref so the terminal knows to run the
+    // new command even if it is already open.
+    setTerminalInitialCommand(command);
+    setTerminalOpen(true);
+  }, []);
 
   // Terminal close handler
   const handleTerminalClose = useCallback(() => {
     setTerminalOpen(false);
     setTerminalInitialCommand(undefined);
-  }, []);
-
-  // Script run dialog close handler
-  const handleScriptRunDialogClose = useCallback(() => {
-    setScriptRunDialog((prev) => ({ ...prev, open: false }));
   }, []);
 
   // Render main content based on view mode
@@ -664,13 +645,6 @@ function AppInner() {
         isOpen={terminalOpen}
         onClose={handleTerminalClose}
         initialCommand={terminalInitialCommand}
-      />
-      <ScriptRunDialog
-        isOpen={scriptRunDialog.open}
-        onClose={handleScriptRunDialogClose}
-        scriptName={scriptRunDialog.scriptName}
-        sessionId={scriptRunDialog.sessionId}
-        command={scriptRunDialog.command}
       />
       <ScriptsModal
         isOpen={scriptsOpen}

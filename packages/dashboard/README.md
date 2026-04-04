@@ -121,16 +121,10 @@ Access a fully functional PTY (pseudo-terminal) shell directly from the dashboar
   - `Ctrl+0` - Reset zoom
   - `Escape` - Close terminal modal
 
-### Script Run Dialog
-When running a saved script from the dashboard (via QuickScripts dropdown in the header or the Run button in Scripts modal), the Scripts modal closes immediately and a dedicated ScriptRunDialog becomes the active foreground view with live output streaming. The dialog uses the existing terminal PTY session infrastructure:
- WebSocket connection for output, but is non-interactive (no user input).
+### Saved Scripts
+Saved scripts (managed via the Scripts modal or QuickScripts dropdown in the header) launch inside the existing interactive Terminal modal instead of a separate read-only output dialog. This gives users a consistent terminal experience and lets them interact with the shell after the script starts — for example, to inspect output files, run follow-up commands, or debug failures.
 
-**Modal Handoff**: When a script is launched from the Scripts modal, the modal dismisses synchronously before the API call completes so that the ScriptRunDialog always appears as the topmost surface — the user never sees both overlays stacked at once.
-  - **Live Output**: Streams stdout/stderr from the script in real-time via WebSocket
-  - **Script Name & Command**: Shows the script name and resolved command
-  - **Status Indicator**: Shows running/completed/error status
-  - **Exit Code**: Displays exit code when the script completes
-  - **Clean Closure**: Kills the backing PTY session if closed while still running
+**Modal Handoff**: When a script is launched from the Scripts modal, the modal closes immediately so the Terminal modal becomes the topmost surface — the user never sees both overlays stacked. The script command is sent to the terminal as an `initialCommand` once the PTY session connects. Running a different script while the terminal is already open sends the new command without needing to close and reopen the modal.
 
 **Features**:
 - **Real PTY Terminal**: Spawns a real shell (bash/zsh/powershell) using node-pty for authentic terminal behavior

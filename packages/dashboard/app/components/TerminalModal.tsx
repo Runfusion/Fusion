@@ -32,12 +32,21 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [xtermReady, setXtermReady] = useState(false);
+  const [openGeneration, setOpenGeneration] = useState(0);
   
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<ITerminalAddon | null>(null);
-  const hasInitialCommandRun = useRef(false);
+  const hasInitialCommandRun = useRef<string | false>(false);
   const xtermInitializedRef = useRef<string | false>(false);
+
+  // Bump open generation whenever the modal opens so the initialCommand
+  // effect re-evaluates after a close/reopen cycle (deps may be identical).
+  useEffect(() => {
+    if (isOpen) {
+      setOpenGeneration((g) => g + 1);
+    }
+  }, [isOpen]);
 
   // Use the session management hook
   const { 
@@ -235,16 +244,20 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     };
   }, [xtermReady, activeTab?.id, onData, onScrollback, onConnect, onExit, updateTabTitle]);
 
-  // Run initial command when connected
+  // Run initial command when connected.
+  // Tracks the last command that was sent so that a new command provided
+  // while the terminal is already open (e.g., running a different script)
+  // will be executed immediately without requiring a modal close/reopen.
+  // Depends on openGeneration so the command re-fires after close/reopen.
   useEffect(() => {
-    if (connectionStatus === "connected" && initialCommand && !hasInitialCommandRun.current && activeTab) {
-      hasInitialCommandRun.current = true;
+    if (connectionStatus === "connected" && initialCommand && hasInitialCommandRun.current !== initialCommand && activeTab) {
+      hasInitialCommandRun.current = initialCommand;
       // Small delay to let shell initialize
       setTimeout(() => {
         sendInput(initialCommand + "\n");
       }, 500);
     }
-  }, [connectionStatus, initialCommand, sendInput, activeTab]);
+  }, [connectionStatus, initialCommand, sendInput, activeTab, openGeneration]);
 
   // Handle keyboard shortcuts (zoom)
   useEffect(() => {

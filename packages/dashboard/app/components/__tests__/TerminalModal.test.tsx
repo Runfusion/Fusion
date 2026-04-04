@@ -452,6 +452,97 @@ describe("TerminalModal", () => {
 
     expect(mockRestartActiveTab).toHaveBeenCalled();
   });
+
+  // --- initialCommand / script launch behavior ---
+  describe("initialCommand execution", () => {
+    it("sends initialCommand to terminal when connected", async () => {
+      mockUseTerminal.mockReturnValue(
+        createMockTerminalState({ connectionStatus: "connected" })
+      );
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />);
+
+      await waitFor(() => {
+        expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
+      });
+    });
+
+    it("does not send the same initialCommand twice on re-renders", async () => {
+      mockUseTerminal.mockReturnValue(
+        createMockTerminalState({ connectionStatus: "connected" })
+      );
+
+      const { rerender } = render(
+        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+      );
+
+      await waitFor(() => {
+        expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
+      });
+
+      const callCount = mockSendInput.mock.calls.length;
+
+      // Re-render with same props
+      rerender(
+        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+      );
+
+      // Should not send the command again
+      expect(mockSendInput).toHaveBeenCalledTimes(callCount);
+    });
+
+    it("sends a new initialCommand when it changes while terminal is open", async () => {
+      mockUseTerminal.mockReturnValue(
+        createMockTerminalState({ connectionStatus: "connected" })
+      );
+
+      const { rerender } = render(
+        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+      );
+
+      await waitFor(() => {
+        expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
+      });
+
+      // Change the command (e.g., user runs a different script)
+      rerender(
+        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="pnpm test" />
+      );
+
+      await waitFor(() => {
+        expect(mockSendInput).toHaveBeenCalledWith("pnpm test\n");
+      });
+    });
+
+    it("resends command after modal close and reopen", async () => {
+      mockUseTerminal.mockReturnValue(
+        createMockTerminalState({ connectionStatus: "connected" })
+      );
+
+      const { rerender } = render(
+        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+      );
+
+      await waitFor(() => {
+        expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
+      });
+
+      // Close the modal
+      rerender(
+        <TerminalModal isOpen={false} onClose={mockOnClose} initialCommand="npm run build" />
+      );
+
+      // Reopen with the same command
+      mockSendInput.mockClear();
+      rerender(
+        <TerminalModal isOpen={true} onClose={mockOnClose} initialCommand="npm run build" />
+      );
+
+      await waitFor(() => {
+        expect(mockSendInput).toHaveBeenCalledWith("npm run build\n");
+      });
+    });
+  });
 });
 
 // --- Mobile layout regression tests ---
