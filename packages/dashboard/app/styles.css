@@ -4336,17 +4336,10 @@ body {
   cursor: not-allowed;
 }
 
-.modal-edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: var(--space-xs);
-}
-
+/* Edit-mode hint text now lives in modal-actions footer */
 .modal-edit-hint {
   font-size: 12px;
   color: var(--text-dim);
-  text-align: center;
 }
 
 .modal-edit-hint kbd {

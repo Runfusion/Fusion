@@ -706,25 +706,6 @@ export function TaskDetailModal({
                 addToast={addToast}
                 isActive={isEditing}
               />
-              <div className="modal-edit-actions">
-                <button
-                  className="btn btn-sm"
-                  onClick={exitEditMode}
-                  disabled={isSaving}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="btn btn-primary btn-sm"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                >
-                  {isSaving ? "Saving…" : "Save"}
-                </button>
-              </div>
-              <div className="modal-edit-hint">
-                <kbd>Ctrl+Enter</kbd> to save · <kbd>Escape</kbd> to cancel
-              </div>
             </div>
           ) : (
             <>
@@ -1109,6 +1090,29 @@ export function TaskDetailModal({
           )}
         </div>
         <div className="modal-actions">
+          {isEditing ? (
+            <>
+              <span className="modal-edit-hint">
+                <kbd>Ctrl+Enter</kbd> to save · <kbd>Escape</kbd> to cancel
+              </span>
+              <div className="modal-actions-spacer" />
+              <button
+                className="btn btn-sm"
+                onClick={exitEditMode}
+                disabled={isSaving}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={handleSave}
+                disabled={isSaving}
+              >
+                {isSaving ? "Saving…" : "Save"}
+              </button>
+            </>
+          ) : (
+            <>
           <button className="btn btn-danger btn-sm" onClick={handleDelete}>
             Delete
           </button>
@@ -1165,6 +1169,8 @@ export function TaskDetailModal({
                 Move to {COLUMN_LABELS[col]}
               </button>
             ))
+          )}
+            </>
           )}
         </div>
         {showRefineModal && (

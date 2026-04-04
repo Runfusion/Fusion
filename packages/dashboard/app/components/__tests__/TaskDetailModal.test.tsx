@@ -3274,6 +3274,89 @@ describe("TaskDetailModal", () => {
       expect(titleInput.value).toBe("My Task");
       expect(descTextarea.value).toBe("My Description");
     });
+
+    it("renders Save and Cancel in the modal footer, not inside the edit form body", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // The edit form body should NOT contain the Save or Cancel action buttons
+      const editForm = container.querySelector(".modal-edit-form");
+      expect(editForm).toBeTruthy();
+      const formButtons = Array.from(editForm!.querySelectorAll("button"));
+      const formButtonTexts = formButtons.map((b) => b.textContent);
+      expect(formButtonTexts).not.toContain("Save");
+      expect(formButtonTexts).not.toContain("Cancel");
+      expect(formButtonTexts).not.toContain("Saving…");
+
+      // The modal-actions footer should contain the Save and Cancel buttons
+      const modalActions = container.querySelector(".modal-actions");
+      expect(modalActions).toBeTruthy();
+      const footerButtons = modalActions!.querySelectorAll("button");
+      const buttonTexts = Array.from(footerButtons).map((b) => b.textContent);
+      expect(buttonTexts).toContain("Cancel");
+      expect(buttonTexts).toContain("Save");
+    });
+
+    it("renders keyboard hint in the modal footer when editing", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Enter edit mode
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      // The hint should be in the modal-actions footer, not inside the edit form body
+      const editForm = container.querySelector(".modal-edit-form");
+      expect(editForm!.querySelector(".modal-edit-hint")).toBeNull();
+
+      const modalActions = container.querySelector(".modal-actions");
+      expect(modalActions!.querySelector(".modal-edit-hint")).toBeTruthy();
+    });
+
+    it("shows normal modal actions (not edit actions) when not editing", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Should NOT be in edit mode — no edit hint, no Save/Cancel in footer
+      const modalActions = container.querySelector(".modal-actions");
+      expect(modalActions!.querySelector(".modal-edit-hint")).toBeNull();
+
+      const footerButtons = modalActions!.querySelectorAll("button");
+      const buttonTexts = Array.from(footerButtons).map((b) => b.textContent);
+      expect(buttonTexts).not.toContain("Save");
+      expect(buttonTexts).not.toContain("Cancel");
+      // Should contain standard actions like Delete
+      expect(buttonTexts).toContain("Delete");
+    });
   });
 
   describe("Commits tab visibility", () => {
