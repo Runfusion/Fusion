@@ -431,6 +431,30 @@ describe("StuckTaskDetector", () => {
       vi.useRealTimers();
     });
 
+    it("marks the abort via onStuck before disposing the session", async () => {
+      let onStuckCalled = false;
+      const onStuck = vi.fn(() => {
+        onStuckCalled = true;
+      });
+      const customDetector = new StuckTaskDetector(store, { onStuck });
+      const session = {
+        dispose: vi.fn(() => {
+          expect(onStuckCalled).toBe(true);
+        }),
+      };
+
+      customDetector.trackTask("FN-001", session);
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.advanceTimersByTime(61000);
+
+      await customDetector.killAndRetry("FN-001", 60000);
+
+      expect(onStuck).toHaveBeenCalledTimes(1);
+
+      vi.useRealTimers();
+    });
+
     it("calls onStuck with loop reason and activity count", async () => {
       const onStuck = vi.fn();
       const customDetector = new StuckTaskDetector(store, { onStuck });

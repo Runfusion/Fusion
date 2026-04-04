@@ -244,16 +244,6 @@ export class StuckTaskDetector {
       `${activitySinceProgress} events since last progress)`,
     );
 
-    // Dispose the agent session first
-    try {
-      entry.session.dispose();
-    } catch (err) {
-      stuckLog.error(`Failed to dispose session for ${taskId}:`, err);
-    }
-
-    // Remove from tracking
-    this.tracked.delete(taskId);
-
     // Log the event to the task log
     try {
       await this.store.logEntry(
@@ -276,6 +266,20 @@ export class StuckTaskDetector {
       activitySinceProgress,
     };
 
+    // Notify listeners before disposing the session so executor cleanup can
+    // mark the abort as intentional before the disposed session unwinds.
+    this.onStuck?.(event);
+
+    // Dispose the agent session after listeners have marked the abort.
+    try {
+      entry.session.dispose();
+    } catch (err) {
+      stuckLog.error(`Failed to dispose session for ${taskId}:`, err);
+    }
+
+    // Remove from tracking
+    this.tracked.delete(taskId);
+
     // Check stuck kill budget before re-queuing (SelfHealingManager integration).
     // If beforeRequeue returns false, the task has been marked failed — skip re-queue.
     if (this.beforeRequeue) {
@@ -283,7 +287,6 @@ export class StuckTaskDetector {
         const shouldRequeue = await this.beforeRequeue(taskId);
         if (!shouldRequeue) {
           stuckLog.log(`${taskId} exceeded stuck kill budget — not re-queuing`);
-          this.onStuck?.(event);
           return;
         }
       } catch (err) {
@@ -304,8 +307,6 @@ export class StuckTaskDetector {
       stuckLog.error(`Failed to move ${taskId} to todo:`, err);
     }
 
-    // Notify listeners
-    this.onStuck?.(event);
   }
 
   /**

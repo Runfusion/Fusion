@@ -4563,6 +4563,41 @@ describe("TaskExecutor bounded recovery retries", () => {
     }));
   });
 
+  it("exits cleanly when a stuck-killed session resolves without throwing", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn(async () => {
+          executor.markStuckAborted("FN-001");
+        }),
+        dispose: vi.fn(),
+        state: {},
+      },
+    }) as any);
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ status: "failed" }),
+    );
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
+  });
+
   it("clears recovery metadata after successful run completes", async () => {
     const store = createMockStore();
 

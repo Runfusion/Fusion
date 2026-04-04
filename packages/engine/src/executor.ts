@@ -668,6 +668,14 @@ export class TaskExecutor {
             return;
           }
 
+          // If the stuck task detector disposed the session and the agent exited
+          // cleanly, stop here. The detector already handled recovery/re-queueing.
+          if (this.stuckAborted.has(task.id)) {
+            this.stuckAborted.delete(task.id);
+            executorLog.log(`${task.id} terminated by stuck task detector (graceful session exit)`);
+            return;
+          }
+
           if (taskDone) {
             // Capture modified files before running workflow steps
             const updatedTask = await this.store.getTask(task.id);
