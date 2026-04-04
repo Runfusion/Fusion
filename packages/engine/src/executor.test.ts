@@ -4920,6 +4920,191 @@ describe("Workflow Steps Execution", () => {
     // Task should still move to in-review
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
+
+  it("uses workflow step model override when both provider and modelId are set", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Security Audit",
+      description: "Check security",
+      prompt: "Scan for vulnerabilities.",
+      enabled: true,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    let callIdx = 0;
+    mockedCreateHaiAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        // Main execution agent
+        const customTools = opts.customTools || [];
+        const session = {
+          prompt: vi.fn().mockImplementation(async () => {
+            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        };
+        return { session };
+      } else {
+        // Workflow step agent
+        return {
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            state: {},
+          },
+        };
+      }
+    }) as any);
+
+    const onComplete = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // createKbAgent called twice: main agent + workflow step agent
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(2);
+
+    // Second call should use the workflow step's model override
+    const secondCall = mockedCreateHaiAgent.mock.calls[1];
+    expect(secondCall[0].defaultProvider).toBe("anthropic");
+    expect(secondCall[0].defaultModelId).toBe("claude-sonnet-4-5");
+
+    // Log should indicate the override
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      expect.stringContaining("workflow step override"),
+    );
+  });
+
+  it("uses global defaults when workflow step has no model override", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Workflow step without model override
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Docs Review",
+      description: "Check documentation",
+      prompt: "Review all docs.",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    let callIdx = 0;
+    mockedCreateHaiAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        const session = {
+          prompt: vi.fn().mockImplementation(async () => {
+            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        };
+        return { session };
+      } else {
+        return {
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            state: {},
+          },
+        };
+      }
+    }) as any);
+
+    const onComplete = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(2);
+
+    // Second call should use settings defaults (no override indicator)
+    const secondCall = mockedCreateHaiAgent.mock.calls[1];
+    // defaults come from the mock store's getSettings
+    expect(secondCall[0].defaultProvider).toBeUndefined();
+    expect(secondCall[0].defaultModelId).toBeUndefined();
+
+    // Log should NOT indicate override
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-001",
+      expect.stringContaining("workflow step override"),
+    );
+  });
 });
 
 describe("Real-time steering injection", () => {

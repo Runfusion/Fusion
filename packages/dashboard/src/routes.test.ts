@@ -6295,6 +6295,72 @@ describe("POST /workflow-steps", () => {
     expect(res.status).toBe(409);
     expect(res.body.error).toContain("already exists");
   });
+
+  it("creates a workflow step with model override", async () => {
+    const created = { id: "WS-002", name: "Security", description: "Security audit", prompt: "", enabled: true, modelProvider: "anthropic", modelId: "claude-sonnet-4-5", createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Security",
+      description: "Security audit",
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(store.createWorkflowStep).toHaveBeenCalledWith({
+      name: "Security",
+      description: "Security audit",
+      prompt: undefined,
+      enabled: undefined,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    });
+  });
+
+  it("returns 400 when model provider is set without modelId", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Security",
+      description: "Security audit",
+      modelProvider: "anthropic",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("must include both provider and modelId");
+  });
+
+  it("returns 400 when modelId is set without model provider", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Security",
+      description: "Security audit",
+      modelId: "claude-sonnet-4-5",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("must include both provider and modelId");
+  });
+
+  it("creates a workflow step without model fields when both empty strings", async () => {
+    const created = { id: "WS-001", name: "Docs", description: "Check docs", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Docs",
+      description: "Check docs",
+      modelProvider: "",
+      modelId: "",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(store.createWorkflowStep).toHaveBeenCalledWith({
+      name: "Docs",
+      description: "Check docs",
+      prompt: undefined,
+      enabled: undefined,
+      modelProvider: undefined,
+      modelId: undefined,
+    });
+  });
 });
 
 describe("PATCH /workflow-steps/:id", () => {
@@ -6333,6 +6399,40 @@ describe("PATCH /workflow-steps/:id", () => {
 
     expect(res.status).toBe(404);
     expect(res.body.error).toContain("not found");
+  });
+
+  it("updates a workflow step with model override", async () => {
+    const updated = { id: "WS-001", name: "Security", description: "Audit", prompt: "", enabled: true, modelProvider: "anthropic", modelId: "claude-sonnet-4-5", createdAt: "2026-01-01", updatedAt: "2026-01-02" };
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated);
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-001", JSON.stringify({
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.updateWorkflowStep).toHaveBeenCalledWith("WS-001", expect.objectContaining({
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    }));
+  });
+
+  it("returns 400 when updating with only modelProvider", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-001", JSON.stringify({
+      modelProvider: "anthropic",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("must include both provider and modelId");
+  });
+
+  it("returns 400 when updating with only modelId", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-001", JSON.stringify({
+      modelId: "claude-sonnet-4-5",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("must include both provider and modelId");
   });
 });
 

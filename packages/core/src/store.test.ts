@@ -4450,6 +4450,81 @@ Task with acceptance criteria
 
       expect(task.enabledWorkflowSteps).toBeUndefined();
     });
+
+    it("should create a workflow step with model override", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Security Audit",
+        description: "Check for security issues",
+        prompt: "Scan for vulnerabilities.",
+        enabled: true,
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+      });
+
+      expect(ws.modelProvider).toBe("anthropic");
+      expect(ws.modelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("should create a workflow step without model override", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "QA Check",
+        description: "Run tests",
+      });
+
+      expect(ws.modelProvider).toBeUndefined();
+      expect(ws.modelId).toBeUndefined();
+    });
+
+    it("should update a workflow step model override", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Docs",
+        description: "Check docs",
+      });
+
+      const updated = await store.updateWorkflowStep(ws.id, {
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+      });
+
+      expect(updated.modelProvider).toBe("openai");
+      expect(updated.modelId).toBe("gpt-4o");
+    });
+
+    it("should clear a workflow step model override by setting to undefined", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Docs",
+        description: "Check docs",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+      });
+
+      expect(ws.modelProvider).toBe("anthropic");
+
+      const updated = await store.updateWorkflowStep(ws.id, {
+        modelProvider: undefined,
+        modelId: undefined,
+      });
+
+      expect(updated.modelProvider).toBeUndefined();
+      expect(updated.modelId).toBeUndefined();
+    });
+
+    it("should persist model override across list/get", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Perf Review",
+        description: "Check performance",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+      });
+
+      const listed = await store.listWorkflowSteps();
+      expect(listed[0].modelProvider).toBe("anthropic");
+      expect(listed[0].modelId).toBe("claude-sonnet-4-5");
+
+      const found = await store.getWorkflowStep(ws.id);
+      expect(found!.modelProvider).toBe("anthropic");
+      expect(found!.modelId).toBe("claude-sonnet-4-5");
+    });
   });
 
   // ── Title Summarization Tests ────────────────────────────────────────────
