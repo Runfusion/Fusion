@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
-import { TaskStore, AutomationStore } from "@fusion/core";
+import { TaskStore, AutomationStore, CentralCore } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo } from "@fusion/core";
 import { createServer, GitHubClient } from "@fusion/dashboard";
 import { TriageProcessor, TaskExecutor, Scheduler, AgentSemaphore, WorktreePool, aiMergeTask, UsageLimitPauser, PRIORITY_MERGE, scanIdleWorktrees, cleanupOrphanedWorktrees, NtfyNotifier, PrMonitor, PrCommentHandler, CronRunner, StuckTaskDetector, SelfHealingManager } from "@fusion/engine";
@@ -208,7 +208,25 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   await automationStore.init();
 
   // ── NtfyNotifier: push notifications for task completion and failures ─
-  const notifier = new NtfyNotifier(store);
+  //
+  // Resolve the project ID from the central registry so that notification
+  // deep links include ?project=...&task=... for multi-project dashboards.
+  // Falls back to no project ID (task-only links) when the central DB is
+  // unavailable or the project is not registered (single-project / legacy).
+  //
+  let ntfyProjectId: string | undefined;
+  try {
+    const central = new CentralCore();
+    await central.init();
+    const registered = await central.getProjectByPath(cwd);
+    await central.close();
+    if (registered) {
+      ntfyProjectId = registered.id;
+    }
+  } catch {
+    // Central DB unavailable or project not registered — backward compatible
+  }
+  const notifier = new NtfyNotifier(store, { projectId: ntfyProjectId });
   notifier.start();
 
   // Set enginePaused if starting in paused mode

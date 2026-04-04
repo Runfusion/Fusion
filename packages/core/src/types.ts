@@ -608,7 +608,9 @@ export interface GlobalSettings {
   ntfyEvents?: NtfyNotificationEvent[];
   /** Dashboard hostname for ntfy.sh deep links. When set along with ntfyEnabled
    *  and ntfyTopic, notifications include a Click URL that opens the dashboard
-   *  directly to the task. Example: "http://localhost:3000" or "https://fusion.example.com" */
+   *  directly to the task. In multi-project setups the URL includes both
+   *  ?project=<id>&task=<id> so the dashboard opens the correct project first.
+   *  Example: "http://localhost:3000" or "https://fusion.example.com" */
   ntfyDashboardHost?: string;
   /** The default project ID for CLI operations when --project flag is not provided.
    *  Used to determine which project to operate on when not in a project directory.

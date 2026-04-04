@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@fusion/core";
 import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, updateGlobalSettings, fetchModels, fetchTaskDetail, updateProject, unregisterProject } from "./api";
 import type { ModelInfo, ProjectInfo } from "./api";
@@ -226,6 +226,9 @@ function AppInner() {
   }, [favoriteModels, favoriteProviders, addToast]);
 
   // Handle deep link to task on mount (with optional project context)
+  // Uses a ref to prevent duplicate fetches when setCurrentProject triggers
+  // a re-run of this effect during project switching.
+  const deepLinkFetchedRef = useRef(false);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const projectParam = params.get("project");
@@ -234,7 +237,12 @@ function AppInner() {
     // If no task to load, nothing to do
     if (!taskId) return;
 
-    // If project param is present, try to switch to that project first
+    // Wait for projects to finish loading before resolving deep links.
+    // Without this guard, an empty projects list during loading would
+    // produce a false "project not found" error toast.
+    if (projectsLoading) return;
+
+    // If project param is present, validate it and switch project if needed
     if (projectParam) {
       const matchingProject = projects.find((p) => p.id === projectParam);
       if (!matchingProject) {
@@ -247,7 +255,13 @@ function AppInner() {
       }
     }
 
-    // After project context is resolved (or if no project param), fetch the task
+    // Skip if we've already fetched this task (prevents double-fetch when
+    // setCurrentProject causes this effect to re-run).
+    if (deepLinkFetchedRef.current) return;
+    deepLinkFetchedRef.current = true;
+
+    // Use project param as the authoritative project context for the fetch
+    // when present; otherwise fall back to the current/default project.
     const taskProjectId = projectParam ?? currentProject?.id;
     fetchTaskDetail(taskId, taskProjectId)
       .then((detail) => {
@@ -256,7 +270,7 @@ function AppInner() {
       .catch(() => {
         addToast(`Task ${taskId} not found`, "error");
       });
-  }, [addToast, projects, currentProject, setCurrentProject]);
+  }, [addToast, projects, projectsLoading, currentProject, setCurrentProject]);
 
   // View change handlers
   const handleChangeTaskView = useCallback((newView: TaskView) => {

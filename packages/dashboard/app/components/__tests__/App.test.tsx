@@ -64,6 +64,7 @@ vi.mock("../../hooks/useTasks", () => ({
 // Mock state holders for dynamic mocking
 const mockProjectsState = {
   projects: [] as any[],
+  loading: false,
 };
 
 const mockCurrentProjectState = {
@@ -76,7 +77,7 @@ const mockCurrentProjectState = {
 vi.mock("../../hooks/useProjects", () => ({
   useProjects: () => ({
     projects: mockProjectsState.projects,
-    loading: false,
+    loading: mockProjectsState.loading,
     error: null,
     refresh: vi.fn(),
     register: vi.fn(),
@@ -124,6 +125,7 @@ beforeEach(() => {
   }));
   // Reset mock states
   mockProjectsState.projects = [];
+  mockProjectsState.loading = false;
   mockCurrentProjectState.currentProject = { id: "proj_123", name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" };
   mockCurrentProjectState.setCurrentProject.mockClear();
   mockCurrentProjectState.clearCurrentProject.mockClear();
@@ -289,6 +291,72 @@ describe("App deep link handling", () => {
 
     // setCurrentProject should NOT be called when no project param
     expect(mockCurrentProjectState.setCurrentProject).not.toHaveBeenCalled();
+  });
+
+  it("waits for projects to load before resolving deep links", async () => {
+    // Start with projects still loading
+    mockProjectsState.loading = true;
+    mockProjectsState.projects = [];
+    mockCurrentProjectState.currentProject = null;
+
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=proj_123&task=FN-001"),
+    });
+
+    render(<App />);
+
+    // Wait a tick to ensure no premature fetch
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+    });
+
+    // Should NOT have fetched the task or shown an error while loading
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
+    expect(screen.queryByText(/not found/)).toBeNull();
+  });
+
+  it("prevents double-fetch when project switch triggers effect re-run", async () => {
+    const project1 = { id: "proj_123", name: "Test Project", path: "/test", status: "active", isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+    const project2 = { id: "proj_456", name: "Other Project", path: "/other", status: "active", isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+    mockProjectsState.projects = [project1, project2];
+    mockCurrentProjectState.currentProject = project1;
+
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=proj_456&task=FN-789"),
+    });
+
+    render(<App />);
+
+    // Wait for the task to be fetched
+    await waitFor(() => {
+      expect(fetchTaskDetail).toHaveBeenCalledWith("FN-789", "proj_456");
+    });
+
+    // fetchTaskDetail should have been called exactly once (no double-fetch)
+    expect(fetchTaskDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches task from the project param's project even when current project differs", async () => {
+    const project1 = { id: "proj_123", name: "Test Project", path: "/test", status: "active", isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+    const project2 = { id: "proj_456", name: "Other Project", path: "/other", status: "active", isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+    mockProjectsState.projects = [project1, project2];
+    mockCurrentProjectState.currentProject = project1;
+
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=proj_456&task=FN-001"),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchTaskDetail).toHaveBeenCalledWith("FN-001", "proj_456");
+    });
+
+    // Should NOT have used the current project (proj_123) for the fetch
+    expect(fetchTaskDetail).not.toHaveBeenCalledWith("FN-001", "proj_123");
   });
 });
 

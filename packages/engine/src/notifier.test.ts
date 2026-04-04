@@ -800,6 +800,103 @@ describe("NtfyNotifier", () => {
     });
   });
 
+  describe("dashboard runtime wiring", () => {
+    /**
+     * These tests simulate the pattern used in packages/cli/src/commands/dashboard.ts
+     * where the NtfyNotifier is constructed with an optional projectId resolved
+     * from the central project registry. When a registered project is found,
+     * deep links include ?project=...&task=...; when no project is registered
+     * (legacy / single-project mode), links fall back to ?task=... only.
+     */
+    beforeEach(() => {
+      fetchMock.mockResolvedValue({ ok: true });
+    });
+
+    it("produces project-aware deep links when constructed with registered project ID", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "http://localhost:3000",
+      });
+
+      // Simulates: const notifier = new NtfyNotifier(store, { projectId: registered.id });
+      notifier = new NtfyNotifier(store, { projectId: "proj_abc123" });
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "http://localhost:3000/?project=proj_abc123&task=FN-001",
+          }),
+        }),
+      );
+    });
+
+    it("produces task-only deep links when no project ID is available (legacy mode)", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "http://localhost:3000",
+      });
+
+      // Simulates: const notifier = new NtfyNotifier(store); // no projectId
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      store.triggerTaskMoved(createTask("FN-001", "Test Task"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "Click": "http://localhost:3000/?task=FN-001",
+          }),
+        }),
+      );
+      // Verify no "project=" in the URL
+      const callArgs = fetchMock.mock.calls[0][1] as { headers: Record<string, string> };
+      expect(callArgs.headers["Click"]).not.toContain("project=");
+    });
+
+    it("produces project-aware deep links for all notification event types", async () => {
+      store.setSettings({
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyDashboardHost: "https://fusion.example.com",
+      });
+
+      notifier = new NtfyNotifier(store, { projectId: "proj_xyz" });
+      await notifier.start();
+
+      // in-review event
+      store.triggerTaskMoved(createTask("FN-001", "Task A"), "in-progress", "in-review");
+      await flushAsyncWork();
+
+      // merged event
+      const mergeResult: MergeResult = {
+        task: createTask("FN-001", "Task A"),
+        branch: "fusion/fn-001",
+        merged: true,
+        worktreeRemoved: true,
+        branchDeleted: true,
+      };
+      store.triggerTaskMerged(mergeResult);
+      await flushAsyncWork();
+
+      // Verify both calls include project
+      const calls = fetchMock.mock.calls;
+      for (const call of calls) {
+        const headers = call[1].headers as Record<string, string>;
+        expect(headers["Click"]).toContain("project=proj_xyz");
+      }
+    });
+  });
+
   describe("custom base URL", () => {
     it("uses custom ntfy base URL when provided", async () => {
       store.setSettings({ ntfyEnabled: true, ntfyTopic: "test-topic" });

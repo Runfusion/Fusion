@@ -760,6 +760,18 @@ Terminates and retries tasks with no agent activity for the specified duration (
 ```
 Get notified when tasks complete, merge, or fail. Requires [ntfy.sh](https://ntfy.sh) app.
 
+**Dashboard Deep Links in Notifications:**
+```json
+{
+  "settings": {
+    "ntfyEnabled": true,
+    "ntfyTopic": "my-kb-notifications",
+    "ntfyDashboardHost": "https://fusion.example.com"
+  }
+}
+```
+When `ntfyDashboardHost` is set, notifications include a clickable deep link that opens the specific task in the dashboard. In multi-project setups, the link includes both `?project=<id>&task=<id>` parameters so the dashboard opens the correct task in the correct project. For single-project or unregistered projects, links use `?task=<id>` only.
+
 **Plan Approval:**
 ```json
 {
