@@ -11791,6 +11791,338 @@ html .column.drag-over * {
   cursor: not-allowed;
 }
 
+/* === Workflow Step Manager Modal === */
+.workflow-step-manager-modal {
+  width: 560px;
+}
+
+.wfm-body {
+  padding: var(--space-md);
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+/* Loading / empty states */
+.wfm-empty {
+  text-align: center;
+  padding: var(--space-xl);
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.wfm-loading {
+  text-align: center;
+  padding: var(--space-xl);
+  color: var(--text-muted);
+}
+
+/* Tab navigation row */
+.wfm-tab-row {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-sm);
+}
+
+.wfm-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+/* Step list */
+.wfm-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* Step card */
+.wfm-step-card {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.wfm-step-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.wfm-step-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.wfm-step-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: 4px;
+}
+
+.wfm-step-card-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.wfm-step-card-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wfm-step-card-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.wfm-delete-confirm {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* Badges */
+.wfm-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.wfm-badge-enabled {
+  background: var(--status-success-bg, rgba(34, 197, 94, 0.15));
+  color: var(--status-success, #22c55e);
+}
+
+.wfm-badge-disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.wfm-badge-prompt {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.wfm-badge-script {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+}
+
+.wfm-badge-category {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+/* Template cards */
+.wfm-template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wfm-template-card {
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.wfm-template-inner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.wfm-template-icon {
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.wfm-template-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.wfm-template-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: 4px;
+}
+
+.wfm-template-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.wfm-template-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+}
+
+.wfm-template-add-btn {
+  font-size: 12px;
+  padding: 4px 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Edit/create form */
+.wfm-form {
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.wfm-form-title {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.wfm-form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.wfm-field label,
+.wfm-field-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.wfm-field input[type="text"],
+.wfm-field textarea,
+.wfm-field select {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.wfm-field input[type="text"]:focus,
+.wfm-field textarea:focus,
+.wfm-field select:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.wfm-field textarea {
+  resize: vertical;
+}
+
+.wfm-field textarea.wfm-prompt-textarea {
+  font-family: var(--font-mono, monospace);
+}
+
+/* Mode selector */
+.wfm-mode-selector {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.wfm-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 12px;
+  flex: 1;
+  justify-content: center;
+}
+
+/* Prompt header row (label + refine button) */
+.wfm-prompt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.wfm-refine-btn {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wfm-refine-btn span {
+  font-size: 11px;
+}
+
+/* No-scripts placeholder */
+.wfm-no-scripts {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Checkbox toggle */
+.wfm-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Form actions */
+.wfm-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: 4px;
+}
+
+/* Footer */
+.wfm-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.wfm-footer-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Spinner */
+.wfm-spinner {
+  margin: 0 auto var(--space-sm);
+}
+
 .new-task-modal .form-group small {
   display: block;
   margin-top: var(--space-sm);

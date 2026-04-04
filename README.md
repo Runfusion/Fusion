@@ -611,6 +611,8 @@ The **Changes** tab in the task detail modal uses the merge commit to load file-
 
 Workflow steps are reusable quality gates that run after task implementation but before the task moves to in-review.
 
+The dashboard's Workflow Step Manager dialog follows the global theme system (dark/light/color themes) using consistent modal styling, spacing, and form controls.
+
 ### Defining Workflow Steps
 
 1. Click the **Workflow Steps** button (⚡) in the dashboard header

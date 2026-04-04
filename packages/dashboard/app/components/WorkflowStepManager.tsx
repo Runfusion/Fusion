@@ -320,49 +320,25 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           </button>
         </div>
 
-        <div className="modal-body" style={{ padding: "16px", maxHeight: "70vh", overflowY: "auto" }}>
+        <div className="wfm-body">
           {loading ? (
-            <div style={{ textAlign: "center", padding: "32px", color: "var(--text-secondary)" }}>
-              Loading...
-            </div>
+            <div className="wfm-loading">Loading...</div>
           ) : (
             <>
               {/* Tab Navigation */}
               {!isEditing && (
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "8px",
-                    marginBottom: "16px",
-                    borderBottom: "1px solid var(--border-primary)",
-                    paddingBottom: "8px",
-                  }}
-                >
+                <div className="wfm-tab-row">
                   <button
-                    className={`btn ${activeTab === "my-steps" ? "btn-primary" : "btn-secondary"}`}
+                    className={`btn ${activeTab === "my-steps" ? "btn-primary" : "btn-secondary"} wfm-tab-btn`}
                     onClick={() => setActiveTab("my-steps")}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      fontSize: "13px",
-                      padding: "6px 12px",
-                    }}
                     data-testid="tab-my-steps"
                   >
                     <BookOpen size={14} />
                     My Workflow Steps ({steps.length})
                   </button>
                   <button
-                    className={`btn ${activeTab === "templates" ? "btn-primary" : "btn-secondary"}`}
+                    className={`btn ${activeTab === "templates" ? "btn-primary" : "btn-secondary"} wfm-tab-btn`}
                     onClick={() => setActiveTab("templates")}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      fontSize: "13px",
-                      padding: "6px 12px",
-                    }}
                     data-testid="tab-templates"
                   >
                     <LayoutGrid size={14} />
@@ -375,101 +351,35 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
               {activeTab === "my-steps" && !isEditing && (
                 <>
                   {steps.length === 0 && (
-                    <div
-                      style={{
-                        textAlign: "center",
-                        padding: "32px",
-                        color: "var(--text-secondary)",
-                        fontSize: "14px",
-                      }}
-                      data-testid="empty-state"
-                    >
+                    <div className="wfm-empty" data-testid="empty-state">
                       No workflow steps defined. Create one to get started, or add one from the Templates tab.
                     </div>
                   )}
 
                   {steps.length > 0 && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <div className="wfm-step-list">
                       {steps.map((step) => (
                         <div
                           key={step.id}
-                          className="workflow-step-card"
+                          className="wfm-step-card"
                           data-testid={`workflow-step-${step.id}`}
-                          style={{
-                            padding: "12px 16px",
-                            border: "1px solid var(--border-primary)",
-                            borderRadius: "8px",
-                            background: "var(--bg-secondary)",
-                          }}
                         >
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "flex-start",
-                            }}
-                          >
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "8px",
-                                  marginBottom: "4px",
-                                }}
-                              >
-                                <span style={{ fontWeight: 600, fontSize: "14px" }}>{step.name}</span>
-                                <span
-                                  style={{
-                                    fontSize: "11px",
-                                    padding: "2px 6px",
-                                    borderRadius: "4px",
-                                    background: step.enabled
-                                      ? "var(--status-success-bg, rgba(34, 197, 94, 0.15))"
-                                      : "var(--bg-tertiary)",
-                                    color: step.enabled
-                                      ? "var(--status-success, #22c55e)"
-                                      : "var(--text-secondary)",
-                                  }}
-                                >
+                          <div className="wfm-step-card-top">
+                            <div className="wfm-step-card-info">
+                              <div className="wfm-step-card-title-row">
+                                <span className="wfm-step-card-name">{step.name}</span>
+                                <span className={`wfm-badge ${step.enabled ? "wfm-badge-enabled" : "wfm-badge-disabled"}`}>
                                   {step.enabled ? "Enabled" : "Disabled"}
                                 </span>
-                                <span
-                                  style={{
-                                    fontSize: "11px",
-                                    padding: "2px 6px",
-                                    borderRadius: "4px",
-                                    background: (step.mode || "prompt") === "script"
-                                      ? "rgba(168, 85, 247, 0.15)"
-                                      : "rgba(59, 130, 246, 0.15)",
-                                    color: (step.mode || "prompt") === "script"
-                                      ? "#a855f7"
-                                      : "#3b82f6",
-                                  }}
-                                >
+                                <span className={`wfm-badge ${(step.mode || "prompt") === "script" ? "wfm-badge-script" : "wfm-badge-prompt"}`}>
                                   {(step.mode || "prompt") === "script" ? "Script" : "AI Prompt"}
                                 </span>
                               </div>
-                              <div
-                                style={{
-                                  fontSize: "12px",
-                                  color: "var(--text-secondary)",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
+                              <div className="wfm-step-card-desc">
                                 {step.description}
                               </div>
                             </div>
-                            <div
-                              style={{
-                                display: "flex",
-                                gap: "4px",
-                                marginLeft: "8px",
-                                flexShrink: 0,
-                              }}
-                            >
+                            <div className="wfm-step-card-actions">
                               <button
                                 className="btn-icon"
                                 onClick={() => handleEdit(step)}
@@ -479,7 +389,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                                 <Pencil size={14} />
                               </button>
                               {deleteConfirmId === step.id ? (
-                                <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                <div className="wfm-delete-confirm">
                                   <button
                                     className="btn-icon"
                                     onClick={() => handleDelete(step.id)}
@@ -521,24 +431,16 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
               {activeTab === "templates" && !isEditing && (
                 <>
                   {templatesLoading ? (
-                    <div style={{ textAlign: "center", padding: "32px", color: "var(--text-secondary)" }}>
-                      <Loader2 size={24} className="spin" style={{ margin: "0 auto 8px" }} />
+                    <div className="wfm-loading">
+                      <Loader2 size={24} className="spin wfm-spinner" />
                       Loading templates...
                     </div>
                   ) : templates.length === 0 ? (
-                    <div
-                      style={{
-                        textAlign: "center",
-                        padding: "32px",
-                        color: "var(--text-secondary)",
-                        fontSize: "14px",
-                      }}
-                      data-testid="no-templates-state"
-                    >
+                    <div className="wfm-empty" data-testid="no-templates-state">
                       No templates available.
                     </div>
                   ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    <div className="wfm-template-list">
                       {templates.map((template) => {
                         const IconComponent = getTemplateIcon(template.icon);
                         const categoryColors = getCategoryColors(template.category);
@@ -547,73 +449,35 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                         return (
                           <div
                             key={template.id}
+                            className="wfm-template-card"
                             data-testid={`template-${template.id}`}
-                            style={{
-                              padding: "16px",
-                              border: "1px solid var(--border-primary)",
-                              borderRadius: "8px",
-                              background: "var(--bg-secondary)",
-                            }}
                           >
-                            <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                            <div className="wfm-template-inner">
                               {/* Icon */}
-                              <div
-                                style={{
-                                  padding: "8px",
-                                  borderRadius: "6px",
-                                  background: "var(--bg-tertiary)",
-                                  color: "var(--text-primary)",
-                                  flexShrink: 0,
-                                }}
-                              >
+                              <div className="wfm-template-icon">
                                 <IconComponent size={20} />
                               </div>
 
                               {/* Content */}
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "8px",
-                                    marginBottom: "4px",
-                                  }}
-                                >
-                                  <span style={{ fontWeight: 600, fontSize: "14px" }}>
+                              <div className="wfm-template-content">
+                                <div className="wfm-template-title-row">
+                                  <span className="wfm-template-name">
                                     {template.name}
                                   </span>
                                   <span
-                                    style={{
-                                      fontSize: "11px",
-                                      padding: "2px 6px",
-                                      borderRadius: "4px",
-                                      background: categoryColors.bg,
-                                      color: categoryColors.text,
-                                    }}
+                                    className="wfm-badge-category"
+                                    style={{ background: categoryColors.bg, color: categoryColors.text }}
                                   >
                                     {template.category}
                                   </span>
                                 </div>
-                                <div
-                                  style={{
-                                    fontSize: "12px",
-                                    color: "var(--text-secondary)",
-                                    marginBottom: "8px",
-                                  }}
-                                >
+                                <div className="wfm-template-desc">
                                   {template.description}
                                 </div>
                                 <button
-                                  className="btn btn-primary"
+                                  className="btn btn-primary wfm-template-add-btn"
                                   onClick={() => handleAddTemplate(template)}
                                   disabled={isAdding}
-                                  style={{
-                                    fontSize: "12px",
-                                    padding: "4px 12px",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "4px",
-                                  }}
                                   data-testid={`add-template-${template.id}`}
                                 >
                                   {isAdding ? (
@@ -640,126 +504,51 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
 
               {/* Edit / Create form */}
               {isEditing && (
-                <div
-                  style={{
-                    padding: "16px",
-                    border: "1px solid var(--border-primary)",
-                    borderRadius: "8px",
-                    background: "var(--bg-secondary)",
-                  }}
-                  data-testid="workflow-step-form"
-                >
-                  <h3 style={{ margin: "0 0 12px", fontSize: "14px", fontWeight: 600 }}>
+                <div className="wfm-form" data-testid="workflow-step-form">
+                  <h3 className="wfm-form-title">
                     {isCreating ? "New Workflow Step" : "Edit Workflow Step"}
                   </h3>
 
-                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  <div className="wfm-form-fields">
                     {/* Name */}
-                    <div>
-                      <label
-                        style={{
-                          display: "block",
-                          fontSize: "12px",
-                          color: "var(--text-secondary)",
-                          marginBottom: "4px",
-                        }}
-                      >
-                        Name
-                      </label>
+                    <div className="wfm-field">
+                      <label>Name</label>
                       <input
                         type="text"
                         value={form.name}
                         onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
                         placeholder="e.g. Documentation Review"
-                        style={{
-                          width: "100%",
-                          padding: "8px 12px",
-                          borderRadius: "6px",
-                          border: "1px solid var(--border-primary)",
-                          background: "var(--bg-primary)",
-                          color: "var(--text-primary)",
-                          fontSize: "13px",
-                        }}
                         data-testid="workflow-step-name"
                       />
                     </div>
 
                     {/* Description */}
-                    <div>
-                      <label
-                        style={{
-                          display: "block",
-                          fontSize: "12px",
-                          color: "var(--text-secondary)",
-                          marginBottom: "4px",
-                        }}
-                      >
-                        Description
-                      </label>
+                    <div className="wfm-field">
+                      <label>Description</label>
                       <textarea
                         value={form.description}
                         onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
                         placeholder="Brief description of what this step does"
                         rows={2}
-                        style={{
-                          width: "100%",
-                          padding: "8px 12px",
-                          borderRadius: "6px",
-                          border: "1px solid var(--border-primary)",
-                          background: "var(--bg-primary)",
-                          color: "var(--text-primary)",
-                          fontSize: "13px",
-                          resize: "vertical",
-                        }}
                         data-testid="workflow-step-description"
                       />
                     </div>
 
                     {/* Mode Selector */}
-                    <div>
-                      <label
-                        style={{
-                          display: "block",
-                          fontSize: "12px",
-                          color: "var(--text-secondary)",
-                          marginBottom: "4px",
-                        }}
-                      >
-                        Execution Mode
-                      </label>
-                      <div
-                        style={{ display: "flex", gap: "8px" }}
-                        data-testid="workflow-step-mode-selector"
-                      >
+                    <div className="wfm-field">
+                      <label>Execution Mode</label>
+                      <div className="wfm-mode-selector" data-testid="workflow-step-mode-selector">
                         <button
-                          className={`btn ${form.mode === "prompt" ? "btn-primary" : "btn-secondary"}`}
+                          className={`btn ${form.mode === "prompt" ? "btn-primary" : "btn-secondary"} wfm-mode-btn`}
                           onClick={() => setForm((prev) => ({ ...prev, mode: "prompt", scriptName: "" }))}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "6px",
-                            fontSize: "12px",
-                            padding: "6px 12px",
-                            flex: 1,
-                            justifyContent: "center",
-                          }}
                           data-testid="mode-prompt"
                         >
                           <MessageSquare size={14} />
                           AI Prompt
                         </button>
                         <button
-                          className={`btn ${form.mode === "script" ? "btn-primary" : "btn-secondary"}`}
+                          className={`btn ${form.mode === "script" ? "btn-primary" : "btn-secondary"} wfm-mode-btn`}
                           onClick={() => setForm((prev) => ({ ...prev, mode: "script", prompt: "" }))}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "6px",
-                            fontSize: "12px",
-                            padding: "6px 12px",
-                            flex: 1,
-                            justifyContent: "center",
-                          }}
                           data-testid="mode-script"
                         >
                           <Terminal size={14} />
@@ -770,30 +559,15 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
 
                     {/* Prompt (AI mode only) */}
                     {form.mode === "prompt" && (
-                      <div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            marginBottom: "4px",
-                          }}
-                        >
-                          <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                            Agent Prompt
-                          </label>
+                      <div className="wfm-field">
+                        <div className="wfm-prompt-header">
+                          <label>Agent Prompt</label>
                           <button
-                            className="btn-icon"
+                            className="btn-icon wfm-refine-btn"
                             onClick={handleRefine}
                             disabled={!form.description.trim() || refining}
                             title="Refine with AI"
                             aria-label="Refine prompt with AI"
-                            style={{
-                              fontSize: "12px",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "4px",
-                            }}
                             data-testid="refine-btn"
                           >
                             {refining ? (
@@ -801,7 +575,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                             ) : (
                               <Sparkles size={12} />
                             )}
-                            <span style={{ fontSize: "11px" }}>Refine with AI</span>
+                            <span>Refine with AI</span>
                           </button>
                         </div>
                         <textarea
@@ -809,17 +583,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                           onChange={(e) => setForm((prev) => ({ ...prev, prompt: e.target.value }))}
                           placeholder="Leave empty to use AI refinement"
                           rows={6}
-                          style={{
-                            width: "100%",
-                            padding: "8px 12px",
-                            borderRadius: "6px",
-                            border: "1px solid var(--border-primary)",
-                            background: "var(--bg-primary)",
-                            color: "var(--text-primary)",
-                            fontSize: "13px",
-                            fontFamily: "monospace",
-                            resize: "vertical",
-                          }}
+                          className="wfm-prompt-textarea"
                           data-testid="workflow-step-prompt"
                         />
                       </div>
@@ -827,44 +591,16 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
 
                     {/* Script selector (script mode only) */}
                     {form.mode === "script" && (
-                      <div>
-                        <label
-                          style={{
-                            display: "block",
-                            fontSize: "12px",
-                            color: "var(--text-secondary)",
-                            marginBottom: "4px",
-                          }}
-                        >
-                          Script
-                        </label>
+                      <div className="wfm-field">
+                        <label>Script</label>
                         {Object.keys(availableScripts).length === 0 ? (
-                          <div
-                            style={{
-                              padding: "8px 12px",
-                              borderRadius: "6px",
-                              border: "1px solid var(--border-primary)",
-                              background: "var(--bg-tertiary)",
-                              color: "var(--text-secondary)",
-                              fontSize: "12px",
-                            }}
-                            data-testid="no-scripts-message"
-                          >
+                          <div className="wfm-no-scripts" data-testid="no-scripts-message">
                             No scripts configured. Add scripts in Settings → Scripts first.
                           </div>
                         ) : (
                           <select
                             value={form.scriptName}
                             onChange={(e) => setForm((prev) => ({ ...prev, scriptName: e.target.value }))}
-                            style={{
-                              width: "100%",
-                              padding: "8px 12px",
-                              borderRadius: "6px",
-                              border: "1px solid var(--border-primary)",
-                              background: "var(--bg-primary)",
-                              color: "var(--text-primary)",
-                              fontSize: "13px",
-                            }}
                             data-testid="workflow-step-script-select"
                           >
                             <option value="">Select a script…</option>
@@ -879,15 +615,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                     )}
 
                     {/* Enabled toggle */}
-                    <label
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        fontSize: "13px",
-                        cursor: "pointer",
-                      }}
-                    >
+                    <label className="wfm-checkbox-label">
                       <input
                         type="checkbox"
                         checked={form.enabled}
@@ -898,14 +626,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                     </label>
 
                     {/* Form actions */}
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "flex-end",
-                        gap: "8px",
-                        marginTop: "4px",
-                      }}
-                    >
+                    <div className="wfm-form-actions">
                       <button className="btn btn-secondary" onClick={handleCancel} disabled={saving}>
                         Cancel
                       </button>
@@ -932,14 +653,10 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
 
         {/* Footer */}
         {!isEditing && (
-          <div
-            className="modal-footer"
-            style={{ padding: "12px 16px", borderTop: "1px solid var(--border-primary)" }}
-          >
+          <div className="wfm-footer">
             <button
-              className="btn btn-primary"
+              className="btn btn-primary wfm-footer-add-btn"
               onClick={handleCreate}
-              style={{ display: "flex", alignItems: "center", gap: "6px" }}
               data-testid="add-workflow-step"
             >
               <Plus size={14} />

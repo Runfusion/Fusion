@@ -358,3 +358,200 @@ describe("WorkflowStepManager", () => {
     expect(saveBtn.disabled).toBe(true);
   });
 });
+
+describe("WorkflowStepManager theme class structure", () => {
+  it("uses wfm-body class for modal body", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".wfm-body")).toBeInTheDocument();
+    });
+  });
+
+  it("uses wfm-tab-row and wfm-tab-btn classes for tab navigation", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("tab-my-steps")).toBeInTheDocument();
+    });
+
+    expect(container.querySelector(".wfm-tab-row")).toBeInTheDocument();
+    expect(container.querySelectorAll(".wfm-tab-btn")).toHaveLength(2);
+  });
+
+  it("uses wfm-empty class for empty state", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+    });
+
+    expect(container.querySelector(".wfm-empty")).toBeInTheDocument();
+  });
+
+  it("uses wfm-step-card and badge classes for step list items", async () => {
+    vi.mocked(fetchWorkflowSteps).mockReset();
+    vi.mocked(fetchWorkflowSteps).mockResolvedValue(mockSteps);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await screen.findByText("Documentation Review");
+
+    // Step cards use class-based styling
+    expect(container.querySelectorAll(".wfm-step-card")).toHaveLength(2);
+    expect(container.querySelectorAll(".wfm-step-card-name")).toHaveLength(2);
+    expect(container.querySelectorAll(".wfm-step-card-desc")).toHaveLength(2);
+
+    // Badges use class-based styling
+    expect(container.querySelector(".wfm-badge-enabled")).toBeInTheDocument();
+    expect(container.querySelector(".wfm-badge-disabled")).toBeInTheDocument();
+    expect(container.querySelectorAll(".wfm-badge-prompt")).toHaveLength(2);
+  });
+
+  it("uses wfm-step-card with script badge for script-mode steps", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValue([
+      { ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "" },
+    ]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await screen.findByText("Script");
+
+    expect(container.querySelector(".wfm-badge-script")).toBeInTheDocument();
+  });
+
+  it("uses wfm-form and wfm-field classes for the edit/create form", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    expect(container.querySelector(".wfm-form")).toBeInTheDocument();
+    expect(container.querySelector(".wfm-form-title")).toBeInTheDocument();
+    expect(container.querySelector(".wfm-form-fields")).toBeInTheDocument();
+    expect(container.querySelectorAll(".wfm-field").length).toBeGreaterThanOrEqual(3); // name, description, mode
+  });
+
+  it("uses wfm-mode-selector and wfm-mode-btn classes for mode toggle", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    expect(container.querySelector(".wfm-mode-selector")).toBeInTheDocument();
+    expect(container.querySelectorAll(".wfm-mode-btn")).toHaveLength(2);
+  });
+
+  it("uses wfm-prompt-textarea class for the prompt textarea", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    expect(container.querySelector(".wfm-prompt-textarea")).toBeInTheDocument();
+    expect(container.querySelector(".wfm-prompt-header")).toBeInTheDocument();
+    expect(container.querySelector(".wfm-refine-btn")).toBeInTheDocument();
+  });
+
+  it("uses wfm-checkbox-label class for enabled toggle", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    expect(container.querySelector(".wfm-checkbox-label")).toBeInTheDocument();
+  });
+
+  it("uses wfm-form-actions class for form action buttons", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    expect(container.querySelector(".wfm-form-actions")).toBeInTheDocument();
+  });
+
+  it("uses wfm-footer and wfm-footer-add-btn classes for footer", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    expect(container.querySelector(".wfm-footer")).toBeInTheDocument();
+    expect(container.querySelector(".wfm-footer-add-btn")).toBeInTheDocument();
+  });
+
+  it("uses wfm-no-scripts class when script mode has no scripts", async () => {
+    vi.mocked(fetchScripts).mockResolvedValueOnce({});
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    const { container } = render(
+      <WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+    fireEvent.click(screen.getByTestId("mode-script"));
+
+    expect(container.querySelector(".wfm-no-scripts")).toBeInTheDocument();
+  });
+});
