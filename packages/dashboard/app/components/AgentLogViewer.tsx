@@ -5,6 +5,21 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 
+function formatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString();
+}
+
 const markdownComponents: Components = {
   pre: ({ children, ...props }) => (
     <pre
@@ -215,6 +230,21 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
           </span>
         ) : null;
 
+        const timestampSpan = (
+          <span
+            className="agent-log-timestamp"
+            data-testid="agent-log-timestamp"
+            style={{
+              color: "var(--text-muted, #888)",
+              fontSize: "10px",
+              marginRight: "6px",
+              opacity: 0.7,
+            }}
+          >
+            {formatTimestamp(entry.timestamp)}
+          </span>
+        );
+
         if (entry.type === "tool") {
           return (
             <div
@@ -228,7 +258,7 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
                 background: "rgba(124, 92, 191, 0.08)",
               }}
             >
-              {agentBadge}⚡ {entry.text}
+              {agentBadge}{timestampSpan}⚡ {entry.text}
               {entry.detail && (
                 <span
                   className="agent-log-tool-detail"
@@ -256,7 +286,7 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
                 opacity: 0.7,
               }}
             >
-              {agentBadge}
+              {agentBadge}{timestampSpan}
               {renderMarkdown ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {entry.text}
@@ -282,7 +312,7 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
                 fontSize: "12px",
               }}
             >
-              {agentBadge}✓ {entry.text}
+              {agentBadge}{timestampSpan}✓ {entry.text}
               {entry.detail && (
                 <span
                   className="agent-log-tool-detail"
@@ -312,7 +342,7 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
                 fontSize: "12px",
               }}
             >
-              {agentBadge}✗ {entry.text}
+              {agentBadge}{timestampSpan}✗ {entry.text}
               {entry.detail && (
                 <span
                   className="agent-log-tool-detail"
@@ -331,7 +361,7 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
         // Default: text entries
         return (
           <span key={i} className="agent-log-text">
-            {agentBadge}
+            {agentBadge}{timestampSpan}
             {renderMarkdown ? (
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                 {entry.text}

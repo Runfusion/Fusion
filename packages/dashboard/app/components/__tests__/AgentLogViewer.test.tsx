@@ -33,8 +33,9 @@ describe("AgentLogViewer", () => {
     const textSpans = container.querySelectorAll(".agent-log-text");
     expect(textSpans).toHaveLength(2);
     // Reversed order: second chunk first, then first chunk
-    expect(textSpans[0].textContent).toBe("second chunk");
-    expect(textSpans[1].textContent).toBe("first chunk");
+    // Each entry includes a timestamp span before the text content
+    expect(textSpans[0].textContent).toContain("second chunk");
+    expect(textSpans[1].textContent).toContain("first chunk");
   });
 
   it("renders tool entries with distinct styling", () => {
@@ -57,8 +58,8 @@ describe("AgentLogViewer", () => {
     // Reversed order: Done! (text), Bash (tool), Starting... (text)
     const textSpans = container.querySelectorAll(".agent-log-text");
     expect(textSpans).toHaveLength(2);
-    expect(textSpans[0].textContent).toBe("Done!");
-    expect(textSpans[1].textContent).toBe("Starting...");
+    expect(textSpans[0].textContent).toContain("Done!");
+    expect(textSpans[1].textContent).toContain("Starting...");
 
     const toolDivs = container.querySelectorAll(".agent-log-tool");
     expect(toolDivs).toHaveLength(1);
@@ -410,6 +411,112 @@ describe("AgentLogViewer", () => {
     });
   });
 
+  describe("timestamp display", () => {
+    it("renders a timestamp span for each log entry", () => {
+      const entries = [
+        makeEntry({ text: "hello", type: "text" }),
+        makeEntry({ text: "Read", type: "tool" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const timestamps = container.querySelectorAll(".agent-log-timestamp");
+      expect(timestamps).toHaveLength(2);
+    });
+
+    it("renders relative timestamps for recent entries", () => {
+      const recentTimestamp = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const entries = [
+        makeEntry({ text: "hello", type: "text", timestamp: recentTimestamp }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const timestamp = container.querySelector(".agent-log-timestamp");
+      expect(timestamp).toBeTruthy();
+      expect(timestamp!.textContent).toBe("5m ago");
+    });
+
+    it("renders 'just now' for entries less than a minute old", () => {
+      const recentTimestamp = new Date(Date.now() - 30 * 1000).toISOString();
+      const entries = [
+        makeEntry({ text: "hello", type: "text", timestamp: recentTimestamp }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const timestamp = container.querySelector(".agent-log-timestamp");
+      expect(timestamp!.textContent).toBe("just now");
+    });
+
+    it("renders hours ago for older entries", () => {
+      const olderTimestamp = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+      const entries = [
+        makeEntry({ text: "hello", type: "text", timestamp: olderTimestamp }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const timestamp = container.querySelector(".agent-log-timestamp");
+      expect(timestamp!.textContent).toBe("3h ago");
+    });
+
+    it("renders days ago for entries older than a day", () => {
+      const oldTimestamp = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+      const entries = [
+        makeEntry({ text: "hello", type: "text", timestamp: oldTimestamp }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const timestamp = container.querySelector(".agent-log-timestamp");
+      expect(timestamp!.textContent).toBe("2d ago");
+    });
+
+    it("renders locale date for entries older than 7 days", () => {
+      const veryOldTimestamp = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const entries = [
+        makeEntry({ text: "hello", type: "text", timestamp: veryOldTimestamp }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const timestamp = container.querySelector(".agent-log-timestamp");
+      // Should be a locale date string, not a relative time
+      expect(timestamp!.textContent).not.toContain("ago");
+      expect(timestamp!.textContent).not.toBe("just now");
+    });
+
+    it("styles timestamps with muted color and small font", () => {
+      const entries = [makeEntry({ text: "hello", type: "text" })];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const timestamp = container.querySelector(".agent-log-timestamp") as HTMLElement;
+      expect(timestamp).toBeTruthy();
+      expect(timestamp.style.fontSize).toBe("10px");
+      expect(timestamp.style.opacity).toBe("0.7");
+    });
+
+    it("includes timestamp on tool entries", () => {
+      const entries = [makeEntry({ text: "Bash", type: "tool" })];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const toolDiv = container.querySelector(".agent-log-tool");
+      expect(toolDiv).toBeTruthy();
+      expect(toolDiv!.querySelector(".agent-log-timestamp")).toBeTruthy();
+    });
+
+    it("includes timestamp on tool_result entries", () => {
+      const entries = [makeEntry({ text: "ok", type: "tool_result" })];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const resultDiv = container.querySelector(".agent-log-tool-result");
+      expect(resultDiv).toBeTruthy();
+      expect(resultDiv!.querySelector(".agent-log-timestamp")).toBeTruthy();
+    });
+
+    it("includes timestamp on tool_error entries", () => {
+      const entries = [makeEntry({ text: "fail", type: "tool_error" })];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const errorDiv = container.querySelector(".agent-log-tool-error");
+      expect(errorDiv).toBeTruthy();
+      expect(errorDiv!.querySelector(".agent-log-timestamp")).toBeTruthy();
+    });
+
+    it("includes timestamp on thinking entries", () => {
+      const entries = [makeEntry({ text: "hmm", type: "thinking" })];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const thinkingSpan = container.querySelector(".agent-log-thinking");
+      expect(thinkingSpan).toBeTruthy();
+      expect(thinkingSpan!.querySelector(".agent-log-timestamp")).toBeTruthy();
+    });
+  });
+
   describe("horizontal overflow prevention", () => {
     it("sets overflowX hidden on the viewer container", () => {
       const longString = "A".repeat(300);
@@ -516,8 +623,9 @@ describe("AgentLogViewer", () => {
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const textSpans = container.querySelectorAll(".agent-log-text");
       expect(textSpans).toHaveLength(1);
-      expect(textSpans[0].textContent).toBe(longText);
-      expect(textSpans[0].textContent!.length).toBe(5000);
+      // Timestamp is included as a separate span before the text
+      expect(textSpans[0].textContent).toContain(longText);
+      expect(textSpans[0].querySelector(".agent-log-timestamp")).toBeTruthy();
     });
 
     it("renders very long detail text without truncation", () => {
@@ -582,7 +690,7 @@ describe("AgentLogViewer", () => {
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const textSpans = container.querySelectorAll(".agent-log-text");
       expect(textSpans).toHaveLength(1);
-      expect(textSpans[0].textContent).toBe("Hello world, this is plain text.");
+      expect(textSpans[0].textContent).toContain("Hello world, this is plain text.");
     });
 
     it("renders inline markdown elements (bold, italic, inline code)", () => {
@@ -722,7 +830,7 @@ describe("AgentLogViewer", () => {
       // Text should now show raw markdown syntax literally
       const textSpans = container.querySelectorAll(".agent-log-text");
       expect(textSpans).toHaveLength(1);
-      expect(textSpans[0].textContent).toBe("**bold** and *italic*");
+      expect(textSpans[0].textContent).toContain("**bold** and *italic*");
       // No markdown elements should be present
       expect(textSpans[0].querySelector("strong")).toBeNull();
       expect(textSpans[0].querySelector("em")).toBeNull();
