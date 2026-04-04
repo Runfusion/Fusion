@@ -1,5 +1,7 @@
 import { useCallback, useEffect } from "react";
+import type { ModelPreset } from "@fusion/core";
 import type { ModelInfo } from "../api";
+import { applyPresetToSelection } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { Brain, X } from "lucide-react";
 
@@ -18,6 +20,12 @@ interface ModelSelectionModalProps {
   onToggleFavorite?: (provider: string) => void;
   favoriteModels?: string[];
   onToggleModelFavorite?: (modelId: string) => void;
+  /** Available model presets for quick selection. When provided, a preset selector is shown. */
+  presets?: ModelPreset[];
+  /** Currently selected preset ID, or undefined if no preset is active. */
+  selectedPresetId?: string;
+  /** Called when the user selects a preset or reverts to default/custom mode. */
+  onPresetChange?: (presetId: string | undefined) => void;
 }
 
 function getModelBadgeLabel(models: ModelInfo[], value: string): string {
@@ -45,6 +53,9 @@ export function ModelSelectionModal({
   onToggleFavorite,
   favoriteModels = [],
   onToggleModelFavorite,
+  presets,
+  selectedPresetId,
+  onPresetChange,
 }: ModelSelectionModalProps) {
   // Handle Escape key
   useEffect(() => {
@@ -69,6 +80,55 @@ export function ModelSelectionModal({
       }
     },
     [onClose],
+  );
+
+  const showPresets = !!(presets && presets.length > 0 && onPresetChange);
+  const selectedPreset = presets?.find((p) => p.id === selectedPresetId);
+
+  const handlePresetSelect = useCallback(
+    (value: string) => {
+      if (!onPresetChange) return;
+      if (value === "default") {
+        onPresetChange(undefined);
+        onExecutorChange("");
+        onValidatorChange("");
+        return;
+      }
+      if (value === "custom") {
+        onPresetChange(undefined);
+        return;
+      }
+      const preset = presets?.find((p) => p.id === value);
+      if (preset) {
+        const selection = applyPresetToSelection(preset);
+        onExecutorChange(selection.executorValue);
+        onValidatorChange(selection.validatorValue);
+        onPresetChange(preset.id);
+      }
+    },
+    [onPresetChange, presets, onExecutorChange, onValidatorChange],
+  );
+
+  const handleExecutorChange = useCallback(
+    (value: string) => {
+      // Manual model selection clears preset mode
+      if (onPresetChange && selectedPresetId) {
+        onPresetChange(undefined);
+      }
+      onExecutorChange(value);
+    },
+    [onPresetChange, selectedPresetId, onExecutorChange],
+  );
+
+  const handleValidatorChange = useCallback(
+    (value: string) => {
+      // Manual model selection clears preset mode
+      if (onPresetChange && selectedPresetId) {
+        onPresetChange(undefined);
+      }
+      onValidatorChange(value);
+    },
+    [onPresetChange, selectedPresetId, onValidatorChange],
   );
 
   if (!isOpen) return null;
@@ -119,6 +179,35 @@ export function ModelSelectionModal({
                 </div>
 
                 <div className="planning-summary-form">
+                  {showPresets && (
+                    <div className="task-detail-section">
+                      <div className="inline-create-model-row">
+                        <label htmlFor="model-selection-preset" className="inline-create-model-label">
+                          Preset
+                        </label>
+                        <span
+                          className={`model-badge ${selectedPresetId ? "model-badge-custom" : "model-badge-default"}`}
+                          data-testid="preset-badge"
+                        >
+                          {selectedPreset ? selectedPreset.name : "Use default"}
+                        </span>
+                        <select
+                          id="model-selection-preset"
+                          value={selectedPresetId || "default"}
+                          onChange={(e) => handlePresetSelect(e.target.value)}
+                          data-testid="model-selection-preset"
+                        >
+                          <option value="default">Use default</option>
+                          {presets!.length > 0 && <option disabled>──────────</option>}
+                          {presets!.map((preset) => (
+                            <option key={preset.id} value={preset.id}>{preset.name}</option>
+                          ))}
+                          <option value="custom">Custom</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="task-detail-section">
                     <div className="inline-create-model-row">
                       <label htmlFor="model-selection-executor" className="inline-create-model-label">
@@ -134,7 +223,7 @@ export function ModelSelectionModal({
                         id="model-selection-executor"
                         label="Executor Model"
                         value={executorValue}
-                        onChange={onExecutorChange}
+                        onChange={handleExecutorChange}
                         models={models}
                         placeholder="Select executor model…"
                         favoriteProviders={favoriteProviders}
@@ -160,7 +249,7 @@ export function ModelSelectionModal({
                         id="model-selection-validator"
                         label="Validator Model"
                         value={validatorValue}
-                        onChange={onValidatorChange}
+                        onChange={handleValidatorChange}
                         models={models}
                         placeholder="Select validator model…"
                         favoriteProviders={favoriteProviders}

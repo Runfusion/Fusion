@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ModelSelectionModal } from "../ModelSelectionModal";
 import type { ModelInfo } from "../../api";
+import type { ModelPreset } from "@fusion/core";
 
 const MOCK_MODELS: ModelInfo[] = [
   {
@@ -20,10 +21,42 @@ const MOCK_MODELS: ModelInfo[] = [
   },
 ];
 
+const MOCK_PRESETS: ModelPreset[] = [
+  {
+    id: "fast",
+    name: "Fast",
+    executorProvider: "anthropic",
+    executorModelId: "claude-sonnet-4-5",
+  },
+  {
+    id: "thorough",
+    name: "Thorough",
+    executorProvider: "openai",
+    executorModelId: "gpt-4o",
+    validatorProvider: "anthropic",
+    validatorModelId: "claude-sonnet-4-5",
+  },
+];
+
 // Mock lucide-react
 vi.mock("lucide-react", () => ({
   Brain: () => null,
   X: () => null,
+}));
+
+// Mock applyPresetToSelection
+vi.mock("../../utils/modelPresets", () => ({
+  applyPresetToSelection: vi.fn((preset: ModelPreset | undefined) => {
+    if (!preset) return { executorValue: "", validatorValue: "" };
+    return {
+      executorValue: preset.executorProvider && preset.executorModelId
+        ? `${preset.executorProvider}/${preset.executorModelId}`
+        : "",
+      validatorValue: preset.validatorProvider && preset.validatorModelId
+        ? `${preset.validatorProvider}/${preset.validatorModelId}`
+        : "",
+    };
+  }),
 }));
 
 // Mock CustomModelDropdown
@@ -242,5 +275,175 @@ describe("ModelSelectionModal", () => {
     expect(screen.getByTestId("dropdown-label-model-selection-validator").textContent).toBe(
       "Validator Model",
     );
+  });
+
+  describe("Preset selection", () => {
+    it("does not show preset selector when presets prop is omitted", () => {
+      renderModelSelectionModal();
+      expect(screen.queryByTestId("model-selection-preset")).toBeNull();
+      expect(screen.queryByTestId("preset-badge")).toBeNull();
+    });
+
+    it("does not show preset selector when presets array is empty", () => {
+      renderModelSelectionModal({
+        presets: [],
+        onPresetChange: vi.fn(),
+      });
+      expect(screen.queryByTestId("model-selection-preset")).toBeNull();
+    });
+
+    it("does not show preset selector when onPresetChange is not provided", () => {
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+      });
+      expect(screen.queryByTestId("model-selection-preset")).toBeNull();
+    });
+
+    it("shows preset selector when presets and onPresetChange are provided", () => {
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        selectedPresetId: undefined,
+        onPresetChange: vi.fn(),
+      });
+      expect(screen.getByTestId("model-selection-preset")).toBeTruthy();
+      expect(screen.getByTestId("preset-badge")).toBeTruthy();
+    });
+
+    it("renders preset options in the select dropdown", () => {
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        onPresetChange: vi.fn(),
+      });
+      const select = screen.getByTestId("model-selection-preset") as HTMLSelectElement;
+      expect(select).toBeTruthy();
+
+      // default, separator (disabled), fast, thorough, custom
+      const options = Array.from(select.options);
+      expect(options.map((o) => o.value)).toEqual(["default", "──────────", "fast", "thorough", "custom"]);
+    });
+
+    it("shows 'Use default' badge when no preset is selected", () => {
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        onPresetChange: vi.fn(),
+      });
+      const badge = screen.getByTestId("preset-badge");
+      expect(badge.textContent).toBe("Use default");
+      expect(badge.classList.contains("model-badge-default")).toBe(true);
+    });
+
+    it("shows preset name badge when a preset is selected", () => {
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        selectedPresetId: "fast",
+        onPresetChange: vi.fn(),
+      });
+      const badge = screen.getByTestId("preset-badge");
+      expect(badge.textContent).toBe("Fast");
+      expect(badge.classList.contains("model-badge-custom")).toBe(true);
+    });
+
+    it("calls onPresetChange with preset id and applies executor/validator when selecting a preset", () => {
+      const onPresetChange = vi.fn();
+      const onExecutorChange = vi.fn();
+      const onValidatorChange = vi.fn();
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        onPresetChange,
+        onExecutorChange,
+        onValidatorChange,
+      });
+
+      const select = screen.getByTestId("model-selection-preset");
+      fireEvent.change(select, { target: { value: "thorough" } });
+
+      expect(onPresetChange).toHaveBeenCalledWith("thorough");
+      expect(onExecutorChange).toHaveBeenCalledWith("openai/gpt-4o");
+      expect(onValidatorChange).toHaveBeenCalledWith("anthropic/claude-sonnet-4-5");
+    });
+
+    it("clears executor/validator when selecting 'Use default'", () => {
+      const onPresetChange = vi.fn();
+      const onExecutorChange = vi.fn();
+      const onValidatorChange = vi.fn();
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        selectedPresetId: "fast",
+        onPresetChange,
+        onExecutorChange,
+        onValidatorChange,
+      });
+
+      const select = screen.getByTestId("model-selection-preset");
+      fireEvent.change(select, { target: { value: "default" } });
+
+      expect(onPresetChange).toHaveBeenCalledWith(undefined);
+      expect(onExecutorChange).toHaveBeenCalledWith("");
+      expect(onValidatorChange).toHaveBeenCalledWith("");
+    });
+
+    it("clears preset mode without changing models when selecting 'Custom'", () => {
+      const onPresetChange = vi.fn();
+      const onExecutorChange = vi.fn();
+      const onValidatorChange = vi.fn();
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        selectedPresetId: "fast",
+        executorValue: "anthropic/claude-sonnet-4-5",
+        onPresetChange,
+        onExecutorChange,
+        onValidatorChange,
+      });
+
+      const select = screen.getByTestId("model-selection-preset");
+      fireEvent.change(select, { target: { value: "custom" } });
+
+      expect(onPresetChange).toHaveBeenCalledWith(undefined);
+      // Should NOT change executor/validator when switching to custom
+      expect(onExecutorChange).not.toHaveBeenCalled();
+      expect(onValidatorChange).not.toHaveBeenCalled();
+    });
+
+    it("clears preset mode when executor is manually changed", () => {
+      const onPresetChange = vi.fn();
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        selectedPresetId: "fast",
+        onPresetChange,
+      });
+
+      const executorSelect = screen.getByTestId("dropdown-select-model-selection-executor");
+      fireEvent.change(executorSelect, { target: { value: "openai/gpt-4o" } });
+
+      expect(onPresetChange).toHaveBeenCalledWith(undefined);
+    });
+
+    it("clears preset mode when validator is manually changed", () => {
+      const onPresetChange = vi.fn();
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        selectedPresetId: "fast",
+        onPresetChange,
+      });
+
+      const validatorSelect = screen.getByTestId("dropdown-select-model-selection-validator");
+      fireEvent.change(validatorSelect, { target: { value: "openai/gpt-4o" } });
+
+      expect(onPresetChange).toHaveBeenCalledWith(undefined);
+    });
+
+    it("does not call onPresetChange when manually changing executor with no preset selected", () => {
+      const onPresetChange = vi.fn();
+      renderModelSelectionModal({
+        presets: MOCK_PRESETS,
+        selectedPresetId: undefined,
+        onPresetChange,
+      });
+
+      const executorSelect = screen.getByTestId("dropdown-select-model-selection-executor");
+      fireEvent.change(executorSelect, { target: { value: "openai/gpt-4o" } });
+
+      expect(onPresetChange).not.toHaveBeenCalled();
+    });
   });
 });

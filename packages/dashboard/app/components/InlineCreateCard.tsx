@@ -775,6 +775,9 @@ export function InlineCreateCard({
               onToggleFavorite={handleToggleFavorite}
               favoriteModels={favoriteModels}
               onToggleModelFavorite={handleToggleModelFavorite}
+              presets={availablePresets}
+              selectedPresetId={selectedPresetId}
+              onPresetChange={(presetId) => setSelectedPresetId(presetId)}
             />,
             document.body,
           )

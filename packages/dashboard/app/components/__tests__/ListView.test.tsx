@@ -6,6 +6,16 @@ import type { Task, TaskDetail } from "@fusion/core";
 // Mock the API
 vi.mock("../../api", () => ({
   fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
+  fetchSettings: vi.fn().mockResolvedValue({
+    modelPresets: [],
+    autoSelectModelPreset: false,
+    defaultPresetBySize: {},
+    maxConcurrent: 2,
+    maxWorktrees: 4,
+    pollIntervalMs: 30000,
+    groupOverlappingFiles: true,
+    autoMerge: true,
+  }),
   fetchTaskDetail: vi.fn(),
   batchUpdateTaskModels: vi.fn(),
 }));

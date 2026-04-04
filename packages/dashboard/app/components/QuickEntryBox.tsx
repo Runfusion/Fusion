@@ -1,9 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
-import type { Task, TaskCreateInput } from "@fusion/core";
+import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import type { ModelInfo, RefinementType } from "../api";
-import { fetchModels, refineText, getRefineErrorMessage, updateGlobalSettings } from "../api";
+import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings } from "../api";
 import { Link, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ModelSelectionModal } from "./ModelSelectionModal";
@@ -101,6 +101,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>(availableModels ?? []);
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined);
 
   // AI Refinement state
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
@@ -114,46 +116,56 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   // If onCreate is not provided, the component is disabled
   const isDisabled = !onCreate;
 
-  // Fetch models if not provided by parent
+  // Fetch models and settings if not provided by parent
   useEffect(() => {
     if (availableModels) {
       setLoadedModels(availableModels);
       setModelsLoading(false);
       setModelsError(null);
-      return;
+    } else {
+      let cancelled = false;
+      setModelsLoading(true);
+      setModelsError(null);
+      fetchModels()
+        .then((response) => {
+          if (!cancelled) {
+            setLoadedModels(response.models);
+            // Only set internal favorites when parent doesn't manage them
+            if (!parentFavoriteProviders) {
+              setFavoriteProviders(response.favoriteProviders);
+            }
+            if (!parentFavoriteModels) {
+              setFavoriteModels(response.favoriteModels);
+            }
+          }
+        })
+        .catch((err: any) => {
+          if (!cancelled) {
+            setModelsError(err?.message || "Failed to load models");
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setModelsLoading(false);
+          }
+        });
+
+      // Also fetch settings for presets
+      fetchSettings()
+        .then((nextSettings) => {
+          if (!cancelled) {
+            setSettings(nextSettings);
+          }
+        })
+        .catch(() => {
+          // Silently ignore settings fetch failure
+        });
+
+      return () => {
+        cancelled = true;
+      };
     }
-
-    let cancelled = false;
-    setModelsLoading(true);
-    setModelsError(null);
-    fetchModels()
-      .then((response) => {
-        if (!cancelled) {
-          setLoadedModels(response.models);
-          // Only set internal favorites when parent doesn't manage them
-          if (!parentFavoriteProviders) {
-            setFavoriteProviders(response.favoriteProviders);
-          }
-          if (!parentFavoriteModels) {
-            setFavoriteModels(response.favoriteModels);
-          }
-        }
-      })
-      .catch((err: any) => {
-        if (!cancelled) {
-          setModelsError(err?.message || "Failed to load models");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setModelsLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [availableModels]);
+  }, [availableModels, parentFavoriteProviders, parentFavoriteModels]);
 
   const executorSelectionValue = getModelSelectionValue(executorProvider, executorModelId);
   const validatorSelectionValue = getModelSelectionValue(validatorProvider, validatorModelId);
@@ -161,6 +173,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const hasExecutorOverride = Boolean(executorProvider && executorModelId);
   const hasValidatorOverride = Boolean(validatorProvider && validatorModelId);
   const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride);
+
+  const availablePresets = settings?.modelPresets || [];
+  const selectedPreset = availablePresets.find((p) => p.id === selectedPresetId);
+
+  const handlePresetChange = useCallback((presetId: string | undefined) => {
+    setSelectedPresetId(presetId);
+  }, []);
 
   const getModelBadgeLabel = useCallback(
     (provider?: string, modelId?: string) => {
@@ -248,6 +267,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setExecutorModelId(undefined);
     setValidatorProvider(undefined);
     setValidatorModelId(undefined);
+    setSelectedPresetId(undefined);
     setShowDeps(false);
     setIsModelModalOpen(false);
     setIsRefineMenuOpen(false);
@@ -274,6 +294,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         description: trimmed,
         column: "triage",
         dependencies: dependencies.length ? dependencies : undefined,
+        modelPresetId: selectedPresetId,
         modelProvider: hasExecutorOverride ? executorProvider : undefined,
         modelId: hasExecutorOverride ? executorModelId : undefined,
         validatorModelProvider: hasValidatorOverride ? validatorProvider : undefined,
@@ -723,9 +744,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               data-testid="quick-entry-models-button"
             >
               <Brain size={12} style={{ verticalAlign: "middle" }} />
-              {selectedModelCount > 0
-                ? ` ${selectedModelCount} model${selectedModelCount === 1 ? "" : "s"}`
-                : " Models"}
+              {selectedPreset
+                ? ` ${selectedPreset.name}`
+                : selectedModelCount > 0
+                  ? ` ${selectedModelCount} model${selectedModelCount === 1 ? "" : "s"}`
+                  : " Models"}
             </button>
           </div>
 
@@ -766,6 +789,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               onToggleFavorite={handleToggleFavorite}
               favoriteModels={effectiveFavoriteModels}
               onToggleModelFavorite={handleToggleModelFavorite}
+              presets={availablePresets}
+              selectedPresetId={selectedPresetId}
+              onPresetChange={handlePresetChange}
             />,
             document.body,
           )

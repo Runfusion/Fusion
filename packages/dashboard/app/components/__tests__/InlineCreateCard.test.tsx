@@ -37,6 +37,9 @@ vi.mock("../ModelSelectionModal", () => ({
     onRetry,
     favoriteModels,
     onToggleModelFavorite,
+    presets,
+    selectedPresetId,
+    onPresetChange,
   }: {
     isOpen: boolean;
     onClose: () => void;
@@ -50,6 +53,9 @@ vi.mock("../ModelSelectionModal", () => ({
     onRetry: () => void;
     favoriteModels?: string[];
     onToggleModelFavorite?: (modelId: string) => void;
+    presets?: unknown[];
+    selectedPresetId?: string;
+    onPresetChange?: (presetId: string | undefined) => void;
   }) => {
     if (!isOpen) return null;
     return (
@@ -60,6 +66,9 @@ vi.mock("../ModelSelectionModal", () => ({
         <div data-testid="modal-props-error">{modelsError || "no-error"}</div>
         <div data-testid="modal-props-favorite-models">{JSON.stringify(favoriteModels ?? [])}</div>
         <div data-testid="modal-props-has-toggle-model-favorite">{onToggleModelFavorite ? "yes" : "no"}</div>
+        <div data-testid="modal-props-presets">{JSON.stringify(presets ?? [])}</div>
+        <div data-testid="modal-props-selected-preset-id">{selectedPresetId ?? ""}</div>
+        <div data-testid="modal-props-has-preset-change">{onPresetChange ? "yes" : "no"}</div>
         <button data-testid="modal-close" onClick={onClose}>Close</button>
         <button data-testid="modal-select-executor" onClick={() => onExecutorChange("anthropic/claude-sonnet-4-5")}>Select Executor</button>
         <button data-testid="modal-select-validator" onClick={() => onValidatorChange("openai/gpt-4o")}>Select Validator</button>
@@ -934,6 +943,89 @@ describe("InlineCreateCard button visibility when collapsed", () => {
       fireEvent.change(textarea, { target: { value: "Some task" } });
       expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(false);
       expect((screen.getByTestId("subtask-button") as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
+  describe("Preset selection through model modal", () => {
+    it("passes presets from settings to ModelSelectionModal", async () => {
+      const mockPresets = [
+        { id: "fast", name: "Fast", executorProvider: "anthropic", executorModelId: "claude-sonnet-4-5" },
+      ];
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        modelPresets: mockPresets,
+        autoSelectModelPreset: false,
+        defaultPresetBySize: {},
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 30000,
+        groupOverlappingFiles: true,
+        autoMerge: true,
+      } as any);
+
+      renderCard([], { availableModels: undefined });
+      expandCard();
+
+      // Wait for settings to load
+      await waitFor(() => {
+        expect(fetchSettings).toHaveBeenCalled();
+      });
+
+      // Open model modal
+      const modelsButton = screen.getByRole("button", { name: /Models/i });
+      fireEvent.click(modelsButton);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+      });
+
+      expect(screen.getByTestId("modal-props-presets").textContent).toBe(JSON.stringify(mockPresets));
+      expect(screen.getByTestId("modal-props-has-preset-change").textContent).toBe("yes");
+    });
+
+    it("reflects selected preset ID in modal props", async () => {
+      const mockPresets = [
+        { id: "fast", name: "Fast", executorProvider: "anthropic", executorModelId: "claude-sonnet-4-5" },
+      ];
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        modelPresets: mockPresets,
+        autoSelectModelPreset: false,
+        defaultPresetBySize: {},
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 30000,
+        groupOverlappingFiles: true,
+        autoMerge: true,
+      } as any);
+
+      renderCard([], { availableModels: undefined });
+      expandCard();
+
+      await waitFor(() => {
+        expect(fetchSettings).toHaveBeenCalled();
+      });
+
+      // First select a preset via the inline Preset button
+      const presetButton = screen.getByRole("button", { name: /Preset/i });
+      fireEvent.click(presetButton);
+
+      // Click the preset option in the dropdown
+      const fastOption = screen.getByText("Fast");
+      fireEvent.click(fastOption);
+
+      // Now open the model modal — the Models button text includes the preset name
+      // Find it by looking for the button with Brain icon (the models button)
+      const allButtons = screen.getAllByRole("button");
+      const modelsButton = allButtons.find(
+        (b) => b.textContent?.includes("Fast") && b.textContent?.includes("model"),
+      );
+      expect(modelsButton).toBeTruthy();
+      fireEvent.click(modelsButton!);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+      });
+
+      expect(screen.getByTestId("modal-props-selected-preset-id").textContent).toBe("fast");
     });
   });
 });
