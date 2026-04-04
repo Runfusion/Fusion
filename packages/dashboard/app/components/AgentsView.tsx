@@ -617,6 +617,42 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
 
         .agent-create-form .input {
           flex: 1;
+          background: var(--surface);
+          color: var(--text);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          padding: 6px 10px;
+          font-size: 13px;
+          font-family: var(--font-primary);
+          outline: none;
+          transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+        }
+
+        .agent-create-form .input:focus {
+          border-color: var(--todo);
+          box-shadow: var(--focus-ring);
+        }
+
+        .agent-create-form .input::placeholder {
+          color: var(--text-dim);
+        }
+
+        .agent-create-form .select {
+          background: var(--surface);
+          color: var(--text);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          padding: 6px 10px;
+          font-size: 13px;
+          font-family: var(--font-primary);
+          cursor: pointer;
+          outline: none;
+          transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+        }
+
+        .agent-create-form .select:focus {
+          border-color: var(--todo);
+          box-shadow: var(--focus-ring);
         }
 
         .agent-list {

@@ -789,6 +789,52 @@ describe("AgentListModal", () => {
       expect(foundCreateFormRule).toBe(true);
     });
 
+    it("create form input and select use theme tokens", async () => {
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("New Agent")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("New Agent"));
+
+      const styleElements = document.querySelectorAll("style");
+      let foundInputRule = false;
+      let foundSelectRule = false;
+      styleElements.forEach(styleEl => {
+        const css = styleEl.textContent ?? "";
+        if (css.includes(".agent-create-form .input")) {
+          foundInputRule = true;
+          // Assert theme token usage
+          expect(css).toContain("var(--surface)");
+          expect(css).toContain("var(--text)");
+          expect(css).toContain("var(--border)");
+          expect(css).toContain("var(--radius-sm)");
+          // Focus ring token
+          expect(css).toContain("var(--focus-ring)");
+          // Guard against hardcoded light-only styles
+          expect(css).not.toMatch(/background:\s*#fff/);
+          expect(css).not.toMatch(/background:\s*white/);
+        }
+        if (css.includes(".agent-create-form .select")) {
+          foundSelectRule = true;
+          expect(css).toContain("var(--surface)");
+          expect(css).toContain("var(--text)");
+          expect(css).toContain("var(--border)");
+          expect(css).toContain("var(--radius-sm)");
+          expect(css).toContain("var(--focus-ring)");
+        }
+      });
+      expect(foundInputRule).toBe(true);
+      expect(foundSelectRule).toBe(true);
+    });
+
     it("renders filter with styled container matching AgentsView", async () => {
       render(
         <AgentListModal
