@@ -160,6 +160,12 @@ Saved scripts (managed via the Scripts modal or QuickScripts dropdown in the hea
 - Sessions can be restarted when shell exits
 - Graceful shutdown with SIGTERM, then SIGKILL fallback
 
+**Startup Failure Handling**:
+- Terminal startup never hangs indefinitely — if the backend session cannot be created (server unavailable, network error, etc.), the modal shows a clear error message instead of a stuck loading spinner
+- Users see an actionable error with a "Retry" button that re-attempts terminal creation without closing the modal
+- On successful retry, the terminal initializes normally; the error state clears automatically
+- Existing sessions (tabs) that are already connected are not affected by bootstrap errors on new tabs
+
 ### Git Manager
 The Git Manager provides comprehensive repository visualization and management directly from the web UI. Access it via the Git Branch icon button in the header (desktop: inline with other utility buttons, mobile: in the overflow menu).
 - **Safety Validation**: Dangerous commands (rm -rf /, etc.) are automatically blocked

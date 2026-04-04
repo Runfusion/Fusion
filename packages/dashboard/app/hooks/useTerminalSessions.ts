@@ -31,6 +31,8 @@ interface UseTerminalSessionsReturn {
   activeTab: TerminalTab | null;
   /** Whether sessions have been validated and restored from server */
   isReady: boolean;
+  /** Error during bootstrap/session creation, or null if no error */
+  bootstrapError: string | null;
   /** Creates a new tab with a fresh server session */
   createTab: () => Promise<TerminalTab>;
   /** Closes a specific tab (kills server session) */
@@ -41,6 +43,8 @@ interface UseTerminalSessionsReturn {
   updateTabTitle: (tabId: string, title: string) => void;
   /** Restarts the active tab's session with a new PTY session */
   restartActiveTab: () => Promise<void>;
+  /** Retry bootstrap after a creation failure. Clears error and re-attempts auto-create. */
+  retryBootstrap: () => void;
 }
 
 /**
@@ -89,6 +93,10 @@ export function useTerminalSessions(): UseTerminalSessionsReturn {
   // Track whether validation has completed
   const [isReady, setIsReady] = useState(false);
   const [serverAvailable, setServerAvailable] = useState(true);
+  // Track bootstrap creation failure so callers can show error/retry UI
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  // Generation counter bumped by retryBootstrap to re-trigger auto-create effect
+  const [retryGeneration, setRetryGeneration] = useState(0);
 
   // Persist tabs to localStorage whenever they change
   useEffect(() => {
@@ -173,15 +181,23 @@ export function useTerminalSessions(): UseTerminalSessionsReturn {
     if (tabs.length === 0 && isReady && serverAvailable) {
       // Small delay to avoid race condition with the validation effect
       const timeout = setTimeout(() => {
-        createTabInternal().catch((err) => {
-          if (!isRelativeUrlFetchError(err)) {
-            console.error(err);
-          }
-        });
+        createTabInternal()
+          .then(() => {
+            // Clear any previous bootstrap error on success
+            setBootstrapError(null);
+          })
+          .catch((err) => {
+            if (!isRelativeUrlFetchError(err)) {
+              console.error(err);
+            }
+            const message =
+              err instanceof Error ? err.message : typeof err === "string" ? err : "Failed to create terminal session";
+            setBootstrapError(message);
+          });
       }, 0);
       return () => clearTimeout(timeout);
     }
-  }, [isReady, serverAvailable, tabs.length]); // Run when ready or when tabs become empty
+  }, [isReady, serverAvailable, tabs.length, retryGeneration]); // Run when ready or when tabs become empty
 
   /**
    * Internal create tab function (used for auto-creation and user-initiated creation)
@@ -326,14 +342,27 @@ export function useTerminalSessions(): UseTerminalSessionsReturn {
   // Derive active tab
   const activeTab = tabs.find((tab) => tab.isActive) ?? null;
 
+  /**
+   * Retry bootstrap after a session creation failure.
+   * Clears the error and bumps the retry generation so the auto-create
+   * effect re-runs. Safe to call multiple times — only one active tab
+   * is created because the effect checks tabs.length === 0.
+   */
+  const retryBootstrap = useCallback((): void => {
+    setBootstrapError(null);
+    setRetryGeneration((g) => g + 1);
+  }, []);
+
   return {
     tabs,
     activeTab,
     isReady,
+    bootstrapError,
     createTab,
     closeTab,
     setActiveTab,
     updateTabTitle,
     restartActiveTab,
+    retryBootstrap,
   };
 }

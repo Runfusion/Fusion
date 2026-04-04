@@ -506,4 +506,161 @@ describe("useTerminalSessions", () => {
       expect(result.current.tabs.length).toBe(0);
     });
   });
+
+  describe("bootstrap failure and retry", () => {
+    it("sets bootstrapError when createTerminalSession fails during auto-create", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockRejectedValue(new Error("Server unreachable"));
+
+      const { result } = renderHook(() => useTerminalSessions());
+
+      // Should become ready (validation passed)
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Should have a bootstrap error (auto-create failed)
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("Server unreachable");
+      });
+
+      // No tabs should be created
+      expect(result.current.tabs.length).toBe(0);
+      expect(result.current.activeTab).toBeNull();
+    });
+
+    it("sets bootstrapError with fallback message for non-Error throws", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockRejectedValue("string error");
+
+      const { result } = renderHook(() => useTerminalSessions());
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("string error");
+      });
+    });
+
+    it("clears bootstrapError and creates tab on retryBootstrap after failure", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      // First attempt fails
+      mockCreateTerminalSession.mockRejectedValueOnce(new Error("Connection refused"));
+
+      const { result } = renderHook(() => useTerminalSessions());
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("Connection refused");
+      });
+
+      expect(result.current.tabs.length).toBe(0);
+
+      // Retry succeeds
+      mockCreateTerminalSession.mockResolvedValueOnce({
+        sessionId: "session-retry",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      await act(async () => {
+        result.current.retryBootstrap();
+      });
+
+      // Error should be cleared
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeNull();
+      });
+
+      // Tab should be created
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+        expect(result.current.activeTab?.sessionId).toBe("session-retry");
+      });
+    });
+
+    it("retryBootstrap does not create duplicate tabs", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-1",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      const { result } = renderHook(() => useTerminalSessions());
+
+      // Wait for initial tab creation
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      expect(result.current.bootstrapError).toBeNull();
+
+      // Call retryBootstrap when there's already a tab (no error state)
+      act(() => {
+        result.current.retryBootstrap();
+      });
+
+      // Should still have exactly one tab (effect checks tabs.length === 0)
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+    });
+
+    it("bootstrapError remains null when createTerminalSession succeeds", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-1",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      const { result } = renderHook(() => useTerminalSessions());
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      expect(result.current.bootstrapError).toBeNull();
+    });
+
+    it("sets bootstrapError when session creation fails after restoring stale tabs", async () => {
+      // Stored tabs that are stale (don't exist on server)
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-stale",
+          title: "bash",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+
+      // Server has no sessions
+      mockListTerminalSessions.mockResolvedValue([]);
+      // Auto-create fails
+      mockCreateTerminalSession.mockRejectedValue(new Error("Internal server error"));
+
+      const { result } = renderHook(() => useTerminalSessions());
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Stale tabs should be removed, auto-create should fail
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe("Internal server error");
+      });
+
+      expect(result.current.tabs.length).toBe(0);
+    });
+  });
 });

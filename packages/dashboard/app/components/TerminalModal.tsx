@@ -97,11 +97,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     tabs, 
     activeTab, 
     isReady,
+    bootstrapError,
     createTab, 
     closeTab, 
     setActiveTab, 
     updateTabTitle,
-    restartActiveTab 
+    restartActiveTab,
+    retryBootstrap,
   } = useTerminalSessions();
 
   // Get the WebSocket connection for the active session
@@ -415,8 +417,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     }
   };
 
-  // Determine loading state
-  const isLoading = !isReady || !activeTab || !xtermReady;
+  // Determine loading state — when bootstrapError is set, we are NOT loading
+  // (we have a definitive error to show instead of an indefinite spinner).
+  const isLoading = !isReady || (!activeTab && !bootstrapError) || !xtermReady;
 
   return (
     <div
@@ -530,10 +533,25 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
 
         {/* Terminal container */}
         <div className="terminal-container" data-testid="terminal-container">
-          {isLoading && (
+          {isLoading && !bootstrapError && (
             <div className="terminal-loading" data-testid="terminal-loading">
               <div className="terminal-spinner" />
               <span>Starting terminal...</span>
+            </div>
+          )}
+          {bootstrapError && !activeTab && (
+            <div className="terminal-loading" data-testid="terminal-bootstrap-error">
+              <div className="terminal-error-content">
+                <span>Failed to start terminal: {bootstrapError}</span>
+                <button
+                  className="terminal-retry-btn"
+                  onClick={retryBootstrap}
+                  data-testid="terminal-retry-btn"
+                >
+                  <RefreshCw size={14} />
+                  Retry
+                </button>
+              </div>
             </div>
           )}
           {/*

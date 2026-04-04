@@ -7325,6 +7325,38 @@ body {
   font-size: 13px;
 }
 
+.terminal-error-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md, 12px);
+}
+
+.terminal-error-content span {
+  color: var(--error, #f48771);
+  text-align: center;
+}
+
+.terminal-retry-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs, 4px);
+  padding: 6px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.terminal-retry-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
 /* === Terminal Modal Mobile Responsive === */
 @media (max-width: 768px) {
   .terminal-modal {

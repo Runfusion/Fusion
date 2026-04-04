@@ -76,11 +76,13 @@ const defaultSessionState = {
   tabs: [defaultTab],
   activeTab: defaultTab,
   isReady: true,
+  bootstrapError: null,
   createTab: vi.fn(),
   closeTab: vi.fn(),
   setActiveTab: vi.fn(),
   updateTabTitle: vi.fn(),
   restartActiveTab: vi.fn(),
+  retryBootstrap: vi.fn(),
 };
 
 describe("TerminalModal", () => {
@@ -140,6 +142,104 @@ describe("TerminalModal", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("terminal-loading")).toBeTruthy();
+    });
+  });
+
+  it("shows error with retry button when bootstrap fails instead of stuck loading", async () => {
+    const mockRetryBootstrap = vi.fn();
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      bootstrapError: "Server unreachable",
+      retryBootstrap: mockRetryBootstrap,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    // Should NOT show the loading spinner
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-loading")).toBeNull();
+    });
+
+    // Should show the bootstrap error state with retry button
+    expect(screen.getByTestId("terminal-bootstrap-error")).toBeTruthy();
+    expect(screen.getByText(/Failed to start terminal: Server unreachable/)).toBeTruthy();
+    
+    const retryBtn = screen.getByTestId("terminal-retry-btn");
+    expect(retryBtn).toBeTruthy();
+    expect(retryBtn.textContent).toContain("Retry");
+  });
+
+  it("retry button calls retryBootstrap from the hook", async () => {
+    const mockRetryBootstrap = vi.fn();
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      bootstrapError: "Connection refused",
+      retryBootstrap: mockRetryBootstrap,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const retryBtn = screen.getByTestId("terminal-retry-btn");
+    fireEvent.click(retryBtn);
+
+    expect(mockRetryBootstrap).toHaveBeenCalled();
+  });
+
+  it("clears error state and shows terminal after successful retry", async () => {
+    const mockRetryBootstrap = vi.fn();
+    
+    // Start with error state
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      bootstrapError: "Server unreachable",
+      retryBootstrap: mockRetryBootstrap,
+    });
+
+    const { rerender } = render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    // Error state should be shown
+    expect(screen.getByTestId("terminal-bootstrap-error")).toBeTruthy();
+
+    // Simulate successful retry — hook updates state
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [defaultTab],
+      activeTab: defaultTab,
+      bootstrapError: null,
+      retryBootstrap: mockRetryBootstrap,
+    });
+
+    rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    // Error state should be gone
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-bootstrap-error")).toBeNull();
+    });
+
+    // Loading spinner should also be gone (xterm will init)
+    // The loading overlay will disappear after xterm initializes
+    expect(screen.queryByTestId("terminal-loading")).toBeNull();
+  });
+
+  it("does not show bootstrap error when activeTab exists (recovered state)", async () => {
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      bootstrapError: "Previous error",
+      tabs: [defaultTab],
+      activeTab: defaultTab,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    // Bootstrap error should NOT show because activeTab exists
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-bootstrap-error")).toBeNull();
     });
   });
 
