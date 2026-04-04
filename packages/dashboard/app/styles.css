@@ -7937,6 +7937,7 @@ body {
 .model-combobox-list {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 4px 0;
 }
 
@@ -7947,6 +7948,7 @@ body {
   padding: var(--space-sm) var(--space-md);
   cursor: pointer;
   transition: background 0.1s;
+  overflow: hidden;
 }
 
 .model-combobox-option:hover,
@@ -7982,7 +7984,11 @@ body {
   color: var(--text-dim);
   font-family: var(--font-mono);
   margin-left: 8px;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
 }
 
 .model-combobox-group {
@@ -8005,10 +8011,14 @@ body {
   color: var(--text-muted);
   background: var(--bg);
   cursor: default;
+  overflow: hidden;
 }
 
 .model-combobox-optgroup-text {
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Provider favorite star (in optgroup header) */
@@ -8020,6 +8030,7 @@ body {
   border: none;
   cursor: pointer;
   line-height: 1;
+  flex-shrink: 0;
 }
 .model-combobox-optgroup-favorite:hover {
   color: #f59e0b;
@@ -8038,6 +8049,7 @@ body {
   cursor: pointer;
   line-height: 1;
   margin-left: auto;
+  flex-shrink: 0;
 }
 .model-combobox-option-favorite:hover {
   color: #f59e0b;

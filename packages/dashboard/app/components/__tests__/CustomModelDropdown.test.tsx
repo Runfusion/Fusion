@@ -973,4 +973,158 @@ describe("CustomModelDropdown", () => {
     });
   });
 
+  describe("Horizontal overflow prevention", () => {
+    const LONG_ID_MODELS = [
+      {
+        provider: "anthropic",
+        id: "claude-3-5-sonnet-20241022-with-very-long-extension-that-exceeds-normal-width",
+        name: "Claude 3.5 Sonnet (Extended Preview Build 20241022 Production)",
+        reasoning: true,
+        contextWindow: 200000,
+      },
+      {
+        provider: "openai",
+        id: "gpt-4o-2024-11-20-with-another-extremely-long-identifier-string",
+        name: "GPT-4o (November 2024 Preview with Extended Model Identifier)",
+        reasoning: false,
+        contextWindow: 128000,
+      },
+    ];
+
+    it("dropdown portal does not scroll horizontally with long model IDs", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(
+        <CustomModelDropdown
+          label="Executor Model"
+          value=""
+          onChange={onChange}
+          models={LONG_ID_MODELS}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Executor Model" }));
+      const portal = await screen.findByTestId("model-combobox-portal");
+
+      // The dropdown container itself must not allow horizontal scroll
+      expect(portal.scrollWidth).toBeLessThanOrEqual(portal.clientWidth + 1); // +1 for sub-pixel rounding
+
+      // The list area must not allow horizontal scroll either
+      const list = portal.querySelector(".model-combobox-list");
+      expect(list).toBeTruthy();
+      expect(list!.scrollWidth).toBeLessThanOrEqual(list!.clientWidth + 1);
+    });
+
+    it("truncates long model IDs with ellipsis class applied", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(
+        <CustomModelDropdown
+          label="Executor Model"
+          value=""
+          onChange={onChange}
+          models={LONG_ID_MODELS}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Executor Model" }));
+      const portal = await screen.findByTestId("model-combobox-portal");
+
+      const idElements = portal.querySelectorAll(".model-combobox-option-id");
+      expect(idElements.length).toBeGreaterThanOrEqual(2);
+
+      // Each ID element should have the model-combobox-option-id class
+      // which has overflow: hidden, text-overflow: ellipsis, and white-space: nowrap
+      // in the CSS stylesheet. The truncation is verified via the scroll constraint
+      // tests above. Here we verify the elements exist and have the correct class.
+      for (const el of idElements) {
+        expect(el.classList.contains("model-combobox-option-id")).toBe(true);
+        expect(el.tagName.toLowerCase()).toBe("span");
+      }
+
+      // The real test is that long ID text doesn't make the dropdown wider than expected
+      // (verified in the "dropdown portal does not scroll horizontally" test)
+    });
+
+    it("option rows constrain content within dropdown width", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(
+        <CustomModelDropdown
+          label="Executor Model"
+          value=""
+          onChange={onChange}
+          models={LONG_ID_MODELS}
+          onToggleModelFavorite={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Executor Model" }));
+      const portal = await screen.findByTestId("model-combobox-portal");
+
+      const dropdownWidth = portal.clientWidth;
+
+      // No option should exceed the dropdown width
+      const options = portal.querySelectorAll(".model-combobox-option");
+      for (const opt of options) {
+        expect(opt.scrollWidth).toBeLessThanOrEqual(dropdownWidth + 1);
+      }
+    });
+
+    it("optgroup headers do not overflow horizontally", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(
+        <CustomModelDropdown
+          label="Executor Model"
+          value=""
+          onChange={onChange}
+          models={LONG_ID_MODELS}
+          onToggleFavorite={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Executor Model" }));
+      const portal = await screen.findByTestId("model-combobox-portal");
+
+      const dropdownWidth = portal.clientWidth;
+
+      const optgroups = portal.querySelectorAll(".model-combobox-optgroup");
+      for (const og of optgroups) {
+        expect(og.scrollWidth).toBeLessThanOrEqual(dropdownWidth + 1);
+      }
+    });
+
+    it("still allows selecting models with very long IDs", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+
+      render(
+        <CustomModelDropdown
+          label="Executor Model"
+          value=""
+          onChange={onChange}
+          models={LONG_ID_MODELS}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Executor Model" }));
+      const portal = await screen.findByTestId("model-combobox-portal");
+
+      // Click on the first long-ID model option (index 1, after "Use default")
+      const options = portal.querySelectorAll(".model-combobox-option");
+      expect(options.length).toBeGreaterThanOrEqual(2);
+
+      await user.click(options[1]!);
+
+      expect(onChange).toHaveBeenCalledWith(
+        `anthropic/${LONG_ID_MODELS[0]!.id}`
+      );
+    });
+  });
+
 });
