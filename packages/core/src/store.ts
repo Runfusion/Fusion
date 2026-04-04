@@ -1,10 +1,10 @@
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
-import { appendFile, mkdir, readFile, writeFile, readdir, rename, unlink } from "node:fs/promises";
-import { join, sep } from "node:path";
-import { existsSync, watch, type FSWatcher, readFileSync } from "node:fs";
+import { appendFile, mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType } from "./types.js";
-import { VALID_TRANSITIONS, DEFAULT_SETTINGS, DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS } from "./types.js";
+import { VALID_TRANSITIONS, DEFAULT_SETTINGS, GLOBAL_SETTINGS_KEYS } from "./types.js";
 import { GlobalSettingsStore } from "./global-settings.js";
 import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
 import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
@@ -62,8 +62,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private kbDir: string;
   private tasksDir: string;
   private configPath: string;
-  private archiveLogPath: string;
-  private activityLogPath: string;
   /** SQLite database for structured data storage */
   private _db: Database | null = null;
 
@@ -101,8 +99,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.kbDir = join(rootDir, ".fusion");
     this.tasksDir = join(this.kbDir, "tasks");
     this.configPath = join(this.kbDir, "config.json");
-    this.archiveLogPath = join(this.kbDir, "archive.jsonl");
-    this.activityLogPath = join(this.kbDir, "activity-log.jsonl");
     this.globalSettingsStore = new GlobalSettingsStore(globalSettingsDir);
   }
 
@@ -1004,7 +1000,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.dependencies = updates.dependencies;
 
         if (hasNewDeps && task.column === "todo") {
-          const fromColumn = task.column;
           task.column = "triage";
           task.status = undefined;
           task.columnMovedAt = new Date().toISOString();
@@ -1371,7 +1366,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
   }
 
-  private collectMergeDetails(id: string, branch: string, task: Task, commitMessage: string): import("./types.js").MergeDetails {
+  private collectMergeDetails(_id: string, _branch: string, task: Task, commitMessage: string): import("./types.js").MergeDetails {
     const mergedAt = new Date().toISOString();
     let commitSha: string | undefined;
     let filesChanged: number | undefined;
@@ -1757,7 +1752,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     // Use a sentinel watcher object so existing code that checks `this.watcher` still works
     try {
-      this.watcher = watch(this.tasksDir, { recursive: true }, (_event, filename) => {
+      this.watcher = watch(this.tasksDir, { recursive: true }, (_event, _filename) => {
         // No-op - we use polling now, but keep watcher for API compat
       });
       this.watcher.on("error", () => {
@@ -1847,86 +1842,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     setTimeout(() => {
       this.recentlyWritten.delete(filePath);
     }, this.debounceMs + 100);
-  }
-
-  /**
-   * Handle a raw fs.watch callback. `filename` is relative to tasksDir.
-   */
-  private handleFsChange(filename: string): void {
-    // We only care about task.json files
-    const parts = filename.split(sep);
-    // Normalize for platforms that may use forward slashes
-    const normalizedParts = parts.length === 1 ? filename.split("/") : parts;
-
-    if (normalizedParts.length < 2) return;
-    const taskId = normalizedParts[0];
-    const file = normalizedParts[normalizedParts.length - 1];
-    if (file !== "task.json") return;
-    if (!/^[A-Z]+-\d+$/.test(taskId)) return;
-
-    const fullPath = join(this.tasksDir, taskId, "task.json");
-
-    // Check suppression
-    if (this.recentlyWritten.has(fullPath)) return;
-
-    // Debounce per task ID
-    const existing = this.debounceTimers.get(taskId);
-    if (existing) clearTimeout(existing);
-
-    this.debounceTimers.set(
-      taskId,
-      setTimeout(() => {
-        this.debounceTimers.delete(taskId);
-        this.processTaskChange(taskId, fullPath).catch(() => {
-          // Ignore errors (file may have been deleted mid-read)
-        });
-      }, this.debounceMs),
-    );
-  }
-
-  /**
-   * Read a task.json from disk and diff against the cache to emit the right event.
-   */
-  private async processTaskChange(taskId: string, filePath: string): Promise<void> {
-    const cached = this.taskCache.get(taskId);
-
-    if (!existsSync(filePath)) {
-      // Task was deleted
-      if (cached) {
-        this.taskCache.delete(taskId);
-        this.emit("task:deleted", cached);
-      }
-      return;
-    }
-
-    let task: Task;
-    try {
-      const taskDir = join(this.tasksDir, taskId);
-      task = await this.readTaskJson(taskDir);
-    } catch {
-      return; // File not readable or invalid JSON
-    }
-
-    if (!cached) {
-      // New task
-      this.taskCache.set(taskId, { ...task });
-      this.emit("task:created", task);
-      return;
-    }
-
-    // Check for column change → task:moved
-    if (cached.column !== task.column) {
-      const from = cached.column;
-      this.taskCache.set(taskId, { ...task });
-      this.emit("task:moved", { task, from, to: task.column });
-      return;
-    }
-
-    // Check for any other field change → task:updated
-    if (JSON.stringify(cached) !== JSON.stringify(task)) {
-      this.taskCache.set(taskId, { ...task });
-      this.emit("task:updated", task);
-    }
   }
 
   private static ALLOWED_MIME_TYPES = new Set([

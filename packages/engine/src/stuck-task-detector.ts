@@ -136,7 +136,7 @@ export class StuckTaskDetector {
    * - Moves the task back to "todo" (preserving step progress)
    * - Invokes the onStuck callback
    */
-  async killAndRetry(taskId: string, timeoutMs: number): Promise<void> {
+  async killAndRetry(taskId: string, _timeoutMs: number): Promise<void> {
     const entry = this.tracked.get(taskId);
     if (!entry) return;
 

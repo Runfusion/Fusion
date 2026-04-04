@@ -317,7 +317,7 @@ export class Database {
   /** Tracks transaction nesting depth for savepoint-based nested transactions. */
   private transactionDepth = 0;
 
-  constructor(private kbDir: string) {
+  constructor(kbDir: string) {
     this.dbPath = join(kbDir, "fusion.db");
 
     // Ensure .fusion directory exists

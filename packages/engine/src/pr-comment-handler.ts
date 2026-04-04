@@ -152,6 +152,45 @@ export class PrCommentHandler {
   }
 
   /**
+   * Handle "changes requested" PR review state.
+   * Moves the task back to in-progress with reviewer feedback as a steering comment,
+   * closing the feedback loop so the agent can address the requested changes.
+   */
+  async handleChangesRequested(
+    taskId: string,
+    prInfo: PrInfo,
+    reviewerLogin: string,
+    reviewBody: string,
+  ): Promise<void> {
+    try {
+      const task = await this.store.getTask(taskId);
+      if (task.column !== "in-review") {
+        prMonitorLog.log(`Task ${taskId} not in-review (${task.column}), skipping changes-requested handling`);
+        return;
+      }
+
+      // Add reviewer feedback as a steering comment
+      const feedbackText = [
+        `**Changes Requested** by @${reviewerLogin} on PR #${prInfo.number}`,
+        "",
+        reviewBody ? reviewBody.slice(0, 800) : "(no review body)",
+        "",
+        "Please address the requested changes and update the PR.",
+      ].join("\n");
+
+      await this.store.addTaskComment(taskId, feedbackText, "agent");
+      await this.store.moveTask(taskId, "in-progress");
+      await this.store.logEntry(
+        taskId,
+        `PR #${prInfo.number}: changes requested by @${reviewerLogin} — moved back to in-progress`,
+      );
+      prMonitorLog.log(`Task ${taskId} moved to in-progress after changes requested on PR #${prInfo.number}`);
+    } catch (err) {
+      prMonitorLog.error(`Failed to handle changes-requested for ${taskId}:`, err);
+    }
+  }
+
+  /**
    * Create a follow-up task when a PR is closed with unaddressed feedback.
    * This is called when a PR is merged or closed.
    */

@@ -844,7 +844,11 @@ describe("detectResolvableConflicts", () => {
   });
 
   it("detects coverage/ paths as generated files with 'theirs' strategy", () => {
-    mockedExecSync.mockReturnValue("coverage/lcov-report/index.html\n");
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("git diff --name-only")) return "coverage/lcov.info\n";
+      return Buffer.from("");
+    });
 
     const result = detectResolvableConflicts("/tmp/root");
     expect(result[0]).toMatchObject({
@@ -855,7 +859,13 @@ describe("detectResolvableConflicts", () => {
   });
 
   it("marks regular source files as complex conflicts", () => {
-    mockedExecSync.mockReturnValue("src/components/App.tsx\n");
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("git diff --name-only")) return "src/components/App.tsx\n";
+      // git diff-tree for trivial detection — return real diff content to indicate non-trivial
+      if (cmdStr.includes("diff-tree")) return "+real change\n-old line\n";
+      return Buffer.from("");
+    });
 
     const result = detectResolvableConflicts("/tmp/root");
     expect(result[0]).toMatchObject({
@@ -866,9 +876,14 @@ describe("detectResolvableConflicts", () => {
   });
 
   it("handles multiple conflicted files with mixed categories", () => {
-    mockedExecSync.mockReturnValue(
-      "package-lock.json\nsrc/components/App.tsx\ndist/bundle.js\n",
-    );
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("git diff --name-only"))
+        return "package-lock.json\nsrc/components/App.tsx\ndist/bundle.js\n";
+      // git diff-tree for trivial detection — return real diff for source files
+      if (cmdStr.includes("diff-tree")) return "+real change\n-old line\n";
+      return Buffer.from("");
+    });
 
     const result = detectResolvableConflicts("/tmp/root");
     expect(result).toHaveLength(3);
@@ -999,23 +1014,19 @@ describe("resolveConflicts", () => {
 
 // ── Trivial Conflict Detection Tests ──────────────────────────────────────
 
-describe("trivial conflict detection (isTrivialConflict via detectResolvableConflicts)", () => {
+describe("trivial conflict detection (isTrivialWhitespaceConflict via detectResolvableConflicts)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it("detects whitespace-only conflicts as trivial", () => {
-    mockedExecSync.mockReturnValue("src/utils.ts\n");
-
-    const fileContent = `function foo() {
-<<<<<<< HEAD
-    return 1;
-=======
-        return 1;
->>>>>>> feature-branch
-}`;
-
-    mockedReadFileSync.mockReturnValue(fileContent);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("git diff --name-only")) return "src/utils.ts\n";
+      // git diff-tree with -w returns empty = trivial whitespace
+      if (cmdStr.includes("diff-tree")) return "";
+      return Buffer.from("");
+    });
 
     const result = detectResolvableConflicts("/tmp/root");
     expect(result).toHaveLength(1);
@@ -1027,34 +1038,14 @@ describe("trivial conflict detection (isTrivialConflict via detectResolvableConf
     });
   });
 
-  it("detects conflicts with different line endings as trivial", () => {
-    mockedExecSync.mockReturnValue("src/utils.ts\n");
-
-    // Same content but different line ending style - CRLF vs LF
-    const fileContent = "const x = 1;\r\n<<<<<<< HEAD\r\nconst y = 2;\r\n=======\r\nconst y = 2;\n>>>>>>> feature-branch";
-
-    mockedReadFileSync.mockReturnValue(fileContent);
-
-    const result = detectResolvableConflicts("/tmp/root");
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      autoResolvable: true,
-      reason: "trivial",
-    });
-  });
-
   it("marks conflicts with actual content differences as complex", () => {
-    mockedExecSync.mockReturnValue("src/utils.ts\n");
-
-    const fileContent = `function foo() {
-<<<<<<< HEAD
-    return 1;
-=======
-    return 2;
->>>>>>> feature-branch
-}`;
-
-    mockedReadFileSync.mockReturnValue(fileContent);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("git diff --name-only")) return "src/utils.ts\n";
+      // git diff-tree returns real content changes = non-trivial
+      if (cmdStr.includes("diff-tree")) return "+return 2;\n-return 1;\n";
+      return Buffer.from("");
+    });
 
     const result = detectResolvableConflicts("/tmp/root");
     expect(result).toHaveLength(1);
@@ -1065,53 +1056,14 @@ describe("trivial conflict detection (isTrivialConflict via detectResolvableConf
     });
   });
 
-  it("handles multiple conflict sections - all trivial", () => {
-    mockedExecSync.mockReturnValue("src/utils.ts\n");
-
-    const fileContent = `function foo() {
-<<<<<<< HEAD
-    return 1;
-=======
-        return 1;
->>>>>>> feature-branch
-}
-function bar() {
-<<<<<<< Updated upstream
-    const x = 2;
-=======
-        const x = 2;
->>>>>>> feature-branch
-}`;
-
-    mockedReadFileSync.mockReturnValue(fileContent);
-
-    const result = detectResolvableConflicts("/tmp/root");
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      autoResolvable: true,
-      reason: "trivial",
-    });
-  });
-
   it("handles multiple conflict sections - one non-trivial makes complex", () => {
-    mockedExecSync.mockReturnValue("src/utils.ts\n");
-
-    const fileContent = `function foo() {
-<<<<<<< HEAD
-    return 1;
-=======
-        return 1;
->>>>>>> feature-branch
-}
-function bar() {
-<<<<<<< Updated upstream
-    const x = 2;
-=======
-    const x = 999;
->>>>>>> feature-branch
-}`;
-
-    mockedReadFileSync.mockReturnValue(fileContent);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("git diff --name-only")) return "src/utils.ts\n";
+      // Real diff content = non-trivial
+      if (cmdStr.includes("diff-tree")) return "+const x = 999;\n-const x = 2;\n";
+      return Buffer.from("");
+    });
 
     const result = detectResolvableConflicts("/tmp/root");
     expect(result).toHaveLength(1);
@@ -1121,10 +1073,12 @@ function bar() {
     });
   });
 
-  it("handles file read errors as complex conflicts", () => {
-    mockedExecSync.mockReturnValue("src/utils.ts\n");
-    mockedReadFileSync.mockImplementation(() => {
-      throw new Error("ENOENT: no such file");
+  it("handles git command errors as complex conflicts", () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("git diff --name-only")) return "src/utils.ts\n";
+      if (cmdStr.includes("diff-tree")) throw new Error("git error");
+      return Buffer.from("");
     });
 
     const result = detectResolvableConflicts("/tmp/root");

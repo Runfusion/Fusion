@@ -267,7 +267,7 @@ function buildReviewRequest(
   stepName: string,
   reviewType: ReviewType,
   promptContent: string,
-  cwd: string,
+  _cwd: string,
   baseline?: string,
 ): string {
   const parts = [
@@ -338,22 +338,34 @@ function buildReviewRequest(
 }
 
 function extractVerdict(review: string): ReviewVerdict {
-  // Look for "### Verdict: APPROVE" or "**Verdict: REVISE**" or similar
-  const verdictMatch = review.match(
-    /(?:###?\s*|[*_]{1,2})Verdict[:\s]*[*_]{0,2}\s*(APPROVE|REVISE|RETHINK)/i,
+  // Strategy 1: Look for a JSON verdict block (structured output)
+  // Matches: ```json\n{"verdict": "APPROVE"}\n``` or inline {"verdict":"REVISE"}
+  const jsonMatch = review.match(
+    /\{\s*"verdict"\s*:\s*"(APPROVE|REVISE|RETHINK)"\s*\}/i,
   );
-  if (verdictMatch) {
-    return verdictMatch[1].toUpperCase() as ReviewVerdict;
+  if (jsonMatch) {
+    reviewerLog.log(`Verdict extracted via JSON block: ${jsonMatch[1].toUpperCase()}`);
+    return jsonMatch[1].toUpperCase() as ReviewVerdict;
   }
 
-  // Fallback: look for a standalone verdict line like "Verdict: APPROVE"
+  // Strategy 2: Look for verdict in a heading line (### Verdict: APPROVE, **Verdict: REVISE**)
+  // Only match lines that START with a verdict pattern to avoid matching keywords in body text
+  const headingMatch = review.match(
+    /^[>\s]*(?:###?\s*|[*_]{1,2})Verdict[:\s]*[*_]{0,2}\s*(APPROVE|REVISE|RETHINK)\b/im,
+  );
+  if (headingMatch) {
+    return headingMatch[1].toUpperCase() as ReviewVerdict;
+  }
+
+  // Strategy 3: Standalone verdict line like "Verdict: APPROVE" or "Decision: REVISE"
   const lineFallback = review.match(
-    /^[>\s]*(?:verdict|decision)[:\s]+(APPROVE|REVISE|RETHINK)\b/im,
+    /^[>\s]*(?:verdict|decision)\s*[-:]\s*(APPROVE|REVISE|RETHINK)\b/im,
   );
   if (lineFallback) {
     return lineFallback[1].toUpperCase() as ReviewVerdict;
   }
 
+  reviewerLog.warn(`Could not extract verdict from review (${review.length} chars). Returning UNAVAILABLE.`);
   return "UNAVAILABLE";
 }
 

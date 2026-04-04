@@ -628,7 +628,10 @@ export interface GlobalSettings {
    *  at the very top of model selection dropdowns, before provider groups. Order is
    *  preserved - earlier entries appear higher. */
   favoriteModels?: string[];
-
+  /** When true, the dashboard eagerly fetches the latest model catalog from
+   *  the OpenRouter API at startup so the model picker shows all available
+   *  OpenRouter models (not just the static built-in list). Default: true. */
+  openrouterModelSync?: boolean;
 }
 
 /**
@@ -739,6 +742,15 @@ export interface ProjectSettings {
    *  lock files (ours), generated files (theirs), and trivial whitespace conflicts
    *  without spawning an AI agent. Default: true. */
   smartConflictResolution?: boolean;
+  /** When true, out-of-scope file changes block merge instead of just logging warnings.
+   *  Useful for teams that want strict enforcement of declared File Scope.
+   *  Default: false (soft guardrail — warnings only). */
+  strictScopeEnforcement?: boolean;
+  /** Maximum number of build retry attempts during merge when a build fails with a
+   *  transient error. Default: 0 (no retry). Set to 1 to allow one retry. */
+  buildRetryCount?: number;
+  /** Timeout in milliseconds for build commands during merge. Default: 300000 (5 min). */
+  buildTimeoutMs?: number;
   /** When enabled, AI-generated task specifications require manual approval
    *  before the task can move from triage to todo. Tasks with approved specs
    *  remain in triage with status "awaiting-approval" until a user approves
@@ -834,6 +846,7 @@ export const DEFAULT_GLOBAL_SETTINGS: Required<Pick<GlobalSettings, "themeMode" 
   ntfyTopic: undefined,
   ntfyEvents: ["in-review", "merged", "failed"],
   ntfyDashboardHost: undefined,
+  openrouterModelSync: true,
 };
 
 /** Default values for project-level settings. */
@@ -864,6 +877,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   defaultPresetBySize: {},
   autoResolveConflicts: true,
   smartConflictResolution: true,
+  strictScopeEnforcement: false,
+  buildRetryCount: 0,
+  buildTimeoutMs: 300_000,
   requirePlanApproval: false,
   taskStuckTimeoutMs: undefined,
   autoUnpauseEnabled: true,
@@ -908,6 +924,7 @@ export const GLOBAL_SETTINGS_KEYS: ReadonlyArray<keyof GlobalSettings> = [
   "ntfyEvents",
   "ntfyDashboardHost",
   "defaultProjectId",
+  "openrouterModelSync",
 ] as const;
 
 /** Keys that belong to the project settings scope. */
@@ -971,6 +988,8 @@ export interface MergeResult extends MergeDetails {
   worktreeRemoved: boolean;
   branchDeleted: boolean;
   error?: string;
+  /** Internal flag to track if a build retry has been attempted. Not persisted. */
+  _buildRetried?: boolean;
 }
 
 export const COLUMN_LABELS: Record<Column, string> = {

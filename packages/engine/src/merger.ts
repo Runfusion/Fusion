@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import type { TaskStore, Task, MergeResult } from "@fusion/core";
+import { existsSync } from "node:fs";
+import type { TaskStore, MergeResult } from "@fusion/core";
 import { createKbAgent, promptWithFallback } from "./pi.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
@@ -184,12 +184,15 @@ function matchesScope(filePath: string, scopePatterns: string[]): boolean {
 /**
  * Validate that the diff stays within the task's declared File Scope.
  * Returns warnings for out-of-scope changes, especially large deletions.
- * This is a soft guardrail — warnings are logged but do not block merge.
+ *
+ * When `strict` is true, throws an error on scope violations instead of
+ * just returning warnings (hard guardrail that blocks merge).
  */
 export async function validateDiffScope(
   store: TaskStore,
   taskId: string,
   diffStat: string,
+  strict: boolean = false,
 ): Promise<DiffScopeResult> {
   const result: DiffScopeResult = { warnings: [], outOfScopeFiles: [], largeOutOfScopeDeletions: [] };
 
@@ -236,6 +239,13 @@ export async function validateDiffScope(
   } else if (result.outOfScopeFiles.length > 3) {
     result.warnings.push(
       `⚠ SCOPE WARNING: ${result.outOfScopeFiles.length} files changed outside declared File Scope`,
+    );
+  }
+
+  // In strict mode, scope violations block the merge
+  if (strict && result.warnings.length > 0) {
+    throw new Error(
+      `Scope enforcement failed for ${taskId}: ${result.warnings.join("; ")}`,
     );
   }
 
@@ -364,189 +374,64 @@ export function resolveTrivialWhitespace(filePath: string, cwd: string): void {
   }
 }
 
-// TODO(KB-023 Step 4): Consolidate with new API above. The following legacy API
-// (ConflictCategory, detectResolvableConflicts, isTrivialConflict, autoResolveFile,
-// resolveConflicts) duplicates functionality with the new Step 2 API. Migrate
-// callers to use classifyConflict, resolveWithOurs, resolveWithTheirs, etc.
-
-/** Conflict category for a file with merge conflicts - LEGACY API, see above */
+// Legacy types re-exported for backward compatibility (tests may reference them)
+/** @deprecated Use ConflictType instead */
 export type ConflictResolution = "ours" | "theirs";
 
+/** @deprecated Use classifyConflict + getConflictedFiles instead */
 export interface ConflictCategory {
   filePath: string;
-  /** Whether this conflict can be auto-resolved without AI */
   autoResolvable: boolean;
-  /** Resolution strategy: 'ours' = take current branch, 'theirs' = take incoming branch */
   strategy?: ConflictResolution;
-  /** Reason for the categorization */
   reason: "lock-file" | "generated-file" | "trivial" | "complex";
 }
 
-/** Lock file patterns that should auto-resolve using "ours" (keep current branch's version) */
-const LOCK_FILE_PATTERNS = [
-  /package-lock\.json$/,
-  /pnpm-lock\.yaml$/,
-  /yarn\.lock$/,
-  /Gemfile\.lock$/,
-  /Cargo\.lock$/,
-  /composer\.lock$/,
-  /poetry\.lock$/,
-  /bun\.lockb$/,
-  /go\.sum$/,
-];
-
-/** Generated file patterns that should auto-resolve using "theirs" (keep branch's fresh generation) */
-const GENERATED_FILE_PATTERNS = [
-  /\.gen\.(ts|js|tsx|jsx|mjs|cjs)$/,
-  /\.min\.(js|css)$/,
-  /dist\//,
-  /build\//,
-  /coverage\//,
-  /\.next\//,
-  /\.nuxt\//,
-  /\.output\//,
-  /\.cache\//,
-  /out\//,
-  /__generated__\//,
-  /generated\//,
-];
-
 /**
- * Detect and categorize merge conflicts in the working directory.
- * Returns array of ConflictCategory for each conflicted file.
+ * Detect and categorize merge conflicts. Delegates to the new classifyConflict API.
+ * @deprecated Use getConflictedFiles() + classifyConflict() instead.
  */
 export function detectResolvableConflicts(rootDir: string): ConflictCategory[] {
-  try {
-    // Get list of conflicted files
-    const conflictedOutput = execSync("git diff --name-only --diff-filter=U", {
-      cwd: rootDir,
-      encoding: "utf-8",
-    }).trim();
-
-    if (!conflictedOutput) {
-      return [];
+  const files = getConflictedFiles(rootDir);
+  return files.map((filePath): ConflictCategory => {
+    const type = classifyConflict(filePath, rootDir);
+    switch (type) {
+      case "lockfile-ours":
+        return { filePath, autoResolvable: true, strategy: "ours", reason: "lock-file" };
+      case "generated-theirs":
+        return { filePath, autoResolvable: true, strategy: "theirs", reason: "generated-file" };
+      case "trivial-whitespace":
+        return { filePath, autoResolvable: true, strategy: "ours", reason: "trivial" };
+      case "complex":
+        return { filePath, autoResolvable: false, reason: "complex" };
     }
-
-    const conflictedFiles = conflictedOutput.split("\n").filter(Boolean);
-
-    return conflictedFiles.map((filePath): ConflictCategory => {
-      // Check for lock files - always take "ours" (current branch's version)
-      if (LOCK_FILE_PATTERNS.some((pattern) => pattern.test(filePath))) {
-        return {
-          filePath,
-          autoResolvable: true,
-          strategy: "ours",
-          reason: "lock-file",
-        };
-      }
-
-      // Check for generated files - take "theirs" (keep branch's fresh generation)
-      if (GENERATED_FILE_PATTERNS.some((pattern) => pattern.test(filePath))) {
-        return {
-          filePath,
-          autoResolvable: true,
-          strategy: "theirs",
-          reason: "generated-file",
-        };
-      }
-
-      // Check for trivial conflicts (whitespace-only)
-      if (isTrivialConflict(filePath, rootDir)) {
-        return {
-          filePath,
-          autoResolvable: true,
-          strategy: "ours", // Either would work, but ours is current branch
-          reason: "trivial",
-        };
-      }
-
-      // Complex conflicts require AI intervention
-      return {
-        filePath,
-        autoResolvable: false,
-        reason: "complex",
-      };
-    });
-  } catch (error) {
-    mergerLog.error(`Failed to detect conflicts: ${error}`);
-    return [];
-  }
-}
-
-/**
- * Check if a conflicted file has only trivial changes (whitespace-only differences).
- * Reads the working directory file and compares the conflict sections.
- */
-function isTrivialConflict(filePath: string, rootDir: string): boolean {
-  try {
-    const fullPath = `${rootDir}/${filePath}`;
-    const content = readFileSync(fullPath, "utf-8");
-
-    // Look for conflict markers - support any text after <<<<<<< (HEAD, ours, Updated upstream, etc.)
-    const conflictRegex = /<<<<<<<\s+.+?[\s\S]*?^=======([\s\S]*?)^>>>>>>>\s+/gm;
-    let hasConflicts = false;
-
-    for (const match of content.matchAll(conflictRegex)) {
-      hasConflicts = true;
-      const fullMatch = match[0];
-      const theirsContent = match[1];
-
-      // Extract "ours" content (between <<<<<<< line and ======= line)
-      const oursMatch = fullMatch.match(/<<<<<<<\s+.+?\n([\s\S]*?)\n=======/);
-      if (!oursMatch) continue;
-
-      const oursContent = oursMatch[1];
-
-      // Normalize: remove all whitespace and compare
-      const oursNormalized = oursContent.replace(/\s+/g, "");
-      const theirsNormalized = theirsContent.replace(/\s+/g, "");
-
-      // If content is the same after stripping whitespace, it's trivial
-      if (oursNormalized !== theirsNormalized) {
-        return false; // Real content difference found
-      }
-    }
-
-    return hasConflicts; // Only trivial if we found conflicts and they're all trivial
-  } catch {
-    return false; // On error, assume complex
-  }
+  });
 }
 
 /**
  * Auto-resolve a single file using git checkout --ours or --theirs.
- * Stages the resolved file.
+ * @deprecated Use resolveWithOurs() or resolveWithTheirs() instead.
  */
 export function autoResolveFile(
   filePath: string,
   resolution: ConflictResolution,
   rootDir: string,
 ): void {
-  try {
-    execSync(`git checkout --${resolution} "${filePath}"`, {
-      cwd: rootDir,
-      stdio: "pipe",
-    });
-    execSync(`git add "${filePath}"`, {
-      cwd: rootDir,
-      stdio: "pipe",
-    });
-    mergerLog.log(`Auto-resolved ${filePath} using --${resolution}`);
-  } catch (error) {
-    throw new Error(`Failed to auto-resolve ${filePath}: ${error}`);
+  if (resolution === "ours") {
+    resolveWithOurs(filePath, rootDir);
+  } else {
+    resolveWithTheirs(filePath, rootDir);
   }
 }
 
 /**
  * Auto-resolve all resolvable conflicts from the categorization.
- * Returns the list of remaining complex conflicts that need AI resolution.
+ * @deprecated Use classifyConflict + resolveWithOurs/resolveWithTheirs instead.
  */
 export function resolveConflicts(
   categories: ConflictCategory[],
   rootDir: string,
 ): string[] {
   const remainingComplex: string[] = [];
-
   for (const category of categories) {
     if (category.autoResolvable && category.strategy) {
       autoResolveFile(category.filePath, category.strategy, rootDir);
@@ -554,7 +439,6 @@ export function resolveConflicts(
       remainingComplex.push(category.filePath);
     }
   }
-
   return remainingComplex;
 }
 
@@ -761,13 +645,18 @@ export async function aiMergeTask(
 
   // 4b. Validate diff scope against task's declared File Scope
   try {
-    const scopeResult = await validateDiffScope(store, taskId, diffStat);
+    const scopeResult = await validateDiffScope(store, taskId, diffStat, settings.strictScopeEnforcement);
     for (const warning of scopeResult.warnings) {
       mergerLog.warn(`${taskId}: ${warning}`);
       await store.logEntry(taskId, warning);
     }
-  } catch {
-    // Scope validation is best-effort — never block merge on validation failure
+  } catch (scopeError: any) {
+    if (settings.strictScopeEnforcement && scopeError.message?.includes("Scope enforcement failed")) {
+      // Strict mode — block the merge
+      await store.logEntry(taskId, `Merge blocked: ${scopeError.message}`);
+      throw scopeError;
+    }
+    // Soft mode — scope validation is best-effort
   }
 
   // 5. Execute merge with retry logic
@@ -814,11 +703,22 @@ export async function aiMergeTask(
 
       return false;
     } catch (error: any) {
-      // Check if it's a build verification failure - don't retry, propagate immediately
+      // Check if it's a build verification failure
       if (error.message?.includes("Build verification failed")) {
-        throw error; // Fatal - don't retry build failures
+        const buildRetryCount = settings.buildRetryCount ?? 0;
+        if (buildRetryCount > 0 && !result._buildRetried) {
+          // Allow one build retry — reset merge state and re-attempt same strategy
+          mergerLog.log(`${taskId}: build failed, retrying (${buildRetryCount} retry allowed)...`);
+          await store.logEntry(taskId, "Build failed — retrying merge attempt");
+          result._buildRetried = true;
+          try {
+            execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
+          } catch { /* ignore cleanup errors */ }
+          return false; // Retry
+        }
+        throw error; // No retries left — fatal
       }
-      
+
       // Clean up on error before potentially rethrowing or retrying
       if (attemptNum < 3 && smartConflictResolution) {
         mergerLog.log(`${taskId}: attempt ${attemptNum} error, cleaning up for retry...`);

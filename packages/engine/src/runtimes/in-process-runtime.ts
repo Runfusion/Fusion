@@ -460,7 +460,7 @@ export class InProcessRuntime
   /**
    * Record task completion in CentralCore.
    */
-  private async recordTaskCompletion(taskId: string, success: boolean): Promise<void> {
+  private async recordTaskCompletion(_taskId: string, success: boolean): Promise<void> {
     try {
       // Estimate duration (simplified - in reality, we'd track start time)
       const durationMs = 0; // Placeholder
