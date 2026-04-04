@@ -1,0 +1,201 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { SettingsModal } from "./SettingsModal";
+import type { SettingsExportData } from "../api";
+
+// --- API mocks ---
+const mockFetchSettings = vi.fn();
+const mockExportSettings = vi.fn();
+const mockUpdateSettings = vi.fn();
+const mockUpdateGlobalSettings = vi.fn();
+const mockFetchAuthStatus = vi.fn();
+const mockLoginProvider = vi.fn();
+const mockLogoutProvider = vi.fn();
+const mockFetchModels = vi.fn();
+const mockTestNtfyNotification = vi.fn();
+const mockFetchBackups = vi.fn();
+const mockCreateBackup = vi.fn();
+const mockImportSettings = vi.fn();
+
+vi.mock("../api", () => ({
+  fetchSettings: (...args: unknown[]) => mockFetchSettings(...args),
+  updateSettings: (...args: unknown[]) => mockUpdateSettings(...args),
+  updateGlobalSettings: (...args: unknown[]) => mockUpdateGlobalSettings(...args),
+  exportSettings: (...args: unknown[]) => mockExportSettings(...args),
+  importSettings: (...args: unknown[]) => mockImportSettings(...args),
+  fetchAuthStatus: (...args: unknown[]) => mockFetchAuthStatus(...args),
+  loginProvider: (...args: unknown[]) => mockLoginProvider(...args),
+  logoutProvider: (...args: unknown[]) => mockLogoutProvider(...args),
+  fetchModels: (...args: unknown[]) => mockFetchModels(...args),
+  testNtfyNotification: (...args: unknown[]) => mockTestNtfyNotification(...args),
+  fetchBackups: (...args: unknown[]) => mockFetchBackups(...args),
+  createBackup: (...args: unknown[]) => mockCreateBackup(...args),
+}));
+
+const noop = () => {};
+
+const defaultSettings = {
+  maxConcurrent: 2,
+  maxWorktrees: 4,
+  pollIntervalMs: 15000,
+  groupOverlappingFiles: true,
+  autoMerge: true,
+  mergeStrategy: "direct",
+  recycleWorktrees: false,
+  worktreeNaming: "random",
+  includeTaskIdInCommit: true,
+  worktreeInitCommand: "",
+  ntfyEnabled: false,
+  ntfyTopic: undefined,
+};
+
+function renderModal(props = {}) {
+  return render(
+    <SettingsModal
+      onClose={noop}
+      addToast={noop}
+      {...props}
+    />
+  );
+}
+
+describe("SettingsModal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchSettings.mockResolvedValue(defaultSettings);
+    mockFetchAuthStatus.mockResolvedValue({ providers: [] });
+    mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
+    mockFetchBackups.mockResolvedValue({ backups: [], totalSize: 0 });
+
+    // jsdom doesn't provide URL.createObjectURL — polyfill it
+    if (!URL.createObjectURL) {
+      URL.createObjectURL = vi.fn(() => "blob:http://localhost/mock") as any;
+    }
+    if (!URL.revokeObjectURL) {
+      URL.revokeObjectURL = vi.fn() as any;
+    }
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe("settings export filename", () => {
+    it("uses fusion-settings- prefix for exported filename", async () => {
+      const mockExportData: SettingsExportData = {
+        version: 1,
+        exportedAt: "2026-04-04T12:00:00.000Z",
+        global: undefined,
+        project: { maxConcurrent: 2 },
+      };
+      mockExportSettings.mockResolvedValue(mockExportData);
+
+      // Spy on createElement to capture the download link's filename
+      const originalCreateElement = document.createElement.bind(document);
+      const createdElements: { tagName: string; download: string; href: string }[] = [];
+      vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+        const el = originalCreateElement(tagName);
+        if (tagName.toLowerCase() === "a") {
+          // Capture the download attribute when set
+          const origDownloadDescriptor = Object.getOwnPropertyDescriptor(
+            HTMLAnchorElement.prototype,
+            "download"
+          );
+          Object.defineProperty(el, "download", {
+            set(v: string) {
+              createdElements.push({ tagName, download: v, href: (el as HTMLAnchorElement).href });
+              origDownloadDescriptor?.set?.call(el, v);
+            },
+            get() {
+              return origDownloadDescriptor?.get?.call(el) ?? "";
+            },
+            configurable: true,
+          });
+        }
+        return el;
+      });
+
+      // Mock URL.createObjectURL and revokeObjectURL
+      vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:http://localhost/mock");
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+
+      renderModal();
+
+      // Wait for settings to load
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      // Find and click the Export button
+      const exportButton = screen.getByTitle("Export settings to JSON file");
+      expect(exportButton).toBeDefined();
+
+      fireEvent.click(exportButton);
+
+      await waitFor(() => {
+        expect(mockExportSettings).toHaveBeenCalled();
+      });
+
+      // Assert the filename uses fusion-settings- prefix
+      expect(createdElements.length).toBeGreaterThanOrEqual(1);
+      const anchorElement = createdElements[0];
+      expect(anchorElement.download).toMatch(/^fusion-settings-/);
+      expect(anchorElement.download).toMatch(/^fusion-settings-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.json$/);
+    });
+
+    it("does not use kb-settings- prefix for exported filename", async () => {
+      const mockExportData: SettingsExportData = {
+        version: 1,
+        exportedAt: "2026-04-04T12:00:00.000Z",
+        global: undefined,
+        project: { maxConcurrent: 2 },
+      };
+      mockExportSettings.mockResolvedValue(mockExportData);
+
+      // Capture filenames set on dynamically-created anchor elements
+      const capturedFilenames: string[] = [];
+      const originalCreateElement = document.createElement.bind(document);
+      vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+        const el = originalCreateElement(tagName);
+        if (tagName.toLowerCase() === "a") {
+          const origDownloadDescriptor = Object.getOwnPropertyDescriptor(
+            HTMLAnchorElement.prototype,
+            "download"
+          );
+          Object.defineProperty(el, "download", {
+            set(v: string) {
+              capturedFilenames.push(v);
+              origDownloadDescriptor?.set?.call(el, v);
+            },
+            get() {
+              return origDownloadDescriptor?.get?.call(el) ?? "";
+            },
+            configurable: true,
+          });
+        }
+        return el;
+      });
+
+      vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:http://localhost/mock");
+      vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      fireEvent.click(screen.getByTitle("Export settings to JSON file"));
+
+      await waitFor(() => {
+        expect(mockExportSettings).toHaveBeenCalled();
+      });
+
+      // Negative assertion: filename must NOT use the old kb- prefix
+      expect(capturedFilenames.length).toBeGreaterThanOrEqual(1);
+      for (const filename of capturedFilenames) {
+        expect(filename).not.toMatch(/^kb-settings-/);
+      }
+    });
+  });
+});
