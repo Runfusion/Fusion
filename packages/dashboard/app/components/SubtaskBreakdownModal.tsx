@@ -8,6 +8,11 @@ import {
   fetchAiSession,
   type SubtaskItem,
 } from "../api";
+import {
+  saveSubtaskDescription,
+  getSubtaskDescription,
+  clearSubtaskDescription,
+} from "../hooks/modalPersistence";
 import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown } from "lucide-react";
 
 interface SubtaskBreakdownModalProps {
@@ -61,6 +66,8 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   const [subtasks, setSubtasks] = useState<SubtaskItem[]>([]);
   const [thinkingOutput, setThinkingOutput] = useState("");
   const [showThinking, setShowThinking] = useState(true);
+  // Local description: synced from prop, can fall back to localStorage
+  const [localDescription, setLocalDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   
@@ -84,6 +91,10 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   }, [subtasks]);
 
   const resetState = useCallback(() => {
+    // Save to localStorage before cleanup (preserve for re-entry)
+    if (localDescription) {
+      saveSubtaskDescription(localDescription);
+    }
     streamRef.current?.close();
     streamRef.current = null;
     setView({ type: "initial" });
@@ -93,7 +104,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     setError(null);
     setDirty(false);
     autoStartedRef.current = false;
-  }, []);
+  }, [localDescription]);
 
   const handleClose = useCallback(async () => {
     if ((dirty || view.type === "editing" || view.type === "creating") && !confirm("Close subtask breakdown? Unsaved changes will be lost.")) {
@@ -111,17 +122,18 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   }, [dirty, onClose, resetState, sessionId, view.type, projectId]);
 
   const beginBreakdown = useCallback(async () => {
-    if (!initialDescription.trim()) return;
+    if (!localDescription.trim()) return;
     setError(null);
     setThinkingOutput("");
 
     try {
-      const { sessionId } = await startSubtaskBreakdown(initialDescription.trim(), projectId);
+      const { sessionId } = await startSubtaskBreakdown(localDescription.trim(), projectId);
       setView({ type: "generating", sessionId });
       streamRef.current?.close();
       streamRef.current = connectSubtaskStream(sessionId, projectId, {
         onThinking: (data) => setThinkingOutput((prev) => prev + data),
         onSubtasks: (items) => {
+          clearSubtaskDescription();
           setSubtasks(items);
           setView({ type: "editing", sessionId });
           setDirty(false);
@@ -135,7 +147,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
       setError(err.message || "Failed to start subtask breakdown");
       setView({ type: "initial" });
     }
-  }, [initialDescription]);
+  }, [localDescription, projectId]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -144,8 +156,15 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     }
 
     if (isOpen && initialDescription && !autoStartedRef.current) {
+      setLocalDescription(initialDescription);
       autoStartedRef.current = true;
       void beginBreakdown();
+    } else if (isOpen && !initialDescription && !autoStartedRef.current) {
+      // Check localStorage for persisted description when no prop provided
+      const persisted = getSubtaskDescription();
+      if (persisted) {
+        setLocalDescription(persisted);
+      }
     }
   }, [isOpen, initialDescription, beginBreakdown, resetState]);
 
@@ -163,6 +182,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
           streamRef.current = connectSubtaskStream(resumeSessionId, projectId, {
             onThinking: (data) => setThinkingOutput((prev) => prev + data),
             onSubtasks: (items) => {
+              clearSubtaskDescription();
               setSubtasks(items);
               setView({ type: "editing", sessionId: resumeSessionId });
               setDirty(false);
@@ -173,6 +193,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
             },
           });
         } else if (session.status === "complete" && session.result) {
+          clearSubtaskDescription();
           const items = JSON.parse(session.result) as SubtaskItem[];
           setSubtasks(items);
           setView({ type: "editing", sessionId: resumeSessionId });
@@ -345,7 +366,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
             <div className="planning-initial">
               <div className="planning-view-scroll">
                 <p className="text-muted">Preparing to break this task into subtasks.</p>
-                <pre className="planning-thinking-output">{initialDescription}</pre>
+                <pre className="planning-thinking-output">{localDescription}</pre>
               </div>
             </div>
           )}

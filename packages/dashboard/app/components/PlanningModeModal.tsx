@@ -13,6 +13,11 @@ import {
   type PlanningSession,
   type SubtaskItem,
 } from "../api";
+import {
+  savePlanningDescription,
+  getPlanningDescription,
+  clearPlanningDescription,
+} from "../hooks/modalPersistence";
 import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2 } from "lucide-react";
 
 interface PlanningModeModalProps {
@@ -83,6 +88,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setStreamingOutput((prev) => prev + data);
         },
         onQuestion: (question) => {
+          clearPlanningDescription();
           setView({
             type: "question",
             session: { sessionId, currentQuestion: question, summary: null },
@@ -91,6 +97,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setHasProgress(true);
         },
         onSummary: (summary) => {
+          clearPlanningDescription();
           setView({
             type: "summary",
             session: { sessionId, currentQuestion: null, summary },
@@ -138,6 +145,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         handleStartPlanning(initialPlanProp);
       }, 0);
       return () => clearTimeout(timer);
+    } else if (isOpen && !initialPlanProp && !hasAutoStartedRef.current && view.type === "initial") {
+      // Check localStorage for persisted description when no prop provided
+      const persisted = getPlanningDescription();
+      if (persisted) {
+        setInitialPlan(persisted);
+      }
     }
   }, [isOpen, initialPlanProp, view.type, handleStartPlanning]);
 
@@ -153,11 +166,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         currentSessionIdRef.current = resumeSessionId;
 
         if (session.status === "awaiting_input" && session.currentQuestion) {
+          clearPlanningDescription();
           const question = JSON.parse(session.currentQuestion);
           setView({ type: "question", session: { sessionId: resumeSessionId, currentQuestion: question, summary: null } });
           if (session.thinkingOutput) setStreamingOutput(session.thinkingOutput);
           setHasProgress(true);
         } else if (session.status === "complete" && session.result) {
+          clearPlanningDescription();
           const summary = JSON.parse(session.result);
           setView({ type: "summary", session: { sessionId: resumeSessionId, currentQuestion: null, summary }, summary });
           setEditedSummary(summary);
@@ -169,11 +184,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           const connection = connectPlanningStream(resumeSessionId, projectId, {
             onThinking: (data) => setStreamingOutput((prev) => prev + data),
             onQuestion: (question) => {
+              clearPlanningDescription();
               setView({ type: "question", session: { sessionId: resumeSessionId, currentQuestion: question, summary: null } });
               setStreamingOutput("");
               setHasProgress(true);
             },
             onSummary: (summary) => {
+              clearPlanningDescription();
               setView({ type: "summary", session: { sessionId: resumeSessionId, currentQuestion: null, summary }, summary });
               setEditedSummary(summary);
               setStreamingOutput("");
@@ -227,6 +244,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [isOpen, view]);
 
   const handleCancel = useCallback(async () => {
+    // Save to localStorage BEFORE any cleanup (preserve for re-entry)
+    if (initialPlan) {
+      savePlanningDescription(initialPlan);
+    }
+
     // Show confirmation if user has made progress
     if (hasProgress) {
       if (!confirm("Are you sure you want to close? Your planning progress will be lost.")) {
@@ -254,7 +276,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setHasProgress(false);
     currentSessionIdRef.current = null;
     onClose();
-  }, [hasProgress, view, onClose]);
+  }, [initialPlan, hasProgress, view, onClose]);
 
   // Handle escape key to close
   useEffect(() => {

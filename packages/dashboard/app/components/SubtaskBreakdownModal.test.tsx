@@ -14,6 +14,12 @@ vi.mock("../api", () => ({
   cancelSubtaskBreakdown: (...args: any[]) => mockCancelSubtaskBreakdown(...args),
 }));
 
+vi.mock("../hooks/modalPersistence", () => ({
+  saveSubtaskDescription: vi.fn(),
+  getSubtaskDescription: vi.fn(() => ""),
+  clearSubtaskDescription: vi.fn(),
+}));
+
 const SAMPLE_SUBTASKS = [
   { id: "subtask-1", title: "First", description: "Do first", suggestedSize: "S" as const, dependsOn: [] },
   { id: "subtask-2", title: "Second", description: "Do second", suggestedSize: "M" as const, dependsOn: ["subtask-1"] },
