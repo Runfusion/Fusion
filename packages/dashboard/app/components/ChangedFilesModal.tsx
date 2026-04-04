@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useChangedFiles } from "../hooks/useChangedFiles";
 import { highlightDiff } from "../utils/highlightDiff";
+import { truncateMiddle } from "../utils/truncatePath";
 import type { TaskFileDiff } from "../api";
 
 const MOBILE_BREAKPOINT = 768;
@@ -237,7 +238,7 @@ export function ChangedFilesModal({
                       onClick={() => handleSelectFile(file)}
                     >
                       <span className="file-node-icon">{getStatusIcon(file.status)}</span>
-                      <span className="file-node-name">{file.path}</span>
+                      <span className="file-node-name" title={file.path}>{truncateMiddle(file.path)}</span>
                       <span className={`detail-column-badge changed-files-badge changed-files-badge--${file.status}`}>
                         {getStatusLabel(file.status)}
                       </span>

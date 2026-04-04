@@ -3,6 +3,7 @@ import { FileCode, ChevronDown, ChevronRight, AlertCircle, GitCommit } from "luc
 import type { MergeDetails, Column } from "@fusion/core";
 import { fetchTaskDiff, type TaskDiff } from "../api";
 import { highlightDiff } from "../utils/highlightDiff";
+import { truncateMiddle } from "../utils/truncatePath";
 
 interface TaskChangesTabProps {
   taskId: string;
@@ -214,7 +215,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
                   {getStatusLabel(file.status)}
                 </span>
                 <span className="changes-file-path" title={file.path}>
-                  {file.path}
+                  {truncateMiddle(file.path)}
                 </span>
                 <span
                   className="changes-file-stat"
