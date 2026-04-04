@@ -785,7 +785,7 @@ body {
   grid-template-columns: repeat(6, minmax(260px, 1fr));
   gap: var(--column-gap);
   padding: var(--board-padding);
-  height: calc(100vh - var(--header-height, 57px) - var(--executor-footer-height, 0px));
+  height: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x proximity;
@@ -5902,7 +5902,7 @@ body {
 .list-view {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--header-height, 57px) - var(--executor-footer-height, 0px));
+  height: 100%;
   overflow: hidden;
   background: var(--bg);
 }
@@ -14155,15 +14155,16 @@ html .column.drag-over * {
 
 /**
  * Wrapper for project-view content (board, list, agents) that reserves space
- * for the fixed ExecutorStatusBar footer. When the footer is present, this
- * wrapper sets the --executor-footer-height CSS token so that child components
- * (board, list-view, agents-view) can subtract it from their height calculations.
+ * for the fixed ExecutorStatusBar footer. This wrapper is the single source of
+ * truth for the footer-safe content area — child views simply use height: 100%
+ * to fill the available space without needing to know about the footer.
  *
- * The wrapper itself fills the remaining viewport space after the header using
- * flex: 1 in the #root flex column. Children that use viewport-relative heights
- * (board, list-view) will read the --executor-footer-height token set on this
- * wrapper via CSS custom property cascade. Children using height: 100% (agents-view)
- * also subtract the token value to avoid overlap with the fixed footer.
+ * When the footer is present, --with-footer reserves space via padding-bottom
+ * equal to the footer height. Because the wrapper uses box-sizing: border-box,
+ * children with height: 100% resolve to the content area (wrapper height minus
+ * padding), which is exactly the safe zone above the fixed footer.
+ *
+ * On mobile the token is overridden to 32px to match the shorter footer.
  */
 .project-content {
   flex: 1;
@@ -14173,6 +14174,7 @@ html .column.drag-over * {
 
 .project-content--with-footer {
   --executor-footer-height: 36px;
+  padding-bottom: var(--executor-footer-height);
 }
 
 /* === Executor Status Bar === */
