@@ -1599,7 +1599,13 @@ export function connectSubtaskStream(
   eventSource.addEventListener("error", (event: Event) => {
     try {
       const messageEvent = event as MessageEvent;
-      handlers.onError?.(JSON.parse(messageEvent.data) as string);
+      const parsedData = JSON.parse(messageEvent.data);
+      const errorMessage = typeof parsedData === "string" && parsedData.length > 0 ? parsedData : null;
+      if (errorMessage) {
+        handlers.onError?.(errorMessage);
+      } else {
+        handlers.onError?.("Stream error");
+      }
     } catch {
       handlers.onError?.("Stream error");
     }

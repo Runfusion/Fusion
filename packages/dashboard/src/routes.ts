@@ -4950,7 +4950,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       if (session.status === "error") {
-        res.write(`event: error\ndata: ${JSON.stringify(session.error || "Failed to generate subtasks")}\n\n`);
+        res.write(`event: error\ndata: ${JSON.stringify(String(session.error || "Unknown error"))}\n\n`);
         unsubscribe();
         res.end();
         return;
@@ -4969,7 +4969,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         unsubscribe();
       });
     } catch (err: any) {
-      res.write(`event: error\ndata: ${JSON.stringify(err.message || "Stream error")}\n\n`);
+      res.write(`event: error\ndata: ${JSON.stringify(String(err?.message) || "Unknown error")}\n\n`);
       res.end();
     }
   });

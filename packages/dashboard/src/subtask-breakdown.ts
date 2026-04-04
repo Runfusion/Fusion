@@ -195,7 +195,7 @@ export async function createSubtaskSession(initialDescription: string, _store?: 
     const existing = sessions.get(sessionId);
     if (!existing) return;
     existing.status = "error";
-    existing.error = err instanceof Error ? err.message : "Failed to generate subtasks";
+    existing.error = err instanceof Error ? (err.message || "Unknown error") : "Failed to generate subtasks";
     existing.updatedAt = new Date();
     persistSubtaskSession(existing, "error", existing.error);
     subtaskStreamManager.broadcast(sessionId, { type: "error", data: existing.error });

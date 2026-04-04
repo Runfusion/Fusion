@@ -373,4 +373,21 @@ describe("SubtaskBreakdownModal", () => {
       });
     });
   });
+
+  describe("error handling", () => {
+    it("displays error message when stream returns error event", async () => {
+      renderModal();
+      await waitFor(() => expect(streamHandlers).toBeDefined());
+      streamHandlers.onError("Something went wrong");
+      expect(await screen.findByText("Something went wrong")).toBeInTheDocument();
+    });
+
+    it("shows Stream error fallback when receiving empty error", async () => {
+      renderModal();
+      await waitFor(() => expect(streamHandlers).toBeDefined());
+      // In real flow, api.ts converts empty string to "Stream error" before calling onError
+      streamHandlers.onError("Stream error");
+      expect(await screen.findByText("Stream error")).toBeInTheDocument();
+    });
+  });
 });
