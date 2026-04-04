@@ -17,6 +17,8 @@ interface WorktreeGroupProps {
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
   onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
+  taskStuckTimeoutMs?: number;
 }
 
 function WorktreeGroupComponent({
@@ -29,6 +31,7 @@ function WorktreeGroupComponent({
   globalPaused,
   onUpdateTask,
   onOpenFilesForTask,
+  taskStuckTimeoutMs,
 }: WorktreeGroupProps) {
   return (
     <div className="worktree-group">
@@ -39,7 +42,7 @@ function WorktreeGroupComponent({
         <span className="worktree-label">{label}</span>
       </div>
       {activeTasks.map((task) => (
-        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onOpenFilesForTask={onOpenFilesForTask} />
+        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onOpenFilesForTask={onOpenFilesForTask} taskStuckTimeoutMs={taskStuckTimeoutMs} />
       ))}
       {queuedTasks.map((task) => (
         <TaskCard
@@ -52,6 +55,7 @@ function WorktreeGroupComponent({
           globalPaused={globalPaused}
           onUpdateTask={onUpdateTask}
           onOpenFilesForTask={onOpenFilesForTask}
+          taskStuckTimeoutMs={taskStuckTimeoutMs}
         />
       ))}
     </div>

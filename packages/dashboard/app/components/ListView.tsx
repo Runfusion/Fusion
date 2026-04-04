@@ -6,6 +6,7 @@ import { fetchTaskDetail, batchUpdateTaskModels } from "../api";
 import type { ModelInfo } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
@@ -56,6 +57,8 @@ interface ListViewProps {
   projectId?: string;
   /** Project name for display (optional) */
   projectName?: string;
+  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
+  taskStuckTimeoutMs?: number;
 }
 
 function getStepProgress(steps: TaskStep[]): string {
@@ -88,6 +91,7 @@ export function ListView({
   onTasksUpdated,
   projectId,
   projectName,
+  taskStuckTimeoutMs,
 }: ListViewProps) {
   const [sortField, setSortField] = useState<SortField>("id");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -849,10 +853,12 @@ export function ListView({
                           columnTasks.map((task) => {
                             const isFailed = task.status === "failed";
                             const isPaused = task.paused === true;
+                            const isStuckState = isTaskStuck(task, taskStuckTimeoutMs);
                             const isAgentActive =
                               !globalPaused &&
                               !isFailed &&
                               !isPaused &&
+                              !isStuckState &&
                               (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
                             const isDragging = draggingTaskId === task.id;
 
@@ -860,8 +866,10 @@ export function ListView({
                               <tr
                                 key={task.id}
                                 className={`list-row${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${
-                                  isAgentActive ? " agent-active" : ""
-                                }${isDragging ? " dragging" : ""}`}
+                                  isStuckState ? " stuck" : ""
+                                }${isAgentActive ? " agent-active" : ""}${
+                                  isDragging ? " dragging" : ""
+                                }`}
                                 onClick={() => handleRowClick(task)}
                                 draggable={!isPaused}
                                 onDragStart={(e) => handleDragStart(e, task)}
@@ -891,7 +899,11 @@ export function ListView({
                                 )}
                                 {visibleColumns.has("status") && (
                                   <td className="list-cell">
-                                    {task.status ? (
+                                    {isStuckState ? (
+                                      <span className="list-status-badge stuck">
+                                        Stuck
+                                      </span>
+                                    ) : task.status ? (
                                       <span
                                         className={`list-status-badge${isFailed ? " failed" : ""}${
                                           isAgentActive ? " pulsing" : ""

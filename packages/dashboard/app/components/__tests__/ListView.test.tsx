@@ -316,6 +316,63 @@ describe("ListView", () => {
     expect(row?.className).not.toContain("agent-active");
   });
 
+  it("renders stuck indicator when task is stuck and timeout is set", () => {
+    const staleTime = new Date(Date.now() - 600000).toISOString();
+    const tasks = [
+      createMockTask({
+        id: "FN-001",
+        status: "executing",
+        column: "in-progress",
+        updatedAt: staleTime,
+      }),
+    ];
+
+    renderListView({ tasks, taskStuckTimeoutMs: 600000 });
+
+    const row = screen.getByText("FN-001").closest("tr");
+    expect(row?.className).toContain("stuck");
+
+    const statusBadge = screen.getByText("Stuck");
+    expect(statusBadge.className).toContain("stuck");
+  });
+
+  it("does not render stuck indicator when taskStuckTimeoutMs is undefined", () => {
+    const staleTime = new Date(Date.now() - 600000).toISOString();
+    const tasks = [
+      createMockTask({
+        id: "FN-001",
+        status: "executing",
+        column: "in-progress",
+        updatedAt: staleTime,
+      }),
+    ];
+
+    renderListView({ tasks });
+
+    const row = screen.getByText("FN-001").closest("tr");
+    expect(row?.className).not.toContain("stuck");
+    expect(screen.getByText("executing")).toBeInTheDocument();
+  });
+
+  it("stuck indicator takes precedence over agent-active", () => {
+    const staleTime = new Date(Date.now() - 600000).toISOString();
+    const tasks = [
+      createMockTask({
+        id: "FN-001",
+        status: "executing",
+        column: "in-progress",
+        updatedAt: staleTime,
+      }),
+    ];
+
+    renderListView({ tasks, taskStuckTimeoutMs: 600000, globalPaused: false });
+
+    const row = screen.getByText("FN-001").closest("tr");
+    expect(row?.className).toContain("stuck");
+    expect(row?.className).not.toContain("agent-active");
+    expect(screen.getByText("Stuck")).toBeInTheDocument();
+  });
+
   it("renders column badges with correct colors", () => {
     const columns = ["triage", "todo", "in-progress", "in-review", "done"] as const;
 

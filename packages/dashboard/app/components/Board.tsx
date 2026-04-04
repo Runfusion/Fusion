@@ -40,6 +40,8 @@ interface BoardProps {
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;
   onToggleModelFavorite?: (modelId: string) => void;
+  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
+  taskStuckTimeoutMs?: number;
 }
 
 function sortTasksForColumn(tasks: Task[]): Task[] {
@@ -58,7 +60,7 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const { fetchBatch } = useBatchBadgeFetch(projectId);
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -175,6 +177,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
             onToggleFavorite={onToggleFavorite}
             onToggleModelFavorite={onToggleModelFavorite}
             isSearchActive={isSearchActive}
+            taskStuckTimeoutMs={taskStuckTimeoutMs}
             {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
             {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
             {...(col === "done" ? { onArchiveAllDone } : {})}

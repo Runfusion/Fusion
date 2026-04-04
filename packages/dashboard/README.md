@@ -74,7 +74,7 @@ A persistent footer status bar at the bottom of the dashboard displays real-time
 **Statistics Displayed**:
 - **Running**: Count of tasks currently in "in-progress" column with pulsing animation when > 0
 - **Blocked**: Count of tasks with `blockedBy` field set (a single task ID string indicating file-overlap blocking)
-- **Stuck**: Count of tasks in "in-progress" with no activity for > 10 minutes (shown only when > 0)
+- **Stuck**: Count of tasks in "in-progress" with no activity for longer than the project's `taskStuckTimeoutMs` setting (shown only when > 0 and the setting is enabled). Uses the same `isTaskStuck()` predicate as task cards and list rows, so the footer count always matches the visible stuck indicators on the board
 - **Queued**: Count of tasks in "todo" column
 - **In Review**: Count of tasks in "in-review" column
 - **Executor State**: Current state badge (Idle/Running/Paused)
@@ -86,7 +86,7 @@ A persistent footer status bar at the bottom of the dashboard displays real-time
 - **Running**: Engine active with running tasks
 
 **Features**:
-- **Shared task list**: Task counts are derived from the same task list used by the board and list views, so the footer always matches the board state exactly
+- **Shared task list**: Task counts are derived from the same task list used by the board and list views, so the footer always matches the board state exactly. Stuck task detection uses a shared `isTaskStuck()` utility (see `utils/taskStuck.ts`) so the footer count and individual card/row indicators are always consistent
 - **Footer-safe layout**: Project-view content (board, list view, agents view) automatically reserves space for the fixed footer using a CSS custom property (`--executor-footer-height`). The `project-content--with-footer` wrapper class sets this token to 36px on desktop and 32px on mobile, ensuring all content remains fully visible and scrollable above the status bar
 - Real-time updates via 5-second polling for executor state (globalPause, enginePaused, maxConcurrent)
 - Responsive design: collapses labels on mobile screens (<768px); footer height reduces from 36px to 32px
@@ -96,6 +96,12 @@ A persistent footer status bar at the bottom of the dashboard displays real-time
 
 **API Endpoint**:
 - `GET /api/executor/stats` - Returns `globalPause`, `enginePaused`, `maxConcurrent`, and `lastActivityAt` for state derivation. Column-based counts (running, blocked, stuck, queued, in-review) are derived client-side from the shared task list.
+
+**Stuck Task Indicators**:
+When `taskStuckTimeoutMs` is configured in project settings, stuck tasks are visually labeled on both board cards and list rows using the same `isTaskStuck()` predicate as the footer count:
+- **Board cards**: A pulsing amber "Stuck" badge replaces the normal status badge, and the card gets a left border highlight
+- **List rows**: A "Stuck" label appears in the status cell, and the row gets a left border highlight
+- **Consistency**: The footer stuck count, card stuck badge, and list stuck label all use the identical `isTaskStuck(task, taskStuckTimeoutMs)` check from `utils/taskStuck.ts`, so the footer count is always explainable by counting visible stuck indicators
 
 ### Agents View
 Manage AI agents with a dedicated control surface accessible from the main dashboard navigation. All agent surfaces (AgentsView, AgentListModal, AgentDetailView) share consistent token-based styling using dashboard design tokens (`--surface`, `--card`, `--border`, `--text`, `--color-success`, `--color-error`, etc.) and locally defined state color tokens (`--state-idle-*`, `--state-active-*`, `--state-paused-*`, `--state-error-*`) for theme-aware rendering.

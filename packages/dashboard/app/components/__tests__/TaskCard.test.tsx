@@ -52,11 +52,11 @@ beforeEach(() => {
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "specifying"]);
 
 /** Mirrors the cardClass computation from TaskCard.tsx */
-function computeCardClass(opts: { dragging?: boolean; queued?: boolean; status?: string; column?: Column; globalPaused?: boolean }): string {
-  const { dragging = false, queued = false, status, column = "todo", globalPaused } = opts;
+function computeCardClass(opts: { dragging?: boolean; queued?: boolean; status?: string; column?: Column; globalPaused?: boolean; isStuck?: boolean; isPaused?: boolean; isAwaitingApproval?: boolean }): string {
+  const { dragging = false, queued = false, status, column = "todo", globalPaused, isStuck = false, isPaused = false, isAwaitingApproval = false } = opts;
   const isFailed = status === "failed";
-  const isAgentActive = !globalPaused && !queued && !isFailed && (column === "in-progress" || ACTIVE_STATUSES.has(status as string));
-  return `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}`;
+  const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && (column === "in-progress" || ACTIVE_STATUSES.has(status as string));
+  return `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isStuck ? " stuck" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}`;
 }
 
 describe("TaskCard memoization", () => {
@@ -415,6 +415,36 @@ describe("TaskCard failed status", () => {
     expect(shouldShowFailedBadge("executing")).toBe(false);
     expect(shouldShowFailedBadge(undefined)).toBe(false);
     expect(shouldShowFailedBadge(null)).toBe(false);
+  });
+});
+
+describe("TaskCard stuck status", () => {
+  it("applies 'stuck' class to card when task is stuck", () => {
+    const cls = computeCardClass({ isStuck: true, column: "in-progress", status: "executing" });
+    expect(cls).toContain("stuck");
+  });
+
+  it("does NOT apply 'stuck' class when task is not stuck", () => {
+    const cls = computeCardClass({ column: "in-progress", status: "executing" });
+    expect(cls).not.toContain("stuck");
+  });
+
+  it("stuck takes precedence over agent-active", () => {
+    const cls = computeCardClass({ isStuck: true, column: "in-progress", status: "executing" });
+    expect(cls).toContain("stuck");
+    expect(cls).not.toContain("agent-active");
+  });
+
+  it("stuck and failed can coexist (stuck appears in class list)", () => {
+    const cls = computeCardClass({ isStuck: true, status: "failed", column: "in-progress" });
+    expect(cls).toContain("stuck");
+    expect(cls).toContain("failed");
+  });
+
+  it("stuck and paused can coexist", () => {
+    const cls = computeCardClass({ isStuck: true, isPaused: true, column: "in-progress" });
+    expect(cls).toContain("stuck");
+    expect(cls).toContain("paused");
   });
 });
 

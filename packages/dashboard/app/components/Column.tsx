@@ -53,9 +53,11 @@ interface ColumnProps {
   onToggleModelFavorite?: (modelId: string) => void;
   /** When true, search is active — bypass pagination so all matching tasks are visible. */
   isSearchActive?: boolean;
+  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
+  taskStuckTimeoutMs?: number;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
@@ -225,6 +227,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   globalPaused={globalPaused}
                   onUpdateTask={onUpdateTask}
                   onOpenFilesForTask={onOpenFilesForTask}
+                  taskStuckTimeoutMs={taskStuckTimeoutMs}
                 />
               ))
             )
@@ -244,6 +247,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   onArchiveTask={onArchiveTask}
                   onUnarchiveTask={onUnarchiveTask}
                   onOpenFilesForTask={onOpenFilesForTask}
+                  taskStuckTimeoutMs={taskStuckTimeoutMs}
                 />
               ))}
               {shouldPaginate && hiddenTaskCount > 0 && (

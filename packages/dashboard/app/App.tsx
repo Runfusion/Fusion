@@ -561,6 +561,7 @@ function AppInner() {
           favoriteModels={favoriteModels}
           onToggleFavorite={handleToggleFavorite}
           onToggleModelFavorite={handleToggleModelFavorite}
+          taskStuckTimeoutMs={taskStuckTimeoutMs}
         />
       );
     }
@@ -583,6 +584,7 @@ function AppInner() {
         favoriteModels={favoriteModels}
         onToggleFavorite={handleToggleFavorite}
         onToggleModelFavorite={handleToggleModelFavorite}
+        taskStuckTimeoutMs={taskStuckTimeoutMs}
       />
     );
   };

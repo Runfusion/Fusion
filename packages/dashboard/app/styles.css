@@ -934,6 +934,26 @@ body {
   color: var(--color-error-dark);
 }
 
+.card-status-badge.stuck {
+  background: rgba(210, 153, 34, 0.2);
+  color: var(--triage);
+  animation: stuck-pulse 2s ease-in-out infinite;
+}
+
+.card.stuck {
+  border-left: 3px solid var(--triage);
+  background: rgba(210, 153, 34, 0.06);
+}
+
+@keyframes stuck-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+
 /* Size badge: positioned in card header, subtle color coding for effort estimation */
 .card-size-badge {
   display: inline-flex;
@@ -6421,6 +6441,11 @@ body {
   opacity: 0.55;
 }
 
+.list-row.stuck {
+  border-left: 3px solid var(--triage);
+  background: rgba(210, 153, 34, 0.06);
+}
+
 .list-row.agent-active {
   border-left: 3px solid var(--in-progress);
   animation: list-agent-glow 2.5s ease-in-out infinite;
@@ -6486,6 +6511,12 @@ body {
 .list-status-badge.failed {
   background: rgba(218, 54, 51, 0.15);
   color: var(--color-error-dark);
+}
+
+.list-status-badge.stuck {
+  background: rgba(210, 153, 34, 0.2);
+  color: var(--triage);
+  animation: stuck-pulse 2s ease-in-out infinite;
 }
 
 .list-status-badge.pulsing {

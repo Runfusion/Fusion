@@ -7,6 +7,7 @@ import { pickPreferredBadge } from "./TaskCardBadge";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
 import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import { useSessionFiles } from "../hooks/useSessionFiles";
+import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
@@ -45,6 +46,8 @@ interface TaskCardProps {
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
   onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
+  taskStuckTimeoutMs?: number;
 }
 
 function areTaskBadgeInfosEqual(
@@ -82,6 +85,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.queued === next.queued &&
     previous.projectId === next.projectId &&
     previous.globalPaused === next.globalPaused &&
+    previous.taskStuckTimeoutMs === next.taskStuckTimeoutMs &&
     previous.onOpenDetail === next.onOpenDetail &&
     previous.addToast === next.addToast &&
     previous.onUpdateTask === next.onUpdateTask &&
@@ -130,6 +134,7 @@ function TaskCardComponent({
   onArchiveTask,
   onUnarchiveTask,
   onOpenFilesForTask,
+  taskStuckTimeoutMs,
 }: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
@@ -315,9 +320,10 @@ function TaskCardComponent({
 
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
+  const isStuck = isTaskStuck(task, taskStuckTimeoutMs);
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
   const isArchived = task.column === "archived";
-  const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isAwaitingApproval && (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
+  const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
   const isDraggable = !queued && !isPaused && !isEditing && !isArchived; // Disable drag during edit or if archived
 
   // Check if this card can be edited inline
@@ -498,7 +504,7 @@ function TaskCardComponent({
     setShowSteps((current) => !current);
   }, []);
 
-  const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
+  const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isStuck ? " stuck" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
   if (isEditing) {
     return (
@@ -560,7 +566,7 @@ function TaskCardComponent({
         )}
         {!isPaused && task.status && task.status !== "queued" && (
           <span
-            className={`card-status-badge${isAwaitingApproval ? " awaiting-approval" : ""}${ACTIVE_STATUSES.has(task.status) ? " pulsing" : ""}${isFailed ? " failed" : ""}`}
+            className={`card-status-badge${isAwaitingApproval ? " awaiting-approval" : ""}${ACTIVE_STATUSES.has(task.status) ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
             style={isAwaitingApproval
               ? { background: "rgba(210,153,34,0.2)", color: "var(--triage)" }
               : isFailed
@@ -568,7 +574,12 @@ function TaskCardComponent({
                 : { background: COLUMN_COLOR_MAP[task.column], color: COLUMN_TEXT_COLOR_MAP[task.column] }
             }
           >
-            {isAwaitingApproval ? "Awaiting Approval" : task.status}
+            {isStuck ? "Stuck" : isAwaitingApproval ? "Awaiting Approval" : task.status}
+          </span>
+        )}
+        {isStuck && (isPaused || !task.status || task.status === "queued") && (
+          <span className="card-status-badge stuck">
+            Stuck
           </span>
         )}
         {hasGitHubBadge && (
