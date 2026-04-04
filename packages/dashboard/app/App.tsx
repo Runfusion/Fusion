@@ -638,6 +638,7 @@ function AppInner() {
           onMergeTask={mergeTask}
           onRetryTask={retryTask}
           onDuplicateTask={duplicateTask}
+          onTaskUpdated={(updated) => setDetailTask(prev => prev ? { ...prev, ...updated } : prev)}
           addToast={addToast}
           githubTokenConfigured={githubTokenConfigured}
         />

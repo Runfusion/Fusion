@@ -125,6 +125,7 @@ interface TaskDetailModalProps {
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   onDuplicateTask?: (id: string) => Promise<Task>;
+  onTaskUpdated?: (task: Task) => void;
   addToast: (message: string, type?: ToastType) => void;
   githubTokenConfigured?: boolean;
 }
@@ -146,6 +147,7 @@ export function TaskDetailModal({
   onMergeTask,
   onRetryTask,
   onDuplicateTask,
+  onTaskUpdated,
   addToast,
   githubTokenConfigured,
 }: TaskDetailModalProps) {
@@ -827,7 +829,7 @@ export function TaskDetailModal({
           ) : activeTab === "commits" ? (
             <CommitDiffTab commitSha={task.mergeDetails?.commitSha ?? ""} mergeDetails={task.mergeDetails} />
           ) : activeTab === "comments" ? (
-            <TaskComments task={task} addToast={addToast} projectId={projectId} />
+            <TaskComments task={task} addToast={addToast} projectId={projectId} onTaskUpdated={onTaskUpdated} />
           ) : (
           <>
           {/* Summary section - only for done tasks with summary */}

@@ -14,6 +14,7 @@ vi.mock("../../api", () => ({
   rejectPlan: vi.fn().mockResolvedValue({}),
   duplicateTask: vi.fn().mockResolvedValue({}),
   refineTask: vi.fn().mockResolvedValue({}),
+  addSteeringComment: vi.fn(),
   // TaskForm dependencies
   fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [] }),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
@@ -3436,6 +3437,74 @@ describe("TaskDetailModal", () => {
       );
 
       expect(screen.queryByText("Commits")).toBeNull();
+    });
+  });
+
+  describe("comment state propagation (FN-845)", () => {
+    it("passes onTaskUpdated to TaskComments when provided", async () => {
+      const { addSteeringComment } = await import("../../api");
+      const onTaskUpdated = vi.fn();
+      const updatedTask = makeTask({
+        comments: [{ id: "c1", text: "New comment", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+      });
+      vi.mocked(addSteeringComment).mockResolvedValueOnce(updatedTask);
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onTaskUpdated={onTaskUpdated}
+          addToast={noop}
+        />,
+      );
+
+      // Switch to Comments tab
+      fireEvent.click(screen.getByText("Comments"));
+
+      // Add a comment
+      fireEvent.change(screen.getByPlaceholderText(/Add a comment/), { target: { value: "New comment" } });
+      fireEvent.click(screen.getByText("Add Comment"));
+
+      await waitFor(() => {
+        expect(addSteeringComment).toHaveBeenCalledWith("FN-099", "New comment", undefined);
+        expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
+      });
+    });
+
+    it("comment mutations still work when onTaskUpdated is not provided", async () => {
+      const { addSteeringComment } = await import("../../api");
+      const addToast = vi.fn();
+      vi.mocked(addSteeringComment).mockResolvedValueOnce(makeTask({
+        comments: [{ id: "c1", text: "Hello", author: "user", createdAt: "2026-01-01T00:00:00.000Z" }],
+      }));
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={addToast}
+        />,
+      );
+
+      // Switch to Comments tab
+      fireEvent.click(screen.getByText("Comments"));
+
+      // Add a comment — should succeed without error even without onTaskUpdated
+      fireEvent.change(screen.getByPlaceholderText(/Add a comment/), { target: { value: "Hello" } });
+      fireEvent.click(screen.getByText("Add Comment"));
+
+      await waitFor(() => {
+        expect(addSteeringComment).toHaveBeenCalledWith("FN-099", "Hello", undefined);
+        expect(addToast).toHaveBeenCalledWith("Comment added", "success");
+      });
     });
   });
 

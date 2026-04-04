@@ -1,6 +1,6 @@
 # Fusion
 
-AI-orchestrated task board. Like Trello, but your tasks get specified, executed, and delivered by AI — powered by [pi](https://github.com/badlogic/pi-mono).
+AI-orchestrated task board. Like Trello, but your tasks get specified, executed, and delivered by AI - powered by [pi](https://github.com/badlogic/pi-mono).
 
 ![Fusion dashboard](demo/screenshot.png)
 
@@ -65,10 +65,10 @@ Mission ("Build Auth System")
 
 **Hierarchy:** Mission → Milestone → Slice → Feature → Task
 
-- **Mission** — High-level goal or project (e.g., "Build Authentication System")
-- **Milestone** — Major phases within a mission (e.g., "Database Schema", "API Endpoints")
-- **Slice** — Parallel work areas within a milestone (e.g., "Backend Implementation", "Frontend Components")
-- **Feature** — Individual deliverables linked to kb tasks (e.g., "Login Form", "JWT Middleware")
+- **Mission** - High-level goal or project (e.g., "Build Authentication System")
+- **Milestone** - Major phases within a mission (e.g., "Database Schema", "API Endpoints")
+- **Slice** - Parallel work areas within a milestone (e.g., "Backend Implementation", "Frontend Components")
+- **Feature** - Individual deliverables linked to kb tasks (e.g., "Login Form", "JWT Middleware")
 
 Status flows automatically: when features are linked to tasks and completed, slice status updates. Linked tasks persist both `missionId` and `sliceId` so mission progress can be observed through normal task reads. When all slices in a milestone are complete, the milestone becomes complete. When all milestones are done, the mission is complete.
 
@@ -101,7 +101,7 @@ Or start with interactive port selection:
 fn dashboard --interactive
 ```
 
-Open [http://localhost:4040](http://localhost:4040) — create tasks from the board or the CLI.
+Open [http://localhost:4040](http://localhost:4040) - create tasks from the board or the CLI.
 
 ### CLI commands
 
@@ -198,10 +198,10 @@ Fusion reuses your existing pi authentication.
 
 | Package         | Description                                                     |
 | --------------- | --------------------------------------------------------------- |
-| `@fusion/core`  | Domain model — tasks, board columns, file-based store           |
-| `@fusion/dashboard` | Web UI — Express server + kanban board with SSE                 |
-| `@fusion/engine`    | AI engine — triage (pi), execution (pi + worktrees), scheduling |
-| `kb` (cli)      | CLI — `fn dashboard`, `fn task create/list/move/attach`         |
+| `@fusion/core`  | Domain model - tasks, board columns, file-based store           |
+| `@fusion/dashboard` | Web UI - Express server + kanban board with SSE                 |
+| `@fusion/engine`    | AI engine - triage (pi), execution (pi + worktrees), scheduling |
+| `kb` (cli)      | CLI - `fn dashboard`, `fn task create/list/move/attach`         |
 
 ## Architecture
 
@@ -216,7 +216,7 @@ Tasks live on disk in `.fusion/tasks/` in the project root:
     └── FN-001/
         ├── task.json        # Metadata (column, deps, timestamps)
         ├── PROMPT.md        # Task specification
-        └── attachments/     # File attachments — images & text files (optional)
+        └── attachments/     # File attachments - images & text files (optional)
 ```
 
 ### Board UI
@@ -233,11 +233,11 @@ Real-time kanban board at `localhost:4040`:
 
 The AI engine starts automatically with the dashboard. Three components run:
 
-- **TriageProcessor** — Watches triage column. Spawns a pi agent session that reads the project, understands context, and writes a full PROMPT.md specification. Moves task to todo.
+- **TriageProcessor** - Watches triage column. Spawns a pi agent session that reads the project, understands context, and writes a full PROMPT.md specification. Moves task to todo.
 
-- **Scheduler** — Watches todo column. Resolves dependency graphs. Moves tasks to in-progress when deps are satisfied and concurrency allows (default: 2 concurrent). When `groupOverlappingFiles` is enabled in settings, tasks whose `## File Scope` sections share files are serialized to prevent merge conflicts.
+- **Scheduler** - Watches todo column. Resolves dependency graphs. Moves tasks to in-progress when deps are satisfied and concurrency allows (default: 2 concurrent). When `groupOverlappingFiles` is enabled in settings, tasks whose `## File Scope` sections share files are serialized to prevent merge conflicts.
 
-- **TaskExecutor** — Listens for tasks entering in-progress. Creates a git worktree, spawns a pi agent session with full coding tools scoped to the worktree, and executes the specification. If the task has enabled workflow steps, runs them sequentially before moving to in-review.
+- **TaskExecutor** - Listens for tasks entering in-progress. Creates a git worktree, spawns a pi agent session with full coding tools scoped to the worktree, and executes the specification. If the task has enabled workflow steps, runs them sequentially before moving to in-review.
 
 Each pi agent session gets:
 
@@ -251,10 +251,10 @@ Each pi agent session gets:
 
 The engine automatically recovers from transient infrastructure failures (network blips, proxy errors, connection resets) using bounded exponential backoff:
 
-- **Recoverable failures** — When a transient error is detected during task execution or triage specification, the task is requeued with an increasing backoff delay (60s → 120s → 240s, capped at 5 minutes). Up to 3 retry attempts are made before the task is marked as permanently failed.
-- **Recovery metadata** — Each task stores `recoveryRetryCount` and `nextRecoveryAt` (ISO-8601 timestamp) in SQLite. The scheduler and triage processor skip tasks whose `nextRecoveryAt` is still in the future, ensuring backoff is respected across engine restarts.
-- **Budget exhaustion** — After 3 failed recovery attempts, executor tasks are marked as `failed` and triage tasks receive an error message for manual intervention. Recovery metadata is cleared.
-- **Separate from other retry mechanisms** — Recovery retries are distinct from `mergeRetries` (merge-conflict resolution), `withRateLimitRetry` (in-session rate-limit backoff), and usage-limit global pauses. User pauses, stuck-task-detector kills, and dependency-abort cleanups do not consume the recovery budget.
+- **Recoverable failures** - When a transient error is detected during task execution or triage specification, the task is requeued with an increasing backoff delay (60s → 120s → 240s, capped at 5 minutes). Up to 3 retry attempts are made before the task is marked as permanently failed.
+- **Recovery metadata** - Each task stores `recoveryRetryCount` and `nextRecoveryAt` (ISO-8601 timestamp) in SQLite. The scheduler and triage processor skip tasks whose `nextRecoveryAt` is still in the future, ensuring backoff is respected across engine restarts.
+- **Budget exhaustion** - After 3 failed recovery attempts, executor tasks are marked as `failed` and triage tasks receive an error message for manual intervention. Recovery metadata is cleared.
+- **Separate from other retry mechanisms** - Recovery retries are distinct from `mergeRetries` (merge-conflict resolution), `withRateLimitRetry` (in-session rate-limit backoff), and usage-limit global pauses. User pauses, stuck-task-detector kills, and dependency-abort cleanups do not consume the recovery budget.
 
 ## Model System
 
@@ -263,36 +263,36 @@ Fusion provides flexible AI model configuration with support for model presets, 
 ### Model Presets
 
 Model presets let teams standardize AI model choices. Each preset contains:
-- **ID** — stable slug for storage (e.g., `budget`, `normal`, `complex`)
-- **Name** — human-friendly label
-- **Executor model** — provider/model pair for task execution
-- **Validator model** — provider/model pair for code/spec review
+- **ID** - stable slug for storage (e.g., `budget`, `normal`, `complex`)
+- **Name** - human-friendly label
+- **Executor model** - provider/model pair for task execution
+- **Validator model** - provider/model pair for code/spec review
 
 Presets can be auto-selected by task size:
 - **Small (S)** → Budget preset
-- **Medium (M)** → Normal preset  
+- **Medium (M)** → Normal preset
 - **Large (L)** → Complex preset
 
 ### Per-Task Model Overrides
 
 Override global models for specific tasks:
-- **Executor Model** — AI model that implements the task
-- **Validator Model** — AI model that reviews code and plans
+- **Executor Model** - AI model that implements the task
+- **Validator Model** - AI model that reviews code and plans
 
 Set overrides in the dashboard via **task detail → Model tab**, or choose **Custom** during task creation.
 
 ### Settings Hierarchy
 
 **Global settings** (`~/.pi/fusion/settings.json`):
-- `defaultProvider` / `defaultModelId` — Default AI models
-- `planningProvider` / `planningModelId` — Task specification models
-- `validatorProvider` / `validatorModelId` — Review models
-- `themeMode`, `colorTheme` — UI preferences
-- `ntfyEnabled`, `ntfyTopic` — Push notifications
+- `defaultProvider` / `defaultModelId` - Default AI models
+- `planningProvider` / `planningModelId` - Task specification models
+- `validatorProvider` / `validatorModelId` - Review models
+- `themeMode`, `colorTheme` - UI preferences
+- `ntfyEnabled`, `ntfyTopic` - Push notifications
 
 **Project settings** (`.fusion/config.json`):
-- `modelPresets` — Custom preset definitions
-- `autoSelectPresetBySize` — Size-to-preset mappings
+- `modelPresets` - Custom preset definitions
+- `autoSelectPresetBySize` - Size-to-preset mappings
 - All workflow and automation settings
 
 Project settings override global settings. Configure in the dashboard under **Settings > Model**.
@@ -341,7 +341,7 @@ Enable `requirePlanApproval` in settings for manual review of AI-generated speci
 }
 ```
 
-When enabled, tasks stay in **Triage** with "awaiting-approval" status after AI specification. On the board, these tasks are highlighted with an amber left border and a gentle pulsing background, plus an **Awaiting Approval** status tag — making them easy to spot among other triage items. Review the PROMPT.md in the task detail modal, then click **Approve Plan** to move to **Todo** or **Reject Plan** to regenerate.
+When enabled, tasks stay in **Triage** with "awaiting-approval" status after AI specification. On the board, these tasks are highlighted with an amber left border and a gentle pulsing background, plus an **Awaiting Approval** status tag - making them easy to spot among other triage items. Review the PROMPT.md in the task detail modal, then click **Approve Plan** to move to **Todo** or **Reject Plan** to regenerate.
 
 ## Development
 
@@ -353,7 +353,7 @@ pnpm dev task list              # CLI commands
 
 ### Type Checking
 
-The workspace supports clean-checkout type checking — no build artifacts required:
+The workspace supports clean-checkout type checking - no build artifacts required:
 
 ```bash
 pnpm typecheck                  # Type-check all packages
@@ -372,7 +372,7 @@ A fully interactive PTY-based terminal is available in the dashboard for executi
 - WebSocket bidirectional communication for instant input/output
 - Auto-resizing with zoom support (Ctrl++/-)
 - Copy/paste via keyboard shortcuts
-- Mobile virtual-keyboard-aware positioning — the terminal automatically adjusts its layout when a mobile virtual keyboard opens, keeping the command entry area visible
+- Mobile virtual-keyboard-aware positioning - the terminal automatically adjusts its layout when a mobile virtual keyboard opens, keeping the command entry area visible
 
 ### Git Manager
 
@@ -449,10 +449,10 @@ pnpm build:exe
 
 This compiles all TypeScript, builds the dashboard client, and produces:
 
-- `packages/cli/dist/fn` — the standalone binary
-- `packages/cli/dist/client/` — co-located dashboard assets
+- `packages/cli/dist/fn` - the standalone binary
+- `packages/cli/dist/client/` - co-located dashboard assets
 
-Run the binary directly — no Node.js, pnpm, or workspace setup needed:
+Run the binary directly - no Node.js, pnpm, or workspace setup needed:
 
 ```bash
 ./packages/cli/dist/fn --help
@@ -504,10 +504,10 @@ Fusion uses the `gh` CLI (GitHub CLI) for all GitHub operations. If you have `gh
 
 Tasks with linked GitHub PRs or imported issues display real-time status badges on the board:
 
-- **PR badges** — Shows open/closed/merged state with check status
-- **Issue badges** — Shows open/closed state
-- **WebSocket updates** — Badge status updates instantly via WebSocket when changes occur on GitHub
-- **Multi-instance support** — Redis pub/sub enables badge updates across load-balanced dashboard instances (configure via `FUSION_BADGE_PUBSUB_REDIS_URL`)
+- **PR badges** - Shows open/closed/merged state with check status
+- **Issue badges** - Shows open/closed state
+- **WebSocket updates** - Badge status updates instantly via WebSocket when changes occur on GitHub
+- **Multi-instance support** - Redis pub/sub enables badge updates across load-balanced dashboard instances (configure via `FUSION_BADGE_PUBSUB_REDIS_URL`)
 
 ### PR Creation
 
@@ -531,8 +531,8 @@ The dashboard shows real-time PR status (open, closed, merged) with a refresh bu
 
 Fusion supports two completion strategies once a task reaches **In Review**:
 
-- **Direct merge** *(default)* — existing behavior. Fusion AI-squash-merges the task branch into your current branch locally.
-- **Pull request** — Fusion creates or links a GitHub PR for the task branch, keeps the task in **In Review** while reviews/checks are pending, and auto-merges the PR when required checks succeed and no review is actively blocking it.
+- **Direct merge** *(default)* - existing behavior. Fusion AI-squash-merges the task branch into your current branch locally.
+- **Pull request** - Fusion creates or links a GitHub PR for the task branch, keeps the task in **In Review** while reviews/checks are pending, and auto-merges the PR when required checks succeed and no review is actively blocking it.
 
 `autoMerge` still controls whether Fusion performs either completion strategy automatically. Turning `autoMerge` off means tasks stay in **In Review** until you merge manually.
 
@@ -585,8 +585,8 @@ Requires `gh` CLI installed and authenticated (`gh auth login`). PR monitoring d
 
 Fusion now supports two distinct kinds of discussion on a task:
 
-- **Task comments** — General collaboration notes for humans. Use these for questions, decisions, progress notes, or context you want preserved on the task. You can add them from the dashboard Comments tab or from the CLI with `fn task comment <id> "message"`.
-- **Steering comments** — Execution guidance aimed at the AI worker. These are used for actionable direction like “change this approach” or “use TypeScript here,” and are also populated automatically from actionable PR review feedback.
+- **Task comments** — General collaboration notes for humans. Use these for questions, decisions, progress notes, or context you want preserved on the task. You can add them from the dashboard Comments tab or from the CLI with `fn task comment <id> "message"`. New comments appear immediately in the Comments tab after posting — no manual refresh is needed.
+- **Steering comments** — Execution guidance aimed at the AI worker. These are used for actionable direction like "change this approach" or "use TypeScript here," and are also populated automatically from actionable PR review feedback.
 
 Use task comments for conversation. Use steering comments when you want to influence implementation behavior.
 
@@ -634,8 +634,8 @@ Click **Add** on any template to create a customizable workflow step.
 ### Using Workflow Steps
 
 1. When creating or editing a task, check the workflow steps you want to run
-2. **Reorder steps** — When two or more steps are selected, an execution-order panel appears showing the numbered sequence. Use the ▲/▼ buttons to change the order
-3. Steps execute sequentially in the saved order — the first selected step runs first, then the next, and so on
+2. **Reorder steps** - When two or more steps are selected, an execution-order panel appears showing the numbered sequence. Use the ▲/▼ buttons to change the order
+3. Steps execute sequentially in the saved order - the first selected step runs first, then the next, and so on
 4. The task only moves to in-review after all workflow steps pass
 5. View results in the **Workflow** tab of the task detail modal
 
@@ -659,7 +659,7 @@ Automate recurring workflows with multi-step scheduled tasks. Schedules are stor
 | `weekdays` | `0 0 * * 1-5` | Weekdays at midnight |
 | `weekly` | `0 0 * * 0` | Weekly on Sunday |
 | `monthly` | `0 0 1 * *` | Monthly on 1st |
-| `custom` | — | Define your own cron |
+| `custom` | - | Define your own cron |
 
 ### Step Types
 
@@ -675,7 +675,7 @@ Each schedule contains multiple steps executed sequentially:
 }
 ```
 
-**AI Prompt Steps** *(placeholder — not yet implemented)*:
+**AI Prompt Steps** *(placeholder - not yet implemented)*:
 ```json
 {
   "type": "ai-prompt",
@@ -688,25 +688,25 @@ Each schedule contains multiple steps executed sequentially:
 
 Access via the **Scheduled Tasks** button in the dashboard header:
 
-- **List view** — All schedules with enable/disable toggle
-- **Create/Edit modal** — Configure schedule, steps, and options
-- **Manual run** — Execute a schedule on-demand
-- **Run history** — Last 50 runs with per-step results and output
-- **Step reordering** — Drag to reorder steps
+- **List view** - All schedules with enable/disable toggle
+- **Create/Edit modal** - Configure schedule, steps, and options
+- **Manual run** - Execute a schedule on-demand
+- **Run history** - Last 50 runs with per-step results and output
+- **Step reordering** - Drag to reorder steps
 
 ### Configuration
 
 Per-step options:
-- `timeout` — Override default timeout (milliseconds)
-- `continueOnFailure` — Continue to next step if this one fails (default: false)
+- `timeout` - Override default timeout (milliseconds)
+- `continueOnFailure` - Continue to next step if this one fails (default: false)
 
 Schedules respect the global pause state (`fn dashboard --paused`).
 
 ## Configuration Reference
 
 Fusion uses a two-tier settings hierarchy:
-- **Global settings** (`~/.pi/fusion/settings.json`) — User preferences across all projects
-- **Project settings** (`.fusion/config.json`) — Project-specific workflow settings
+- **Global settings** (`~/.pi/fusion/settings.json`) - User preferences across all projects
+- **Project settings** (`.fusion/config.json`) - Project-specific workflow settings
 
 Project settings override global settings. Configure in the dashboard under **Settings**.
 
@@ -714,23 +714,23 @@ Project settings override global settings. Configure in the dashboard under **Se
 
 | Setting | Scope | Default | Description |
 |---------|-------|---------|-------------|
-| `defaultProvider` | Global | — | Default AI model provider |
-| `defaultModelId` | Global | — | Default AI model ID |
-| `planningProvider` | Global | — | Model provider for task specification |
-| `planningModelId` | Global | — | Model ID for task specification |
-| `validatorProvider` | Global | — | Model provider for code/spec review |
-| `validatorModelId` | Global | — | Model ID for review |
-| `defaultThinkingLevel` | Global | — | Default thinking effort level |
+| `defaultProvider` | Global | - | Default AI model provider |
+| `defaultModelId` | Global | - | Default AI model ID |
+| `planningProvider` | Global | - | Model provider for task specification |
+| `planningModelId` | Global | - | Model ID for task specification |
+| `validatorProvider` | Global | - | Model provider for code/spec review |
+| `validatorModelId` | Global | - | Model ID for review |
+| `defaultThinkingLevel` | Global | - | Default thinking effort level |
 | `themeMode` | Global | dark | UI theme: dark/light/system |
 | `colorTheme` | Global | default | Color theme name |
 | `ntfyEnabled` | Global | false | Enable push notifications |
-| `ntfyTopic` | Global | — | ntfy.sh topic for notifications |
+| `ntfyTopic` | Global | - | ntfy.sh topic for notifications |
 | `maxConcurrent` | Project | 2 | Concurrent task execution limit |
 | `autoMerge` | Project | true | Auto-merge completed tasks |
 | `smartConflictResolution` | Project | true | Auto-resolve lock/generated files |
 | `autoResolveConflicts` | Project | true | Alias for smartConflictResolution |
 | `requirePlanApproval` | Project | false | Manual approval for AI specs |
-| `taskStuckTimeoutMs` | Project | — | Stuck task detection timeout (ms) |
+| `taskStuckTimeoutMs` | Project | - | Stuck task detection timeout (ms) |
 | `worktreeNaming` | Project | random | Worktree naming: random/task-id/task-title |
 | `recycleWorktrees` | Project | false | Pool and reuse worktrees |
 | `groupOverlappingFiles` | Project | false | Serialize tasks with shared files |
@@ -763,9 +763,9 @@ Terminates and retries tasks with no agent activity for the specified duration (
 
 **Pause Behavior for In-Progress Tasks:**
 
-Pausing a task that is currently executing will immediately terminate the agent session and move the task back to `todo`. When the task is later unpaused, the scheduler immediately picks it up (event-driven, no poll-cycle delay) and resumes execution from where it left off (step progress is preserved). The task is never left stranded in `in-progress` after a pause — both the error-throwing and graceful session exit paths move it to `todo`. Paused tasks are never marked as `failed`.
+Pausing a task that is currently executing will immediately terminate the agent session and move the task back to `todo`. When the task is later unpaused, the scheduler immediately picks it up (event-driven, no poll-cycle delay) and resumes execution from where it left off (step progress is preserved). The task is never left stranded in `in-progress` after a pause - both the error-throwing and graceful session exit paths move it to `todo`. Paused tasks are never marked as `failed`.
 
-If an engine restart occurs while a task is paused in `in-progress` (orphaned state), the executor automatically resumes execution when the task is unpaused — no manual intervention or engine restart is required.
+If an engine restart occurs while a task is paused in `in-progress` (orphaned state), the executor automatically resumes execution when the task is unpaused - no manual intervention or engine restart is required.
 
 **Pause Behavior for Todo/Triage Tasks:**
 
@@ -822,8 +822,8 @@ In short: add a changeset with `pnpm changeset`, merge to main, then merge the a
 
 ### CI pipeline
 
-- **Pull requests & pushes to main** — runs tests and build (`.github/workflows/ci.yml`)
-- **Push to main** — creates a version PR (if changesets exist) or publishes to npm (`.github/workflows/version.yml`)
+- **Pull requests & pushes to main** - runs tests and build (`.github/workflows/ci.yml`)
+- **Push to main** - creates a version PR (if changesets exist) or publishes to npm (`.github/workflows/version.yml`)
 
 ## License
 
