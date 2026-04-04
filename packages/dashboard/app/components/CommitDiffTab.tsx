@@ -9,7 +9,7 @@ interface CommitDiffTabProps {
   mergeDetails?: MergeDetails;
 }
 
-interface ParsedFile {
+export interface ParsedFile {
   path: string;
   status: "added" | "modified" | "deleted" | "unknown";
   additions: number;
@@ -43,7 +43,7 @@ function getStatusLabel(status: ParsedFile["status"]): string {
   }
 }
 
-function parsePatch(rawPatch: string): ParsedFile[] {
+export function parsePatch(rawPatch: string): ParsedFile[] {
   const files: ParsedFile[] = [];
   // Split on diff boundaries, keeping the delimiter
   const parts = rawPatch.split(/(?=^diff --git )/m);

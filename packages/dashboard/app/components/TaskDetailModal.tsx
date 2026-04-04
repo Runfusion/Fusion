@@ -789,7 +789,7 @@ export function TaskDetailModal({
               />
             </div>
           ) : activeTab === "changes" ? (
-            <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} />
+            <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} column={task.column} mergeDetails={task.mergeDetails} />
           ) : activeTab === "commits" ? (
             <CommitDiffTab commitSha={task.mergeDetails?.commitSha ?? ""} mergeDetails={task.mergeDetails} />
           ) : activeTab === "comments" ? (

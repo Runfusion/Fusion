@@ -596,6 +596,8 @@ When a task is merged successfully, Fusion now stores richer merge metadata on t
 
 This gives completed tasks a clearer audit trail in both the board UI and stored task metadata.
 
+The **Changes** tab in the task detail modal uses the merge commit to load file-level diffs for done tasks, so changes remain visible even after the worktree is cleaned up. The tab displays commit metadata (short SHA, merge message, merged timestamp) alongside the diff.
+
 ## Workflow Steps
 
 Workflow steps are reusable quality gates that run after task implementation but before the task moves to in-review.
