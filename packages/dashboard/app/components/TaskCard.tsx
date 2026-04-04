@@ -44,7 +44,7 @@ interface TaskCardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string, commitSha?: string) => void;
 }
 
 function areTaskBadgeInfosEqual(
@@ -686,6 +686,20 @@ function TaskCardComponent({
           <span>
             {sessionFilesLoading ? "Checking files…" : `${sessionFiles.length} files changed`}
           </span>
+        </button>
+      )}
+      {task.column === "done" && task.mergeDetails?.filesChanged != null && task.mergeDetails.filesChanged > 0 && (
+        <button
+          type="button"
+          className="card-session-files"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenFilesForTask?.(task.id, task.worktree, task.column, task.mergeDetails?.commitSha);
+          }}
+          disabled={!onOpenFilesForTask}
+        >
+          <Folder size={12} />
+          <span>{task.mergeDetails.filesChanged} files changed</span>
         </button>
       )}
       {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy) && (

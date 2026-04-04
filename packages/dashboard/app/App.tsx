@@ -83,7 +83,7 @@ function AppInner() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [fileBrowserWorkspace, setFileBrowserWorkspace] = useState("project");
-  const [changedFilesState, setChangedFilesState] = useState<{ taskId: string; worktree: string | undefined; column: string } | null>(null);
+  const [changedFilesState, setChangedFilesState] = useState<{ taskId: string; worktree: string | undefined; column: string; commitSha?: string } | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
@@ -469,8 +469,8 @@ function AppInner() {
     setFilesOpen(true);
   }, []);
 
-  const handleOpenChangedFiles = useCallback((taskId: string, worktree: string | undefined, column: string) => {
-    setChangedFilesState({ taskId, worktree, column });
+  const handleOpenChangedFiles = useCallback((taskId: string, worktree: string | undefined, column: string, commitSha?: string) => {
+    setChangedFilesState({ taskId, worktree, column, commitSha });
   }, []);
 
   const handleCloseChangedFiles = useCallback(() => {
@@ -705,6 +705,7 @@ function AppInner() {
           worktree={changedFilesState.worktree}
           column={changedFilesState.column}
           projectId={currentProject?.id}
+          commitSha={changedFilesState.commitSha}
           isOpen={true}
           onClose={handleCloseChangedFiles}
         />
