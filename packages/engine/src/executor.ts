@@ -2224,6 +2224,17 @@ git log --oneline
     commandsSection = "\n" + lines.join("\n") + "\n";
   }
 
+  // Build project memory section from settings
+  // When enabled, agents consult and update .fusion/memory.md for durable project learnings.
+  // Actual memory instructions will be injected by FN-810; this placeholder establishes
+  // the conditional integration point.
+  const memoryEnabled = settings?.memoryEnabled !== false;
+  let memorySection = "";
+  if (memoryEnabled && rootDir) {
+    // TODO(FN-810): Call buildMemoryInstructions(rootDir) to populate memory context
+    memorySection = "";
+  }
+
   // Build steering comments section (last 10 comments only to avoid context bloat)
   let steeringSection = "";
   if (task.steeringComments && task.steeringComments.length > 0) {
@@ -2253,7 +2264,7 @@ ${task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}`
 ## PROMPT.md
 
 ${task.prompt}
-${attachmentsSection}${commandsSection}${progressSection}${steeringSection}
+${attachmentsSection}${commandsSection}${memorySection}${progressSection}${steeringSection}
 ## Review level: ${reviewLevel}
 
 ${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}

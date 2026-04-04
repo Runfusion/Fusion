@@ -872,6 +872,11 @@ export interface ProjectSettings {
    *  Extraction only runs if BOTH this time has elapsed AND memory has grown
    *  by more than MIN_INSIGHT_GROWTH_CHARS characters. Default: 86400000 (24h). */
   insightExtractionMinIntervalMs?: number;
+  /** When enabled, agents will consult and update .fusion/memory.md with durable
+   *  project learnings. When disabled, agents will not include memory instructions
+   *  in their prompts and will not read or write to .fusion/memory.md.
+   *  Default: true (enabled for backward compatibility). */
+  memoryEnabled?: boolean;
 }
 
 /**
@@ -958,6 +963,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   insightExtractionEnabled: false,
   insightExtractionSchedule: "0 2 * * *",
   insightExtractionMinIntervalMs: 86_400_000,
+  memoryEnabled: true,
 };
 
 /**
@@ -1034,6 +1040,7 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "insightExtractionEnabled",
   "insightExtractionSchedule",
   "insightExtractionMinIntervalMs",
+  "memoryEnabled",
 ] as const;
 
 export interface BoardConfig {

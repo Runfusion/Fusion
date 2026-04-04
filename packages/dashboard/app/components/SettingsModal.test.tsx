@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { SettingsModal } from "./SettingsModal";
 import type { SettingsExportData } from "../api";
 
@@ -196,6 +197,76 @@ describe("SettingsModal", () => {
       for (const filename of capturedFilenames) {
         expect(filename).not.toMatch(/^kb-settings-/);
       }
+    });
+  });
+
+  describe("Memory section", () => {
+    it("renders the Memory section in the sidebar", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      expect(screen.getByText("Memory")).toBeDefined();
+    });
+
+    it("shows the memory toggle with default enabled", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      // Click the Memory section in the sidebar
+      await userEvent.click(screen.getByText("Memory"));
+
+      const checkbox = screen.getByRole("checkbox", { name: /enable project memory/i });
+      expect(checkbox).toBeDefined();
+      // Default is enabled, so checkbox should be checked
+      expect(checkbox).toBeChecked();
+    });
+
+    it("shows memory toggle unchecked when memoryEnabled is false", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        memoryEnabled: false,
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      // Click the Memory section in the sidebar
+      await userEvent.click(screen.getByText("Memory"));
+
+      const checkbox = screen.getByRole("checkbox", { name: /enable project memory/i });
+      expect(checkbox).toBeDefined();
+      expect(checkbox).not.toBeChecked();
+    });
+
+    it("toggles the memory setting when checkbox is clicked", async () => {
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+
+      // Click the Memory section in the sidebar
+      await userEvent.click(screen.getByText("Memory"));
+
+      const checkbox = screen.getByRole("checkbox", { name: /enable project memory/i });
+      expect(checkbox).toBeChecked();
+
+      // Uncheck it
+      await userEvent.click(checkbox);
+      expect(checkbox).not.toBeChecked();
+
+      // Check it again
+      await userEvent.click(checkbox);
+      expect(checkbox).toBeChecked();
     });
   });
 });

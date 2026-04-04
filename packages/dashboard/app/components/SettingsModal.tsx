@@ -41,6 +41,7 @@ const SETTINGS_SECTIONS = [
   { id: "worktrees", label: "Worktrees", scope: "project" as const },
   { id: "commands", label: "Commands", scope: "project" as const },
   { id: "merge", label: "Merge", scope: "project" as const },
+  { id: "memory", label: "Memory", scope: "project" as const },
   { id: "backups", label: "Backups", scope: "project" as const },
   { id: "notifications", label: "Notifications", scope: "global" as const },
   { id: "authentication", label: "Authentication", scope: undefined },
@@ -1394,6 +1395,27 @@ export function SettingsModal({
                 Smart conflict resolution
               </label>
               <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review.</small>
+            </div>
+          </>
+        );
+      case "memory":
+        return (
+          <>
+            {renderScopeBanner()}
+            <h4 className="settings-section-heading">Memory</h4>
+            <div className="form-group">
+              <label htmlFor="memoryEnabled" className="checkbox-label">
+                <input
+                  id="memoryEnabled"
+                  type="checkbox"
+                  checked={form.memoryEnabled !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, memoryEnabled: e.target.checked }))
+                  }
+                />
+                Enable project memory
+              </label>
+              <small>When enabled, agents will consult and update .fusion/memory.md with durable project learnings</small>
             </div>
           </>
         );

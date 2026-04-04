@@ -2125,6 +2125,31 @@ describe("buildExecutionPrompt", () => {
     expect(agentPrompt).toContain("- **Test:** `npm test`");
     expect(agentPrompt).toContain("- **Build:** `npm run build`");
   });
+
+  describe("memoryEnabled setting", () => {
+    it("accepts memoryEnabled: true without error", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        memoryEnabled: true,
+      } as any);
+      // Memory instructions are a placeholder until FN-810; just verify no crash
+      expect(result).toContain("Execute this task.");
+    });
+
+    it("accepts memoryEnabled: false without error", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        memoryEnabled: false,
+      } as any);
+      expect(result).toContain("Execute this task.");
+    });
+
+    it("accepts undefined memoryEnabled (default enabled) without error", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {} as any);
+      expect(result).toContain("Execute this task.");
+    });
+  });
 });
 
 // Import the summarizeToolArgs helper directly (not affected by mocks above)

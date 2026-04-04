@@ -1262,14 +1262,14 @@ describe("SettingsModal", () => {
     expect(layout!.querySelector(".settings-content")).toBeTruthy();
   });
 
-  it("has .settings-sidebar with 10 .settings-nav-item buttons for all sections", async () => {
+  it("has .settings-sidebar with 11 .settings-nav-item buttons for all sections", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     const sidebar = container.querySelector(".settings-sidebar");
     expect(sidebar).toBeTruthy();
     const navItems = sidebar!.querySelectorAll(".settings-nav-item");
-    expect(navItems.length).toBe(10);
+    expect(navItems.length).toBe(11);
 
     // Labels include scope emoji indicators (🌐 for global, 📁 for project)
     const labels = Array.from(navItems).map((el) => el.textContent);
@@ -1281,6 +1281,7 @@ describe("SettingsModal", () => {
       "📁Worktrees",
       "📁Commands",
       "📁Merge",
+      "📁Memory",
       "📁Backups",
       "🌐Notifications",
       "Authentication",

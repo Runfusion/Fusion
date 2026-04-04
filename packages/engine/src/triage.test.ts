@@ -214,6 +214,52 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("If splitting: use the \\\`task_create\\\` tool");
     expect(prompt).not.toContain("## Subtask Consideration");
   });
+
+  describe("memoryEnabled setting", () => {
+    it("accepts memoryEnabled: true without error", () => {
+      const settings: Settings = {
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        memoryEnabled: true,
+      };
+      const prompt = buildSpecificationPrompt(
+        baseTask,
+        ".fusion/tasks/KB-001/PROMPT.md",
+        settings,
+      );
+      // Memory instructions are a placeholder until FN-810; just verify no crash
+      expect(prompt).toContain("Specify this task");
+    });
+
+    it("accepts memoryEnabled: false without error", () => {
+      const settings: Settings = {
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        memoryEnabled: false,
+      };
+      const prompt = buildSpecificationPrompt(
+        baseTask,
+        ".fusion/tasks/KB-001/PROMPT.md",
+        settings,
+      );
+      expect(prompt).toContain("Specify this task");
+    });
+
+    it("accepts undefined memoryEnabled (default enabled) without error", () => {
+      const prompt = buildSpecificationPrompt(
+        baseTask,
+        ".fusion/tasks/KB-001/PROMPT.md",
+        undefined,
+      );
+      expect(prompt).toContain("Specify this task");
+    });
+  });
 });
 
 describe("TRIAGE_SYSTEM_PROMPT", () => {

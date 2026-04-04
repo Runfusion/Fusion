@@ -1193,6 +1193,17 @@ export function buildSpecificationPrompt(
     commandsSection = "\n\n" + lines.join("\n");
   }
 
+  // Build project memory section from settings.
+  // When enabled, agents consult .fusion/memory.md for durable project learnings.
+  // Actual memory instructions will be injected by FN-810; this placeholder
+  // establishes the conditional integration point.
+  const memoryEnabled = settings?.memoryEnabled !== false;
+  let memorySection = "";
+  if (memoryEnabled) {
+    // TODO(FN-810): Call buildMemoryInstructions(rootDir) to populate memory context
+    memorySection = "";
+  }
+
   let attachmentsSection = "";
   if (attachmentContents && attachmentContents.length > 0) {
     const parts = ["## Attachments", ""];
@@ -1276,5 +1287,5 @@ ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join("
 ## Instructions
 ${isRevision ? "1. Review the existing specification and user feedback carefully\n2. Revise the PROMPT.md to address the feedback while maintaining the structure\n3. Ensure the specification is detailed enough for an AI agent to execute" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n4. Name actual files, functions, and patterns from the codebase — be specific"}
 
-Use the write tool to write the specification file.${commandsSection}${attachmentsSection}`;
+Use the write tool to write the specification file.${commandsSection}${memorySection}${attachmentsSection}`;
 }
