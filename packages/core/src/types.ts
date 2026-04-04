@@ -55,6 +55,14 @@ export interface WorkflowStep {
   prompt: string;
   /** Whether this step is available for selection on new tasks */
   enabled: boolean;
+  /** AI model provider override for the workflow step agent (e.g., "anthropic").
+   *  Must be set together with `modelId`. When both model fields are undefined,
+   *  the executor uses global settings defaults. */
+  modelProvider?: string;
+  /** AI model ID override for the workflow step agent (e.g., "claude-sonnet-4-5").
+   *  Must be set together with `modelProvider`. When both model fields are undefined,
+   *  the executor uses global settings defaults. */
+  modelId?: string;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
@@ -72,6 +80,10 @@ export interface WorkflowStepInput {
   prompt?: string;
   /** Defaults to true if not specified */
   enabled?: boolean;
+  /** AI model provider override. Must be set together with modelId. */
+  modelProvider?: string;
+  /** AI model ID override. Must be set together with modelProvider. */
+  modelId?: string;
 }
 
 /** Result of a workflow step execution on a task. */

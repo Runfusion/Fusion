@@ -2529,6 +2529,8 @@ ${stepsSection}`;
         description: input.description,
         prompt: input.prompt || "",
         enabled: input.enabled !== undefined ? input.enabled : true,
+        modelProvider: input.modelProvider,
+        modelId: input.modelId,
         createdAt: now,
         updatedAt: now,
       };
@@ -2579,6 +2581,8 @@ ${stepsSection}`;
       if (updates.description !== undefined) step.description = updates.description;
       if (updates.prompt !== undefined) step.prompt = updates.prompt;
       if (updates.enabled !== undefined) step.enabled = updates.enabled;
+      if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
+      if ("modelId" in updates) step.modelId = updates.modelId;
       step.updatedAt = new Date().toISOString();
 
       config.workflowSteps = steps;

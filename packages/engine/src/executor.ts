@@ -1424,19 +1424,24 @@ If issues are found that need attention, describe them clearly.`;
     });
 
     try {
+      // Determine model: prefer workflow step override, fall back to global settings
+      const stepProvider = workflowStep.modelProvider || settings.defaultProvider;
+      const stepModelId = workflowStep.modelId || settings.defaultModelId;
+      const useOverride = !!(workflowStep.modelProvider && workflowStep.modelId);
+
       const { session } = await createKbAgent({
         cwd: worktreePath,
         systemPrompt,
         tools: "readonly",
-        defaultProvider: settings.defaultProvider,
-        defaultModelId: settings.defaultModelId,
+        defaultProvider: stepProvider,
+        defaultModelId: stepModelId,
         fallbackProvider: settings.fallbackProvider,
         fallbackModelId: settings.fallbackModelId,
         defaultThinkingLevel: settings.defaultThinkingLevel,
       });
 
-      executorLog.log(`${task.id}: workflow step '${workflowStep.name}' using model ${describeModel(session)}`);
-      await this.store.logEntry(task.id, `Workflow step '${workflowStep.name}' using model: ${describeModel(session)}`);
+      executorLog.log(`${task.id}: workflow step '${workflowStep.name}' using model ${describeModel(session)}${useOverride ? " (workflow step override)" : ""}`);
+      await this.store.logEntry(task.id, `Workflow step '${workflowStep.name}' using model: ${describeModel(session)}${useOverride ? " (workflow step override)" : ""}`);
 
       let output = "";
       session.subscribe((event) => {

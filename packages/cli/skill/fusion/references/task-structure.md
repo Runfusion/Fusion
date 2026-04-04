@@ -125,7 +125,9 @@ What the task should accomplish.
       "id": "WS-001",
       "name": "Documentation Review",
       "prompt": "Review the task changes...",
-      "enabled": true
+      "enabled": true,
+      "modelProvider": "anthropic",
+      "modelId": "claude-sonnet-4-5"
     }
   ]
 }

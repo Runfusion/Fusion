@@ -5810,7 +5810,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/workflow-steps", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const { name, description, prompt, enabled } = req.body;
+      const { name, description, prompt, enabled, modelProvider, modelId } = req.body;
 
       if (!name || typeof name !== "string" || !name.trim()) {
         res.status(400).json({ error: "name is required" });
@@ -5829,6 +5829,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
+      // Validate model override pair
+      const modelPair = assertConsistentOptionalPair(modelProvider, modelId, "workflow step model");
+
       // Check for name conflicts
       const existing = await scopedStore.listWorkflowSteps();
       if (existing.some((ws) => ws.name.toLowerCase() === name.trim().toLowerCase())) {
@@ -5841,10 +5844,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         description: description.trim(),
         prompt: prompt?.trim(),
         enabled,
+        modelProvider: modelPair.provider,
+        modelId: modelPair.modelId,
       });
       res.status(201).json(step);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const status = typeof err?.message === "string" && err.message.includes("must include both provider and modelId") ? 400 : 500;
+      res.status(status).json({ error: err.message });
     }
   });
 
@@ -5857,7 +5863,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.patch("/workflow-steps/:id", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const { name, description, prompt, enabled } = req.body;
+      const { name, description, prompt, enabled, modelProvider, modelId } = req.body;
 
       const updates: Record<string, unknown> = {};
       if (name !== undefined) {
@@ -5889,13 +5895,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         updates.enabled = enabled;
       }
 
+      // Validate and apply model override pair
+      if (modelProvider !== undefined || modelId !== undefined) {
+        const modelPair = assertConsistentOptionalPair(modelProvider, modelId, "workflow step model");
+        updates.modelProvider = modelPair.provider;
+        updates.modelId = modelPair.modelId;
+      }
+
       const step = await scopedStore.updateWorkflowStep(req.params.id, updates);
       res.json(step);
     } catch (err: any) {
       if (err.message?.includes("not found")) {
         res.status(404).json({ error: err.message });
       } else {
-        res.status(500).json({ error: err.message });
+        const status = typeof err?.message === "string" && err.message.includes("must include both provider and modelId") ? 400 : 500;
+        res.status(status).json({ error: err.message });
       }
     }
   });
