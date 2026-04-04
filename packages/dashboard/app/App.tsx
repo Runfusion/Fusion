@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@fusion/core";
-import { fetchConfig, fetchSettings, fetchAuthStatus, updateSettings, updateGlobalSettings, fetchModels, fetchTaskDetail, updateProject, unregisterProject } from "./api";
+import { fetchConfig, fetchSettings, fetchAuthStatus, fetchGlobalSettings, updateSettings, updateGlobalSettings, fetchModels, fetchTaskDetail, updateProject, unregisterProject } from "./api";
 import type { ModelInfo, ProjectInfo } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
@@ -12,6 +12,7 @@ import { TerminalModal } from "./components/TerminalModal";
 import { FileBrowserModal } from "./components/FileBrowserModal";
 import { ChangedFilesModal } from "./components/ChangedFilesModal";
 import { SettingsModal } from "./components/SettingsModal";
+import { ModelOnboardingModal } from "./components/ModelOnboardingModal";
 import { PlanningModeModal } from "./components/PlanningModeModal";
 import { SubtaskBreakdownModal } from "./components/SubtaskBreakdownModal";
 import type { SectionId } from "./components/SettingsModal";
@@ -100,6 +101,7 @@ function AppInner() {
   const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
+  const [modelOnboardingOpen, setModelOnboardingOpen] = useState(false);
 
   // Settings state
   const [maxConcurrent, setMaxConcurrent] = useState(2);
@@ -180,9 +182,30 @@ function AppInner() {
       .catch(() => {/* keep default */});
     fetchAuthStatus()
       .then(({ providers }) => {
-        if (providers.length > 0 && providers.every((p) => !p.authenticated)) {
-          setSettingsOpen(true);
-          setSettingsInitialSection("authentication");
+        const hasAuthenticatedProvider = providers.some((p) => p.authenticated);
+        // Check if onboarding is needed: either no authenticated providers,
+        // or providers are authenticated but no default model is configured
+        const needsSetup = providers.length > 0 && !hasAuthenticatedProvider;
+        if (needsSetup || (providers.length > 0 && hasAuthenticatedProvider)) {
+          fetchGlobalSettings()
+            .then((globalSettings) => {
+              const hasDefaultModel = !!(globalSettings.defaultProvider && globalSettings.defaultModelId);
+              const setupIncomplete = !hasAuthenticatedProvider || !hasDefaultModel;
+              if (!globalSettings.modelOnboardingComplete && setupIncomplete) {
+                // First-run: show onboarding modal
+                setModelOnboardingOpen(true);
+              } else if (!hasAuthenticatedProvider) {
+                // Already onboarded but no auth: open settings to authentication
+                setSettingsOpen(true);
+                setSettingsInitialSection("authentication");
+              }
+            })
+            .catch(() => {
+              // If we can't fetch global settings, fall back to onboarding
+              if (!hasAuthenticatedProvider) {
+                setModelOnboardingOpen(true);
+              }
+            });
         }
       })
       .catch(() => {/* fail silently */});
@@ -313,6 +336,10 @@ function AppInner() {
     addToast(`Project ${project.name} registered successfully`, "success");
     refreshProjects();
   }, [setCurrentProject, addToast, refreshProjects]);
+
+  const handleModelOnboardingComplete = useCallback(() => {
+    setModelOnboardingOpen(false);
+  }, []);
 
   const handlePauseProject = useCallback(async (project: ProjectInfo) => {
     try {
@@ -820,6 +847,12 @@ function AppInner() {
         <SetupWizardModal
           onProjectRegistered={handleSetupComplete}
           onClose={() => setSetupWizardOpen(false)}
+        />
+      )}
+      {modelOnboardingOpen && (
+        <ModelOnboardingModal
+          onComplete={handleModelOnboardingComplete}
+          addToast={addToast}
         />
       )}
       <ToastContainer toasts={toasts} onRemove={removeToast} />

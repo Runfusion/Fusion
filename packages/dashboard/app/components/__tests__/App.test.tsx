@@ -22,6 +22,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchConfig: vi.fn(() => Promise.resolve({ maxConcurrent: 2 })),
     fetchSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
     updateSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
+    fetchGlobalSettings: vi.fn(() => Promise.resolve({})),
     fetchAuthStatus: vi.fn(() =>
       Promise.resolve({
         providers: [
@@ -105,7 +106,7 @@ vi.mock("../../hooks/useTerminal", () => ({
 }));
 
 import { App } from "../../App";
-import { fetchAuthStatus, fetchSettings, fetchTaskDetail, updateSettings, runScript, fetchScripts } from "../../api";
+import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, updateSettings, runScript, fetchScripts } from "../../api";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -513,10 +514,30 @@ describe("App mission wiring", () => {
 });
 
 describe("App auto-open Settings on unauthenticated", () => {
-  it("auto-opens Settings to Authentication tab when all providers are unauthenticated", async () => {
+  it("auto-opens onboarding modal when all providers are unauthenticated and onboarding not complete", async () => {
+    // fetchGlobalSettings returns {} by default (modelOnboardingComplete is undefined)
     render(<App />);
 
-    // Wait for the auth status check and settings modal to appear
+    // Wait for the auth status check and global settings check
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+    await waitFor(() => expect(fetchGlobalSettings).toHaveBeenCalled());
+
+    // The onboarding modal should be open showing the provider step
+    await waitFor(() => {
+      expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
+    });
+
+    // Settings modal should NOT be open
+    expect(screen.queryByText("Settings")).toBeNull();
+  });
+
+  it("auto-opens Settings to Authentication tab when all providers are unauthenticated but onboarding IS complete", async () => {
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      modelOnboardingComplete: true,
+    });
+
+    render(<App />);
+
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
 
     // The Settings modal should be open showing Authentication content
@@ -524,34 +545,59 @@ describe("App auto-open Settings on unauthenticated", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalledTimes(2));
 
     // Authentication section should be active — auth status is fetched when section is active
-    // Wait for the auth providers to appear
     await waitFor(() => {
       expect(screen.getByText("Anthropic")).toBeTruthy();
     });
     expect(screen.getByText("GitHub")).toBeTruthy();
 
-    // General section should NOT be showing
-    expect(screen.queryByLabelText("Task Prefix")).toBeNull();
+    // Onboarding modal should NOT be open
+    expect(screen.queryByText("Set Up AI Provider")).toBeNull();
   });
 
-  it("does NOT auto-open Settings when at least one provider is authenticated", async () => {
+  it("does NOT auto-open anything when at least one provider is authenticated and default model is set", async () => {
     (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       providers: [
         { id: "anthropic", name: "Anthropic", authenticated: true },
         { id: "github", name: "GitHub", authenticated: false },
       ],
     });
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+    });
 
     render(<App />);
 
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
 
-    // Settings modal should NOT be open — no modal overlay
-    // fetchSettings called once by App useEffect only (not by SettingsModal)
+    // Settings modal should NOT be open
     await waitFor(() => expect(fetchSettings).toHaveBeenCalledTimes(1));
-
-    // No settings modal content
     expect(screen.queryByText("Settings")).toBeNull();
+
+    // Onboarding modal should NOT be open
+    expect(screen.queryByText("Set Up AI Provider")).toBeNull();
+  });
+
+  it("auto-opens onboarding when providers are authenticated but default model is missing", async () => {
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [
+        { id: "anthropic", name: "Anthropic", authenticated: true },
+      ],
+    });
+    // No defaultProvider or defaultModelId → setup incomplete
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      modelOnboardingComplete: false,
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+    await waitFor(() => expect(fetchGlobalSettings).toHaveBeenCalled());
+
+    // Onboarding modal should be open
+    await waitFor(() => {
+      expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
+    });
   });
 
   it("does NOT auto-open Settings when fetchAuthStatus fails", async () => {
@@ -564,37 +610,35 @@ describe("App auto-open Settings on unauthenticated", () => {
 
     // Settings modal should NOT be open
     expect(screen.queryByText("Settings")).toBeNull();
+    // Onboarding modal should NOT be open
+    expect(screen.queryByText("Set Up AI Provider")).toBeNull();
   });
 
-  it("re-opening Settings via gear icon defaults to General tab after auto-opened close", async () => {
+  it("re-opening Settings via gear icon defaults to General tab after closing onboarding", async () => {
+    // fetchGlobalSettings returns {} by default → onboarding opens
     render(<App />);
 
-    // Wait for auto-open
+    // Wait for onboarding to auto-open
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalledTimes(2));
     await waitFor(() => {
-      expect(screen.getByText("Anthropic")).toBeTruthy();
+      expect(screen.getByText("Set Up AI Provider")).toBeTruthy();
     });
 
-    // Authentication auto-open should not render General fields yet
-    expect(screen.queryByLabelText("Task Prefix")).toBeNull();
+    // Dismiss the onboarding modal via Skip for now button
+    fireEvent.click(screen.getByText("Skip for now"));
 
-    // Close the auto-opened settings modal via Cancel button
-    fireEvent.click(screen.getByText("Cancel"));
-
-    // Settings modal should be closed
+    // Onboarding modal should be closed
     await waitFor(() => {
-      expect(screen.queryByText("Anthropic")).toBeNull();
+      expect(screen.queryByText("Set Up AI Provider")).toBeNull();
     });
 
-    // Open settings again via the gear icon button
+    // Open settings via the gear icon button
     const settingsButton = screen.getByTitle("Settings");
     fireEvent.click(settingsButton);
 
     // Now it should open to General section (default)
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalledTimes(2));
     expect(screen.getByLabelText("Task Prefix")).toBeTruthy();
-    expect(screen.queryByText("Anthropic")).toBeNull();
   });
 });
 

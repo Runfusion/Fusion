@@ -276,7 +276,8 @@ View a centralized timeline of all task lifecycle events. Click the history icon
 - **Error Recovery**: If settings fail to load, the modal displays an inline error message with a retry button instead of getting stuck on "Loading…"
 - **Settings API Contract**: Server-owned fields like `githubTokenConfigured` are injected on GET /settings but stripped on PUT /settings to prevent persistence to config.json
 - **Notifications**: ntfy.sh integration for push notifications when tasks complete or fail
-- **Authentication**: OAuth provider management for AI model access
+- **Authentication**: Provider management for AI model access. OAuth providers (e.g. Anthropic) use a Login/Logout flow; API-key providers (e.g. OpenRouter) show a masked key entry with Save/Clear actions. After saving or clearing a key, the auth status refreshes immediately so the authenticated badge stays in sync. Stored key values are never prefilled or displayed.
+- **Model Onboarding**: On first dashboard launch, a guided onboarding modal walks users through (1) authenticating with at least one AI provider (OAuth login or API key entry) and (2) selecting a default AI model. Completion is tracked via the `modelOnboardingComplete` global setting. Users can skip onboarding (which still marks it complete to prevent repeated popups) or re-trigger it by clearing the flag in Settings.
 - **Pause Controls**: Soft pause (stop new work) and hard stop (kill all agents)
 - **Theming**: Light/dark/system mode toggle and 12 color themes (see Theming section below)
 

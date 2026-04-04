@@ -713,6 +713,7 @@ When reading settings, project values override global values. The merged view is
 - `defaultThinkingLevel` — Default thinking effort level
 - `ntfyEnabled` — Enable push notifications
 - `ntfyTopic` — ntfy.sh topic for notifications
+- `modelOnboardingComplete` — Whether first-run model/provider onboarding has been completed
 
 **Project settings** (`~/.fusion/config.json`):
 - All other settings listed below (concurrency, merge, worktrees, commands, etc.)

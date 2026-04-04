@@ -33,6 +33,8 @@ vi.mock("../../api", () => ({
   fetchAuthStatus: vi.fn(() => Promise.resolve({ providers: [{ id: "anthropic", name: "Anthropic", authenticated: false }] })),
   loginProvider: vi.fn(() => Promise.resolve({ url: "https://auth.example.com/login" })),
   logoutProvider: vi.fn(() => Promise.resolve({ success: true })),
+  saveApiKey: vi.fn(() => Promise.resolve({ success: true })),
+  clearApiKey: vi.fn(() => Promise.resolve({ success: true })),
   fetchModels: vi.fn(() => Promise.resolve({
     models: [
       { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
@@ -44,7 +46,7 @@ vi.mock("../../api", () => ({
   testNtfyNotification: vi.fn(() => Promise.resolve({ success: true })),
 }));
 
-import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, testNtfyNotification } from "../../api";
+import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification } from "../../api";
 
 const onClose = vi.fn();
 const addToast = vi.fn();
@@ -995,6 +997,257 @@ describe("SettingsModal", () => {
     // Provider rows should still be visible
     expect(screen.getByText("Anthropic")).toBeTruthy();
     expect(screen.getByText("GitHub")).toBeTruthy();
+  });
+
+  // --- API key provider tests ---
+
+  it("renders password input and Save button for api_key providers", async () => {
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [
+        { id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" as const },
+      ],
+    });
+
+    const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    const input = screen.getByPlaceholderText("Enter API key") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.type).toBe("password");
+
+    // The Save button should be inside the auth-apikey-section, not the global save
+    const apiKeySection = container.querySelector(".auth-apikey-section");
+    expect(apiKeySection).toBeTruthy();
+    expect(apiKeySection!.querySelector("button")!.textContent?.trim()).toBe("Save");
+
+    // Should NOT show Login button for api_key providers
+    expect(screen.queryByText("Login")).toBeNull();
+  });
+
+  it("renders Clear button for authenticated api_key providers", async () => {
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [
+        { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" as const },
+      ],
+    });
+
+    const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    // The Clear button should be inside the auth-apikey-section
+    const apiKeySection = container.querySelector(".auth-apikey-section");
+    expect(apiKeySection).toBeTruthy();
+    expect(apiKeySection!.querySelector("button")!.textContent?.trim()).toBe("Clear");
+
+    // Should NOT show Logout button for api_key providers
+    expect(screen.queryByText("Logout")).toBeNull();
+  });
+
+  it("saves API key when Save is clicked", async () => {
+    
+
+    (fetchAuthStatus as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        providers: [
+          { id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" as const },
+        ],
+      })
+      .mockResolvedValueOnce({
+        providers: [
+          { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" as const },
+        ],
+      });
+
+    const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    const input = screen.getByPlaceholderText("Enter API key");
+    fireEvent.change(input, { target: { value: "sk-test-key-123" } });
+
+    const apiKeySection = container.querySelector(".auth-apikey-section")!;
+    fireEvent.click(apiKeySection.querySelector("button")!);
+
+    await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("openrouter", "sk-test-key-123"));
+    expect(addToast).toHaveBeenCalledWith("API key saved", "success");
+  });
+
+  it("shows error when saving empty API key", async () => {
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [
+        { id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" as const },
+      ],
+    });
+
+    const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    const apiKeySection = container.querySelector(".auth-apikey-section")!;
+    fireEvent.click(apiKeySection.querySelector("button")!);
+
+    expect(screen.getByText("API key is required")).toBeTruthy();
+  });
+
+  it("clears API key when Clear is clicked", async () => {
+    
+
+    (fetchAuthStatus as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        providers: [
+          { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" as const },
+        ],
+      })
+      .mockResolvedValueOnce({
+        providers: [
+          { id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" as const },
+        ],
+      });
+
+    const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    const apiKeySection = container.querySelector(".auth-apikey-section")!;
+    fireEvent.click(apiKeySection.querySelector("button")!);
+
+    await waitFor(() => expect(clearApiKey).toHaveBeenCalledWith("openrouter"));
+    expect(addToast).toHaveBeenCalledWith("API key cleared", "success");
+  });
+
+  it("handles API key save error gracefully", async () => {
+    
+    (saveApiKey as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network error"));
+
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [
+        { id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" as const },
+      ],
+    });
+
+    const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    const input = screen.getByPlaceholderText("Enter API key");
+    fireEvent.change(input, { target: { value: "sk-key" } });
+
+    const apiKeySection = container.querySelector(".auth-apikey-section")!;
+    fireEvent.click(apiKeySection.querySelector("button")!);
+
+    await waitFor(() => expect(screen.getByText("Network error")).toBeTruthy());
+  });
+
+  it("shows input field after clearing API key (badge updates to not authenticated)", async () => {
+    
+
+    (fetchAuthStatus as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        providers: [
+          { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" as const },
+        ],
+      })
+      .mockResolvedValueOnce({
+        providers: [
+          { id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" as const },
+        ],
+      });
+
+    const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    // Initially should show "Clear" button (authenticated)
+    expect(container.querySelector(".auth-apikey-section button")?.textContent).toContain("Clear");
+
+    // Click Clear
+    fireEvent.click(container.querySelector(".auth-apikey-section button")!);
+
+    await waitFor(() => expect(clearApiKey).toHaveBeenCalledWith("openrouter"));
+
+    // After clearing, fetchAuthStatus should be called again (loadAuthStatus)
+    // and the UI should show an input field (not authenticated state)
+    await waitFor(() => {
+      expect(container.querySelector(".auth-apikey-section input")).toBeTruthy();
+    });
+    expect(addToast).toHaveBeenCalledWith("API key cleared", "success");
+  });
+
+  it("handles API key clear error gracefully", async () => {
+    
+
+    (clearApiKey as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Clear failed"));
+
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [
+        { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" as const },
+      ],
+    });
+
+    const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    const apiKeySection = container.querySelector(".auth-apikey-section")!;
+    fireEvent.click(apiKeySection.querySelector("button")!);
+
+    await waitFor(() => expect(clearApiKey).toHaveBeenCalledWith("openrouter"));
+    expect(addToast).toHaveBeenCalledWith("Clear failed", "error");
+  });
+
+  it("shows Login for oauth providers and password input for api_key providers side by side", async () => {
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [
+        { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" as const },
+        { id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" as const },
+      ],
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    // OAuth provider shows Login
+    expect(screen.getByText("Login")).toBeTruthy();
+    // API key provider shows password input
+    expect(screen.getByPlaceholderText("Enter API key")).toBeTruthy();
+  });
+
+  it("does not prefill stored key values in the input", async () => {
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [
+        { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" as const },
+      ],
+    });
+
+    render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Authentication"));
+    await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
+
+    const input = screen.getByPlaceholderText("Enter API key") as HTMLInputElement;
+    expect(input.value).toBe("");
   });
 
   // --- Mobile structure tests (DOM classes that responsive CSS targets) ---

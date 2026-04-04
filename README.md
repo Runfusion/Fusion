@@ -103,6 +103,8 @@ fn dashboard --interactive
 
 Open [http://localhost:4040](http://localhost:4040) - create tasks from the board or the CLI.
 
+**First-run setup:** On first launch, Fusion opens a guided onboarding modal that walks you through configuring provider credentials (OAuth login or API key entry) and selecting a default AI model. Completion is tracked via the `modelOnboardingComplete` global setting. You can re-trigger onboarding at any time by clearing this flag in Settings, or configure providers and models manually from the Settings modal.
+
 ### CLI commands
 
 **Dashboard:**

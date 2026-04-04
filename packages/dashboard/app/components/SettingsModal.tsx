@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { THINKING_LEVELS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent } from "@fusion/core";
-import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings } from "../api";
+import { fetchSettings, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
@@ -86,6 +86,8 @@ export function SettingsModal({
   const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
   const [authLoading, setAuthLoading] = useState(false);
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
+  const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
+  const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Model state
@@ -200,7 +202,7 @@ export function SettingsModal({
       addToast(err.message || "Login failed", "error");
       setAuthActionInProgress(null);
     }
-  }, [addToast, loadAuthStatus]);
+  }, [addToast]);
 
   const handleLogout = useCallback(async (providerId: string) => {
     setAuthActionInProgress(providerId);
@@ -210,6 +212,57 @@ export function SettingsModal({
       addToast("Logged out", "success");
     } catch (err: any) {
       addToast(err.message || "Logout failed", "error");
+    } finally {
+      setAuthActionInProgress(null);
+    }
+  }, [addToast, loadAuthStatus]);
+
+  const handleSaveApiKey = useCallback(async (providerId: string) => {
+    const key = apiKeyInputs[providerId]?.trim();
+    if (!key) {
+      setApiKeyErrors((prev) => ({ ...prev, [providerId]: "API key is required" }));
+      return;
+    }
+    setAuthActionInProgress(providerId);
+    setApiKeyErrors((prev) => {
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
+    try {
+      await saveApiKey(providerId, key);
+      setApiKeyInputs((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      await loadAuthStatus();
+      addToast("API key saved", "success");
+    } catch (err: any) {
+      setApiKeyErrors((prev) => ({ ...prev, [providerId]: err.message || "Failed to save API key" }));
+    } finally {
+      setAuthActionInProgress(null);
+    }
+  }, [apiKeyInputs, addToast, loadAuthStatus]);
+
+  const handleClearApiKey = useCallback(async (providerId: string) => {
+    setAuthActionInProgress(providerId);
+    try {
+      await clearApiKey(providerId);
+      setApiKeyInputs((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      setApiKeyErrors((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      await loadAuthStatus();
+      addToast("API key cleared", "success");
+    } catch (err: any) {
+      addToast(err.message || "Failed to clear API key", "error");
     } finally {
       setAuthActionInProgress(null);
     }
@@ -1614,7 +1667,7 @@ export function SettingsModal({
               <div className="settings-empty-state">Loading authentication status…</div>
             ) : authProviders.length === 0 ? (
               <div className="settings-empty-state settings-muted">
-                No OAuth providers available
+                No providers available
               </div>
             ) : (
               <>
@@ -1634,33 +1687,71 @@ export function SettingsModal({
                       {provider.authenticated ? "✓ Authenticated" : "✗ Not authenticated"}
                     </span>
                   </div>
-                  <div>
-                    {authActionInProgress === provider.id ? (
-                      <button className="btn btn-sm" disabled>
-                        {provider.authenticated ? "Logging out…" : "Waiting for login…"}
-                      </button>
-                    ) : provider.authenticated ? (
-                      <button
-                        className="btn btn-sm"
-                        onClick={() => handleLogout(provider.id)}
-                      >
-                        Logout
-                      </button>
-                    ) : (
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => handleLogin(provider.id)}
-                      >
-                        Login
-                      </button>
-                    )}
-                  </div>
+                  {provider.type === "api_key" ? (
+                    <div className="auth-apikey-section">
+                      <div className="auth-apikey-input-row">
+                        <input
+                          type="password"
+                          className="auth-apikey-input"
+                          placeholder="Enter API key"
+                          value={apiKeyInputs[provider.id] ?? ""}
+                          onChange={(e) => setApiKeyInputs((prev) => ({ ...prev, [provider.id]: e.target.value }))}
+                          disabled={authActionInProgress === provider.id}
+                        />
+                        {provider.authenticated ? (
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => handleClearApiKey(provider.id)}
+                            disabled={authActionInProgress === provider.id}
+                          >
+                            Clear
+                          </button>
+                        ) : (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => handleSaveApiKey(provider.id)}
+                            disabled={authActionInProgress === provider.id}
+                          >
+                            Save
+                          </button>
+                        )}
+                      </div>
+                      {authActionInProgress === provider.id && (
+                        <small className="auth-apikey-progress">Saving…</small>
+                      )}
+                      {apiKeyErrors[provider.id] && (
+                        <small className="auth-apikey-error">{apiKeyErrors[provider.id]}</small>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      {authActionInProgress === provider.id ? (
+                        <button className="btn btn-sm" disabled>
+                          {provider.authenticated ? "Logging out…" : "Waiting for login…"}
+                        </button>
+                      ) : provider.authenticated ? (
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleLogout(provider.id)}
+                        >
+                          Logout
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => handleLogin(provider.id)}
+                        >
+                          Login
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
               </>
             )}
             <small className="auth-hint">
-              Login and logout take effect immediately — no need to save.
+              Authentication changes take effect immediately — no need to save.
             </small>
           </>
         );
