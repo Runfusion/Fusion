@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
 import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import type { ModelInfo, RefinementType } from "../api";
@@ -98,6 +99,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [planningProvider, setPlanningProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const modelMenuPortalRef = useRef<HTMLDivElement>(null);
+  const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>(availableModels ?? []);
@@ -208,6 +212,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     }
   }, []);
 
+  // Set portal root for model menu rendering
+  useEffect(() => {
+    setPortalRoot(document.body);
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -269,7 +278,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     if (!isModelMenuOpen) return;
 
     const handleClickOutside = (e: MouseEvent) => {
-      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const clickedInsideTrigger = modelMenuRef.current?.contains(target);
+      const clickedInsidePortal = modelMenuPortalRef.current?.contains(target);
+      // Also check for clicks inside CustomModelDropdown's portaled dropdown
+      const clickedInsideCombobox = (target instanceof Element) && (target.closest?.(".model-combobox-dropdown--portal") != null);
+
+      if (!clickedInsideTrigger && !clickedInsidePortal && !clickedInsideCombobox) {
         setIsModelMenuOpen(false);
         setActiveModelSubmenu(null);
       }
@@ -437,17 +452,47 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     });
   }, []);
 
+  const updateModelMenuPosition = useCallback(() => {
+    const trigger = modelMenuRef.current?.querySelector(".quick-entry-model-trigger") as HTMLElement | null;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    setModelMenuPosition({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(rect.width, 240),
+    });
+  }, []);
+
   const toggleModelMenu = useCallback(() => {
     setIsModelMenuOpen((prev) => {
       const next = !prev;
       if (next) {
         setShowDeps(false);
+        // Compute position synchronously so the portal renders on first paint
+        updateModelMenuPosition();
       } else {
         setActiveModelSubmenu(null);
+        setModelMenuPosition(null);
       }
       return next;
     });
-  }, []);
+  }, [updateModelMenuPosition]);
+
+  // Keep model menu portal anchored during scroll/resize
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+
+    const handleReposition = () => updateModelMenuPosition();
+
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+  }, [isModelMenuOpen, updateModelMenuPosition]);
 
   const handlePlanningModelChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
@@ -794,8 +839,19 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   ? ` ${selectedModelCount} model${selectedModelCount === 1 ? "" : "s"}`
                   : " Models"}
             </button>
-            {isModelMenuOpen && (
-              <div className="model-nested-menu" onMouseDown={(e) => e.preventDefault()} data-testid="model-nested-menu">
+            {isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(
+              <div
+                ref={modelMenuPortalRef}
+                className="model-nested-menu model-nested-menu--portal"
+                onMouseDown={(e) => e.preventDefault()}
+                data-testid="model-nested-menu"
+                style={{
+                  position: "fixed",
+                  top: `${modelMenuPosition.top}px`,
+                  left: `${modelMenuPosition.left}px`,
+                  width: `${modelMenuPosition.width}px`,
+                }}
+              >
                 {activeModelSubmenu === null ? (
                   // Top-level menu with Plan/Executor/Validator choices
                   <div className="model-menu-items">
@@ -903,7 +959,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     )}
                   </div>
                 )}
-              </div>
+              </div>,
+              portalRoot,
             )}
           </div>
 

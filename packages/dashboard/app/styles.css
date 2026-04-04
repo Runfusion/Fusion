@@ -11550,6 +11550,14 @@ html .column.drag-over * {
   overflow: hidden;
 }
 
+/* Portaled variant — rendered via createPortal to escape column overflow clipping */
+.model-nested-menu--portal {
+  position: fixed;
+  margin-top: 0;
+  z-index: 1000;
+  max-width: 360px;
+}
+
 .model-menu-items {
   display: flex;
   flex-direction: column;

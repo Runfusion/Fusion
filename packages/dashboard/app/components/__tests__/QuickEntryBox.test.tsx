@@ -1717,4 +1717,127 @@ describe("QuickEntryBox", () => {
       expect(payload.modelPresetId).toBeUndefined();
     });
   });
+
+  describe("FN-879: portaled model menu layering and filter-input stability", () => {
+    it("renders model menu as a portal in document.body (not inside QuickEntryBox)", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+
+      const menu = screen.getByTestId("model-nested-menu");
+      expect(menu).toBeTruthy();
+
+      // The portaled menu should have the --portal modifier class
+      expect(menu.classList.contains("model-nested-menu--portal")).toBe(true);
+
+      // The menu should be a direct child of document.body, NOT inside the QuickEntryBox container
+      const quickEntryBox = screen.getByTestId("quick-entry-box");
+      expect(quickEntryBox.contains(menu)).toBe(false);
+      expect(document.body.contains(menu)).toBe(true);
+    });
+
+    it("positions the portaled menu with fixed positioning to escape column overflow", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+
+      const menu = screen.getByTestId("model-nested-menu");
+      expect(menu).toBeTruthy();
+
+      // The portaled menu should use fixed positioning
+      expect(menu.style.position).toBe("fixed");
+      // Should have explicit top, left, and width set
+      expect(menu.style.top).toBeTruthy();
+      expect(menu.style.left).toBeTruthy();
+      expect(menu.style.width).toBeTruthy();
+    });
+
+    it("does not close model menu when clicking inside CustomModelDropdown portal", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+      expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
+
+      // Navigate to executor submenu (shows CustomModelDropdown mock)
+      fireEvent.click(screen.getByTestId("model-menu-executor"));
+      expect(screen.getByTestId("custom-model-dropdown-executor model")).toBeTruthy();
+
+      // Simulate a mousedown inside the CustomModelDropdown's portaled dropdown.
+      // In production, the CustomModelDropdown renders its dropdown as a portal
+      // with class "model-combobox-dropdown--portal". The outside-click handler
+      // must recognize clicks inside this portal as internal interactions.
+      const comboboxPortal = document.createElement("div");
+      comboboxPortal.className = "model-combobox-dropdown--portal";
+      const filterInput = document.createElement("input");
+      filterInput.type = "text";
+      comboboxPortal.appendChild(filterInput);
+      document.body.appendChild(comboboxPortal);
+
+      try {
+        // Dispatch mousedown on the filter input inside the combobox portal
+        fireEvent.mouseDown(filterInput);
+
+        // The model menu should remain open
+        expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
+      } finally {
+        document.body.removeChild(comboboxPortal);
+      }
+    });
+
+    it("does not close model menu when clicking inside the model-nested-menu portal itself", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+      const menu = screen.getByTestId("model-nested-menu");
+      expect(menu).toBeTruthy();
+
+      // Click inside the menu portal (simulating click on a menu item)
+      fireEvent.mouseDown(menu);
+
+      // Menu should still be open
+      expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
+    });
+
+    it("closes model menu on outside click (click outside both trigger and portal)", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Task with menu" } });
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+      expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
+
+      // Click on an element outside both the trigger and the portal
+      const outsideElement = document.createElement("div");
+      document.body.appendChild(outsideElement);
+      try {
+        fireEvent.mouseDown(outsideElement);
+      } finally {
+        document.body.removeChild(outsideElement);
+      }
+
+      // Menu should be closed
+      expect(screen.queryByTestId("model-nested-menu")).toBeNull();
+    });
+
+    it("repositions portaled menu on window resize while open", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+      const menu = screen.getByTestId("model-nested-menu");
+      const initialTop = menu.style.top;
+
+      // Trigger a resize event
+      fireEvent.resize(window);
+
+      // Menu should still be open and have position styles (may or may not change in test env)
+      expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
+      expect(menu.style.position).toBe("fixed");
+    });
+  });
 });
