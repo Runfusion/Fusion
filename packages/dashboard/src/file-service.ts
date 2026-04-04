@@ -187,11 +187,6 @@ async function listFilesForBasePath(basePath: string, subPath?: string): Promise
     const fileNodes: FileNode[] = [];
 
     for (const entry of entries) {
-      // Skip hidden files and directories
-      if (entry.name.startsWith(".")) {
-        continue;
-      }
-
       const entryPath = join(targetPath, entry.name);
       const entryStats = await stat(entryPath);
 

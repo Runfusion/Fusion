@@ -668,6 +668,135 @@ describe("workspace operations", () => {
   });
 });
 
+describe("hidden files visibility", () => {
+  const mockGetTask = vi.fn();
+  const mockGetRootDir = vi.fn();
+  const mockStore = {
+    getTask: mockGetTask,
+    getRootDir: mockGetRootDir,
+  } as unknown as TaskStore;
+
+  beforeEach(() => {
+    mockGetTask.mockReset();
+    mockGetRootDir.mockReset();
+    mockStat.mockReset();
+    mockReaddir.mockReset();
+    mockExistsSync.mockReset();
+  });
+
+  describe("listWorkspaceFiles", () => {
+    it("includes hidden files (dotfiles) in workspace listing", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      // stat for the directory itself, then for each entry
+      mockStat
+        .mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false, size: 0, mtime: new Date() })
+        .mockResolvedValueOnce({ isDirectory: () => false, isFile: () => true, size: 42, mtime: new Date() })
+        .mockResolvedValueOnce({ isDirectory: () => false, isFile: () => true, size: 200, mtime: new Date() })
+        .mockResolvedValueOnce({ isDirectory: () => false, isFile: () => true, size: 15, mtime: new Date() });
+
+      mockReaddir.mockResolvedValue([
+        { name: ".env.example", isDirectory: () => false, isFile: () => true },
+        { name: ".gitignore", isDirectory: () => false, isFile: () => true },
+        { name: "README.md", isDirectory: () => false, isFile: () => true },
+      ]);
+
+      const result = await listWorkspaceFiles(mockStore, "project");
+
+      expect(result.entries).toHaveLength(3);
+      const names = result.entries.map((e) => e.name);
+      expect(names).toContain(".env.example");
+      expect(names).toContain(".gitignore");
+      expect(names).toContain("README.md");
+    });
+
+    it("includes hidden directories (dot-directories) in workspace listing", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockStat
+        .mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false, size: 0, mtime: new Date() })
+        .mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false, size: 0, mtime: new Date() })
+        .mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false, size: 0, mtime: new Date() })
+        .mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false, size: 0, mtime: new Date() });
+
+      mockReaddir.mockResolvedValue([
+        { name: ".changeset", isDirectory: () => true, isFile: () => false },
+        { name: ".github", isDirectory: () => true, isFile: () => false },
+        { name: "src", isDirectory: () => true, isFile: () => false },
+      ]);
+
+      const result = await listWorkspaceFiles(mockStore, "project");
+
+      expect(result.entries).toHaveLength(3);
+      const names = result.entries.map((e) => e.name);
+      expect(names).toContain(".changeset");
+      expect(names).toContain(".github");
+      expect(names).toContain("src");
+      // All should be type directory
+      expect(result.entries.every((e) => e.type === "directory")).toBe(true);
+    });
+
+    it("includes mixed hidden and non-hidden entries with correct sort order", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      // Directory stat + 6 entry stats = 7 mock returns
+      const dirStat = { isDirectory: () => true, isFile: () => false, size: 0, mtime: new Date() };
+      const fileStat = (size: number) => ({ isDirectory: () => false, isFile: () => true, size, mtime: new Date() });
+      mockStat
+        .mockResolvedValueOnce(dirStat)   // directory itself
+        .mockResolvedValueOnce(dirStat)   // .github (dir)
+        .mockResolvedValueOnce(dirStat)   // .changeset (dir)
+        .mockResolvedValueOnce(dirStat)   // src (dir)
+        .mockResolvedValueOnce(fileStat(10))   // .env (file)
+        .mockResolvedValueOnce(fileStat(300))  // README.md (file)
+        .mockResolvedValueOnce(fileStat(50));  // package.json (file)
+
+      mockReaddir.mockResolvedValue([
+        { name: ".env", isDirectory: () => false, isFile: () => true },
+        { name: ".github", isDirectory: () => true, isFile: () => false },
+        { name: "README.md", isDirectory: () => false, isFile: () => true },
+        { name: "src", isDirectory: () => true, isFile: () => false },
+        { name: ".changeset", isDirectory: () => true, isFile: () => false },
+        { name: "package.json", isDirectory: () => false, isFile: () => true },
+      ]);
+
+      const result = await listWorkspaceFiles(mockStore, "project");
+
+      expect(result.entries).toHaveLength(6);
+      // Sort order: directories first, then files, both alphabetically
+      const types = result.entries.map((e) => e.type);
+      const lastDirIdx = types.lastIndexOf("directory");
+      const firstFileIdx = types.indexOf("file");
+      expect(lastDirIdx).toBeLessThan(firstFileIdx);
+
+      // Hidden entries are present
+      const names = result.entries.map((e) => e.name);
+      expect(names).toContain(".env");
+      expect(names).toContain(".github");
+      expect(names).toContain(".changeset");
+    });
+  });
+
+  describe("listProjectFiles", () => {
+    it("includes hidden files and directories in project listing", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockStat
+        .mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false, size: 0, mtime: new Date() })
+        .mockResolvedValueOnce({ isDirectory: () => false, isFile: () => true, size: 18, mtime: new Date() })
+        .mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false, size: 0, mtime: new Date() });
+
+      mockReaddir.mockResolvedValue([
+        { name: ".editorconfig", isDirectory: () => false, isFile: () => true },
+        { name: ".husky", isDirectory: () => true, isFile: () => false },
+      ]);
+
+      const result = await listProjectFiles(mockStore);
+
+      expect(result.entries).toHaveLength(2);
+      const names = result.entries.map((e) => e.name);
+      expect(names).toContain(".editorconfig");
+      expect(names).toContain(".husky");
+    });
+  });
+});
+
 describe("URL-encoded characters handling", () => {
   const mockGetRootDir = vi.fn();
   const mockStore = {

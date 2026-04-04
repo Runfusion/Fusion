@@ -165,4 +165,27 @@ describe("FileBrowserModal", () => {
     expect(mockOnClose).toHaveBeenCalledTimes(1);
     expect(mockSave).toHaveBeenCalledTimes(1);
   });
+
+  it("renders hidden files and directories from the file listing", () => {
+    mockUseWorkspaceFileBrowser.mockReturnValue({
+      ...defaultBrowserState,
+      entries: [
+        { name: ".env.example", type: "file", size: 42, mtime: "2024-01-01" },
+        { name: ".github", type: "directory", mtime: "2024-01-01" },
+        { name: "src", type: "directory", mtime: "2024-01-01" },
+      ],
+    });
+
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    expect(screen.getByText(".env.example")).toBeInTheDocument();
+    expect(screen.getByText(".github")).toBeInTheDocument();
+    expect(screen.getByText("src")).toBeInTheDocument();
+  });
 });

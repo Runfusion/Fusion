@@ -389,6 +389,15 @@ Global activity tracking accessible from the header (history icon):
 - Filter events by type
 - Auto-refresh every 30 seconds
 
+### Files
+
+Built-in file browser for viewing and editing project files directly from the dashboard:
+
+- Browse the project root or any active task worktree
+- View and edit text files with syntax highlighting
+- Hidden files and directories (dotfiles like `.env.example`, `.github/*`) are visible
+- Create and save files within the workspace
+
 ### Board Search & Views
 
 **Board View:**

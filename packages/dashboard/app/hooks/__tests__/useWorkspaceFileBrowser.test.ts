@@ -71,4 +71,26 @@ describe("useWorkspaceFileBrowser", () => {
     expect(result.current.error).toBe("Failed to load files");
     expect(result.current.entries).toEqual([]);
   });
+
+  it("returns hidden files and directories from the API response", async () => {
+    const mockResponse: FileListResponse = {
+      path: ".",
+      entries: [
+        { name: ".env.example", type: "file", size: 42, mtime: "2024-01-01T00:00:00Z" },
+        { name: ".github", type: "directory", mtime: "2024-01-01T00:00:00Z" },
+        { name: "src", type: "directory", mtime: "2024-01-01T00:00:00Z" },
+      ],
+    };
+    mockFetchWorkspaceFileList.mockResolvedValueOnce(mockResponse);
+
+    const { result } = renderHook(() => useWorkspaceFileBrowser("project", true));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.entries).toEqual(mockResponse.entries);
+    const names = result.current.entries.map((e) => e.name);
+    expect(names).toContain(".env.example");
+    expect(names).toContain(".github");
+    expect(names).toContain("src");
+  });
 });
