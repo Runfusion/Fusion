@@ -302,7 +302,7 @@ Project settings override global settings. Configure in the dashboard under **Se
 
 ### Agent Log Model Display
 
-The dashboard Agent Log tab shows which AI models were used for each task, including:
+The dashboard Agent Log subview (within the unified Logs tab) shows which AI models were used for each task, including:
 
 - **Executor** — the model used to implement the task
 - **Validator** — the model used to review code and plans

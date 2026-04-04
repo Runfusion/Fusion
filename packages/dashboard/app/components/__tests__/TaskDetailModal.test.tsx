@@ -904,7 +904,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("shows correct top-level tabs including Logs", async () => {
-      render(
+      const { container } = render(
         <TaskDetailModal
           task={makeTask()}
           onClose={noop}
@@ -916,8 +916,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // For an in-progress task, the top-level tabs are:
-      // Definition, Logs, Changes, Comments, Model (no Activity/Agent Log as top-level)
+      // For an in-progress task (no workflow steps, no merge commit),
+      // the top-level tabs are: Definition, Logs, Changes, Comments, Model
       const tabTexts = ["Definition", "Logs", "Changes", "Comments", "Model"];
       const tabs = screen.getAllByRole("button").filter((b) =>
         tabTexts.includes(b.textContent || "")
@@ -928,6 +928,13 @@ describe("TaskDetailModal", () => {
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Comments");
       expect(tabs[4].textContent).toBe("Model");
+
+      // Activity and Agent Log are NOT top-level tabs (they are subviews inside Logs)
+      expect(container.querySelectorAll(".detail-tab").length).toBe(5);
+      // Workflow tab should NOT appear when no workflow steps are configured
+      expect(screen.queryByText("Workflow")).toBeNull();
+      // Commits tab should NOT appear for non-done tasks
+      expect(screen.queryByText("Commits")).toBeNull();
     });
   });
 
@@ -1644,7 +1651,7 @@ describe("TaskDetailModal", () => {
       expect(segments[1].getAttribute("data-tooltip")).toBe("Add tests (in-progress)");
     });
 
-    it("step progress only renders in Definition tab, not Agent Log tab", () => {
+    it("step progress only renders in Definition tab, not in Agent Log subview", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -1669,7 +1676,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Logs"));
       fireEvent.click(screen.getByText("Agent Log"));
 
-      // Should not be visible in Agent Log tab
+      // Should not be visible in Agent Log subview
       expect(container.querySelector(".detail-step-progress")).toBeNull();
     });
 
@@ -2254,7 +2261,7 @@ describe("TaskDetailModal", () => {
       });
     });
 
-    it("shows all tabs in correct order", () => {
+    it("shows all tabs in correct order for in-progress task", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask()}
@@ -2267,13 +2274,137 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      // In-progress tasks without workflow steps show exactly 5 tabs:
+      // Definition, Logs, Changes, Comments, Model
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(5); // Definition, Logs, Changes, Comments, Model ( for in-progress tasks
+      expect(tabs.length).toBe(5);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Comments");
       expect(tabs[4].textContent).toBe("Model");
+      // Conditional tabs should NOT be present
+      expect(screen.queryByText("Workflow")).toBeNull();
+      expect(screen.queryByText("Commits")).toBeNull();
+    });
+
+    it("shows Workflow tab in correct position when enabledWorkflowSteps is non-empty", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ enabledWorkflowSteps: ["WS-001"] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // In-progress task with workflow steps: 6 tabs (Workflow after Model)
+      const tabs = container.querySelectorAll(".detail-tab");
+      expect(tabs.length).toBe(6);
+      expect(tabs[0].textContent).toBe("Definition");
+      expect(tabs[1].textContent).toBe("Logs");
+      expect(tabs[2].textContent).toBe("Changes");
+      expect(tabs[3].textContent).toBe("Comments");
+      expect(tabs[4].textContent).toBe("Model");
+      expect(tabs[5].textContent).toBe("Workflow");
+    });
+
+    it("shows Commits tab for done task with mergeDetails.commitSha", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "done",
+            mergeDetails: { commitSha: "abc1234567890", filesChanged: 3 },
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Done task with commit SHA: Definition, Logs, Changes, Commits, Comments, Model
+      const tabs = container.querySelectorAll(".detail-tab");
+      expect(tabs.length).toBe(6);
+      expect(tabs[0].textContent).toBe("Definition");
+      expect(tabs[1].textContent).toBe("Logs");
+      expect(tabs[2].textContent).toBe("Changes");
+      expect(tabs[3].textContent).toBe("Commits");
+      expect(tabs[4].textContent).toBe("Comments");
+      expect(tabs[5].textContent).toBe("Model");
+    });
+
+    it("shows all conditional tabs for done task with workflow steps and commit SHA", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "done",
+            mergeDetails: { commitSha: "abc1234567890", filesChanged: 3 },
+            enabledWorkflowSteps: ["WS-001"],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // Done task with both workflow steps and commit SHA:
+      // Definition, Logs, Changes, Commits, Comments, Model, Workflow
+      const tabs = container.querySelectorAll(".detail-tab");
+      expect(tabs.length).toBe(7);
+      expect(tabs[0].textContent).toBe("Definition");
+      expect(tabs[1].textContent).toBe("Logs");
+      expect(tabs[2].textContent).toBe("Changes");
+      expect(tabs[3].textContent).toBe("Commits");
+      expect(tabs[4].textContent).toBe("Comments");
+      expect(tabs[5].textContent).toBe("Model");
+      expect(tabs[6].textContent).toBe("Workflow");
+    });
+
+    it("does NOT show Changes tab for triage/todo tasks", () => {
+      const { container: triageContainer } = render(
+        <TaskDetailModal
+          task={makeTask({ column: "triage" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const triageTabs = triageContainer.querySelectorAll(".detail-tab");
+      expect(triageTabs.length).toBe(4); // Definition, Logs, Comments, Model
+      expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
+        "Definition", "Logs", "Comments", "Model",
+      ]);
+
+      const { container: todoContainer } = render(
+        <TaskDetailModal
+          task={makeTask({ column: "todo" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const todoTabs = todoContainer.querySelectorAll(".detail-tab");
+      expect(todoTabs.length).toBe(4); // Definition, Logs, Comments, Model
+      expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
+        "Definition", "Logs", "Comments", "Model",
+      ]);
     });
 
     it("shows empty state and Edit button when no prompt", () => {
