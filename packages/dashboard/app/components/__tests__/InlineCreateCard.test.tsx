@@ -334,6 +334,17 @@ describe("InlineCreateCard model selector", () => {
     });
   });
 
+  it("Save button uses theme-driven btn-task-create class", () => {
+    const { props } = renderCard();
+    expandCard();
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+    fireEvent.change(textarea, { target: { value: "Some task" } });
+
+    // Save button should have the btn-task-create class
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    expect(saveButton.className).toContain("btn-task-create");
+  });
+
   it("includes selected models in the submit payload", async () => {
     const { props } = renderCard();
     expandCard();

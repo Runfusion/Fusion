@@ -43,17 +43,20 @@ describe("Header", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-  it("renders a logo image with correct src and alt", () => {
+  it("renders a theme-driven logo element (inline SVG) with aria-label", () => {
     render(<Header />);
-    const logo = screen.getByAltText("Fusion logo");
+    // The logo is now an inline SVG with aria-label instead of img with alt
+    const logo = screen.getByLabelText("Fusion logo");
     expect(logo).toBeDefined();
-    expect(logo.tagName).toBe("IMG");
-    expect((logo as HTMLImageElement).src).toContain("/logo.svg");
+    expect(logo.tagName.toLowerCase()).toBe("svg");
+    // The SVG should have the currentColor" fill
+    const circles = logo.querySelectorAll("circle");
+    expect(circles).toHaveLength(4);
   });
 
   it("renders the logo before the h1 element", () => {
     render(<Header />);
-    const logo = screen.getByAltText("Fusion logo");
+    const logo = screen.getByLabelText("Fusion logo");
     const h1 = screen.getByRole("heading", { level: 1 });
     // Logo should be a preceding sibling of the h1
     expect(logo.compareDocumentPosition(h1) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

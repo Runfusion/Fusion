@@ -165,7 +165,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
           </label>
         )}
         {onNewTask && (
-          <button className="btn btn-primary btn-sm" onClick={onNewTask}>
+          <button className="btn btn-task-create btn-sm" onClick={onNewTask}>
             + New Task
           </button>
         )}

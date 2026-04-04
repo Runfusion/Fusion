@@ -910,7 +910,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           {!isSubmitting && (
             <button
               type="button"
-              className="btn btn-sm"
+              className="btn btn-task-create btn-sm"
               onClick={handleSaveClick}
               onMouseDown={(e) => e.preventDefault()}
               disabled={!description.trim() || isSubmitting}

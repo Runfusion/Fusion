@@ -747,7 +747,7 @@ export function InlineCreateCard({
             <span className="inline-create-hint">Enter to create · Esc to cancel</span>
             <button
               type="button"
-              className="btn btn-primary btn-sm"
+              className="btn btn-task-create btn-sm"
               onClick={handleSubmit}
               disabled={!description.trim() || submitting}
               data-testid="save-button"

@@ -1457,6 +1457,8 @@ describe("QuickEntryBox", () => {
       // Button should have data-testid="save-button"
       const saveButton = screen.getByTestId("save-button");
       expect(saveButton).toBeTruthy();
+      // Save button uses theme-driven class for task creation CTA
+      expect(saveButton.className).toContain("btn-task-create");
     });
 
     it("save button has correct title attribute", () => {

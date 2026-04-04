@@ -432,6 +432,14 @@ describe("ListView", () => {
     expect(mockOnNewTask).toHaveBeenCalled();
   });
 
+  it("+ New Task button uses theme-driven btn-task-create class", () => {
+    const mockOnNewTask = vi.fn();
+    renderListView({ onNewTask: mockOnNewTask });
+
+    const newTaskButton = screen.getByText("+ New Task");
+    expect(newTaskButton.className).toContain("btn-task-create");
+  });
+
   it("does not render + New Task button when onNewTask is not provided", () => {
     renderListView({ onNewTask: undefined });
 

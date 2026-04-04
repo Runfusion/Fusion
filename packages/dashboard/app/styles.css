@@ -100,6 +100,17 @@
   --color-error: #f85149;
   --color-error-dark: #da3633;
   --color-muted: #8b949e;
+
+  /* Logo & branding tokens */
+  --logo-accent: var(--todo);
+
+  /* Task-creation CTA tokens */
+  --cta-bg: #238636;
+  --cta-border: #2ea043;
+  --cta-text: #fff;
+  --cta-bg-hover: #2ea043;
+  --cta-border-hover: #3fb950;
+  --cta-glow: 0 0 8px rgba(46, 160, 67, 0.3);
 }
 
 html,
@@ -138,6 +149,7 @@ body {
   width: 24px;
   height: 24px;
   flex-shrink: 0;
+  color: var(--logo-accent);
 }
 .header-actions {
   display: flex;
@@ -598,6 +610,7 @@ body {
   font-size: 20px;
   font-weight: 700;
   letter-spacing: -0.5px;
+  color: var(--logo-accent);
 }
 /* === Buttons === */
 .btn {
@@ -638,6 +651,18 @@ body {
 .btn-primary:hover {
   background: #2ea043;
   box-shadow: var(--shadow-glow);
+}
+
+/* Theme-driven task-creation CTA — uses tokens so every color theme updates consistently */
+.btn-task-create {
+  background: var(--cta-bg);
+  border-color: var(--cta-border);
+  color: var(--cta-text);
+}
+.btn-task-create:hover {
+  background: var(--cta-bg-hover);
+  border-color: var(--cta-border-hover);
+  box-shadow: var(--cta-glow);
 }
 
 .btn-danger {
@@ -7982,6 +8007,16 @@ html .column.drag-over * {
   background: #0969da;
 }
 
+[data-theme="light"] .btn-task-create {
+  background: #1a7f37;
+  border-color: #1f883d;
+}
+
+[data-theme="light"] .btn-task-create:hover {
+  background: #1f883d;
+  box-shadow: var(--shadow-glow);
+}
+
 [data-theme="light"] .btn-primary {
   background: #1a7f37;
   border-color: #1f883d;
@@ -8459,14 +8494,16 @@ html .column.drag-over * {
   font-weight: 600;
 }
 
-[data-color-theme="factory"] .btn-primary {
+[data-color-theme="factory"] .btn-primary,
+[data-color-theme="factory"] .btn-task-create {
   background: transparent;
   border-color: var(--todo);
   color: var(--todo);
   box-shadow: none;
 }
 
-[data-color-theme="factory"] .btn-primary:hover {
+[data-color-theme="factory"] .btn-primary:hover,
+[data-color-theme="factory"] .btn-task-create:hover {
   background: var(--todo);
   color: var(--bg);
   box-shadow: var(--shadow-glow);

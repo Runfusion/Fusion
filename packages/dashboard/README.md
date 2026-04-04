@@ -318,6 +318,27 @@ To add a new color theme:
 3. Add the swatch class for the theme picker in the CSS
 4. Update `ThemeSelector.tsx` with the new theme option
 
+### Theme-Driven Logo and Task-Creation CTAs
+
+The Fusion logo and all task-creation action buttons (including the "+ New Task" and "Save" buttons in board view, list view, and inline creation surfaces) are fully tokenized and respond to the active color theme. This ensures branding and task-creation affordances stay visually consistent across all 12 color themes and both light/dark modes.
+
+**Theme tokens used:**
+| Token | Purpose |
+|-------|---------|
+| `--logo-accent` | Fusion logo SVG fill color (defaults to `var(--todo)`) |
+| `--cta-bg` / `--cta-bg-hover` | Task-creation CTA button background |
+| `--cta-border` / `--cta-border-hover` | Task-creation CTA button border |
+| `--cta-text` / `--cta-text-hover` | Task-creation CTA button text |
+| `--cta-glow` | Box-shadow glow on hover |
+
+**Semantic class:** `.btn-task-create` — used consistently on:
+- Board column "+ New Task" button (`Column.tsx`)
+- List view "+ New Task" button (`ListView.tsx`)
+- Inline create card "Save" button (`InlineCreateCard.tsx`)
+- Quick entry box "Save" button (`QuickEntryBox.tsx`)
+
+All color themes automatically provide values for these tokens. Adding a new color theme requires only setting `--todo` (and optionally `--logo-accent` if the logo should differ from the todo column color).
+
 ## Performance Characteristics
 
 The dashboard includes several runtime safeguards to stay responsive during long sessions and on larger boards:

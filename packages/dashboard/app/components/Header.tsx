@@ -242,7 +242,20 @@ export function Header({
   return (
     <header className="header">
       <div className="header-left">
-        <img src="/logo.svg" alt="Fusion logo" className="header-logo" width={24} height={24} />
+        <svg
+          className="header-logo"
+          width={24}
+          height={24}
+          viewBox="0 0 128 128"
+          fill="none"
+          aria-label="Fusion logo"
+          role="img"
+        >
+          <circle cx="44" cy="44" r="20" fill="currentColor" />
+          <circle cx="84" cy="44" r="20" fill="currentColor" />
+          <circle cx="44" cy="84" r="20" fill="currentColor" />
+          <circle cx="84" cy="84" r="20" fill="currentColor" />
+        </svg>
         <h1 className="logo">Fusion</h1>
 
         {/* Project Selector - shown when 2+ projects on desktop only */}
