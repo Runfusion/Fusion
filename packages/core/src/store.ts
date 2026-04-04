@@ -583,10 +583,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (!row) {
       return { nextId: 1 };
     }
+    const workflowSteps = fromJson<import("./types.js").WorkflowStep[]>(row.workflowSteps);
+    // Normalize legacy steps that don't have a mode field — default to "prompt"
+    if (workflowSteps) {
+      for (const ws of workflowSteps) {
+        if (!ws.mode) {
+          ws.mode = "prompt";
+        }
+      }
+    }
     return {
       nextId: row.nextId || 1,
       settings: fromJson<Settings>(row.settings),
-      workflowSteps: fromJson<import("./types.js").WorkflowStep[]>(row.workflowSteps),
+      workflowSteps,
       nextWorkflowStepId: row.nextWorkflowStepId || 1,
     };
   }
@@ -2522,15 +2531,24 @@ ${stepsSection}`;
       const nextWsId = config.nextWorkflowStepId || 1;
       const id = `WS-${String(nextWsId).padStart(3, "0")}`;
 
+      const mode = input.mode || "prompt";
+
+      // Validate: script mode requires scriptName
+      if (mode === "script" && !input.scriptName?.trim()) {
+        throw new Error("Script mode requires a scriptName");
+      }
+
       const now = new Date().toISOString();
       const step: import("./types.js").WorkflowStep = {
         id,
         name: input.name,
         description: input.description,
-        prompt: input.prompt || "",
+        mode,
+        prompt: mode === "prompt" ? (input.prompt || "") : "",
+        scriptName: mode === "script" ? input.scriptName : undefined,
         enabled: input.enabled !== undefined ? input.enabled : true,
-        modelProvider: input.modelProvider,
-        modelId: input.modelId,
+        modelProvider: mode === "prompt" ? input.modelProvider : undefined,
+        modelId: mode === "prompt" ? input.modelId : undefined,
         createdAt: now,
         updatedAt: now,
       };
@@ -2577,12 +2595,36 @@ ${stepsSection}`;
       }
 
       const step = steps[index];
+
+      // Handle mode change
+      if (updates.mode !== undefined) {
+        const newMode = updates.mode;
+        // Validate: script mode requires scriptName
+        if (newMode === "script" && !updates.scriptName?.trim() && !step.scriptName?.trim()) {
+          throw new Error("Script mode requires a scriptName");
+        }
+        step.mode = newMode;
+        // When switching to script mode, clear prompt and model overrides
+        if (newMode === "script") {
+          step.prompt = "";
+          step.modelProvider = undefined;
+          step.modelId = undefined;
+        }
+        // When switching to prompt mode, clear scriptName
+        if (newMode === "prompt") {
+          step.scriptName = undefined;
+        }
+      }
+
       if (updates.name !== undefined) step.name = updates.name;
       if (updates.description !== undefined) step.description = updates.description;
-      if (updates.prompt !== undefined) step.prompt = updates.prompt;
+      if (updates.prompt !== undefined && step.mode === "prompt") step.prompt = updates.prompt;
+      if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
       if (updates.enabled !== undefined) step.enabled = updates.enabled;
-      if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
-      if ("modelId" in updates) step.modelId = updates.modelId;
+      if (step.mode === "prompt") {
+        if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
+        if ("modelId" in updates) step.modelId = updates.modelId;
+      }
       step.updatedAt = new Date().toISOString();
 
       config.workflowSteps = steps;

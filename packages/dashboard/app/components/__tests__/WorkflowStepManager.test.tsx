@@ -8,6 +8,7 @@ const mockSteps: WorkflowStep[] = [
     id: "WS-001",
     name: "Documentation Review",
     description: "Verify all public APIs have documentation",
+    mode: "prompt",
     prompt: "Review the task changes and verify docs.",
     enabled: true,
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -17,6 +18,7 @@ const mockSteps: WorkflowStep[] = [
     id: "WS-002",
     name: "QA Check",
     description: "Run tests and verify they pass",
+    mode: "prompt",
     prompt: "Execute the test suite.",
     enabled: false,
     createdAt: "2026-01-02T00:00:00.000Z",
@@ -30,6 +32,7 @@ vi.mock("../../api", () => ({
     id: "WS-003",
     name: "New Step",
     description: "New description",
+    mode: "prompt",
     prompt: "",
     enabled: true,
     createdAt: "2026-01-03T00:00:00.000Z",
@@ -45,6 +48,7 @@ vi.mock("../../api", () => ({
     prompt: "AI-generated detailed prompt",
     workflowStep: { ...mockSteps[0], prompt: "AI-generated detailed prompt" },
   })),
+  fetchScripts: vi.fn(() => Promise.resolve({ test: "pnpm test", lint: "pnpm lint" })),
 }));
 
 import {
@@ -54,6 +58,7 @@ import {
   deleteWorkflowStep,
   refineWorkflowStepPrompt,
 } from "../../api";
+import { fetchScripts } from "../../api";
 
 const onClose = vi.fn();
 const addToast = vi.fn();
@@ -133,7 +138,9 @@ describe("WorkflowStepManager", () => {
       expect(createWorkflowStep).toHaveBeenCalledWith({
         name: "New Step",
         description: "New description",
+        mode: "prompt",
         prompt: undefined,
+        scriptName: undefined,
         enabled: true,
       }, undefined);
       expect(addToast).toHaveBeenCalledWith("Workflow step created", "success");
@@ -240,5 +247,114 @@ describe("WorkflowStepManager", () => {
       expect(screen.getByText("Enabled")).toBeInTheDocument();
       expect(screen.getByText("Disabled")).toBeInTheDocument();
     });
+  });
+
+  it("shows AI Prompt mode badge for prompt steps", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce(mockSteps);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("AI Prompt")).toHaveLength(2);
+    });
+  });
+
+  it("shows Script mode badge for script steps", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "" },
+    ]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Script")).toBeInTheDocument();
+    });
+  });
+
+  it("shows mode selector when creating a new step", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    expect(screen.getByTestId("workflow-step-mode-selector")).toBeInTheDocument();
+    expect(screen.getByTestId("mode-prompt")).toBeInTheDocument();
+    expect(screen.getByTestId("mode-script")).toBeInTheDocument();
+  });
+
+  it("shows prompt field in prompt mode and script select in script mode", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    // Default is prompt mode — should show prompt field
+    expect(screen.getByTestId("workflow-step-prompt")).toBeInTheDocument();
+    expect(screen.queryByTestId("workflow-step-script-select")).not.toBeInTheDocument();
+
+    // Switch to script mode
+    fireEvent.click(screen.getByTestId("mode-script"));
+
+    expect(screen.queryByTestId("workflow-step-prompt")).not.toBeInTheDocument();
+    expect(screen.getByTestId("workflow-step-script-select")).toBeInTheDocument();
+
+    // Switch back to prompt mode
+    fireEvent.click(screen.getByTestId("mode-prompt"));
+
+    expect(screen.getByTestId("workflow-step-prompt")).toBeInTheDocument();
+    expect(screen.queryByTestId("workflow-step-script-select")).not.toBeInTheDocument();
+  });
+
+  it("loads script name when editing a script-mode step", async () => {
+    vi.mocked(fetchWorkflowSteps)
+      .mockResolvedValueOnce([{ ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "" }])
+      .mockResolvedValueOnce([{ ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "" }]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Documentation Review")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Documentation Review"));
+
+    // Script mode should be selected
+    const scriptSelect = screen.getByTestId("workflow-step-script-select") as HTMLSelectElement;
+    expect(scriptSelect.value).toBe("test");
+  });
+
+  it("disables save when script mode is selected without a script name", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    const nameInput = screen.getByTestId("workflow-step-name");
+    const descInput = screen.getByTestId("workflow-step-description");
+
+    fireEvent.change(nameInput, { target: { value: "Test" } });
+    fireEvent.change(descInput, { target: { value: "Test desc" } });
+
+    // Switch to script mode
+    fireEvent.click(screen.getByTestId("mode-script"));
+
+    // Save should be disabled (no script selected)
+    const saveBtn = screen.getByTestId("save-workflow-step") as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(true);
   });
 });

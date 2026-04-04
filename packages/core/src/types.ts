@@ -44,6 +44,9 @@ export interface ModelPreset {
 }
 
 /** A reusable workflow step definition that can run after task implementation. */
+/** Execution mode for a workflow step. */
+export type WorkflowStepMode = "prompt" | "script";
+
 export interface WorkflowStep {
   /** Unique identifier (e.g., "WS-001") */
   id: string;
@@ -51,17 +54,21 @@ export interface WorkflowStep {
   name: string;
   /** Short description for UI display */
   description: string;
-  /** Full agent prompt to execute when this step runs */
+  /** Execution mode — "prompt" runs an AI agent, "script" runs a named project script */
+  mode: WorkflowStepMode;
+  /** Full agent prompt to execute when this step runs (used when mode is "prompt") */
   prompt: string;
+  /** Name of a script from project settings `scripts` map to execute (required when mode is "script") */
+  scriptName?: string;
   /** Whether this step is available for selection on new tasks */
   enabled: boolean;
   /** AI model provider override for the workflow step agent (e.g., "anthropic").
    *  Must be set together with `modelId`. When both model fields are undefined,
-   *  the executor uses global settings defaults. */
+   *  the executor uses global settings defaults. Only used when mode is "prompt". */
   modelProvider?: string;
   /** AI model ID override for the workflow step agent (e.g., "claude-sonnet-4-5").
    *  Must be set together with `modelProvider`. When both model fields are undefined,
-   *  the executor uses global settings defaults. */
+   *  the executor uses global settings defaults. Only used when mode is "prompt". */
   modelId?: string;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
@@ -76,13 +83,18 @@ export type NtfyNotificationEvent = "in-review" | "merged" | "failed";
 export interface WorkflowStepInput {
   name: string;
   description: string;
-  /** Optional — can be AI-generated later via refinement */
+  /** Execution mode — defaults to "prompt" if not specified */
+  mode?: WorkflowStepMode;
+  /** Agent prompt (used when mode is "prompt"). Optional — can be AI-generated later via refinement. */
   prompt?: string;
+  /** Script name from project settings (required when mode is "script").
+   *  Must reference a named script in `settings.scripts` — no raw commands. */
+  scriptName?: string;
   /** Defaults to true if not specified */
   enabled?: boolean;
-  /** AI model provider override. Must be set together with modelId. */
+  /** AI model provider override. Must be set together with modelId. Only used when mode is "prompt". */
   modelProvider?: string;
-  /** AI model ID override. Must be set together with modelProvider. */
+  /** AI model ID override. Must be set together with modelProvider. Only used when mode is "prompt". */
   modelId?: string;
 }
 

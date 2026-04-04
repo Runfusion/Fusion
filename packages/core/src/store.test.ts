@@ -4311,7 +4311,9 @@ Task with acceptance criteria
       expect(ws.id).toBe("WS-001");
       expect(ws.name).toBe("Documentation Review");
       expect(ws.description).toBe("Verify all public APIs have documentation");
+      expect(ws.mode).toBe("prompt");
       expect(ws.prompt).toBe("Review the task changes and verify that all new public functions have docs.");
+      expect(ws.scriptName).toBeUndefined();
       expect(ws.enabled).toBe(true);
       expect(ws.createdAt).toBeDefined();
       expect(ws.updatedAt).toBeDefined();
@@ -4326,8 +4328,48 @@ Task with acceptance criteria
       expect(ws.id).toBe("WS-001");
       expect(ws.name).toBe("QA Check");
       expect(ws.description).toBe("Run tests and verify they pass");
+      expect(ws.mode).toBe("prompt"); // Default mode
       expect(ws.prompt).toBe(""); // Empty when not provided
       expect(ws.enabled).toBe(true); // Default enabled
+    });
+
+    it("should create a script-mode workflow step", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Run Tests",
+        description: "Execute the test suite",
+        mode: "script",
+        scriptName: "test",
+      });
+
+      expect(ws.id).toBe("WS-001");
+      expect(ws.name).toBe("Run Tests");
+      expect(ws.mode).toBe("script");
+      expect(ws.prompt).toBe("");
+      expect(ws.scriptName).toBe("test");
+      expect(ws.modelProvider).toBeUndefined();
+      expect(ws.modelId).toBeUndefined();
+      expect(ws.enabled).toBe(true);
+    });
+
+    it("should reject script mode without scriptName", async () => {
+      await expect(
+        store.createWorkflowStep({
+          name: "Broken",
+          description: "No script name",
+          mode: "script",
+        }),
+      ).rejects.toThrow("Script mode requires a scriptName");
+    });
+
+    it("should reject script mode with empty scriptName", async () => {
+      await expect(
+        store.createWorkflowStep({
+          name: "Broken",
+          description: "Empty script name",
+          mode: "script",
+          scriptName: "  ",
+        }),
+      ).rejects.toThrow("Script mode requires a scriptName");
     });
 
     it("should auto-increment workflow step IDs", async () => {
@@ -4385,11 +4427,97 @@ Task with acceptance criteria
 
       expect(updated.name).toBe("Updated");
       expect(updated.description).toBe("Updated desc");
+      expect(updated.mode).toBe("prompt");
       expect(updated.prompt).toBe("Updated prompt");
       expect(updated.enabled).toBe(false);
       expect(new Date(updated.updatedAt).getTime()).toBeGreaterThanOrEqual(
         new Date(ws.updatedAt).getTime()
       );
+    });
+
+    it("should switch a workflow step from prompt to script mode", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Docs",
+        description: "Check docs",
+        prompt: "Review documentation.",
+        mode: "prompt",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+      });
+
+      const updated = await store.updateWorkflowStep(ws.id, {
+        mode: "script",
+        scriptName: "lint",
+      });
+
+      expect(updated.mode).toBe("script");
+      expect(updated.scriptName).toBe("lint");
+      expect(updated.prompt).toBe(""); // Cleared on mode switch
+      expect(updated.modelProvider).toBeUndefined(); // Cleared on mode switch
+      expect(updated.modelId).toBeUndefined(); // Cleared on mode switch
+    });
+
+    it("should switch a workflow step from script to prompt mode", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Lint",
+        description: "Run linting",
+        mode: "script",
+        scriptName: "lint",
+      });
+
+      const updated = await store.updateWorkflowStep(ws.id, {
+        mode: "prompt",
+        prompt: "Review code quality.",
+      });
+
+      expect(updated.mode).toBe("prompt");
+      expect(updated.scriptName).toBeUndefined(); // Cleared on mode switch
+      expect(updated.prompt).toBe("Review code quality.");
+    });
+
+    it("should reject switching to script mode without scriptName", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Docs",
+        description: "Check docs",
+        prompt: "Review documentation.",
+      });
+
+      await expect(
+        store.updateWorkflowStep(ws.id, { mode: "script" }),
+      ).rejects.toThrow("Script mode requires a scriptName");
+    });
+
+    it("should ignore prompt updates for script-mode steps", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Lint",
+        description: "Run linting",
+        mode: "script",
+        scriptName: "lint",
+      });
+
+      const updated = await store.updateWorkflowStep(ws.id, {
+        prompt: "This should be ignored",
+      });
+
+      expect(updated.prompt).toBe(""); // Prompt not updated for script mode
+    });
+
+    it("should ignore model override updates for script-mode steps", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Lint",
+        description: "Run linting",
+        mode: "script",
+        scriptName: "lint",
+      });
+
+      const updated = await store.updateWorkflowStep(ws.id, {
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+      });
+
+      // Model overrides should not be set for script mode
+      expect(updated.modelProvider).toBeUndefined();
+      expect(updated.modelId).toBeUndefined();
     });
 
     it("should throw when updating non-existent workflow step", async () => {
@@ -4524,6 +4652,43 @@ Task with acceptance criteria
       const found = await store.getWorkflowStep(ws.id);
       expect(found!.modelProvider).toBe("anthropic");
       expect(found!.modelId).toBe("claude-sonnet-4-5");
+    });
+
+    it("should normalize legacy workflow steps without mode to prompt mode", async () => {
+      // Create a step normally (it will have mode: "prompt")
+      const ws = await store.createWorkflowStep({
+        name: "Legacy Step",
+        description: "Pre-existing step",
+        prompt: "Review the code.",
+      });
+
+      // Simulate legacy data by writing a step without mode directly to DB
+      const config = await (store as any).readConfig();
+      // Remove mode from the stored step to simulate legacy data
+      delete config.workflowSteps[0].mode;
+      await (store as any).writeConfig(config);
+
+      // Re-read should normalize mode to "prompt"
+      const found = await store.getWorkflowStep(ws.id);
+      expect(found!.mode).toBe("prompt");
+      expect(found!.prompt).toBe("Review the code.");
+    });
+
+    it("should persist script-mode workflow step across list/get", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Type Check",
+        description: "Run TypeScript type checking",
+        mode: "script",
+        scriptName: "typecheck",
+      });
+
+      const listed = await store.listWorkflowSteps();
+      expect(listed[0].mode).toBe("script");
+      expect(listed[0].scriptName).toBe("typecheck");
+
+      const found = await store.getWorkflowStep(ws.id);
+      expect(found!.mode).toBe("script");
+      expect(found!.scriptName).toBe("typecheck");
     });
   });
 

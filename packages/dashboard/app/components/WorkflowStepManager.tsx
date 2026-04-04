@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { WorkflowStep, WorkflowStepInput } from "@fusion/core";
+import type { WorkflowStep, WorkflowStepInput, WorkflowStepMode } from "@fusion/core";
 import {
   fetchWorkflowSteps,
   createWorkflowStep,
@@ -8,6 +8,7 @@ import {
   refineWorkflowStepPrompt,
   fetchWorkflowStepTemplates,
   createWorkflowStepFromTemplate,
+  fetchScripts,
   type WorkflowStepTemplate,
 } from "../api";
 import type { ToastType } from "../hooks/useToast";
@@ -26,6 +27,8 @@ import {
   Eye,
   LayoutGrid,
   BookOpen,
+  Terminal,
+  MessageSquare,
 } from "lucide-react";
 
 interface WorkflowStepManagerProps {
@@ -38,7 +41,9 @@ interface WorkflowStepManagerProps {
 interface StepFormData {
   name: string;
   description: string;
+  mode: WorkflowStepMode;
   prompt: string;
+  scriptName: string;
   enabled: boolean;
 }
 
@@ -47,7 +52,9 @@ type TabId = "my-steps" | "templates";
 const EMPTY_FORM: StepFormData = {
   name: "",
   description: "",
+  mode: "prompt",
   prompt: "",
+  scriptName: "",
   enabled: true,
 };
 
@@ -94,6 +101,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
   const [refining, setRefining] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [addingTemplateId, setAddingTemplateId] = useState<string | null>(null);
+  const [availableScripts, setAvailableScripts] = useState<Record<string, string>>({});
 
   const loadSteps = useCallback(async () => {
     try {
@@ -106,6 +114,15 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
       setLoading(false);
     }
   }, [addToast, projectId]);
+
+  const loadScripts = useCallback(async () => {
+    try {
+      const scripts = await fetchScripts(projectId);
+      setAvailableScripts(scripts || {});
+    } catch {
+      // Silently ignore — scripts are optional
+    }
+  }, [projectId]);
 
   const loadTemplates = useCallback(async () => {
     try {
@@ -123,8 +140,9 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
     if (isOpen) {
       loadSteps();
       loadTemplates();
+      loadScripts();
     }
-  }, [isOpen, loadSteps, loadTemplates]);
+  }, [isOpen, loadSteps, loadTemplates, loadScripts]);
 
   const handleCreate = useCallback(() => {
     setIsCreating(true);
@@ -138,7 +156,9 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
     setForm({
       name: step.name,
       description: step.description,
+      mode: step.mode || "prompt",
       prompt: step.prompt,
+      scriptName: step.scriptName || "",
       enabled: step.enabled,
     });
   }, []);
@@ -161,7 +181,9 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
         const input: WorkflowStepInput = {
           name: form.name.trim(),
           description: form.description.trim(),
-          prompt: form.prompt.trim() || undefined,
+          mode: form.mode,
+          prompt: form.mode === "prompt" ? (form.prompt.trim() || undefined) : undefined,
+          scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
         };
         await createWorkflowStep(input, projectId);
@@ -170,7 +192,9 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
         await updateWorkflowStep(editingId, {
           name: form.name.trim(),
           description: form.description.trim(),
-          prompt: form.prompt,
+          mode: form.mode,
+          prompt: form.mode === "prompt" ? form.prompt : "",
+          scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
         }, projectId);
         addToast("Workflow step updated", "success");
@@ -204,6 +228,8 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
 
   const handleRefine = useCallback(async () => {
     if (!editingId && !isCreating) return;
+    // Refine only works for prompt mode
+    if (form.mode !== "prompt") return;
 
     // For new steps being created, we need to save first then refine
     if (isCreating) {
@@ -217,6 +243,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
         const input: WorkflowStepInput = {
           name: form.name.trim(),
           description: form.description.trim(),
+          mode: "prompt",
           prompt: form.prompt.trim() || undefined,
           enabled: form.enabled,
         };
@@ -406,6 +433,21 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                                   }}
                                 >
                                   {step.enabled ? "Enabled" : "Disabled"}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: "11px",
+                                    padding: "2px 6px",
+                                    borderRadius: "4px",
+                                    background: (step.mode || "prompt") === "script"
+                                      ? "rgba(168, 85, 247, 0.15)"
+                                      : "rgba(59, 130, 246, 0.15)",
+                                    color: (step.mode || "prompt") === "script"
+                                      ? "#a855f7"
+                                      : "#3b82f6",
+                                  }}
+                                >
+                                  {(step.mode || "prompt") === "script" ? "Script" : "AI Prompt"}
                                 </span>
                               </div>
                               <div
@@ -673,60 +715,168 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                       />
                     </div>
 
-                    {/* Prompt */}
+                    {/* Mode Selector */}
                     <div>
-                      <div
+                      <label
                         style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
+                          display: "block",
+                          fontSize: "12px",
+                          color: "var(--text-secondary)",
                           marginBottom: "4px",
                         }}
                       >
-                        <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                          Agent Prompt
-                        </label>
+                        Execution Mode
+                      </label>
+                      <div
+                        style={{ display: "flex", gap: "8px" }}
+                        data-testid="workflow-step-mode-selector"
+                      >
                         <button
-                          className="btn-icon"
-                          onClick={handleRefine}
-                          disabled={!form.description.trim() || refining}
-                          title="Refine with AI"
-                          aria-label="Refine prompt with AI"
+                          className={`btn ${form.mode === "prompt" ? "btn-primary" : "btn-secondary"}`}
+                          onClick={() => setForm((prev) => ({ ...prev, mode: "prompt", scriptName: "" }))}
                           style={{
-                            fontSize: "12px",
                             display: "flex",
                             alignItems: "center",
-                            gap: "4px",
+                            gap: "6px",
+                            fontSize: "12px",
+                            padding: "6px 12px",
+                            flex: 1,
+                            justifyContent: "center",
                           }}
-                          data-testid="refine-btn"
+                          data-testid="mode-prompt"
                         >
-                          {refining ? (
-                            <Loader2 size={12} className="spin" />
-                          ) : (
-                            <Sparkles size={12} />
-                          )}
-                          <span style={{ fontSize: "11px" }}>Refine with AI</span>
+                          <MessageSquare size={14} />
+                          AI Prompt
+                        </button>
+                        <button
+                          className={`btn ${form.mode === "script" ? "btn-primary" : "btn-secondary"}`}
+                          onClick={() => setForm((prev) => ({ ...prev, mode: "script", prompt: "" }))}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            fontSize: "12px",
+                            padding: "6px 12px",
+                            flex: 1,
+                            justifyContent: "center",
+                          }}
+                          data-testid="mode-script"
+                        >
+                          <Terminal size={14} />
+                          Run Script
                         </button>
                       </div>
-                      <textarea
-                        value={form.prompt}
-                        onChange={(e) => setForm((prev) => ({ ...prev, prompt: e.target.value }))}
-                        placeholder="Leave empty to use AI refinement"
-                        rows={6}
-                        style={{
-                          width: "100%",
-                          padding: "8px 12px",
-                          borderRadius: "6px",
-                          border: "1px solid var(--border-primary)",
-                          background: "var(--bg-primary)",
-                          color: "var(--text-primary)",
-                          fontSize: "13px",
-                          fontFamily: "monospace",
-                          resize: "vertical",
-                        }}
-                        data-testid="workflow-step-prompt"
-                      />
                     </div>
+
+                    {/* Prompt (AI mode only) */}
+                    {form.mode === "prompt" && (
+                      <div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: "4px",
+                          }}
+                        >
+                          <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                            Agent Prompt
+                          </label>
+                          <button
+                            className="btn-icon"
+                            onClick={handleRefine}
+                            disabled={!form.description.trim() || refining}
+                            title="Refine with AI"
+                            aria-label="Refine prompt with AI"
+                            style={{
+                              fontSize: "12px",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "4px",
+                            }}
+                            data-testid="refine-btn"
+                          >
+                            {refining ? (
+                              <Loader2 size={12} className="spin" />
+                            ) : (
+                              <Sparkles size={12} />
+                            )}
+                            <span style={{ fontSize: "11px" }}>Refine with AI</span>
+                          </button>
+                        </div>
+                        <textarea
+                          value={form.prompt}
+                          onChange={(e) => setForm((prev) => ({ ...prev, prompt: e.target.value }))}
+                          placeholder="Leave empty to use AI refinement"
+                          rows={6}
+                          style={{
+                            width: "100%",
+                            padding: "8px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid var(--border-primary)",
+                            background: "var(--bg-primary)",
+                            color: "var(--text-primary)",
+                            fontSize: "13px",
+                            fontFamily: "monospace",
+                            resize: "vertical",
+                          }}
+                          data-testid="workflow-step-prompt"
+                        />
+                      </div>
+                    )}
+
+                    {/* Script selector (script mode only) */}
+                    {form.mode === "script" && (
+                      <div>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: "12px",
+                            color: "var(--text-secondary)",
+                            marginBottom: "4px",
+                          }}
+                        >
+                          Script
+                        </label>
+                        {Object.keys(availableScripts).length === 0 ? (
+                          <div
+                            style={{
+                              padding: "8px 12px",
+                              borderRadius: "6px",
+                              border: "1px solid var(--border-primary)",
+                              background: "var(--bg-tertiary)",
+                              color: "var(--text-secondary)",
+                              fontSize: "12px",
+                            }}
+                            data-testid="no-scripts-message"
+                          >
+                            No scripts configured. Add scripts in Settings → Scripts first.
+                          </div>
+                        ) : (
+                          <select
+                            value={form.scriptName}
+                            onChange={(e) => setForm((prev) => ({ ...prev, scriptName: e.target.value }))}
+                            style={{
+                              width: "100%",
+                              padding: "8px 12px",
+                              borderRadius: "6px",
+                              border: "1px solid var(--border-primary)",
+                              background: "var(--bg-primary)",
+                              color: "var(--text-primary)",
+                              fontSize: "13px",
+                            }}
+                            data-testid="workflow-step-script-select"
+                          >
+                            <option value="">Select a script…</option>
+                            {Object.entries(availableScripts).map(([name, command]) => (
+                              <option key={name} value={name}>
+                                {name} ({command})
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    )}
 
                     {/* Enabled toggle */}
                     <label
@@ -762,7 +912,12 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                       <button
                         className="btn btn-primary"
                         onClick={handleSave}
-                        disabled={saving || !form.name.trim() || !form.description.trim()}
+                        disabled={
+                          saving ||
+                          !form.name.trim() ||
+                          !form.description.trim() ||
+                          (form.mode === "script" && !form.scriptName.trim())
+                        }
                         data-testid="save-workflow-step"
                       >
                         {saving ? "Saving..." : isCreating ? "Create" : "Save"}

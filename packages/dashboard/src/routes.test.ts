@@ -6246,7 +6246,7 @@ describe("POST /workflow-steps", () => {
   }
 
   it("creates a workflow step", async () => {
-    const created = { id: "WS-001", name: "Docs", description: "Check docs", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    const created = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
 
     const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
@@ -6259,7 +6259,9 @@ describe("POST /workflow-steps", () => {
     expect(store.createWorkflowStep).toHaveBeenCalledWith({
       name: "Docs",
       description: "Check docs",
+      mode: "prompt",
       prompt: undefined,
+      scriptName: undefined,
       enabled: undefined,
     });
   });
@@ -6311,7 +6313,9 @@ describe("POST /workflow-steps", () => {
     expect(store.createWorkflowStep).toHaveBeenCalledWith({
       name: "Security",
       description: "Security audit",
+      mode: "prompt",
       prompt: undefined,
+      scriptName: undefined,
       enabled: undefined,
       modelProvider: "anthropic",
       modelId: "claude-sonnet-4-5",
@@ -6341,7 +6345,7 @@ describe("POST /workflow-steps", () => {
   });
 
   it("creates a workflow step without model fields when both empty strings", async () => {
-    const created = { id: "WS-001", name: "Docs", description: "Check docs", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    const created = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
 
     const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
@@ -6355,11 +6359,76 @@ describe("POST /workflow-steps", () => {
     expect(store.createWorkflowStep).toHaveBeenCalledWith({
       name: "Docs",
       description: "Check docs",
+      mode: "prompt",
       prompt: undefined,
+      scriptName: undefined,
       enabled: undefined,
       modelProvider: undefined,
       modelId: undefined,
     });
+  });
+
+  it("creates a script-mode workflow step with valid scriptName", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      scripts: { test: "pnpm test", lint: "pnpm lint" },
+    });
+    const created = { id: "WS-001", name: "Run Tests", description: "Execute tests", mode: "script", scriptName: "test", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Run Tests",
+      description: "Execute tests",
+      mode: "script",
+      scriptName: "test",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(store.createWorkflowStep).toHaveBeenCalledWith({
+      name: "Run Tests",
+      description: "Execute tests",
+      mode: "script",
+      prompt: undefined,
+      scriptName: "test",
+      enabled: undefined,
+    });
+  });
+
+  it("returns 400 for script mode without scriptName", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Run Tests",
+      description: "Execute tests",
+      mode: "script",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("scriptName is required");
+  });
+
+  it("returns 400 for script mode with scriptName not in project scripts", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      scripts: { lint: "pnpm lint" },
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Run Tests",
+      description: "Execute tests",
+      mode: "script",
+      scriptName: "nonexistent",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("not found in project settings");
+  });
+
+  it("returns 400 for invalid mode value", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Test",
+      description: "Test",
+      mode: "invalid",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("mode must be");
   });
 });
 
@@ -6495,7 +6564,7 @@ describe("POST /workflow-steps/:id/refine", () => {
 
   it("returns 400 when workflow step has no description", async () => {
     (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      id: "WS-001", name: "Empty", description: "  ", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01",
+      id: "WS-001", name: "Empty", description: "  ", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01",
     });
 
     const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps/WS-001/refine", JSON.stringify({}), {
@@ -6506,8 +6575,21 @@ describe("POST /workflow-steps/:id/refine", () => {
     expect(res.body.error).toContain("no description");
   });
 
+  it("returns 400 when workflow step is in script mode", async () => {
+    (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "WS-001", name: "Run Tests", description: "Execute test suite", mode: "script", scriptName: "test", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps/WS-001/refine", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Cannot refine prompt for script-mode");
+  });
+
   it("falls back to description when AI is unavailable", async () => {
-    const ws = { id: "WS-001", name: "Docs", description: "Check docs", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    const ws = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ws);
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
     const updatedWs = { ...ws, prompt: "Check docs" };

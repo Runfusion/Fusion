@@ -5804,13 +5804,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * POST /api/workflow-steps
    * Create a new workflow step.
-   * Body: { name: string, description: string, prompt?: string, enabled?: boolean }
+   * Body: { name: string, description: string, mode?: "prompt"|"script", prompt?: string, scriptName?: string, enabled?: boolean, modelProvider?: string, modelId?: string }
    * Returns: WorkflowStep
    */
   router.post("/workflow-steps", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const { name, description, prompt, enabled, modelProvider, modelId } = req.body;
+      const { name, description, mode, prompt, scriptName, enabled, modelProvider, modelId } = req.body;
 
       if (!name || typeof name !== "string" || !name.trim()) {
         res.status(400).json({ error: "name is required" });
@@ -5820,8 +5820,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "description is required" });
         return;
       }
+
+      // Validate mode
+      const resolvedMode: "prompt" | "script" = mode || "prompt";
+      if (resolvedMode !== "prompt" && resolvedMode !== "script") {
+        res.status(400).json({ error: "mode must be 'prompt' or 'script'" });
+        return;
+      }
+
       if (prompt !== undefined && typeof prompt !== "string") {
         res.status(400).json({ error: "prompt must be a string" });
+        return;
+      }
+      if (scriptName !== undefined && typeof scriptName !== "string") {
+        res.status(400).json({ error: "scriptName must be a string" });
         return;
       }
       if (enabled !== undefined && typeof enabled !== "boolean") {
@@ -5829,7 +5841,21 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      // Validate model override pair
+      // Validate script mode: scriptName must reference a named script in settings
+      if (resolvedMode === "script") {
+        if (!scriptName?.trim()) {
+          res.status(400).json({ error: "scriptName is required when mode is 'script'" });
+          return;
+        }
+        const settings = await scopedStore.getSettings();
+        const scripts = settings.scripts || {};
+        if (!(scriptName.trim() in scripts)) {
+          res.status(400).json({ error: `Script '${scriptName.trim()}' not found in project settings. Available scripts: ${Object.keys(scripts).join(", ") || "none"}` });
+          return;
+        }
+      }
+
+      // Validate model override pair (only relevant for prompt mode)
       const modelPair = assertConsistentOptionalPair(modelProvider, modelId, "workflow step model");
 
       // Check for name conflicts
@@ -5842,14 +5868,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const step = await scopedStore.createWorkflowStep({
         name: name.trim(),
         description: description.trim(),
+        mode: resolvedMode,
         prompt: prompt?.trim(),
+        scriptName: scriptName?.trim(),
         enabled,
         modelProvider: modelPair.provider,
         modelId: modelPair.modelId,
       });
       res.status(201).json(step);
     } catch (err: any) {
-      const status = typeof err?.message === "string" && err.message.includes("must include both provider and modelId") ? 400 : 500;
+      const status = typeof err?.message === "string" && (err.message.includes("must include both provider and modelId") || err.message.includes("Script mode requires")) ? 400 : 500;
       res.status(status).json({ error: err.message });
     }
   });
@@ -5857,13 +5885,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * PATCH /api/workflow-steps/:id
    * Update a workflow step.
-   * Body: Partial<{ name, description, prompt, enabled }>
+   * Body: Partial<{ name, description, mode, prompt, scriptName, enabled, modelProvider, modelId }>
    * Returns: WorkflowStep
    */
   router.patch("/workflow-steps/:id", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const { name, description, prompt, enabled, modelProvider, modelId } = req.body;
+      const { name, description, mode, prompt, scriptName, enabled, modelProvider, modelId } = req.body;
 
       const updates: Record<string, unknown> = {};
       if (name !== undefined) {
@@ -5880,6 +5908,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         }
         updates.description = description.trim();
       }
+      if (mode !== undefined) {
+        if (mode !== "prompt" && mode !== "script") {
+          res.status(400).json({ error: "mode must be 'prompt' or 'script'" });
+          return;
+        }
+        updates.mode = mode;
+      }
       if (prompt !== undefined) {
         if (typeof prompt !== "string") {
           res.status(400).json({ error: "prompt must be a string" });
@@ -5887,12 +5922,34 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         }
         updates.prompt = prompt;
       }
+      if (scriptName !== undefined) {
+        if (typeof scriptName !== "string") {
+          res.status(400).json({ error: "scriptName must be a string" });
+          return;
+        }
+        updates.scriptName = scriptName;
+      }
       if (enabled !== undefined) {
         if (typeof enabled !== "boolean") {
           res.status(400).json({ error: "enabled must be a boolean" });
           return;
         }
         updates.enabled = enabled;
+      }
+
+      // Validate script name references an actual script when switching to script mode
+      if (updates.mode === "script") {
+        const scriptNameToValidate = (updates.scriptName as string | undefined);
+        if (!scriptNameToValidate?.trim()) {
+          res.status(400).json({ error: "scriptName is required when mode is 'script'" });
+          return;
+        }
+        const settings = await scopedStore.getSettings();
+        const scripts = settings.scripts || {};
+        if (!(scriptNameToValidate.trim() in scripts)) {
+          res.status(400).json({ error: `Script '${scriptNameToValidate.trim()}' not found in project settings. Available scripts: ${Object.keys(scripts).join(", ") || "none"}` });
+          return;
+        }
       }
 
       // Validate and apply model override pair
@@ -5908,7 +5965,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (err.message?.includes("not found")) {
         res.status(404).json({ error: err.message });
       } else {
-        const status = typeof err?.message === "string" && err.message.includes("must include both provider and modelId") ? 400 : 500;
+        const status = typeof err?.message === "string" && (err.message.includes("must include both provider and modelId") || err.message.includes("Script mode requires")) ? 400 : 500;
         res.status(status).json({ error: err.message });
       }
     }
@@ -5936,6 +5993,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * POST /api/workflow-steps/:id/refine
    * Use AI to refine the workflow step's description into a detailed agent prompt.
+   * Only available for prompt-mode steps.
    * Returns: { prompt: string, workflowStep: WorkflowStep }
    */
   router.post("/workflow-steps/:id/refine", async (req, res) => {
@@ -5944,6 +6002,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const step = await scopedStore.getWorkflowStep(req.params.id);
       if (!step) {
         res.status(404).json({ error: `Workflow step '${req.params.id}' not found` });
+        return;
+      }
+
+      if (step.mode === "script") {
+        res.status(400).json({ error: "Cannot refine prompt for script-mode workflow steps" });
         return;
       }
 
