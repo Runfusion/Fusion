@@ -859,6 +859,19 @@ export interface ProjectSettings {
   /** Reference to a named script in the scripts map that runs before task execution.
    *  Used for pre-task setup like environment preparation. */
   setupScript?: string;
+  /** When true, enables periodic AI-powered extraction of insights from working memory
+   *  into a distilled long-term memory file. Creates an automation schedule that reads
+   *  `.fusion/memory.md`, identifies patterns/principles/pitfalls, and writes to
+   *  `.fusion/memory-insights.md`. Default: false. */
+  insightExtractionEnabled?: boolean;
+  /** Cron expression for insight extraction schedule. Only used when
+   *  insightExtractionEnabled is true. Default: "0 2 * * *" (daily at 2 AM). */
+  insightExtractionSchedule?: string;
+  /** Minimum interval between insight extractions in milliseconds. Prevents
+   *  excessive AI calls when working memory hasn't changed significantly.
+   *  Extraction only runs if BOTH this time has elapsed AND memory has grown
+   *  by more than MIN_INSIGHT_GROWTH_CHARS characters. Default: 86400000 (24h). */
+  insightExtractionMinIntervalMs?: number;
 }
 
 /**
@@ -942,6 +955,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   titleSummarizerModelId: undefined,
   titleSummarizerFallbackProvider: undefined,
   titleSummarizerFallbackModelId: undefined,
+  insightExtractionEnabled: false,
+  insightExtractionSchedule: "0 2 * * *",
+  insightExtractionMinIntervalMs: 86_400_000,
 };
 
 /**
@@ -1015,6 +1031,9 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "titleSummarizerModelId",
   "titleSummarizerFallbackProvider",
   "titleSummarizerFallbackModelId",
+  "insightExtractionEnabled",
+  "insightExtractionSchedule",
+  "insightExtractionMinIntervalMs",
 ] as const;
 
 export interface BoardConfig {

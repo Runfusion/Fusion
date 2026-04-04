@@ -150,3 +150,29 @@ export {
   detectExistingProjects,
   autoMigrateToCentral,
 } from "./db-migrate.js";
+
+// ── Memory Insights ──────────────────────────────────────────────────────
+
+export {
+  MEMORY_WORKING_PATH,
+  MEMORY_INSIGHTS_PATH,
+  DEFAULT_INSIGHT_SCHEDULE,
+  DEFAULT_MIN_INTERVAL_MS,
+  MIN_INSIGHT_GROWTH_CHARS,
+  INSIGHT_EXTRACTION_SCHEDULE_NAME,
+  readWorkingMemory,
+  readInsightsMemory,
+  writeInsightsMemory,
+  buildInsightExtractionPrompt,
+  parseInsightExtractionResponse,
+  mergeInsights,
+  shouldTriggerExtraction,
+  getDefaultInsightsTemplate,
+  createInsightExtractionAutomation,
+  syncInsightExtractionAutomation,
+} from "./memory-insights.js";
+export type {
+  MemoryInsightCategory,
+  MemoryInsight,
+  InsightExtractionResult,
+} from "./memory-insights.js";
