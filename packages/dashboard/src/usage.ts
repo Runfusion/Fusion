@@ -655,9 +655,9 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
             const msLeft = new Date(iso).getTime() - Date.now();
             window.resetMs = msLeft > 0 ? msLeft : 0;
             window.resetAt = iso;
-            if (!window.resetText) {
-              window.resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
-            }
+            // Always replace raw CLI text (e.g. "Resets Apr 9 at 8pm") with
+            // a relative duration (e.g. "resets in 3d 8h") for better UX.
+            window.resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
           }
         }
 
