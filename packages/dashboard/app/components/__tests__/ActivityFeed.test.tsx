@@ -187,4 +187,25 @@ describe("ActivityFeed", () => {
     // Title attribute should have full timestamp
     expect(timeEl.getAttribute("title")).toContain(":");
   });
+
+  it("uses theme tokens for event type icon colors", () => {
+    const entries: ActivityFeedEntry[] = [
+      makeEntry({ id: "1", type: "task:deleted" }),
+      makeEntry({ id: "2", type: "task:failed" }),
+    ];
+
+    const { container } = render(<ActivityFeed entries={entries} />);
+
+    // Verify that deleted and failed events use --color-error (not undefined --error)
+    const icons = container.querySelectorAll(".activity-feed-icon");
+    expect(icons.length).toBeGreaterThanOrEqual(2);
+
+    for (const icon of icons) {
+      const style = (icon as HTMLElement).style;
+      const color = style.color || style.getPropertyValue("color");
+      // Should use var(--color-error), NOT var(--error) which is undefined
+      expect(color).toContain("var(--color-error)");
+      expect(color).not.toContain("var(--error)");
+    }
+  });
 });

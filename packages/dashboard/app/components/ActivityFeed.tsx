@@ -28,9 +28,9 @@ const TYPE_CONFIG: Record<ActivityFeedEntry["type"], {
   "task:created": { label: "Created", icon: Plus, color: "var(--todo)" },
   "task:moved": { label: "Moved", icon: ArrowRightLeft, color: "var(--in-progress)" },
   "task:updated": { label: "Updated", icon: Settings, color: "var(--text-muted)" },
-  "task:deleted": { label: "Deleted", icon: XCircle, color: "var(--error)" },
+  "task:deleted": { label: "Deleted", icon: XCircle, color: "var(--color-error)" },
   "task:merged": { label: "Merged", icon: GitMerge, color: "var(--color-success)" },
-  "task:failed": { label: "Failed", icon: AlertTriangle, color: "var(--error)" },
+  "task:failed": { label: "Failed", icon: AlertTriangle, color: "var(--color-error)" },
   "settings:updated": { label: "Settings", icon: Settings, color: "var(--text-muted)" },
 };
 

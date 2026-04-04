@@ -246,6 +246,7 @@ View a centralized timeline of all task lifecycle events. Click the history icon
 - **Pagination**: "Load More" button fetches older entries (100 entries per request, max 1000)
 - **Clear Log**: Maintenance function to clear all activity history (with confirmation)
 - **Responsive Layout**: The modal uses the shared `modal-lg` width (640px) and standard `modal-header` pattern with a dedicated close button, consistent with other dashboard modals. On narrow screens (≤768px), the modal adapts with a stacked header, full-width filter controls, wrapped active-filters bar, reflowed entry text, and vertically stacked confirmation actions — preserving access to filters, task links, and clear-log on mobile devices
+- **Theme-aware Styling**: ActivityFeed colors are fully token-driven using dashboard CSS custom properties (e.g., `var(--todo)`, `var(--color-error)`, `var(--text-muted)`). Event type icon colors, project badge backgrounds, and error states all reference theme tokens, ensuring consistent rendering across dark/light mode and all color themes. No hardcoded `rgba()` or hex values are used in feed-specific styles.
 
 **Event Metadata**:
 - Task moves show from/to column transitions
