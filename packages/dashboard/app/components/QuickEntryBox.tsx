@@ -1,12 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
 import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import type { ModelInfo, RefinementType } from "../api";
 import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings } from "../api";
-import { Link, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp } from "lucide-react";
+import { Link, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
-import { ModelSelectionModal } from "./ModelSelectionModal";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 
@@ -91,11 +89,15 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [showDeps, setShowDeps] = useState(false);
   const [depSearch, setDepSearch] = useState("");
-  const [isModelModalOpen, setIsModelModalOpen] = useState(false);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | null>(null);
   const [executorProvider, setExecutorProvider] = useState<string | undefined>(undefined);
   const [executorModelId, setExecutorModelId] = useState<string | undefined>(undefined);
   const [validatorProvider, setValidatorProvider] = useState<string | undefined>(undefined);
   const [validatorModelId, setValidatorModelId] = useState<string | undefined>(undefined);
+  const [planningProvider, setPlanningProvider] = useState<string | undefined>(undefined);
+  const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>(availableModels ?? []);
@@ -169,10 +171,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
   const executorSelectionValue = getModelSelectionValue(executorProvider, executorModelId);
   const validatorSelectionValue = getModelSelectionValue(validatorProvider, validatorModelId);
+  const planningSelectionValue = getModelSelectionValue(planningProvider, planningModelId);
 
   const hasExecutorOverride = Boolean(executorProvider && executorModelId);
   const hasValidatorOverride = Boolean(validatorProvider && validatorModelId);
-  const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride);
+  const hasPlanningOverride = Boolean(planningProvider && planningModelId);
+  const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride) + Number(hasPlanningOverride);
 
   const availablePresets = settings?.modelPresets || [];
   const selectedPreset = availablePresets.find((p) => p.id === selectedPresetId);
@@ -260,6 +264,21 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isRefineMenuOpen]);
 
+  // Close model menu when clicking outside
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+        setIsModelMenuOpen(false);
+        setActiveModelSubmenu(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isModelMenuOpen]);
+
   const resetForm = useCallback(() => {
     setDescription("");
     setDependencies([]);
@@ -267,9 +286,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setExecutorModelId(undefined);
     setValidatorProvider(undefined);
     setValidatorModelId(undefined);
+    setPlanningProvider(undefined);
+    setPlanningModelId(undefined);
     setSelectedPresetId(undefined);
     setShowDeps(false);
-    setIsModelModalOpen(false);
+    setIsModelMenuOpen(false);
+    setActiveModelSubmenu(null);
     setIsRefineMenuOpen(false);
     setIsRefining(false);
     setIsExpanded(false); // Collapse textarea height on reset
@@ -337,9 +359,14 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         handleSubmit();
       } else if (e.key === "Escape") {
         e.preventDefault();
-        // Close modal first if open
-        if (isModelModalOpen) {
-          setIsModelModalOpen(false);
+        // Close model submenu first if open
+        if (activeModelSubmenu) {
+          setActiveModelSubmenu(null);
+          return;
+        }
+        // Close model menu if open
+        if (isModelMenuOpen) {
+          setIsModelMenuOpen(false);
           return;
         }
         // Close dropdowns first if open
@@ -371,7 +398,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       description,
       isExpanded,
       showDeps,
-      isModelModalOpen,
+      isModelMenuOpen,
+      activeModelSubmenu,
       isRefineMenuOpen,
       setIsDisclosureExpanded,
     ],
@@ -401,14 +429,30 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const toggleDepsDropdown = useCallback(() => {
     setShowDeps((prev) => {
       const next = !prev;
-      if (next) setIsModelModalOpen(false);
+      if (next) {
+        setIsModelMenuOpen(false);
+        setActiveModelSubmenu(null);
+      }
       return next;
     });
   }, []);
 
-  const openModelModal = useCallback(() => {
-    setIsModelModalOpen(true);
-    setShowDeps(false);
+  const toggleModelMenu = useCallback(() => {
+    setIsModelMenuOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setShowDeps(false);
+      } else {
+        setActiveModelSubmenu(null);
+      }
+      return next;
+    });
+  }, []);
+
+  const handlePlanningModelChange = useCallback((value: string) => {
+    const next = parseModelSelection(value);
+    setPlanningProvider(next.provider);
+    setPlanningModelId(next.modelId);
   }, []);
 
   const handleExecutorChange = useCallback((value: string) => {
@@ -734,13 +778,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             })()}
           </div>
 
-          <div className="quick-entry-model-wrap">
+          <div className="quick-entry-model-wrap" ref={modelMenuRef}>
             <button
               type="button"
               className="btn btn-sm quick-entry-model-trigger"
-              onClick={openModelModal}
-              aria-expanded={isModelModalOpen}
-              aria-haspopup="dialog"
+              onClick={toggleModelMenu}
+              aria-expanded={isModelMenuOpen}
+              aria-haspopup="menu"
               data-testid="quick-entry-models-button"
             >
               <Brain size={12} style={{ verticalAlign: "middle" }} />
@@ -750,6 +794,117 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   ? ` ${selectedModelCount} model${selectedModelCount === 1 ? "" : "s"}`
                   : " Models"}
             </button>
+            {isModelMenuOpen && (
+              <div className="model-nested-menu" onMouseDown={(e) => e.preventDefault()} data-testid="model-nested-menu">
+                {activeModelSubmenu === null ? (
+                  // Top-level menu with Plan/Executor/Validator choices
+                  <div className="model-menu-items">
+                    <button
+                      type="button"
+                      className={`model-menu-item ${hasPlanningOverride ? "model-menu-item--active" : ""}`}
+                      onClick={() => setActiveModelSubmenu("plan")}
+                      data-testid="model-menu-plan"
+                    >
+                      <span className="model-menu-item-label">
+                        <Lightbulb size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                        Plan
+                      </span>
+                      <span className="model-menu-item-value">
+                        {hasPlanningOverride
+                          ? getModelBadgeLabel(planningProvider, planningModelId)
+                          : "Using default"}
+                      </span>
+                      <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
+                    </button>
+                    <button
+                      type="button"
+                      className={`model-menu-item ${hasExecutorOverride ? "model-menu-item--active" : ""}`}
+                      onClick={() => setActiveModelSubmenu("executor")}
+                      data-testid="model-menu-executor"
+                    >
+                      <span className="model-menu-item-label">
+                        <Sparkles size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                        Executor
+                      </span>
+                      <span className="model-menu-item-value">
+                        {hasExecutorOverride
+                          ? getModelBadgeLabel(executorProvider, executorModelId)
+                          : "Using default"}
+                      </span>
+                      <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
+                    </button>
+                    <button
+                      type="button"
+                      className={`model-menu-item ${hasValidatorOverride ? "model-menu-item--active" : ""}`}
+                      onClick={() => setActiveModelSubmenu("validator")}
+                      data-testid="model-menu-validator"
+                    >
+                      <span className="model-menu-item-label">
+                        <Brain size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                        Validator
+                      </span>
+                      <span className="model-menu-item-value">
+                        {hasValidatorOverride
+                          ? getModelBadgeLabel(validatorProvider, validatorModelId)
+                          : "Using default"}
+                      </span>
+                      <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
+                    </button>
+                  </div>
+                ) : (
+                  // Submenu with CustomModelDropdown for the selected target
+                  <div className="model-submenu">
+                    <button
+                      type="button"
+                      className="model-submenu-back"
+                      onClick={() => setActiveModelSubmenu(null)}
+                      data-testid="model-submenu-back"
+                    >
+                      <ChevronDown size={12} style={{ transform: "rotate(90deg)", marginRight: 4 }} />
+                      Back
+                    </button>
+                    <div className="model-submenu-header">
+                      {activeModelSubmenu === "plan" && "Plan Model"}
+                      {activeModelSubmenu === "executor" && "Executor Model"}
+                      {activeModelSubmenu === "validator" && "Validator Model"}
+                    </div>
+                    <CustomModelDropdown
+                      models={loadedModels}
+                      value={
+                        activeModelSubmenu === "plan"
+                          ? planningSelectionValue
+                          : activeModelSubmenu === "executor"
+                            ? executorSelectionValue
+                            : validatorSelectionValue
+                      }
+                      onChange={
+                        activeModelSubmenu === "plan"
+                          ? handlePlanningModelChange
+                          : activeModelSubmenu === "executor"
+                            ? handleExecutorChange
+                            : handleValidatorChange
+                      }
+                      placeholder="Using default"
+                      disabled={modelsLoading}
+                      id={`model-${activeModelSubmenu}-select`}
+                      label={`${activeModelSubmenu} model`}
+                      favoriteProviders={effectiveFavoriteProviders}
+                      onToggleFavorite={handleToggleFavorite}
+                      favoriteModels={effectiveFavoriteModels}
+                      onToggleModelFavorite={handleToggleModelFavorite}
+                    />
+                    {modelsError && (
+                      <div className="model-submenu-error">
+                        <span>{modelsError}</span>
+                        <button type="button" className="btn btn-sm" onClick={loadModels}>
+                          Retry
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {!isSubmitting && (
@@ -772,30 +927,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         </div>
       </div>
 
-      {typeof document !== "undefined"
-        ? createPortal(
-            <ModelSelectionModal
-              isOpen={isModelModalOpen}
-              onClose={() => setIsModelModalOpen(false)}
-              models={loadedModels}
-              executorValue={executorSelectionValue}
-              validatorValue={validatorSelectionValue}
-              onExecutorChange={handleExecutorChange}
-              onValidatorChange={handleValidatorChange}
-              modelsLoading={modelsLoading}
-              modelsError={modelsError}
-              onRetry={loadModels}
-              favoriteProviders={effectiveFavoriteProviders}
-              onToggleFavorite={handleToggleFavorite}
-              favoriteModels={effectiveFavoriteModels}
-              onToggleModelFavorite={handleToggleModelFavorite}
-              presets={availablePresets}
-              selectedPresetId={selectedPresetId}
-              onPresetChange={handlePresetChange}
-            />,
-            document.body,
-          )
-        : null}
     </div>
   );
 }

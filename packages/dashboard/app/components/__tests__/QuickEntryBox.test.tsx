@@ -91,83 +91,52 @@ vi.mock("lucide-react", () => ({
   X: () => null,
   ChevronDown: () => null,
   ChevronUp: () => null,
+  ChevronRight: () => null,
 }));
 
-// Mock ModelSelectionModal
+// Mock ModelSelectionModal (kept for backward compatibility - no longer directly rendered)
 vi.mock("../ModelSelectionModal", () => ({
-  ModelSelectionModal: ({
-    isOpen,
-    onClose,
-    models,
-    executorValue,
-    validatorValue,
-    onExecutorChange,
-    onValidatorChange,
-    modelsLoading,
-    modelsError,
-    onRetry,
-    favoriteProviders,
-    onToggleFavorite,
-    favoriteModels,
-    onToggleModelFavorite,
-    presets,
-    selectedPresetId,
-    onPresetChange,
+  ModelSelectionModal: () => null,
+}));
+
+// Mock CustomModelDropdown - renders a simple test-friendly control
+vi.mock("../CustomModelDropdown", () => ({
+  CustomModelDropdown: ({
+    value,
+    onChange,
+    label,
+    disabled,
   }: {
-    isOpen: boolean;
-    onClose: () => void;
-    models: typeof MOCK_MODELS;
-    executorValue: string;
-    validatorValue: string;
-    onExecutorChange: (value: string) => void;
-    onValidatorChange: (value: string) => void;
-    modelsLoading: boolean;
-    modelsError: string | null;
-    onRetry: () => void;
+    value: string;
+    onChange: (value: string) => void;
+    label: string;
+    disabled?: boolean;
+    models?: unknown[];
+    placeholder?: string;
+    id?: string;
     favoriteProviders?: string[];
     onToggleFavorite?: (provider: string) => void;
     favoriteModels?: string[];
     onToggleModelFavorite?: (modelId: string) => void;
-    presets?: unknown[];
-    selectedPresetId?: string;
-    onPresetChange?: (presetId: string | undefined) => void;
-  }) => {
-    if (!isOpen) return null;
-    return (
-      <div data-testid="model-selection-modal">
-        <div data-testid="modal-props-models-count">{models.length}</div>
-        <div data-testid="modal-props-executor-value">{executorValue}</div>
-        <div data-testid="modal-props-validator-value">{validatorValue}</div>
-        <div data-testid="modal-props-loading">{modelsLoading ? "loading" : "not-loading"}</div>
-        <div data-testid="modal-props-error">{modelsError || "no-error"}</div>
-        <div data-testid="modal-props-favorite-providers">{JSON.stringify(favoriteProviders ?? [])}</div>
-        <div data-testid="modal-props-has-toggle-favorite">{onToggleFavorite ? "yes" : "no"}</div>
-        <div data-testid="modal-props-favorite-models">{JSON.stringify(favoriteModels ?? [])}</div>
-        <div data-testid="modal-props-has-toggle-model-favorite">{onToggleModelFavorite ? "yes" : "no"}</div>
-        <div data-testid="modal-props-presets">{JSON.stringify(presets ?? [])}</div>
-        <div data-testid="modal-props-selected-preset-id">{selectedPresetId ?? ""}</div>
-        <div data-testid="modal-props-has-preset-change">{onPresetChange ? "yes" : "no"}</div>
-        <button data-testid="modal-close" onClick={onClose}>
-          Close
-        </button>
-        <button
-          data-testid="modal-select-executor"
-          onClick={() => onExecutorChange("anthropic/claude-sonnet-4-5")}
-        >
-          Select Executor
-        </button>
-        <button
-          data-testid="modal-select-validator"
-          onClick={() => onValidatorChange("openai/gpt-4o")}
-        >
-          Select Validator
-        </button>
-        <button data-testid="modal-retry" onClick={onRetry}>
-          Retry
-        </button>
-      </div>
-    );
-  },
+  }) => (
+    <div data-testid={`custom-model-dropdown-${label}`}>
+      <span data-testid={`dropdown-value-${label}`}>{value || "none"}</span>
+      <button
+        data-testid={`dropdown-select-${label}`}
+        onClick={() => onChange("anthropic/claude-sonnet-4-5")}
+        disabled={disabled}
+      >
+        Select {label}
+      </button>
+      <button
+        data-testid={`dropdown-clear-${label}`}
+        onClick={() => onChange("")}
+        disabled={disabled}
+      >
+        Clear {label}
+      </button>
+    </div>
+  ),
 }));
 
 function renderQuickEntryBox(props = {}, { startExpanded = false } = {}) {
@@ -590,24 +559,24 @@ describe("QuickEntryBox", () => {
       expect(document.querySelector(".dep-dropdown-search")).toBeTruthy();
     });
 
-    it("opens model modal when clicking models button", () => {
+    it("opens model menu when clicking models button", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Task with models" } });
 
-      // Modal should not be visible initially
-      expect(screen.queryByTestId("model-selection-modal")).toBeNull();
+      // Menu should not be visible initially
+      expect(screen.queryByTestId("model-nested-menu")).toBeNull();
 
       // Click the models button
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
-      // Modal should now be visible
-      expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+      // Menu should now be visible
+      expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
     });
 
-    it("modal receives correct props (models, loading state, etc.)", () => {
+    it("shows Plan, Executor, and Validator options in model menu", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
@@ -615,84 +584,66 @@ describe("QuickEntryBox", () => {
       fireEvent.change(textarea, { target: { value: "Task with models" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
-      // Modal should be open
-      expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
-
-      // Check props passed to modal
-      expect(screen.getByTestId("modal-props-models-count").textContent).toBe("2");
-      expect(screen.getByTestId("modal-props-executor-value").textContent).toBe("");
-      expect(screen.getByTestId("modal-props-validator-value").textContent).toBe("");
-      expect(screen.getByTestId("modal-props-loading").textContent).toBe("not-loading");
-      expect(screen.getByTestId("modal-props-error").textContent).toBe("no-error");
+      expect(screen.getByTestId("model-menu-plan")).toBeTruthy();
+      expect(screen.getByTestId("model-menu-executor")).toBeTruthy();
+      expect(screen.getByTestId("model-menu-validator")).toBeTruthy();
     });
 
-    it("passes favoriteModels and onToggleModelFavorite to ModelSelectionModal", () => {
+    it("clicking Executor opens submenu with CustomModelDropdown", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Task with models" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+      fireEvent.click(screen.getByTestId("model-menu-executor"));
 
-      expect(screen.getByTestId("modal-props-favorite-models").textContent).toBe("[]");
-      expect(screen.getByTestId("modal-props-has-toggle-model-favorite").textContent).toBe("yes");
+      // Submenu should show the dropdown for executor
+      expect(screen.getByTestId("custom-model-dropdown-executor model")).toBeTruthy();
+      // Back button should be visible
+      expect(screen.getByTestId("model-submenu-back")).toBeTruthy();
     });
 
-    it("passes favoriteProviders and favoriteModels from parent props to ModelSelectionModal (regression FN-770)", () => {
-      const parentToggleFavorite = vi.fn();
-      const parentToggleModelFavorite = vi.fn();
-      renderQuickEntryBox({
-        favoriteProviders: ["anthropic"],
-        favoriteModels: ["claude-sonnet-4-5"],
-        onToggleFavorite: parentToggleFavorite,
-        onToggleModelFavorite: parentToggleModelFavorite,
-      });
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      fireEvent.change(textarea, { target: { value: "Task with parent favorites" } });
-      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
-
-      expect(screen.getByTestId("modal-props-favorite-providers").textContent).toBe(JSON.stringify(["anthropic"]));
-      expect(screen.getByTestId("modal-props-favorite-models").textContent).toBe(JSON.stringify(["claude-sonnet-4-5"]));
-      expect(screen.getByTestId("modal-props-has-toggle-favorite").textContent).toBe("yes");
-      expect(screen.getByTestId("modal-props-has-toggle-model-favorite").textContent).toBe("yes");
-    });
-
-    it("delegates toggle favorite to parent callback when provided (regression FN-770)", () => {
-      const parentToggleFavorite = vi.fn();
-      const parentToggleModelFavorite = vi.fn();
-      renderQuickEntryBox({
-        favoriteProviders: ["anthropic"],
-        favoriteModels: ["claude-sonnet-4-5"],
-        onToggleFavorite: parentToggleFavorite,
-        onToggleModelFavorite: parentToggleModelFavorite,
-      });
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      fireEvent.change(textarea, { target: { value: "Task with parent favorites" } });
-      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
-
-      // The modal has toggle callbacks; simulate using them
-      expect(screen.getByTestId("modal-props-has-toggle-favorite").textContent).toBe("yes");
-      expect(screen.getByTestId("modal-props-has-toggle-model-favorite").textContent).toBe("yes");
-    });
-
-    it("falls back to internal favorites when parent props not provided (standalone mode)", () => {
-      // availableModels is supplied but no favorite props — uses internal empty state
+    it("clicking Plan opens submenu with CustomModelDropdown", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      fireEvent.change(textarea, { target: { value: "Standalone task" } });
+      fireEvent.change(textarea, { target: { value: "Task with models" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+      fireEvent.click(screen.getByTestId("model-menu-plan"));
 
-      // When parent doesn't provide favorites, internal state is used (empty by default)
-      expect(screen.getByTestId("modal-props-favorite-providers").textContent).toBe("[]");
-      expect(screen.getByTestId("modal-props-favorite-models").textContent).toBe("[]");
-      expect(screen.getByTestId("modal-props-has-toggle-favorite").textContent).toBe("yes");
-      expect(screen.getByTestId("modal-props-has-toggle-model-favorite").textContent).toBe("yes");
+      expect(screen.getByTestId("custom-model-dropdown-plan model")).toBeTruthy();
+    });
+
+    it("clicking Validator opens submenu with CustomModelDropdown", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Task with models" } });
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+      fireEvent.click(screen.getByTestId("model-menu-validator"));
+
+      expect(screen.getByTestId("custom-model-dropdown-validator model")).toBeTruthy();
+    });
+
+    it("back button returns to top-level model menu", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Task with models" } });
+      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
+      fireEvent.click(screen.getByTestId("model-menu-executor"));
+
+      // Click back
+      fireEvent.click(screen.getByTestId("model-submenu-back"));
+
+      // Should show top-level menu items again
+      expect(screen.getByTestId("model-menu-plan")).toBeTruthy();
+      expect(screen.getByTestId("model-menu-executor")).toBeTruthy();
+      expect(screen.getByTestId("model-menu-validator")).toBeTruthy();
     });
 
     it("selects dependencies and includes them in submit payload", async () => {
@@ -845,14 +796,17 @@ describe("QuickEntryBox", () => {
       fireEvent.change(textarea, { target: { value: "Task with model" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
-      // Modal should be open
-      expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+      // Menu should be open
+      expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
 
-      // Select executor model via mocked modal
-      fireEvent.click(screen.getByTestId("modal-select-executor"));
+      // Navigate to executor submenu
+      fireEvent.click(screen.getByTestId("model-menu-executor"));
 
-      // Close the modal
-      fireEvent.click(screen.getByTestId("modal-close"));
+      // Select executor model via mocked dropdown
+      fireEvent.click(screen.getByTestId("dropdown-select-executor model"));
+
+      // Close the menu via Escape
+      fireEvent.keyDown(textarea, { key: "Escape" });
 
       // Submit the task
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -868,25 +822,25 @@ describe("QuickEntryBox", () => {
       });
     });
 
-    it("closes modal on Escape when open", async () => {
+    it("closes model menu on Escape when open", async () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      fireEvent.change(textarea, { target: { value: "Task with modal" } });
+      fireEvent.change(textarea, { target: { value: "Task with menu" } });
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
-      // Modal should be open
-      expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+      // Menu should be open
+      expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
 
-      // Press Escape - should close modal but not clear input
+      // Press Escape - should close menu but not clear input
       fireEvent.keyDown(textarea, { key: "Escape" });
 
-      // Modal should be closed
-      expect(screen.queryByTestId("model-selection-modal")).toBeNull();
+      // Menu should be closed
+      expect(screen.queryByTestId("model-nested-menu")).toBeNull();
 
       // Input should still have the value
-      expect((textarea as HTMLTextAreaElement).value).toBe("Task with modal");
+      expect((textarea as HTMLTextAreaElement).value).toBe("Task with menu");
     });
 
     it("clears all state on second Escape after dropdowns are closed", () => {
@@ -1661,8 +1615,8 @@ describe("QuickEntryBox", () => {
     });
   });
 
-  describe("Preset selection through model modal", () => {
-    it("passes presets from settings to ModelSelectionModal", async () => {
+  describe("Preset selection through model menu", () => {
+    it("shows Models button with menu options when settings loaded", async () => {
       const mockPresets = [
         { id: "fast", name: "Fast", executorProvider: "anthropic", executorModelId: "claude-sonnet-4-5" },
       ];
@@ -1681,50 +1635,20 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox({ availableModels: undefined });
       expandQuickEntry();
 
-      // Open model modal
+      // Open model menu
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
       await waitFor(() => {
-        expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+        expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
       });
 
-      // The presets should be passed to the modal
-      expect(screen.getByTestId("modal-props-presets").textContent).toBe(JSON.stringify(mockPresets));
-      expect(screen.getByTestId("modal-props-has-preset-change").textContent).toBe("yes");
+      // The menu should show the three options
+      expect(screen.getByTestId("model-menu-plan")).toBeTruthy();
+      expect(screen.getByTestId("model-menu-executor")).toBeTruthy();
+      expect(screen.getByTestId("model-menu-validator")).toBeTruthy();
     });
 
-    it("shows preset name on Models button when preset is selected via modal", async () => {
-      const mockPresets = [
-        { id: "fast", name: "Fast", executorProvider: "anthropic", executorModelId: "claude-sonnet-4-5" },
-      ];
-      vi.mocked(fetchSettings).mockResolvedValueOnce({
-        modelPresets: mockPresets,
-        autoSelectModelPreset: false,
-        defaultPresetBySize: {},
-        maxConcurrent: 2,
-        maxWorktrees: 4,
-        pollIntervalMs: 30000,
-        groupOverlappingFiles: true,
-        autoMerge: true,
-      } as any);
-
-      renderQuickEntryBox({ availableModels: undefined });
-      expandQuickEntry();
-
-      // Open model modal
-      fireEvent.click(screen.getByTestId("quick-entry-models-button"));
-
-      await waitFor(() => {
-        expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
-      });
-
-      // Simulate selecting the preset via the onPresetChange callback
-      // We need to use the modal's onPresetChange prop which is wired to setSelectedPresetId
-      // Since the modal is mocked, we simulate this through the mock's rendered button behavior
-      // Instead, let's verify the Models button shows preset after we trigger the callback
-    });
-
-    it("includes modelPresetId in submit payload when preset is selected", async () => {
+    it("omits modelPresetId when executor selected via submenu but no preset", async () => {
       const mockPresets = [
         { id: "fast", name: "Fast", executorProvider: "anthropic", executorModelId: "claude-sonnet-4-5" },
       ];
@@ -1743,22 +1667,26 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox({ onCreate, availableModels: undefined });
       expandQuickEntry();
 
-      // Open model modal and wait for settings to load
+      // Open model menu and select an executor via submenu
       fireEvent.click(screen.getByTestId("quick-entry-models-button"));
 
       await waitFor(() => {
-        expect(screen.getByTestId("model-selection-modal")).toBeTruthy();
+        expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
       });
 
-      // Simulate selecting an executor through the modal
-      fireEvent.click(screen.getByTestId("modal-select-executor"));
+      // Navigate to executor submenu
+      fireEvent.click(screen.getByTestId("model-menu-executor"));
 
-      // Close modal
-      fireEvent.click(screen.getByTestId("modal-close"));
+      // Select executor model via mocked dropdown
+      fireEvent.click(screen.getByTestId("dropdown-select-executor model"));
+
+      // Close menu via Escape
+      const textarea = screen.getByTestId("quick-entry-input");
+      fireEvent.keyDown(textarea, { key: "Escape" });
 
       // Type and submit
-      const textarea = screen.getByTestId("quick-entry-input");
       fireEvent.change(textarea, { target: { value: "Test task" } });
+
       fireEvent.keyDown(textarea, { key: "Enter" });
 
       await waitFor(() => {
@@ -1770,7 +1698,7 @@ describe("QuickEntryBox", () => {
       expect(payload.modelPresetId).toBeUndefined();
     });
 
-    it("omits modelPresetId when no preset is selected", async () => {
+    it("omits modelPresetId when no preset is selected (direct create)", async () => {
       const onCreate = vi.fn().mockResolvedValue(undefined);
       renderQuickEntryBox({ onCreate });
       expandQuickEntry();

@@ -1984,7 +1984,7 @@ describe("ListView - Bulk Selection", () => {
     // This test verifies the initial disabled state and button presence
   });
 
-  it("forwards favoriteProviders and favoriteModels to QuickEntryBox model modal (FN-770)", async () => {
+  it("forwards favoriteProviders and favoriteModels to QuickEntryBox model menu (FN-770)", async () => {
     const availableModels = [
       { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
     ];
@@ -2007,18 +2007,20 @@ describe("ListView - Bulk Selection", () => {
       />
     );
 
-    // Expand the QuickEntryBox and open the model modal
+    // Expand the QuickEntryBox and open the model menu
     const toggleButton = screen.getByTestId("quick-entry-toggle");
     fireEvent.click(toggleButton);
 
     const modelButton = await screen.findByTestId("quick-entry-models-button");
     fireEvent.click(modelButton);
 
-    // The real ModelSelectionModal should render via portal with data-testid
-    const modal = await screen.findByTestId("model-selection-modal");
-    expect(modal).toBeDefined();
+    // The nested model menu should render with data-testid
+    const menu = await screen.findByTestId("model-nested-menu");
+    expect(menu).toBeDefined();
 
-    // Verify the modal has content (models are loaded)
-    expect(modal.textContent).toContain("Select Models");
+    // Verify the menu has the three options
+    expect(menu.textContent).toContain("Plan");
+    expect(menu.textContent).toContain("Executor");
+    expect(menu.textContent).toContain("Validator");
   });
 });

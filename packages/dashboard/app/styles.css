@@ -11424,6 +11424,122 @@ html .column.drag-over * {
   padding: 3px 8px;
 }
 
+/* Nested model menu (replaces ModelSelectionModal in quick entry) */
+.model-nested-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+  min-width: 240px;
+  max-width: 320px;
+  overflow: hidden;
+}
+
+.model-menu-items {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.model-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  transition: background-color 0.15s;
+}
+
+.model-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.model-menu-item--active {
+  color: var(--text-accent, var(--todo));
+}
+
+.model-menu-item-label {
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.model-menu-item-value {
+  flex: 1;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.model-submenu {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+}
+
+.model-submenu-back {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 0;
+  width: fit-content;
+}
+
+.model-submenu-back:hover {
+  color: var(--text-primary);
+}
+
+.model-submenu-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-submenu-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-error, #e53e3e);
+  padding-top: 4px;
+}
+
+/* Responsive: model menu on mobile */
+@media (max-width: 640px) {
+  .model-nested-menu {
+    left: 0;
+    right: 0;
+    min-width: unset;
+    max-width: unset;
+    width: calc(100vw - 32px);
+  }
+}
+
 /* Responsive layout for quick entry controls */
 @media (max-width: 640px) {
   .quick-entry-controls {
