@@ -967,6 +967,24 @@ body {
   word-break: break-word;
 }
 
+/* Awaiting manual plan approval: amber left border + subtle pulsing background to signal human review needed.
+   Distinct from agent-active (purple glow), failed (red left border + error block), and paused (dimmed opacity). */
+.card.awaiting-approval {
+  border-left: 3px solid var(--triage);
+  background: rgba(210, 153, 34, 0.06);
+  animation: approval-pulse 3s ease-in-out infinite;
+}
+
+@keyframes approval-pulse {
+  0%,
+  100% {
+    background: rgba(210, 153, 34, 0.06);
+  }
+  50% {
+    background: rgba(210, 153, 34, 0.12);
+  }
+}
+
 .card.paused {
   opacity: 0.55;
   border-left: 3px solid var(--text-secondary, #888);

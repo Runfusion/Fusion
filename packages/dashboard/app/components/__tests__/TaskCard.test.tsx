@@ -2907,3 +2907,152 @@ describe("TaskCard title display", () => {
     expect(cardTitle).toBeDefined();
   });
 });
+
+/**
+ * Tests for awaiting-approval visual state in TaskCard.
+ * Tasks in triage with status "awaiting-approval" receive a distinct
+ * highlight and approval-specific badge text on the board.
+ */
+describe("TaskCard awaiting-approval state", () => {
+  const noopToast = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("applies awaiting-approval class when task is in triage with awaiting-approval status", () => {
+    const task = makeTask({ column: "triage", status: "awaiting-approval" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card?.classList.contains("awaiting-approval")).toBe(true);
+  });
+
+  it("does NOT apply awaiting-approval class for triage tasks with other statuses", () => {
+    const task = makeTask({ column: "triage", status: "specifying" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card?.classList.contains("awaiting-approval")).toBe(false);
+  });
+
+  it("does NOT apply awaiting-approval class for non-triage columns", () => {
+    const columns: Column[] = ["todo", "in-progress", "in-review", "done"];
+
+    for (const column of columns) {
+      const task = makeTask({ column, status: "awaiting-approval" });
+
+      const { unmount } = render(
+        <TaskCard
+          task={task}
+          onOpenDetail={vi.fn()}
+          addToast={noopToast}
+        />
+      );
+
+      const card = document.querySelector('[data-id="FN-099"]');
+      expect(card?.classList.contains("awaiting-approval")).toBe(false);
+
+      unmount();
+    }
+  });
+
+  it("shows 'Awaiting Approval' badge text for awaiting-approval tasks", () => {
+    const task = makeTask({ column: "triage", status: "awaiting-approval" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const badge = screen.getByText("Awaiting Approval");
+    expect(badge).toBeDefined();
+    expect(badge.classList.contains("card-status-badge")).toBe(true);
+    expect(badge.classList.contains("awaiting-approval")).toBe(true);
+  });
+
+  it("shows raw status text for other triage statuses", () => {
+    const task = makeTask({ column: "triage", status: "specifying" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Should show raw status text, not "Awaiting Approval"
+    expect(screen.getByText("specifying")).toBeDefined();
+    expect(screen.queryByText("Awaiting Approval")).toBeNull();
+  });
+
+  it("does NOT apply agent-active class for awaiting-approval tasks", () => {
+    const task = makeTask({ column: "triage", status: "awaiting-approval" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card?.classList.contains("agent-active")).toBe(false);
+    expect(card?.classList.contains("awaiting-approval")).toBe(true);
+  });
+
+  it("awaiting-approval badge uses triage color styling", () => {
+    const task = makeTask({ column: "triage", status: "awaiting-approval" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const badge = screen.getByText("Awaiting Approval") as HTMLElement;
+    // The badge should use the triage amber color
+    expect(badge.style.color).toBe("var(--triage)");
+    // JSDOM may normalize rgba() with or without spaces, so normalize for comparison
+    expect(badge.style.background.replace(/\s+/g, "")).toBe("rgba(210,153,34,0.2)");
+  });
+
+  it("awaiting-approval card does NOT look like other states (no agent-active, failed, or paused)", () => {
+    const task = makeTask({ column: "triage", status: "awaiting-approval" });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    const card = document.querySelector('[data-id="FN-099"]');
+    expect(card?.classList.contains("awaiting-approval")).toBe(true);
+    expect(card?.classList.contains("agent-active")).toBe(false);
+    expect(card?.classList.contains("failed")).toBe(false);
+    expect(card?.classList.contains("paused")).toBe(false);
+  });
+});

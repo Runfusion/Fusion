@@ -339,7 +339,7 @@ Enable `requirePlanApproval` in settings for manual review of AI-generated speci
 }
 ```
 
-When enabled, tasks stay in **Triage** with "awaiting-approval" status after AI specification. Review the PROMPT.md in the task detail modal, then click **Approve Plan** to move to **Todo** or **Reject Plan** to regenerate.
+When enabled, tasks stay in **Triage** with "awaiting-approval" status after AI specification. On the board, these tasks are highlighted with an amber left border and a gentle pulsing background, plus an **Awaiting Approval** status tag — making them easy to spot among other triage items. Review the PROMPT.md in the task detail modal, then click **Approve Plan** to move to **Todo** or **Reject Plan** to regenerate.
 
 ## Development
 

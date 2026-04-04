@@ -315,8 +315,9 @@ function TaskCardComponent({
 
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
+  const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
   const isArchived = task.column === "archived";
-  const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
+  const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isAwaitingApproval && (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
   const isDraggable = !queued && !isPaused && !isEditing && !isArchived; // Disable drag during edit or if archived
 
   // Check if this card can be edited inline
@@ -502,7 +503,7 @@ function TaskCardComponent({
     setShowSteps((current) => !current);
   }, []);
 
-  const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
+  const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
   if (isEditing) {
     return (
@@ -564,13 +565,15 @@ function TaskCardComponent({
         )}
         {!isPaused && task.status && task.status !== "queued" && (
           <span
-            className={`card-status-badge${ACTIVE_STATUSES.has(task.status) ? " pulsing" : ""}${isFailed ? " failed" : ""}`}
-            style={isFailed
-              ? { background: "rgba(218,54,51,0.15)", color: "#da3633" }
-              : { background: COLUMN_COLOR_MAP[task.column], color: COLUMN_TEXT_COLOR_MAP[task.column] }
+            className={`card-status-badge${isAwaitingApproval ? " awaiting-approval" : ""}${ACTIVE_STATUSES.has(task.status) ? " pulsing" : ""}${isFailed ? " failed" : ""}`}
+            style={isAwaitingApproval
+              ? { background: "rgba(210,153,34,0.2)", color: "var(--triage)" }
+              : isFailed
+                ? { background: "rgba(218,54,51,0.15)", color: "#da3633" }
+                : { background: COLUMN_COLOR_MAP[task.column], color: COLUMN_TEXT_COLOR_MAP[task.column] }
             }
           >
-            {task.status}
+            {isAwaitingApproval ? "Awaiting Approval" : task.status}
           </span>
         )}
         {hasGitHubBadge && (
