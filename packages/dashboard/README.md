@@ -91,6 +91,7 @@ A persistent footer status bar at the bottom of the dashboard displays real-time
 - Real-time updates via 5-second polling for executor state (globalPause, enginePaused, maxConcurrent)
 - Responsive design: collapses labels on mobile screens (<768px); footer height reduces from 36px to 32px
 - Dark/light theme support via CSS variables
+- **Theme-tokenized state accents**: Running and error state backgrounds use semantic CSS custom properties (`--executor-status-running-bg` / `--executor-status-error-bg`) computed via `color-mix()` from `--color-success` and `--color-error` at 8% opacity (dark theme) and 6% (light theme). This ensures the footer adapts to every color theme without manual overrides — no hardcoded RGBA literals in state rules
 - Error state shows connection issues
 - Only visible in project view, not in overview/project selector
 

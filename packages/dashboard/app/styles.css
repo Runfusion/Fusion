@@ -101,6 +101,10 @@
   --color-error-dark: #da3633;
   --color-muted: #8b949e;
 
+  /* Executor status bar state accents */
+  --executor-status-running-bg: color-mix(in srgb, var(--color-success) 8%, transparent);
+  --executor-status-error-bg: color-mix(in srgb, var(--color-error) 8%, transparent);
+
   /* Logo & branding tokens */
   --logo-accent: var(--todo);
 
@@ -8150,6 +8154,10 @@ html .column.drag-over * {
   --color-error: #cf222e;
   --color-muted: #6e7781;
 
+  /* Executor status bar state accents (lower intensity for light backgrounds) */
+  --executor-status-running-bg: color-mix(in srgb, var(--color-success) 6%, transparent);
+  --executor-status-error-bg: color-mix(in srgb, var(--color-error) 6%, transparent);
+
   /* Changed-file status colors (adjusted for light backgrounds) */
   --status-color-added: #1a7f37;
   --status-color-modified: #0969da;
@@ -15547,11 +15555,11 @@ html .column.drag-over * {
 
 /* State variants */
 .executor-status-bar--running {
-  background: linear-gradient(to right, rgba(63, 185, 80, 0.08), transparent);
+  background: linear-gradient(to right, var(--executor-status-running-bg), transparent);
 }
 
 .executor-status-bar--error {
-  background: rgba(248, 81, 73, 0.08);
+  background: var(--executor-status-error-bg);
 }
 
 .executor-status-bar--loading {
@@ -15727,14 +15735,6 @@ html .column.drag-over * {
 [data-theme="light"] .executor-status-bar {
   background: var(--surface);
   border-top-color: var(--border);
-}
-
-[data-theme="light"] .executor-status-bar--running {
-  background: linear-gradient(to right, rgba(46, 160, 67, 0.06), transparent);
-}
-
-[data-theme="light"] .executor-status-bar--error {
-  background: rgba(248, 81, 73, 0.06);
 }
 
 [data-theme="light"] .executor-status-bar__count {
