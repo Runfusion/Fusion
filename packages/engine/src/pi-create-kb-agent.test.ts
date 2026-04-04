@@ -13,6 +13,7 @@ const findMock = vi.fn();
 const registerProviderMock = vi.fn();
 const refreshMock = vi.fn();
 const settingsManagerCreateMock = vi.fn(() => ({ kind: "settings-manager-create" }));
+const settingsManagerInMemoryMock = vi.fn(() => ({ kind: "settings-manager" }));
 const setFallbackResolverMock = vi.fn();
 const reloadMock = vi.fn(async () => {});
 
@@ -54,7 +55,7 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   },
   SettingsManager: {
     create: settingsManagerCreateMock,
-    inMemory: () => ({ kind: "settings-manager" }),
+    inMemory: settingsManagerInMemoryMock,
   },
 }));
 
@@ -178,5 +179,41 @@ describe("createKbAgent", () => {
     expect(createAgentSessionMock.mock.calls[0][0]).toMatchObject({
       model: { provider: "openai-codex", id: "gpt-5.4" },
     });
+  });
+
+  it("enables auto-compaction to prevent context-window overflow", async () => {
+    const { createKbAgent } = await import("./pi.js");
+
+    await createKbAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "coding",
+    });
+
+    expect(settingsManagerInMemoryMock).toHaveBeenCalledTimes(1);
+    expect(settingsManagerInMemoryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compaction: { enabled: true },
+      }),
+    );
+  });
+
+  it("passes compaction enabled alongside retry settings", async () => {
+    const { createKbAgent } = await import("./pi.js");
+
+    await createKbAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+    });
+
+    expect(settingsManagerInMemoryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compaction: { enabled: true },
+        retry: { enabled: true, maxRetries: 3 },
+      }),
+    );
   });
 });

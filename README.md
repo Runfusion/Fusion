@@ -244,6 +244,7 @@ Each pi agent session gets:
 - Custom system prompt for its role (triage specifier vs task executor)
 - Tools scoped to the correct directory (`createCodingTools(cwd)`)
 - In-memory sessions (no persistence needed)
+- Auto-compaction enabled to automatically summarize conversation history when context fills up, preventing context-window overflow in long-running agent conversations
 - The user's existing pi auth (API keys from `~/.pi/agent/auth.json`)
 
 ### Error Recovery

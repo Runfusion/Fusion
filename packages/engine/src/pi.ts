@@ -196,6 +196,11 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
       ? createReadOnlyTools(options.cwd)
       : createCodingTools(options.cwd);
 
+  // Compaction is explicitly enabled to prevent context-window overflow during
+  // long-running agent conversations (triage, execution, review, merge).
+  // When the context fills up, pi auto-compacts the conversation history to
+  // keep the session alive without manual intervention. This must remain enabled
+  // as a reliability safeguard — disabling it would cause overflow failures.
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: true },
     retry: { enabled: true, maxRetries: 3 },
