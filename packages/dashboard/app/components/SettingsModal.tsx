@@ -6,7 +6,7 @@ import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData } 
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
 import { CustomModelDropdown } from "./CustomModelDropdown";
-import { applyPresetToSelection, generatePresetId, validatePresetId } from "../utils/modelPresets";
+import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 
 /**
  * Settings sections configuration.
@@ -98,7 +98,6 @@ export function SettingsModal({
   const [testNotificationLoading, setTestNotificationLoading] = useState(false);
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   const [presetDraft, setPresetDraft] = useState<ModelPreset | null>(null);
-  const [presetIdTouched, setPresetIdTouched] = useState(false);
 
   // Backup state
   const [backupInfo, setBackupInfo] = useState<BackupListResponse | null>(null);
@@ -427,17 +426,20 @@ export function SettingsModal({
   const savePresetDraft = () => {
     if (!presetDraft) return;
 
-    const nextId = presetDraft.id.trim();
     const nextName = presetDraft.name.trim();
-    if (!nextName || !nextId || !validatePresetId(nextId)) {
-      addToast("Preset name is required and ID must be 1–32 letters, numbers, hyphens, or underscores", "error");
+    if (!nextName) {
+      addToast("Preset name is required", "error");
       return;
     }
 
     const presets = form.modelPresets || [];
-    if (presets.some((preset) => preset.id === nextId && preset.id !== editingPresetId)) {
-      addToast("Preset ID must be unique", "error");
-      return;
+
+    // For new presets, generate unique ID from name; for edits, keep existing ID
+    let nextId: string;
+    if (editingPresetId) {
+      nextId = editingPresetId;
+    } else {
+      nextId = generateUniquePresetId(nextName, presets);
     }
 
     const normalizedDraft: ModelPreset = {
@@ -459,7 +461,6 @@ export function SettingsModal({
 
     setEditingPresetId(null);
     setPresetDraft(null);
-    setPresetIdTouched(false);
   };
 
   /** Render a scope indicator banner for the current section */
@@ -785,7 +786,6 @@ export function SettingsModal({
                             onClick={() => {
                               setEditingPresetId(preset.id);
                               setPresetDraft({ ...preset });
-                              setPresetIdTouched(true);
                             }}
                           >
                             Edit
@@ -807,7 +807,6 @@ export function SettingsModal({
                               if (editingPresetId === preset.id) {
                                 setEditingPresetId(null);
                                 setPresetDraft(null);
-                                setPresetIdTouched(false);
                               }
                             }}
                           >
@@ -826,7 +825,6 @@ export function SettingsModal({
                   onClick={() => {
                     setEditingPresetId(null);
                     setPresetDraft({ id: "", name: "", executorProvider: undefined, executorModelId: undefined, validatorProvider: undefined, validatorModelId: undefined });
-                    setPresetIdTouched(false);
                   }}
                 >
                   Add Preset
@@ -845,30 +843,9 @@ export function SettingsModal({
                     value={presetDraft.name}
                     onChange={(e) => {
                       const name = e.target.value;
-                      setPresetDraft((current) => current ? {
-                        ...current,
-                        name,
-                        id: presetIdTouched ? current.id : generatePresetId(name),
-                      } : current);
+                      setPresetDraft((current) => current ? { ...current, name } : current);
                     }}
                   />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="preset-id">ID</label>
-                  <input
-                    id="preset-id"
-                    type="text"
-                    value={presetDraft.id}
-                    onChange={(e) => {
-                      setPresetIdTouched(true);
-                      setPresetDraft((current) => current ? { ...current, id: e.target.value } : current);
-                    }}
-                  />
-                  {presetDraft.id && !validatePresetId(presetDraft.id) ? (
-                    <small className="field-error">ID must be 1–32 letters, numbers, hyphens, or underscores</small>
-                  ) : (
-                    <small>Slug-friendly unique identifier used for preset mappings.</small>
-                  )}
                 </div>
                 {availableModels.length === 0 ? (
                   <small>No models available. Configure authentication first.</small>
@@ -930,7 +907,7 @@ export function SettingsModal({
                 )}
                 <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
                   <button type="button" className="btn btn-primary btn-sm" onClick={savePresetDraft}>Save preset</button>
-                  <button type="button" className="btn btn-sm" onClick={() => { setEditingPresetId(null); setPresetDraft(null); setPresetIdTouched(false); }}>Cancel</button>
+                  <button type="button" className="btn btn-sm" onClick={() => { setEditingPresetId(null); setPresetDraft(null); }}>Cancel</button>
                 </div>
               </div>
             ) : null}
