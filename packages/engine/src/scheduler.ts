@@ -89,6 +89,8 @@ export class Scheduler {
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   /** The interval (ms) of the currently active `setInterval` timer. */
   private activePollMs: number | null = null;
+  /** Tracks which task IDs are currently paused, to detect unpause transitions. */
+  private pausedTaskIds = new Set<string>();
 
   constructor(
     private store: TaskStore,
@@ -179,8 +181,24 @@ export class Scheduler {
 
     /**
      * PR Monitoring: Start monitoring when PR is linked to an in-review task.
+     * Also detects task-level unpause transitions and triggers immediate scheduling.
      */
     this.store.on("task:updated", (task) => {
+      // Track pause state transitions for event-driven scheduling on unpause.
+      // When a previously-paused task is unpaused in a schedulable column,
+      // trigger a scheduling pass immediately instead of waiting for the next
+      // poll interval (up to 15 seconds).
+      if (task.paused) {
+        this.pausedTaskIds.add(task.id);
+      } else if (this.pausedTaskIds.has(task.id)) {
+        // Task was paused, now unpaused — trigger scheduling
+        this.pausedTaskIds.delete(task.id);
+        if (this.running && (task.column === "todo" || task.column === "triage")) {
+          schedulerLog.log(`Task ${task.id} unpaused — triggering scheduling`);
+          this.schedule();
+        }
+      }
+
       if (!this.options.prMonitor) return;
       if (task.column !== "in-review") return;
       if (!task.prInfo) return;

@@ -233,6 +233,23 @@ export class TaskExecutor {
         return;
       }
 
+      // Handle unpause of an in-progress task with no active session.
+      // This covers orphaned states (e.g., engine restarted while task was
+      // paused in-progress) where the task needs to resume execution.
+      // The executing/executing guards prevent duplicate runs.
+      if (!task.paused && task.column === "in-progress" && !this.activeSessions.has(task.id)) {
+        if (!this.executing.has(task.id)) {
+          executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
+          try {
+            await this.store.logEntry(task.id, "Resuming execution after unpause");
+          } catch { /* non-critical */ }
+          this.execute(task).catch((err) =>
+            executorLog.error(`Failed to resume unpaused ${task.id}:`, err),
+          );
+        }
+        return;
+      }
+
       // Handle steering comments - inject new ones into the running session
       // Only process if session is active (activeSessions check is sufficient
       // since entries are only added when a task is in-progress)

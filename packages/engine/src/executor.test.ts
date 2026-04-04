@@ -2154,6 +2154,150 @@ describe("TaskExecutor pause behavior", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-002", "Resumed after engine restart");
     expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", expect.anything());
   });
+
+  it("resumes unpaused in-progress task with no active session", async () => {
+    const store = createMockStore();
+    const disposeFn = vi.fn();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: disposeFn,
+      },
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Simulate unpause of an in-progress task that has no active session
+    // (e.g., engine restarted while task was paused in-progress)
+    store._trigger("task:updated", {
+      id: "FN-001",
+      paused: undefined,
+      column: "in-progress",
+      description: "Test task",
+      title: "Resumed task",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Wait for async execution to start
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Agent should have been created to resume the task
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resuming execution after unpause");
+  });
+
+  it("does not duplicate execution when unpausing already-executing task", async () => {
+    const store = createMockStore();
+    const disposeFn = vi.fn();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Simulate rapid unpause during execution — should NOT start a second run
+          store._trigger("task:updated", {
+            id: "FN-001",
+            paused: undefined,
+            column: "in-progress",
+          });
+          // Wait a bit to let the unpause handler run
+          await new Promise((r) => setTimeout(r, 10));
+        }),
+        dispose: disposeFn,
+      },
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({
+      id: "FN-001",
+      title: "Already executing",
+      description: "Test no duplicate",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Only one agent should have been created (no duplicate from the unpause event)
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resume unpaused task that is not in-progress", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Unpause a todo task — executor should NOT try to execute it
+    store._trigger("task:updated", {
+      id: "FN-001",
+      paused: undefined,
+      column: "todo",
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    // No agent should have been created
+    expect(mockedCreateHaiAgent).not.toHaveBeenCalled();
+  });
+
+  it("does not resume unpaused task that still has an active session", async () => {
+    const store = createMockStore();
+    const disposeFn = vi.fn();
+
+    let promptResolve: () => void;
+    const promptPromise = new Promise<void>((r) => { promptResolve = r; });
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          // Simulate unpause while session is still active (should be a no-op)
+          store._trigger("task:updated", {
+            id: "FN-001",
+            paused: undefined,
+            column: "in-progress",
+          });
+          await new Promise((r) => setTimeout(r, 10));
+        }),
+        dispose: disposeFn,
+      },
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    // Start execution — session will be active
+    const executePromise = executor.execute({
+      id: "FN-001",
+      title: "Active session",
+      description: "Test active session unpause",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await executePromise;
+
+    // Only one agent session created — the unpause during active session was a no-op
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("TaskExecutor global pause behavior", () => {

@@ -271,6 +271,156 @@ describe("Scheduler", () => {
     });
   });
 
+  describe("task unpause scheduling", () => {
+    it("triggers scheduling immediately when a paused todo task is unpaused", async () => {
+      // Mock filesystem validation so schedule() can proceed
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const listTasksMock = vi.fn()
+        .mockResolvedValueOnce([]) // Initial schedule from start()
+        .mockResolvedValueOnce([
+          createMockTask({ id: "FN-001", column: "todo", dependencies: [] }),
+        ]);
+
+      const store = createMockStore({
+        listTasks: listTasksMock,
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+
+      // Wait for initial schedule pass to complete
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Find the task:updated handler
+      const onCalls = (store.on as any).mock.calls;
+      const updatedHandler = onCalls.find((call: any) => call[0] === "task:updated")?.[1];
+      expect(updatedHandler).toBeDefined();
+
+      // First, simulate pause event (to register the task as paused)
+      await updatedHandler(createMockTask({ id: "FN-001", column: "todo", paused: true }));
+
+      // Now simulate unpause event
+      await updatedHandler(createMockTask({ id: "FN-001", column: "todo", paused: undefined }));
+
+      // Wait for async scheduling to complete
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Should have triggered scheduling and moved the task to in-progress
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
+    });
+
+    it("does not trigger scheduling on unpause if scheduler is not running", async () => {
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+      });
+
+      const scheduler = new Scheduler(store);
+      // Don't start the scheduler
+
+      const onCalls = (store.on as any).mock.calls;
+      const updatedHandler = onCalls.find((call: any) => call[0] === "task:updated")?.[1];
+
+      // Pause then unpause
+      await updatedHandler(createMockTask({ id: "FN-001", column: "todo", paused: true }));
+      await updatedHandler(createMockTask({ id: "FN-001", column: "todo", paused: undefined }));
+
+      // Should NOT have moved any tasks
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
+    it("does not trigger scheduling for tasks that were never paused", async () => {
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([
+          createMockTask({ id: "FN-001", column: "todo", dependencies: [] }),
+        ]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Clear calls from initial schedule
+      (store.moveTask as any).mockClear();
+
+      const onCalls = (store.on as any).mock.calls;
+      const updatedHandler = onCalls.find((call: any) => call[0] === "task:updated")?.[1];
+
+      // Fire task:updated for a task that was never paused — should NOT trigger extra scheduling
+      await updatedHandler(createMockTask({ id: "FN-001", column: "todo", paused: undefined }));
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      // moveTask should not be called (no scheduling triggered)
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
+    it("does not trigger scheduling on unpause for in-progress tasks", async () => {
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+      await new Promise((r) => setTimeout(r, 10));
+
+      (store.moveTask as any).mockClear();
+
+      const onCalls = (store.on as any).mock.calls;
+      const updatedHandler = onCalls.find((call: any) => call[0] === "task:updated")?.[1];
+
+      // Pause then unpause an in-progress task — executor handles this, not scheduler
+      await updatedHandler(createMockTask({ id: "FN-001", column: "in-progress", paused: true }));
+      await updatedHandler(createMockTask({ id: "FN-001", column: "in-progress", paused: undefined }));
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Scheduler should NOT try to schedule an in-progress task
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
+    it("triggers scheduling for unpaused triage tasks", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const scheduleSpy = vi.spyOn(Scheduler.prototype, "schedule");
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+      });
+
+      const scheduler = new Scheduler(store);
+      scheduler.start();
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Clear calls from initial start() schedule
+      scheduleSpy.mockClear();
+
+      const onCalls = (store.on as any).mock.calls;
+      const updatedHandler = onCalls.find((call: any) => call[0] === "task:updated")?.[1];
+
+      // Pause then unpause a triage task
+      await updatedHandler(createMockTask({ id: "FN-001", column: "triage", paused: true }));
+      await updatedHandler(createMockTask({ id: "FN-001", column: "triage", paused: undefined }));
+
+      // schedule() should have been triggered by the unpause
+      expect(scheduleSpy).toHaveBeenCalled();
+
+      scheduleSpy.mockRestore();
+    });
+  });
+
   describe("start/stop", () => {
     it("starts and stops the scheduler", () => {
       const store = createMockStore();

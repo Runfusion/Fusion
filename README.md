@@ -757,7 +757,13 @@ Terminates and retries tasks with no agent activity for the specified duration (
 
 **Pause Behavior for In-Progress Tasks:**
 
-Pausing a task that is currently executing will immediately terminate the agent session and move the task back to `todo`. When the task is later unpaused, the scheduler picks it up and resumes execution from where it left off (step progress is preserved). The task is never left stranded in `in-progress` after a pause — both the error-throwing and graceful session exit paths move it to `todo`. Paused tasks are never marked as `failed`.
+Pausing a task that is currently executing will immediately terminate the agent session and move the task back to `todo`. When the task is later unpaused, the scheduler immediately picks it up (event-driven, no poll-cycle delay) and resumes execution from where it left off (step progress is preserved). The task is never left stranded in `in-progress` after a pause — both the error-throwing and graceful session exit paths move it to `todo`. Paused tasks are never marked as `failed`.
+
+If an engine restart occurs while a task is paused in `in-progress` (orphaned state), the executor automatically resumes execution when the task is unpaused — no manual intervention or engine restart is required.
+
+**Pause Behavior for Todo/Triage Tasks:**
+
+Pausing a task in `todo` or `triage` excludes it from scheduling. When unpaused, the scheduler is immediately notified and the task re-enters the scheduling queue without waiting for the next poll cycle.
 
 **Push Notifications (ntfy.sh):**
 ```json
