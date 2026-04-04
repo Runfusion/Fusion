@@ -323,7 +323,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
       unsubConnect();
       unsubExit();
     };
-  }, [xtermReady, activeTab?.sessionId, activeTab?.id, onData, onScrollback, onConnect, onExit, updateTabTitle]);
+  }, [xtermReady, activeTab?.sessionId, activeTab?.id, activeTab, connectionStatus, onData, onScrollback, onConnect, onExit, updateTabTitle]);
 
   // Run initial command when connected.
   // Tracks the last command that was sent so that a new command provided
