@@ -81,6 +81,7 @@ function createMockStore(overrides: Record<string, any> = {}) {
       return makeTask(id, col);
     }),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    appendAgentLog: vi.fn().mockResolvedValue(undefined),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),

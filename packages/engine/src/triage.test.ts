@@ -45,6 +45,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     } as Settings),
     updateSettings: vi.fn(),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),
     addSteeringComment: vi.fn(),
     parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
@@ -866,6 +867,67 @@ describe("taskCreate tool model inheritance", () => {
 
       expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-101" }));
       specifySpy.mockRestore();
+    });
+  });
+
+  describe("triage model logging in agent log", () => {
+    it("appends triage model info to agent log after session creation", async () => {
+      const task = {
+        id: "FN-300",
+        description: "Test triage task for model logging",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+
+      const mockDispose = vi.fn();
+      const mockPrompt = vi.fn().mockResolvedValue(undefined);
+      const mockGetLeafId = vi.fn().mockReturnValue(null);
+      const mockNavigateTree = vi.fn();
+
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+
+      // Set up createKbAgent to return a session that immediately throws
+      // after the model log line, so we can verify the appendAgentLog call.
+      // The session will be created, model logged, then promptWithFallback
+      // throws — but the model log has already been written.
+      mockCreateKbAgent.mockResolvedValue({
+        session: {
+          prompt: mockPrompt,
+          dispose: mockDispose,
+          sessionManager: {
+            getLeafId: mockGetLeafId,
+            navigateTree: mockNavigateTree,
+          },
+        },
+      });
+
+      // Make promptWithFallback throw so we can stop execution after model log
+      const { promptWithFallback } = await import("./pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("test stop after model log"),
+      );
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+
+      await processor.specifyTask(task);
+
+      // Verify appendAgentLog was called with model info and triage role
+      expect(store.appendAgentLog).toHaveBeenCalledWith(
+        "FN-300",
+        "Triage using model: mock-model",
+        "text",
+        undefined,
+        "triage",
+      );
     });
   });
 });

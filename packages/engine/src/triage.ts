@@ -495,8 +495,16 @@ export class TriageProcessor {
           defaultThinkingLevel: settings.defaultThinkingLevel,
         });
 
-        triageLog.log(`${task.id}: using model ${describeModel(session)}`);
-        await this.store.logEntry(task.id, `Triage using model: ${describeModel(session)}`);
+        const modelDesc = describeModel(session);
+        triageLog.log(`${task.id}: using model ${modelDesc}`);
+        await this.store.logEntry(task.id, `Triage using model: ${modelDesc}`);
+        await this.store.appendAgentLog(
+          task.id,
+          `Triage using model: ${modelDesc}`,
+          "text",
+          undefined,
+          "triage",
+        );
 
         // Make session available to review_spec tool (for RETHINK rewind)
         sessionRef.current = session;
