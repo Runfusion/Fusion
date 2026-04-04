@@ -62,6 +62,9 @@ export interface WorkflowStep {
   scriptName?: string;
   /** Whether this step is available for selection on new tasks */
   enabled: boolean;
+  /** When true, this step is automatically pre-selected when creating new tasks.
+   *  Users can still deselect it — this only controls the initial default state. */
+  defaultOn?: boolean;
   /** AI model provider override for the workflow step agent (e.g., "anthropic").
    *  Must be set together with `modelId`. When both model fields are undefined,
    *  the executor uses global settings defaults. Only used when mode is "prompt". */
@@ -92,6 +95,9 @@ export interface WorkflowStepInput {
   scriptName?: string;
   /** Defaults to true if not specified */
   enabled?: boolean;
+  /** When true, this step is automatically pre-selected when creating new tasks.
+   *  Users can still deselect — this only controls the initial default state. */
+  defaultOn?: boolean;
   /** AI model provider override. Must be set together with modelId. Only used when mode is "prompt". */
   modelProvider?: string;
   /** AI model ID override. Must be set together with modelProvider. Only used when mode is "prompt". */

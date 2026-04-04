@@ -4690,6 +4690,117 @@ Task with acceptance criteria
       expect(found!.mode).toBe("script");
       expect(found!.scriptName).toBe("typecheck");
     });
+
+    // ── Workflow Step defaultOn ──────────────────────────────────────────────
+
+    it("should persist defaultOn flag on workflow step creation", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Default-on Step",
+        description: "Auto-selected for new tasks",
+        defaultOn: true,
+      });
+
+      expect(ws.defaultOn).toBe(true);
+
+      const found = await store.getWorkflowStep(ws.id);
+      expect(found!.defaultOn).toBe(true);
+
+      // Verify persistence
+      const steps = await store.listWorkflowSteps();
+      expect(steps[0].defaultOn).toBe(true);
+    });
+
+    it("should not set defaultOn by default", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Non-default Step",
+        description: "Not auto-selected",
+      });
+
+      expect(ws.defaultOn).toBeUndefined();
+
+      const found = await store.getWorkflowStep(ws.id);
+      expect(found!.defaultOn).toBeUndefined();
+    });
+
+    it("should update defaultOn flag on workflow step", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Step",
+        description: "Desc",
+      });
+
+      const updated = await store.updateWorkflowStep(ws.id, { defaultOn: true });
+      expect(updated.defaultOn).toBe(true);
+
+      const found = await store.getWorkflowStep(ws.id);
+      expect(found!.defaultOn).toBe(true);
+    });
+
+    it("should clear defaultOn flag by setting to false", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Step",
+        description: "Desc",
+        defaultOn: true,
+      });
+
+      const updated = await store.updateWorkflowStep(ws.id, { defaultOn: false });
+      expect(updated.defaultOn).toBe(false);
+
+      const found = await store.getWorkflowStep(ws.id);
+      expect(found!.defaultOn).toBe(false);
+    });
+
+    it("should auto-apply default-on workflow steps when creating task without enabledWorkflowSteps", async () => {
+      await store.createWorkflowStep({ name: "Always Run", description: "Auto-select", enabled: true, defaultOn: true });
+      await store.createWorkflowStep({ name: "Optional Check", description: "Only when manually selected", enabled: true, defaultOn: false });
+      await store.createWorkflowStep({ name: "Disabled Step", description: "Disabled step", enabled: false, defaultOn: true });
+
+      const task = await store.createTask({ description: "Test task" });
+
+      // Only the enabled + defaultOn step should be auto-applied
+      expect(task.enabledWorkflowSteps).toEqual(["WS-001"]);
+    });
+
+    it("should use explicit enabledWorkflowSteps over default-on steps", async () => {
+      await store.createWorkflowStep({ name: "Always Run", description: "Auto-select", enabled: true, defaultOn: true });
+
+      const task = await store.createTask({
+        description: "Test task",
+        enabledWorkflowSteps: ["WS-001", "WS-002"],
+      });
+
+      // Explicit input takes precedence
+      expect(task.enabledWorkflowSteps).toEqual(["WS-001", "WS-002"]);
+    });
+
+    it("should use empty enabledWorkflowSteps to override default-on steps", async () => {
+      await store.createWorkflowStep({ name: "Always Run", description: "Auto-select", enabled: true, defaultOn: true });
+
+      const task = await store.createTask({
+        description: "Test task",
+        enabledWorkflowSteps: [],
+      });
+
+      // Explicit empty array means user intentionally wants no steps
+      expect(task.enabledWorkflowSteps).toBeUndefined();
+    });
+
+    it("should not auto-apply disabled steps even with defaultOn flag", async () => {
+      await store.createWorkflowStep({ name: "Disabled Step", description: "Disabled step", enabled: false, defaultOn: true });
+
+      const task = await store.createTask({ description: "Test task" });
+
+      expect(task.enabledWorkflowSteps).toBeUndefined();
+    });
+
+    it("should auto-apply multiple default-on steps in order", async () => {
+      await store.createWorkflowStep({ name: "First", description: "First", enabled: true, defaultOn: true });
+      await store.createWorkflowStep({ name: "Second", description: "Second", enabled: true, defaultOn: true });
+      await store.createWorkflowStep({ name: "Third", description: "Third", enabled: true, defaultOn: false });
+
+      const task = await store.createTask({ description: "Test task" });
+
+      expect(task.enabledWorkflowSteps).toEqual(["WS-001", "WS-002"]);
+    });
   });
 
   // ── Title Summarization Tests ────────────────────────────────────────────
