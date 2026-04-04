@@ -192,8 +192,6 @@ export function useTerminal(sessionId: string | null): UseTerminalReturn {
     }
 
     isManualCloseRef.current = false;
-    // Reset buffer for new connection — previous session's data is stale
-    initialBufferRef.current = createEmptyBuffer();
     setConnectionStatus("connecting");
 
     // Build WebSocket URL
@@ -204,6 +202,10 @@ export function useTerminal(sessionId: string | null): UseTerminalReturn {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      // Reset buffer ONLY when connection is established — ensures any
+      // late-arriving messages from a previous session are discarded and
+      // the new session's scrollback/data is captured in a fresh buffer.
+      initialBufferRef.current = createEmptyBuffer();
       setConnectionStatus("connected");
       reconnectAttemptsRef.current = 0;
 
