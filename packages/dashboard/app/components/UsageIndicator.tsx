@@ -66,12 +66,29 @@ function getUsageColorClass(percentUsed: number): string {
 interface UsageWindowRowProps {
   window: UsageWindow;
   viewMode: 'used' | 'remaining';
+  providerName: string;
+}
+
+/**
+ * Determine whether a usage window is a Claude weekly window.
+ *
+ * Claude weekly windows (e.g. "Weekly", "Weekly (Sonnet)", "Weekly (Opus)")
+ * intentionally suppress the absolute reset timestamp display because the
+ * relative text ("resets in 3d") already provides the most useful information
+ * for weekly quota planning. Session windows (e.g. "Session (5h)") and
+ * non-Claude providers continue to show the absolute timestamp when available.
+ */
+function isClaudeWeeklyWindow(providerName: string, windowLabel: string): boolean {
+  const normalizedProvider = providerName.toLowerCase();
+  const isClaudeProvider = normalizedProvider.includes("claude") || normalizedProvider.includes("anthropic");
+  const isWeeklyWindow = windowLabel.toLowerCase().startsWith("weekly");
+  return isClaudeProvider && isWeeklyWindow;
 }
 
 /**
  * Single usage window row with progress bar
  */
-function UsageWindowRow({ window, viewMode }: UsageWindowRowProps) {
+function UsageWindowRow({ window, viewMode, providerName }: UsageWindowRowProps) {
   const colorClass = getUsageColorClass(window.percentUsed);
   const isRemainingMode = viewMode === 'remaining';
   
@@ -134,7 +151,10 @@ function UsageWindowRow({ window, viewMode }: UsageWindowRowProps) {
           {window.resetText && (
             <span className="usage-window-reset">{window.resetText}</span>
           )}
-          {window.resetAt && (
+          {/* Absolute reset timestamp: shown for session windows and non-Claude providers.
+              Claude weekly windows intentionally suppress this — the relative "resets in Xd"
+              text is more useful for weekly quota planning than an exact calendar timestamp. */}
+          {window.resetAt && !isClaudeWeeklyWindow(providerName, window.label) && (
             <span className="usage-window-reset-at">
               {formatResetAt(window.resetAt)}
             </span>
@@ -250,7 +270,7 @@ function ProviderCard({ provider, viewMode }: ProviderCardProps) {
       {provider.windows.length > 0 ? (
         <div className="usage-provider-windows">
           {provider.windows.map((window, index) => (
-            <UsageWindowRow key={`${provider.name}-${window.label}-${index}`} window={window} viewMode={viewMode} />
+            <UsageWindowRow key={`${provider.name}-${window.label}-${index}`} window={window} viewMode={viewMode} providerName={provider.name} />
           ))}
         </div>
       ) : provider.status === "ok" ? (

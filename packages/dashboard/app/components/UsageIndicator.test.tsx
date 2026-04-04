@@ -1250,7 +1250,7 @@ describe("UsageIndicator", () => {
     expect(document.querySelector(".usage-window-reset-at")).not.toBeInTheDocument();
   });
 
-  it("shows reset time for weekly window when resetAt is provided", () => {
+  it("Claude weekly window does not show absolute reset time (relative only)", () => {
     const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
     mockUseUsageData.mockReturnValue({
       providers: [
@@ -1278,8 +1278,10 @@ describe("UsageIndicator", () => {
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
 
+    // Relative reset text should be present
     expect(screen.getByText("resets in 3d")).toBeInTheDocument();
-    expect(document.querySelector(".usage-window-reset-at")).toBeInTheDocument();
+    // Claude weekly windows intentionally suppress the absolute timestamp
+    expect(document.querySelector(".usage-window-reset-at")).not.toBeInTheDocument();
   });
 
   it("Claude 5h session row shows both relative reset text and absolute reset time", () => {
@@ -1328,12 +1330,12 @@ describe("UsageIndicator", () => {
     expect(screen.getByText("resets in 2h")).toBeInTheDocument();
     expect(screen.getByText("resets in 5d")).toBeInTheDocument();
 
-    // Both absolute reset times should be rendered
+    // Only the Session row should show the absolute reset time;
+    // the Weekly row intentionally suppresses it (relative-only for Claude weekly).
     const resetAtElements = document.querySelectorAll(".usage-window-reset-at");
-    expect(resetAtElements.length).toBe(2);
+    expect(resetAtElements.length).toBe(1);
 
     // Session row should show the absolute time formatted for today (just time like "2:30 PM")
-    // Since the resetAt is today, formatResetAt should return just the time string
     const sessionResetAtEl = resetAtElements[0];
     expect(sessionResetAtEl.textContent).toBeTruthy();
     // It should be a time-only format (e.g., "12:30 PM") since the reset is today
@@ -1435,5 +1437,115 @@ describe("UsageIndicator", () => {
     // Both providers should show their relative reset text
     expect(screen.getByText("resets in 4h")).toBeInTheDocument();
     expect(screen.getByText("resets in 6h")).toBeInTheDocument();
+  });
+
+  it("Claude weekly variant labels also suppress absolute reset time", () => {
+    const resetAt = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "Claude",
+          icon: "🟠",
+          status: "ok",
+          windows: [
+            {
+              label: "Weekly (Sonnet)",
+              percentUsed: 40,
+              percentLeft: 60,
+              resetText: "resets in 4d",
+              resetMs: 345600000,
+              resetAt: resetAt.toISOString(),
+            },
+            {
+              label: "Weekly (Opus)",
+              percentUsed: 25,
+              percentLeft: 75,
+              resetText: "resets in 4d",
+              resetMs: 345600000,
+              resetAt: resetAt.toISOString(),
+            },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    // Relative reset text should be present for both weekly variants
+    const resetTexts = screen.getAllByText("resets in 4d");
+    expect(resetTexts.length).toBe(2);
+
+    // Neither weekly variant should show absolute timestamp
+    expect(document.querySelectorAll(".usage-window-reset-at").length).toBe(0);
+  });
+
+  it("Anthropic provider name also suppresses weekly absolute reset time", () => {
+    const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "Anthropic",
+          icon: "🟠",
+          status: "ok",
+          windows: [
+            {
+              label: "Weekly",
+              percentUsed: 35,
+              percentLeft: 65,
+              resetText: "resets in 3d",
+              resetMs: 259200000,
+              resetAt: resetAt.toISOString(),
+            },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByText("resets in 3d")).toBeInTheDocument();
+    // "Anthropic" is treated as a Claude provider — weekly should suppress absolute time
+    expect(document.querySelector(".usage-window-reset-at")).not.toBeInTheDocument();
+  });
+
+  it("non-Claude weekly windows still show absolute reset time when provided", () => {
+    const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "Codex",
+          icon: "🟢",
+          status: "ok",
+          windows: [
+            {
+              label: "Weekly",
+              percentUsed: 20,
+              percentLeft: 80,
+              resetText: "resets in 3d",
+              resetMs: 259200000,
+              resetAt: resetAt.toISOString(),
+            },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByText("resets in 3d")).toBeInTheDocument();
+    // Non-Claude weekly windows are unaffected — should still show absolute time
+    expect(document.querySelector(".usage-window-reset-at")).toBeInTheDocument();
   });
 });
