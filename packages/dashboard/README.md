@@ -162,9 +162,14 @@ Saved scripts (managed via the Scripts modal or QuickScripts dropdown in the hea
 - Graceful shutdown with SIGTERM, then SIGKILL fallback
 
 **Startup Failure Handling**:
-- Terminal startup never hangs indefinitely — if the backend session cannot be created (server unavailable, network error, etc.), the modal shows a clear error message instead of a stuck loading spinner
-- Users see an actionable error with a "Retry" button that re-attempts terminal creation without closing the modal
-- On successful retry, the terminal initializes normally; the error state clears automatically
+- Terminal startup never hangs indefinitely — bounded timeouts ensure the UI always resolves to either a usable terminal or a clear failure state
+- **Bootstrap timeout** (15s): If the backend session listing or creation call hangs, the modal transitions from "Starting terminal..." to an actionable error message
+- **xterm init timeout** (10s): If xterm.js dynamic imports or `terminal.open()` setup stalls, the modal shows a "Terminal UI failed to initialize" error with a **Reinitialize** button that retries xterm setup without recreating the backend session
+- Users see distinct recovery actions based on the failure type:
+  - **Bootstrap/session failure** (no backend session): "Retry" button re-attempts session creation
+  - **xterm init failure** (session exists but UI didn't load): "Reinitialize" button retries xterm initialization only, preserving the existing session
+- Generation-based stale-result guards prevent timed-out prior requests from corrupting state after a successful retry
+- On successful recovery, the terminal initializes normally; the error state clears automatically
 - Existing sessions (tabs) that are already connected are not affected by bootstrap errors on new tabs
 
 ### Git Manager

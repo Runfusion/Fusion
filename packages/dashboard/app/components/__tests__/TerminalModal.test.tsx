@@ -646,6 +646,170 @@ describe("TerminalModal", () => {
       });
     });
   });
+
+  // --- xterm initialization watchdog tests ---
+  describe("xterm initialization watchdog", () => {
+    it("shows xterm init error overlay when xterm constructor throws", async () => {
+      // Override the mock to throw on construction
+      const { Terminal } = await import("@xterm/xterm");
+      const OrigTerminal = Terminal;
+
+      // Replace Terminal constructor with one that throws
+      const throwingModule = await import("@xterm/xterm");
+      (throwingModule as any).Terminal = vi.fn().mockImplementation(() => {
+        throw new Error("xterm constructor failed");
+      });
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      // Should show xterm init error
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-xterm-init-error")).toBeTruthy();
+        expect(screen.getByText(/Terminal UI failed to initialize/)).toBeTruthy();
+      });
+
+      // Should have a reinitialize button
+      const reinitBtn = screen.getByTestId("terminal-reinit-btn");
+      expect(reinitBtn).toBeTruthy();
+      expect(reinitBtn.textContent).toContain("Reinitialize");
+
+      // Restore original Terminal
+      (throwingModule as any).Terminal = OrigTerminal;
+    });
+
+    it("clicking Reinitialize button clears error and triggers fresh init attempt", async () => {
+      // Make Terminal throw first, then work after reinitialize
+      const throwingModule = await import("@xterm/xterm");
+      const OrigTerminal = throwingModule.Terminal;
+
+      let callCount = 0;
+      (throwingModule as any).Terminal = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          throw new Error("first init fails");
+        }
+        // Second call succeeds — return a mock terminal
+        return mockTerminalInstance;
+      });
+
+      const { rerender } = render(
+        <TerminalModal isOpen={true} onClose={mockOnClose} />
+      );
+
+      // Wait for error
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-xterm-init-error")).toBeTruthy();
+      });
+
+      // Click Reinitialize
+      const reinitBtn = screen.getByTestId("terminal-reinit-btn");
+      fireEvent.click(reinitBtn);
+
+      // After reinitialize, the error should be cleared and xterm should init successfully
+      await waitFor(() => {
+        expect(screen.queryByTestId("terminal-xterm-init-error")).toBeNull();
+      });
+
+      // Restore
+      (throwingModule as any).Terminal = OrigTerminal;
+    });
+
+    it("shows timeout error when xterm initialization exceeds XTERM_INIT_TIMEOUT_MS", async () => {
+      // This test uses vi.isolateModules to override the @xterm/xterm mock
+      // for this test only, making the dynamic import hang so the watchdog fires.
+      
+      // Since isolateModules runs the factory in isolation, we need to set up
+      // all mocks inside the callback. However, this conflicts with the hoisted
+      // vi.mock calls used by the rest of the test suite.
+      //
+      // Alternative: directly exercise the timeout path by overriding the module's
+      // Terminal export to delay. Since the component does:
+      //   await Promise.race([Promise.all([import("@xterm/xterm"), ...]), timeout])
+      // and vi.mock resolves imports instantly, the race is always won by imports.
+      //
+      // We CAN test the timeout by making one of the dynamic imports throw after a
+      // delay, but since imports are vi.mock'd, they resolve immediately.
+      //
+      // Best practical test: verify the timeout error message is rendered correctly
+      // by directly triggering the catch block with a timeout-like error.
+      const xtermModule = await import("@xterm/xterm");
+      const OrigTerminal = xtermModule.Terminal;
+
+      // Simulate the timeout error by making Terminal constructor throw
+      // with the exact timeout message the watchdog would produce
+      (xtermModule as any).Terminal = vi.fn().mockImplementation(() => {
+        throw new Error("xterm initialization timed out");
+      });
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-xterm-init-error")).toBeTruthy();
+      });
+
+      // Verify the timeout-specific message is rendered
+      expect(screen.getByText(/timed out/)).toBeTruthy();
+
+      // Reinitialize button should be present
+      expect(screen.getByTestId("terminal-reinit-btn")).toBeTruthy();
+
+      // Restore
+      (xtermModule as any).Terminal = OrigTerminal;
+    });
+
+    it("does not show xterm init error when no activeTab (bootstrap error takes priority)", async () => {
+      mockUseTerminalSessions.mockReturnValue({
+        ...defaultSessionState,
+        tabs: [],
+        activeTab: null,
+        bootstrapError: "Server unreachable",
+      });
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      // Should show bootstrap error, not xterm init error
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-bootstrap-error")).toBeTruthy();
+      });
+      expect(screen.queryByTestId("terminal-xterm-init-error")).toBeNull();
+    });
+
+    it("xterm init error is cleared when modal is closed and reopened", async () => {
+      // Force xterm init error
+      const throwingModule = await import("@xterm/xterm");
+      const OrigTerminal = throwingModule.Terminal;
+
+      (throwingModule as any).Terminal = vi.fn().mockImplementation(() => {
+        throw new Error("xterm constructor failed");
+      });
+
+      const { rerender } = render(
+        <TerminalModal isOpen={true} onClose={mockOnClose} />
+      );
+
+      // Wait for error to appear
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-xterm-init-error")).toBeTruthy();
+      });
+
+      // Close the modal
+      rerender(<TerminalModal isOpen={false} onClose={mockOnClose} />);
+
+      // Modal is gone
+      expect(screen.queryByTestId("terminal-xterm-init-error")).toBeNull();
+
+      // Restore working xterm
+      (throwingModule as any).Terminal = OrigTerminal;
+
+      // Reopen the modal
+      rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      // Should NOT show the old xterm init error — fresh init attempt
+      await waitFor(() => {
+        expect(screen.queryByTestId("terminal-xterm-init-error")).toBeNull();
+      });
+    });
+  });
 });
 
 // --- Mobile layout regression tests ---

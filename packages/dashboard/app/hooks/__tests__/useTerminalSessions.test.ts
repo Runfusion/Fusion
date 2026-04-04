@@ -663,4 +663,149 @@ describe("useTerminalSessions", () => {
       expect(result.current.tabs.length).toBe(0);
     });
   });
+
+  describe("bounded bootstrap timeouts", () => {
+    it("sets bootstrapError when createTerminalSession hangs beyond timeout", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      // createTerminalSession never resolves
+      mockCreateTerminalSession.mockReturnValue(new Promise(() => {}));
+
+      const { result } = renderHook(() => useTerminalSessions());
+
+      // isReady should become true (list resolved)
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Advance past the create timeout (15s)
+      await act(async () => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      // Should have a bootstrap error from the timed-out create call
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeTruthy();
+        expect(result.current.bootstrapError).toContain("timed out");
+      });
+
+      expect(result.current.tabs.length).toBe(0);
+      expect(result.current.activeTab).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("retryBootstrap recovers from a timed-out create call", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      // First create call hangs forever
+      mockCreateTerminalSession.mockReturnValue(new Promise(() => {}));
+
+      const { result } = renderHook(() => useTerminalSessions());
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Advance past create timeout to trigger error
+      await act(async () => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeTruthy();
+      });
+
+      // Now make retry succeed
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-after-timeout",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      await act(async () => {
+        result.current.retryBootstrap();
+      });
+
+      // Advance to let the auto-create effect fire and complete
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeNull();
+        expect(result.current.tabs.length).toBe(1);
+        expect(result.current.activeTab?.sessionId).toBe("session-after-timeout");
+      });
+
+      vi.useRealTimers();
+    });
+
+    it("ignores late resolution from a prior generation after retry succeeds", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      // First create call: will resolve very late
+      let resolveFirst: (val: any) => void;
+      const firstPromise = new Promise<any>((resolve) => {
+        resolveFirst = resolve;
+      });
+      mockCreateTerminalSession.mockReturnValueOnce(firstPromise);
+
+      const { result } = renderHook(() => useTerminalSessions());
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // Advance past create timeout to trigger error
+      await act(async () => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBeTruthy();
+      });
+
+      // Now set up retry to succeed immediately
+      mockCreateTerminalSession.mockResolvedValueOnce({
+        sessionId: "session-gen2",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      await act(async () => {
+        result.current.retryBootstrap();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+        expect(result.current.activeTab?.sessionId).toBe("session-gen2");
+      });
+
+      // Now the first (stale) call resolves late — this must NOT overwrite the tab
+      await act(async () => {
+        resolveFirst!({
+          sessionId: "session-gen1-stale",
+          shell: "/bin/bash",
+          cwd: "/project",
+        });
+      });
+
+      // The tab must still be from gen2, not gen1
+      expect(result.current.tabs[0].sessionId).toBe("session-gen2");
+      expect(result.current.tabs.length).toBe(1);
+
+      vi.useRealTimers();
+    });
+  });
 });

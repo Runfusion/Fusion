@@ -1,7 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createTerminalSession, killPtyTerminalSession, listTerminalSessions } from "../api";
 
 const STORAGE_KEY = "kb-terminal-tabs";
+
+/** Timeout for the list-terminal-sessions validation call during bootstrap. */
+const BOOTSTRAP_LIST_TIMEOUT_MS = 15000;
+/** Timeout for the auto-create createTerminalSession call during bootstrap. */
+const BOOTSTRAP_CREATE_TIMEOUT_MS = 15000;
 
 /**
  * Represents a terminal tab with its metadata and session information.
@@ -61,6 +66,18 @@ function isRelativeUrlFetchError(error: unknown): boolean {
 }
 
 /**
+ * Wrap a promise with a timeout that rejects with a TimeoutError.
+ * Uses an AbortSignal-style approach so only the winning path resolves.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Hook for managing multiple terminal sessions with localStorage persistence.
  * 
  * Features:
@@ -97,6 +114,9 @@ export function useTerminalSessions(): UseTerminalSessionsReturn {
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   // Generation counter bumped by retryBootstrap to re-trigger auto-create effect
   const [retryGeneration, setRetryGeneration] = useState(0);
+  // Ref-based generation token to protect against stale completions from prior
+  // bootstrap attempts. Only the current generation may mutate state.
+  const generationRef = useRef(0);
 
   // Persist tabs to localStorage whenever they change
   useEffect(() => {
@@ -110,20 +130,25 @@ export function useTerminalSessions(): UseTerminalSessionsReturn {
   // Validate and restore tabs from server on mount
   useEffect(() => {
     let cancelled = false;
+    const gen = generationRef.current;
 
     const validateAndRestore = async () => {
       if (cancelled) return;
       
       try {
-        // Get active server sessions
-        const serverSessions = await listTerminalSessions();
-        if (cancelled) return;
+        // Get active server sessions with bounded timeout
+        const serverSessions = await withTimeout(
+          listTerminalSessions(),
+          BOOTSTRAP_LIST_TIMEOUT_MS,
+          "listTerminalSessions"
+        );
+        if (cancelled || gen !== generationRef.current) return;
         
         const validSessionIds = new Set(serverSessions.map((s) => s.id));
         setServerAvailable(true);
 
         setTabs((currentTabs) => {
-          if (cancelled) return currentTabs;
+          if (cancelled || gen !== generationRef.current) return currentTabs;
           
           // Filter out tabs whose sessions no longer exist on server
           const validTabs = currentTabs.map((tab) => ({
@@ -157,6 +182,7 @@ export function useTerminalSessions(): UseTerminalSessionsReturn {
         // Mark as ready after validation
         setIsReady(true);
       } catch (err) {
+        if (cancelled || gen !== generationRef.current) return;
         // Server listing failed - keep local tabs but mark as unverified
         // The WebSocket will fail to connect, which is acceptable
         const relativeUrlError = isRelativeUrlFetchError(err);
@@ -179,14 +205,42 @@ export function useTerminalSessions(): UseTerminalSessionsReturn {
   // Auto-create first tab if no tabs exist after validation
   useEffect(() => {
     if (tabs.length === 0 && isReady && serverAvailable) {
+      // Capture current generation so only this attempt's result is accepted
+      const gen = generationRef.current;
+
       // Small delay to avoid race condition with the validation effect
       const timeout = setTimeout(() => {
-        createTabInternal()
-          .then(() => {
-            // Clear any previous bootstrap error on success
+        withTimeout(
+          createTerminalSession(),
+          BOOTSTRAP_CREATE_TIMEOUT_MS,
+          "createTerminalSession"
+        )
+          .then((session) => {
+            // Only apply state changes if this is still the current generation
+            if (gen !== generationRef.current) return;
+
+            const newTab: TerminalTab = {
+              id: generateTabId(),
+              sessionId: session.sessionId,
+              title: `Terminal ${tabs.length + 1}`,
+              isActive: true,
+              createdAt: Date.now(),
+            };
+
+            setTabs((currentTabs) => {
+              // Double-check tabs.length === 0 to prevent duplicates
+              if (currentTabs.length > 0) return currentTabs;
+              const updatedTabs = currentTabs.map((tab) => ({
+                ...tab,
+                isActive: false,
+              }));
+              return [...updatedTabs, newTab];
+            });
             setBootstrapError(null);
           })
           .catch((err) => {
+            // Only set error if this is still the current generation
+            if (gen !== generationRef.current) return;
             if (!isRelativeUrlFetchError(err)) {
               console.error(err);
             }
@@ -344,12 +398,14 @@ export function useTerminalSessions(): UseTerminalSessionsReturn {
 
   /**
    * Retry bootstrap after a session creation failure.
-   * Clears the error and bumps the retry generation so the auto-create
-   * effect re-runs. Safe to call multiple times — only one active tab
-   * is created because the effect checks tabs.length === 0.
+   * Clears the error and bumps the generation so the auto-create
+   * effect re-runs and stale completions from prior attempts are ignored.
+   * Safe to call multiple times — only one active tab is created because
+   * the effect checks tabs.length === 0.
    */
   const retryBootstrap = useCallback((): void => {
     setBootstrapError(null);
+    generationRef.current += 1;
     setRetryGeneration((g) => g + 1);
   }, []);
 

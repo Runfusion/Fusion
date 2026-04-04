@@ -7,6 +7,9 @@ import "@xterm/xterm/css/xterm.css";
 import type { Terminal as XTerm, ITerminalAddon } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 
+/** Timeout for xterm.js dynamic imports + terminal.open() setup. */
+const XTERM_INIT_TIMEOUT_MS = 10000;
+
 /** Whether the current device is likely mobile (touch-primary, small viewport). */
 function isMobileDevice(): boolean {
   if (typeof window === "undefined") return false;
@@ -54,6 +57,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [xtermReady, setXtermReady] = useState(false);
+  const [xtermInitError, setXtermInitError] = useState<string | null>(null);
   const [openGeneration, setOpenGeneration] = useState(0);
   const [keyboardOverlap, setKeyboardOverlap] = useState(0);
   
@@ -125,6 +129,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
       fitAddonRef.current = null;
       xtermInitializedRef.current = false;
       setXtermReady(false);
+      setXtermInitError(null);
     }
 
     // If already initialized for this session, skip
@@ -133,105 +138,132 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     }
 
     let mounted = true;
+    let watchdogTimer: ReturnType<typeof setTimeout>;
 
     const initTerminal = async () => {
-      // Dynamically import xterm modules
-      const [{ Terminal }, { FitAddon }, { WebLinksAddon }] = await Promise.all([
+      // Dynamically import xterm modules with watchdog timeout
+      const importsPromise = Promise.all([
         import("@xterm/xterm"),
         import("@xterm/addon-fit"),
         import("@xterm/addon-web-links"),
       ]);
 
-      if (!mounted || !terminalRef.current || xtermRef.current) return;
-
-      // Create terminal instance
-      const terminal = new Terminal({
-        cursorBlink: true,
-        cursorStyle: "block",
-        fontSize: 14,
-        fontFamily: "monospace",
-        theme: {
-          background: "#1e1e1e",
-          foreground: "#d4d4d4",
-          cursor: "#d4d4d4",
-          selectionBackground: "#264f78",
-          black: "#1e1e1e",
-          red: "#f48771",
-          green: "#4ec9b0",
-          yellow: "#dcdcaa",
-          blue: "#569cd6",
-          magenta: "#c586c0",
-          cyan: "#9cdcfe",
-          white: "#d4d4d4",
-        },
-        allowProposedApi: true,
-        scrollback: 5000,
+      // Watchdog: reject if imports + setup take too long
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        watchdogTimer = setTimeout(() => {
+          reject(new Error("xterm initialization timed out"));
+        }, XTERM_INIT_TIMEOUT_MS);
       });
 
-      // Load addons
-      const fitAddon = new FitAddon();
-      terminal.loadAddon(fitAddon);
+      let terminal: InstanceType<typeof import("@xterm/xterm").Terminal>;
+      let fitAddon: InstanceType<typeof import("@xterm/addon-fit").FitAddon>;
 
-      const webLinksAddon = new WebLinksAddon();
-      terminal.loadAddon(webLinksAddon);
-
-      // Try to load WebGL addon for better performance
       try {
-        const { WebglAddon } = await import("@xterm/addon-webgl");
-        const webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => {
-          webglAddon.dispose();
+        const [{ Terminal: TerminalCtor }, { FitAddon: FitAddonCtor }, { WebLinksAddon }] =
+          await Promise.race([importsPromise, timeoutPromise]);
+
+        if (!mounted || !terminalRef.current || xtermRef.current) return;
+
+        // Create terminal instance
+        terminal = new TerminalCtor({
+          cursorBlink: true,
+          cursorStyle: "block",
+          fontSize: 14,
+          fontFamily: "monospace",
+          theme: {
+            background: "#1e1e1e",
+            foreground: "#d4d4d4",
+            cursor: "#d4d4d4",
+            selectionBackground: "#264f78",
+            black: "#1e1e1e",
+            red: "#f48771",
+            green: "#4ec9b0",
+            yellow: "#dcdcaa",
+            blue: "#569cd6",
+            magenta: "#c586c0",
+            cyan: "#9cdcfe",
+            white: "#d4d4d4",
+          },
+          allowProposedApi: true,
+          scrollback: 5000,
         });
-        terminal.loadAddon(webglAddon);
-      } catch {
-        // WebGL not available, fallback to canvas
-      }
 
-      // Open terminal in container
-      terminal.open(terminalRef.current);
+        // Load addons
+        fitAddon = new FitAddonCtor();
+        terminal.loadAddon(fitAddon);
 
-      // Initial fit
-      setTimeout(() => {
-        fitAddon.fit();
-      }, 50);
+        const webLinksAddon = new WebLinksAddon();
+        terminal.loadAddon(webLinksAddon);
 
-      xtermRef.current = terminal;
-      fitAddonRef.current = fitAddon;
-      xtermInitializedRef.current = currentSessionId;
-
-      // Signal that xterm is ready so the subscription effect re-runs
-      setXtermReady(true);
-
-      // Handle data from terminal (user input)
-      const dataHandler = terminal.onData((data) => {
-        sendInput(data);
-      });
-
-      // Handle resize
-      const resizeHandler = () => {
-        if (fitAddonRef.current && xtermRef.current) {
-          try {
-            (fitAddonRef.current as InstanceType<typeof FitAddon>).fit();
-            const { cols, rows } = xtermRef.current;
-            resize(cols, rows);
-          } catch {
-            // Ignore fit errors
-          }
+        // Try to load WebGL addon for better performance
+        try {
+          const { WebglAddon } = await import("@xterm/addon-webgl");
+          const webglAddon = new WebglAddon();
+          webglAddon.onContextLoss(() => {
+            webglAddon.dispose();
+          });
+          terminal.loadAddon(webglAddon);
+        } catch {
+          // WebGL not available, fallback to canvas
         }
-      };
 
-      window.addEventListener("resize", resizeHandler);
+        // Open terminal in container
+        terminal.open(terminalRef.current);
 
-      return () => {
-        dataHandler.dispose();
-        window.removeEventListener("resize", resizeHandler);
-      };
+        // Clear watchdog — imports and open() succeeded within deadline
+        clearTimeout(watchdogTimer);
+
+        // Initial fit
+        setTimeout(() => {
+          fitAddon.fit();
+        }, 50);
+
+        xtermRef.current = terminal;
+        fitAddonRef.current = fitAddon;
+        xtermInitializedRef.current = currentSessionId;
+
+        // Signal that xterm is ready so the subscription effect re-runs
+        setXtermReady(true);
+        // Clear any prior xterm init error
+        setXtermInitError(null);
+
+        // Handle data from terminal (user input)
+        const dataHandler = terminal.onData((data) => {
+          sendInput(data);
+        });
+
+        // Handle resize
+        const resizeHandler = () => {
+          if (fitAddonRef.current && xtermRef.current) {
+            try {
+              (fitAddonRef.current as InstanceType<typeof FitAddon>).fit();
+              const { cols, rows } = xtermRef.current;
+              resize(cols, rows);
+            } catch {
+              // Ignore fit errors
+            }
+          }
+        };
+
+        window.addEventListener("resize", resizeHandler);
+
+        return () => {
+          dataHandler.dispose();
+          window.removeEventListener("resize", resizeHandler);
+        };
+      } catch (err) {
+        clearTimeout(watchdogTimer);
+        if (!mounted) return;
+        const message = err instanceof Error ? err.message : "xterm initialization failed";
+        setXtermInitError(message);
+      }
     };
 
     const cleanupPromise = initTerminal();
 
     return () => {
       mounted = false;
+      clearTimeout(watchdogTimer);
       cleanupPromise.then((cleanup) => cleanup?.());
       
       // Don't dispose xterm here - it should persist across tab switches
@@ -251,6 +283,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     fitAddonRef.current = null;
     xtermInitializedRef.current = false;
     setXtermReady(false);
+    setXtermInitError(null);
     hasInitialCommandRun.current = false;
     setError(null);
     setExitCode(null);
@@ -401,6 +434,21 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     }
   }, [restartActiveTab]);
 
+  // Reinitialize xterm UI without recreating the session.
+  // Used when xterm initialization fails/stalls but the backend session is fine.
+  const handleReinitialize = useCallback(() => {
+    // Dispose any partially-initialized xterm
+    if (xtermRef.current) {
+      xtermRef.current.dispose();
+      xtermRef.current = null;
+    }
+    fitAddonRef.current = null;
+    xtermInitializedRef.current = false;
+    // Clear error state and reset readiness so the init effect re-runs
+    setXtermInitError(null);
+    setXtermReady(false);
+  }, []);
+
   if (!isOpen) return null;
 
   const getStatusIndicator = () => {
@@ -417,9 +465,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     }
   };
 
-  // Determine loading state — when bootstrapError is set, we are NOT loading
+  // Determine loading state — when bootstrapError or xtermInitError is set, we are NOT loading
   // (we have a definitive error to show instead of an indefinite spinner).
-  const isLoading = !isReady || (!activeTab && !bootstrapError) || !xtermReady;
+  const isLoading = !isReady || (!activeTab && !bootstrapError) || (!xtermReady && !xtermInitError);
 
   return (
     <div
@@ -550,6 +598,21 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
                 >
                   <RefreshCw size={14} />
                   Retry
+                </button>
+              </div>
+            </div>
+          )}
+          {xtermInitError && activeTab && (
+            <div className="terminal-loading" data-testid="terminal-xterm-init-error">
+              <div className="terminal-error-content">
+                <span>Terminal UI failed to initialize: {xtermInitError}</span>
+                <button
+                  className="terminal-retry-btn"
+                  onClick={handleReinitialize}
+                  data-testid="terminal-reinit-btn"
+                >
+                  <RefreshCw size={14} />
+                  Reinitialize
                 </button>
               </div>
             </div>
