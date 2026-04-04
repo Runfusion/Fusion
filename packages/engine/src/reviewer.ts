@@ -338,19 +338,21 @@ function buildReviewRequest(
 }
 
 function extractVerdict(review: string): ReviewVerdict {
-  // Look for "### Verdict: APPROVE" or similar patterns
+  // Look for "### Verdict: APPROVE" or "**Verdict: REVISE**" or similar
   const verdictMatch = review.match(
-    /###?\s*Verdict[:\s]*(APPROVE|REVISE|RETHINK)/i,
+    /(?:###?\s*|[*_]{1,2})Verdict[:\s]*[*_]{0,2}\s*(APPROVE|REVISE|RETHINK)/i,
   );
   if (verdictMatch) {
     return verdictMatch[1].toUpperCase() as ReviewVerdict;
   }
 
-  // Fallback: look for the word anywhere in the text
-  const upper = review.toUpperCase();
-  if (upper.includes("RETHINK")) return "RETHINK";
-  if (upper.includes("REVISE")) return "REVISE";
-  if (upper.includes("APPROVE")) return "APPROVE";
+  // Fallback: look for a standalone verdict line like "Verdict: APPROVE"
+  const lineFallback = review.match(
+    /^[>\s]*(?:verdict|decision)[:\s]+(APPROVE|REVISE|RETHINK)\b/im,
+  );
+  if (lineFallback) {
+    return lineFallback[1].toUpperCase() as ReviewVerdict;
+  }
 
   return "UNAVAILABLE";
 }
