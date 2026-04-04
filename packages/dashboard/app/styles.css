@@ -13856,8 +13856,44 @@ html .column.drag-over * {
 }
 
 .changed-files-entry {
+  /* Button reset — entries are <button> elements that must not use browser defaults */
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text);
+  text-align: left;
+  width: 100%;
+  /* Layout */
   justify-content: flex-start;
   gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.changed-files-entry:hover {
+  background: var(--card-hover);
+}
+
+.changed-files-entry:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.changed-files-entry.active {
+  background: var(--card);
+  border-left: 3px solid var(--todo);
+}
+
+/* Entry icon color uses muted token so it adapts to every theme */
+.changed-files-entry .file-node-icon {
+  color: var(--text-muted);
+}
+
+/* Entry filename uses theme text token */
+.changed-files-entry .file-node-name {
+  color: var(--text);
 }
 
 .changed-files-badge {

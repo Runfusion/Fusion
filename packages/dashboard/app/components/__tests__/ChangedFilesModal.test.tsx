@@ -704,6 +704,161 @@ describe("ChangedFilesModal", () => {
     });
   });
 
+  describe("list structure and styling classes", () => {
+    it("renders sidebar entries with dedicated changed-files-entry class", () => {
+      render(
+        <ChangedFilesModal
+          taskId="KB-651"
+          worktree="/repo/.worktrees/kb-651"
+          column="in-progress"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      const entries = document.querySelectorAll(".changed-files-entry");
+      expect(entries.length).toBe(2);
+
+      // Each entry should have the file-node base class AND the changed-files-entry class
+      entries.forEach((entry) => {
+        expect(entry.classList.contains("file-node")).toBe(true);
+        expect(entry.classList.contains("file-node--file")).toBe(true);
+        expect(entry.classList.contains("changed-files-entry")).toBe(true);
+      });
+    });
+
+    it("renders entry buttons with proper type and role attributes", () => {
+      render(
+        <ChangedFilesModal
+          taskId="KB-651"
+          worktree="/repo/.worktrees/kb-651"
+          column="in-progress"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      const entries = document.querySelectorAll("button.changed-files-entry");
+      entries.forEach((entry) => {
+        expect(entry.getAttribute("type")).toBe("button");
+        expect(entry.getAttribute("role")).toBe("listitem");
+      });
+    });
+
+    it("applies active class to the selected file entry on desktop", () => {
+      render(
+        <ChangedFilesModal
+          taskId="KB-651"
+          worktree="/repo/.worktrees/kb-651"
+          column="in-progress"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      // defaultSelectedFile is src/a.ts
+      const activeEntry = document.querySelector(".changed-files-entry.active");
+      expect(activeEntry).toBeTruthy();
+      expect(activeEntry?.getAttribute("aria-label")).toBe("src/a.ts");
+      expect(activeEntry?.getAttribute("aria-current")).toBe("true");
+
+      // Non-selected entry should NOT have active class
+      const allEntries = document.querySelectorAll(".changed-files-entry");
+      const inactiveEntry = Array.from(allEntries).find(
+        (el) => el.getAttribute("aria-label") === "src/b.ts",
+      );
+      expect(inactiveEntry).toBeTruthy();
+      expect(inactiveEntry?.classList.contains("active")).toBe(false);
+    });
+
+    it("renders icon, name, and badge spans in each entry", () => {
+      render(
+        <ChangedFilesModal
+          taskId="KB-651"
+          worktree="/repo/.worktrees/kb-651"
+          column="in-progress"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      const entries = document.querySelectorAll(".changed-files-entry");
+      entries.forEach((entry) => {
+        // Each entry should contain an icon span, a name span, and a badge span
+        const icon = entry.querySelector(".file-node-icon");
+        const name = entry.querySelector(".file-node-name");
+        const badge = entry.querySelector(".changed-files-badge");
+        expect(icon).toBeTruthy();
+        expect(name).toBeTruthy();
+        expect(badge).toBeTruthy();
+      });
+    });
+
+    it("applies active class alongside aria-current on mobile list view", () => {
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(600);
+
+      // On mobile, the selected file comes from hook but back button is NOT shown
+      // because mobileDiffIntentional hasn't been set (no user action).
+      // The active entry in the list should still have both classes.
+      mockUseChangedFiles.mockReturnValue({
+        files: defaultFiles,
+        loading: false,
+        error: null,
+        selectedFile: defaultSelectedFile,
+        setSelectedFile: mockSetSelectedFile,
+        resetSelection: mockResetSelection,
+      });
+
+      render(
+        <ChangedFilesModal
+          taskId="KB-651"
+          worktree="/repo/.worktrees/kb-651"
+          column="in-progress"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      // The selected file entry should have both active class and aria-current
+      const activeEntry = document.querySelector(".changed-files-entry.active");
+      expect(activeEntry).toBeTruthy();
+      expect(activeEntry?.getAttribute("aria-current")).toBe("true");
+
+      vi.restoreAllMocks();
+    });
+
+    it("renders deleted status badge class correctly", () => {
+      const deletedFile = {
+        path: "src/deleted.ts",
+        status: "deleted" as const,
+        diff: "diff --git a/src/deleted.ts b/src/deleted.ts",
+      };
+
+      mockUseChangedFiles.mockReturnValue({
+        files: [deletedFile],
+        loading: false,
+        error: null,
+        selectedFile: deletedFile,
+        setSelectedFile: mockSetSelectedFile,
+        resetSelection: mockResetSelection,
+      });
+
+      render(
+        <ChangedFilesModal
+          taskId="KB-651"
+          worktree="/repo/.worktrees/kb-651"
+          column="in-progress"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      const deletedBadge = document.querySelector(".changed-files-badge--deleted");
+      expect(deletedBadge).toBeTruthy();
+      expect(deletedBadge?.textContent).toBe("D");
+    });
+  });
+
   describe("status-to-class mapping", () => {
     it("applies status-specific CSS class to sidebar badges", () => {
       render(
