@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task } from "@fusion/core";
 import { fetchExecutorStats } from "../api";
 import type { ExecutorStats, ExecutorState } from "../api";
+import { isTaskStuck } from "../utils/taskStuck";
 
 const POLL_INTERVAL_MS = 5000; // 5 seconds - different from useProjectHealth's 10s
-const STUCK_TASK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
 export interface UseExecutorStatsResult {
   /** Aggregated executor statistics */
@@ -46,21 +46,9 @@ function deriveExecutorState(
 }
 
 /**
- * Check if a task is stuck (no activity for > 10 minutes).
- */
-function isTaskStuck(task: Task): boolean {
-  if (task.column !== "in-progress") {
-    return false;
-  }
-  const updatedAt = new Date(task.updatedAt).getTime();
-  const now = Date.now();
-  return now - updatedAt > STUCK_TASK_THRESHOLD_MS;
-}
-
-/**
  * Derive statistics from the task list.
  */
-function deriveStatsFromTasks(tasks: Task[]): Pick<
+function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number): Pick<
   ExecutorStats,
   "runningTaskCount" | "blockedTaskCount" | "stuckTaskCount" | "queuedTaskCount" | "inReviewCount"
 > {
@@ -74,7 +62,7 @@ function deriveStatsFromTasks(tasks: Task[]): Pick<
     switch (task.column) {
       case "in-progress":
         runningTaskCount++;
-        if (isTaskStuck(task)) {
+        if (isTaskStuck(task, taskStuckTimeoutMs)) {
           stuckTaskCount++;
         }
         break;
@@ -103,16 +91,17 @@ function deriveStatsFromTasks(tasks: Task[]): Pick<
 
 /**
  * Hook for aggregating executor statistics for the status bar.
- * 
+ *
  * - Receives the shared task list directly (same instance used by the board)
  *   so footer counts always match the board state
  * - Polls `/api/executor/stats` every 5 seconds for executor state
  * - Derives blockedTaskCount from tasks with blockedBy field set
- * - Derives stuckTaskCount by checking if any "in-progress" task has updatedAt > 10 minutes ago
+ * - Derives stuckTaskCount using the project's `taskStuckTimeoutMs` setting;
+ *   returns 0 when the setting is undefined/disabled
  * - Derives executorState from globalPause and enginePaused flags
  * - Returns ExecutorStats object with reactive updates
  */
-export function useExecutorStats(tasks: Task[], projectId?: string): UseExecutorStatsResult {
+export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTimeoutMs?: number): UseExecutorStatsResult {
 
   const [apiData, setApiData] = useState<{
     globalPause: boolean;
@@ -184,7 +173,7 @@ export function useExecutorStats(tasks: Task[], projectId?: string): UseExecutor
   }, [refresh]);
 
   // Derive stats from tasks and API data
-  const taskStats = deriveStatsFromTasks(tasks);
+  const taskStats = deriveStatsFromTasks(tasks, taskStuckTimeoutMs);
   const executorState = deriveExecutorState(
     apiData.globalPause,
     apiData.enginePaused,

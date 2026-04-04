@@ -101,6 +101,7 @@ function AppInner() {
   const [globalPaused, setGlobalPaused] = useState(false);
   const [enginePaused, setEnginePaused] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [taskStuckTimeoutMs, setTaskStuckTimeoutMs] = useState<number | undefined>(undefined);
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
@@ -167,6 +168,7 @@ function AppInner() {
         setGlobalPaused(!!s.globalPause);
         setEnginePaused(!!s.enginePaused);
         setGithubTokenConfigured(!!s.githubTokenConfigured);
+        setTaskStuckTimeoutMs(s.taskStuckTimeoutMs);
       })
       .catch(() => {/* keep default */});
     fetchAuthStatus()
@@ -622,7 +624,7 @@ function AppInner() {
         {renderMainContent()}
       </div>
       {viewMode === "project" && currentProject && (
-        <ExecutorStatusBar tasks={tasks} projectId={currentProject.id} />
+        <ExecutorStatusBar tasks={tasks} projectId={currentProject.id} taskStuckTimeoutMs={taskStuckTimeoutMs} />
       )}
       {detailTask && (
         <TaskDetailModal
