@@ -33,6 +33,8 @@ vi.mock("../../api", async () => {
     removeGitRemote: vi.fn(),
     renameGitRemote: vi.fn(),
     updateGitRemoteUrl: vi.fn(),
+    fetchAheadCommits: vi.fn(),
+    fetchRemoteCommits: vi.fn(),
   };
 });
 
@@ -63,6 +65,8 @@ import {
   removeGitRemote,
   renameGitRemote,
   updateGitRemoteUrl,
+  fetchAheadCommits,
+  fetchRemoteCommits,
 } from "../../api";
 
 const mockAddToast = vi.fn();
@@ -169,6 +173,8 @@ describe("GitManagerModal", () => {
     (removeGitRemote as any).mockResolvedValue(undefined);
     (renameGitRemote as any).mockResolvedValue(undefined);
     (updateGitRemoteUrl as any).mockResolvedValue(undefined);
+    (fetchAheadCommits as any).mockResolvedValue([]);
+    (fetchRemoteCommits as any).mockResolvedValue([]);
   });
 
   // ── Basic Rendering ─────────────────────────────────────────
@@ -1084,6 +1090,152 @@ describe("GitManagerModal", () => {
     );
 
     expect(screen.getByText("Loading...")).toBeInTheDocument();
+  });
+
+  // ── Commits to Push Section ───────────────────────────────────
+
+  it("shows commits to push section when ahead > 0", async () => {
+    (fetchGitStatus as any).mockResolvedValue({
+      branch: "main",
+      commit: "abc1234",
+      isDirty: false,
+      ahead: 2,
+      behind: 0,
+    });
+    (fetchAheadCommits as any).mockResolvedValue([
+      { hash: "aaa1111", shortHash: "aaa1", message: "First ahead commit", author: "Dev", date: "2026-01-01T00:00:00Z", parents: [] },
+      { hash: "bbb2222", shortHash: "bbb2", message: "Second ahead commit", author: "Dev", date: "2026-01-02T00:00:00Z", parents: [] },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("commits-to-push")).toBeInTheDocument();
+      expect(screen.getByText("First ahead commit")).toBeInTheDocument();
+      expect(screen.getByText("Second ahead commit")).toBeInTheDocument();
+    });
+  });
+
+  it("shows empty state when ahead > 0 but no ahead commits returned", async () => {
+    (fetchGitStatus as any).mockResolvedValue({
+      branch: "main",
+      commit: "abc1234",
+      isDirty: false,
+      ahead: 1,
+      behind: 0,
+    });
+    (fetchAheadCommits as any).mockResolvedValue([]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("commits-to-push")).toBeInTheDocument();
+      expect(screen.getByText(/No ahead commits found/)).toBeInTheDocument();
+    });
+  });
+
+  it("does not show commits to push when ahead === 0", async () => {
+    (fetchGitStatus as any).mockResolvedValue({
+      branch: "main",
+      commit: "abc1234",
+      isDirty: false,
+      ahead: 0,
+      behind: 0,
+    });
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("commits-to-push")).not.toBeInTheDocument();
+  });
+
+  // ── Remote Selection & Recent Commits ──────────────────────────
+
+  it("shows recent commits section for auto-selected remote", async () => {
+    (fetchRemoteCommits as any).mockResolvedValue([
+      { hash: "rc1", shortHash: "rc1", message: "Remote commit 1", author: "Dev", date: "2026-01-01T00:00:00Z", parents: [] },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("remote-commits-section")).toBeInTheDocument();
+      expect(screen.getByText("Remote commit 1")).toBeInTheDocument();
+    });
+  });
+
+  it("shows empty state when remote has no commits", async () => {
+    (fetchRemoteCommits as any).mockResolvedValue([]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/No commits found on origin/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows error state when remote commits fetch fails", async () => {
+    (fetchRemoteCommits as any).mockRejectedValue(new Error("Network failure"));
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Network failure")).toBeInTheDocument();
+    });
+  });
+
+  it("does not show remote commits section when no remotes configured", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No remotes configured")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("remote-commits-section")).not.toBeInTheDocument();
+  });
+
+  it("highlights selected remote in the list", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/a/b.git", pushUrl: "https://github.com/a/b.git" },
+      { name: "upstream", fetchUrl: "https://github.com/c/d.git", pushUrl: "https://github.com/c/d.git" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    // First remote (origin) should be auto-selected
+    await waitFor(() => {
+      const originItem = screen.getByText("origin").closest(".gm-remote-item");
+      expect(originItem?.classList.contains("selected")).toBe(true);
+    });
   });
 
   // ── Refresh Button ─────────────────────────────────────────

@@ -40,6 +40,8 @@ import {
   removeGitRemote,
   renameGitRemote,
   updateGitRemoteUrl,
+  fetchAheadCommits,
+  fetchRemoteCommits,
 } from "../api";
 import {
   GitBranch as GitBranchIcon,
@@ -1498,10 +1500,45 @@ function RemotesPanel({
   const [editNameValue, setEditNameValue] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
 
-  // Fetch remotes when panel mounts
+  // Ahead commits (local commits to push)
+  const [aheadCommits, setAheadCommits] = useState<GitCommit[]>([]);
+  const [loadingAhead, setLoadingAhead] = useState(false);
+
+  // Selected remote and its recent commits
+  const [selectedRemote, setSelectedRemote] = useState<string | null>(null);
+  const [remoteCommits, setRemoteCommits] = useState<GitCommit[]>([]);
+  const [loadingRemoteCommits, setLoadingRemoteCommits] = useState(false);
+  const [remoteCommitsError, setRemoteCommitsError] = useState<string | null>(null);
+
+  // Fetch remotes and ahead commits when panel mounts
   useEffect(() => {
     loadRemotes();
+    loadAheadCommits();
   }, []);
+
+  // Auto-select first remote when remotes load
+  useEffect(() => {
+    if (remotes.length > 0 && !selectedRemote) {
+      setSelectedRemote(remotes[0].name);
+    }
+  }, [remotes]);
+
+  // Load commits for selected remote
+  useEffect(() => {
+    if (selectedRemote) {
+      loadRemoteCommits(selectedRemote);
+    } else {
+      setRemoteCommits([]);
+      setRemoteCommitsError(null);
+    }
+  }, [selectedRemote]);
+
+  // Clear selected remote if it was removed from the list
+  useEffect(() => {
+    if (selectedRemote && !remotes.find((r) => r.name === selectedRemote)) {
+      setSelectedRemote(remotes.length > 0 ? remotes[0].name : null);
+    }
+  }, [remotes, selectedRemote]);
 
   const loadRemotes = async () => {
     setLoading(true);
@@ -1512,6 +1549,33 @@ function RemotesPanel({
       addToast(err.message || "Failed to load remotes", "error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAheadCommits = async () => {
+    setLoadingAhead(true);
+    try {
+      const commits = await fetchAheadCommits();
+      setAheadCommits(commits);
+    } catch {
+      // Silently ignore — ahead commits are a nice-to-have
+      setAheadCommits([]);
+    } finally {
+      setLoadingAhead(false);
+    }
+  };
+
+  const loadRemoteCommits = async (remoteName: string) => {
+    setLoadingRemoteCommits(true);
+    setRemoteCommitsError(null);
+    try {
+      const commits = await fetchRemoteCommits(remoteName, undefined, 10);
+      setRemoteCommits(commits);
+    } catch (err: any) {
+      setRemoteCommitsError(err.message || "Failed to load remote commits");
+      setRemoteCommits([]);
+    } finally {
+      setLoadingRemoteCommits(false);
     }
   };
 
@@ -1645,6 +1709,49 @@ function RemotesPanel({
 
       {/* Remote Operations (Fetch/Pull/Push) */}
       <div className="gm-remote-operations">
+        {/* Commits to Push */}
+        {status && status.ahead > 0 && (
+          <div className="gm-commits-to-push" data-testid="commits-to-push">
+            <div className="gm-section-subheader">
+              <h5>
+                <ArrowUp size={14} />
+                Commits to Push ({status.ahead})
+              </h5>
+            </div>
+            {loadingAhead ? (
+              <div className="gm-loading">
+                <Loader2 size={14} className="spin" />
+                Loading...
+              </div>
+            ) : aheadCommits.length > 0 ? (
+              <div className="gm-ahead-commits-list" data-testid="ahead-commits-list">
+                {aheadCommits.map((commit) => (
+                  <div key={commit.hash} className="gm-commit-item-compact">
+                    <div className="gm-commit-compact-hash">
+                      <code className="gm-hash">{commit.shortHash}</code>
+                    </div>
+                    <div className="gm-commit-compact-info">
+                      <span className="gm-commit-message" title={commit.message}>
+                        {commit.message}
+                      </span>
+                      <span className="gm-commit-meta">
+                        <span>{commit.author}</span>
+                        <span>•</span>
+                        <span>{relativeDate(commit.date)}</span>
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="gm-empty">
+                No ahead commits found (may need to fetch first)
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Ahead/Behind indicators */}
         {status && (status.ahead > 0 || status.behind > 0) && (
           <div className="gm-remote-status">
             {status.ahead > 0 && (
@@ -1713,7 +1820,13 @@ function RemotesPanel({
           <div className="gm-empty">No remotes configured</div>
         ) : (
           remotes.map((remote) => (
-            <div key={remote.name} className="gm-remote-item">
+            <div
+              key={remote.name}
+              className={`gm-remote-item${selectedRemote === remote.name ? " selected" : ""}`}
+              onClick={() => setSelectedRemote(remote.name)}
+              role="button"
+              tabIndex={0}
+            >
               <div className="gm-remote-info">
                 {editingRemote === `name-${remote.name}` ? (
                   <div className="gm-remote-edit">
@@ -1750,7 +1863,7 @@ function RemotesPanel({
                     <span className="gm-remote-name">{remote.name}</span>
                     <button
                       className="btn btn-icon"
-                      onClick={() => startEditingName(remote)}
+                      onClick={(e) => { e.stopPropagation(); startEditingName(remote); }}
                       disabled={remoteActionLoading !== null}
                       title="Rename remote"
                     >
@@ -1804,7 +1917,7 @@ function RemotesPanel({
                       </span>
                       <button
                         className="btn btn-icon"
-                        onClick={() => startEditingUrl(remote)}
+                        onClick={(e) => { e.stopPropagation(); startEditingUrl(remote); }}
                         disabled={remoteActionLoading !== null}
                         title="Edit URL"
                       >
@@ -1818,7 +1931,7 @@ function RemotesPanel({
               <div className="gm-remote-actions-inline">
                 <button
                   className="btn btn-sm btn-danger"
-                  onClick={() => handleRemoveRemote(remote.name)}
+                  onClick={(e) => { e.stopPropagation(); handleRemoveRemote(remote.name); }}
                   disabled={remoteActionLoading !== null}
                   title="Remove remote"
                 >
@@ -1833,6 +1946,53 @@ function RemotesPanel({
           ))
         )}
       </div>
+
+      {/* Selected Remote Commits */}
+      {selectedRemote && (
+        <div className="gm-remote-commits-section" data-testid="remote-commits-section">
+          <div className="gm-section-subheader">
+            <h5>
+              <Radio size={14} />
+              Recent commits on {selectedRemote}
+            </h5>
+          </div>
+          {loadingRemoteCommits ? (
+            <div className="gm-loading">
+              <Loader2 size={14} className="spin" />
+              Loading commits...
+            </div>
+          ) : remoteCommitsError ? (
+            <div className="gm-error">
+              <AlertCircle size={14} />
+              {remoteCommitsError}
+            </div>
+          ) : remoteCommits.length === 0 ? (
+            <div className="gm-empty">
+              No commits found on {selectedRemote}. Try fetching first.
+            </div>
+          ) : (
+            <div className="gm-remote-commits-list" data-testid="remote-commits-list">
+              {remoteCommits.map((commit) => (
+                <div key={commit.hash} className="gm-commit-item-compact">
+                  <div className="gm-commit-compact-hash">
+                    <code className="gm-hash">{commit.shortHash}</code>
+                  </div>
+                  <div className="gm-commit-compact-info">
+                    <span className="gm-commit-message" title={commit.message}>
+                      {commit.message}
+                    </span>
+                    <span className="gm-commit-meta">
+                      <span>{commit.author}</span>
+                      <span>•</span>
+                      <span>{relativeDate(commit.date)}</span>
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {lastRemoteResult && (
         <div className="gm-remote-result">

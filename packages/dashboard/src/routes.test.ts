@@ -3874,6 +3874,116 @@ describe("Git Management endpoints", () => {
     });
   });
 
+  describe("GET /git/commits/ahead", () => {
+    it("returns commits ahead of upstream", async () => {
+      const res = await GET(buildApp(), "/api/git/commits/ahead");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      // Each commit should have the standard GitCommit shape
+      for (const commit of res.body) {
+        expect(commit).toHaveProperty("hash");
+        expect(commit).toHaveProperty("shortHash");
+        expect(commit).toHaveProperty("message");
+        expect(commit).toHaveProperty("author");
+        expect(commit).toHaveProperty("date");
+        expect(commit).toHaveProperty("parents");
+      }
+    });
+
+    it("returns empty array when no upstream is configured", async () => {
+      // In a worktree without upstream tracking, this should return []
+      const res = await GET(buildApp(), "/api/git/commits/ahead");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+    });
+
+    it("returns 400 when not a git repository", async () => {
+      const nonGitStore = createMockStore({
+        getRootDir: vi.fn().mockReturnValue("/tmp/nonexistent-git-dir-for-test"),
+      });
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(nonGitStore));
+
+      const res = await GET(app, "/api/git/commits/ahead");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Not a git repository");
+    });
+  });
+
+  describe("GET /git/remotes/:name/commits", () => {
+    it("returns commits for a valid remote", async () => {
+      // First, get remotes to find a valid name
+      const remotesRes = await GET(buildApp(), "/api/git/remotes/detailed");
+      if (remotesRes.status === 200 && remotesRes.body.length > 0) {
+        const remoteName = remotesRes.body[0].name;
+        const res = await GET(buildApp(), `/api/git/remotes/${remoteName}/commits`);
+
+        expect(res.status).toBe(200);
+        expect(Array.isArray(res.body)).toBe(true);
+        for (const commit of res.body) {
+          expect(commit).toHaveProperty("hash");
+          expect(commit).toHaveProperty("shortHash");
+          expect(commit).toHaveProperty("message");
+          expect(commit).toHaveProperty("author");
+          expect(commit).toHaveProperty("date");
+          expect(commit).toHaveProperty("parents");
+        }
+      }
+    });
+
+    it("returns 400 for invalid remote name", async () => {
+      const res = await GET(buildApp(), "/api/git/remotes/invalid;rm%20-rf%20/commits");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid remote name");
+    });
+
+    it("returns 400 for invalid ref parameter", async () => {
+      const res = await GET(buildApp(), "/api/git/remotes/origin/commits?ref=main;rm%20-rf");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid ref name");
+    });
+
+    it("respects limit parameter", async () => {
+      const remotesRes = await GET(buildApp(), "/api/git/remotes/detailed");
+      if (remotesRes.status === 200 && remotesRes.body.length > 0) {
+        const remoteName = remotesRes.body[0].name;
+        const res = await GET(buildApp(), `/api/git/remotes/${remoteName}/commits?limit=3`);
+
+        expect(res.status).toBe(200);
+        expect(Array.isArray(res.body)).toBe(true);
+        expect(res.body.length).toBeLessThanOrEqual(3);
+      }
+    });
+
+    it("returns empty array for non-existent remote", async () => {
+      const res = await GET(buildApp(), "/api/git/remotes/nonexistent-remote-xyz/commits");
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body).toHaveLength(0);
+    });
+
+    it("returns 400 when not a git repository", async () => {
+      const nonGitStore = createMockStore({
+        getRootDir: vi.fn().mockReturnValue("/tmp/nonexistent-git-dir-for-test"),
+      });
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(nonGitStore));
+
+      const res = await GET(app, "/api/git/remotes/origin/commits");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Not a git repository");
+    });
+  });
+
   describe("GET /git/branches", () => {
     it("returns branches array", async () => {
       const res = await GET(buildApp(), "/api/git/branches");

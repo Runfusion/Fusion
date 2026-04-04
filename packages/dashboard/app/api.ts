@@ -822,6 +822,20 @@ export function fetchCommitDiff(hash: string): Promise<{ stat: string; patch: st
   return api<{ stat: string; patch: string }>(`/git/commits/${hash}/diff`);
 }
 
+/** Fetch local commits ahead of the upstream tracking branch (commits to push) */
+export function fetchAheadCommits(): Promise<GitCommit[]> {
+  return api<GitCommit[]>("/git/commits/ahead");
+}
+
+/** Fetch recent commits for a specific remote */
+export function fetchRemoteCommits(remote: string, ref?: string, limit?: number): Promise<GitCommit[]> {
+  const params = new URLSearchParams();
+  if (ref) params.set("ref", ref);
+  if (limit) params.set("limit", String(limit));
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<GitCommit[]>(`/git/remotes/${encodeURIComponent(remote)}/commits${query}`);
+}
+
 /** Fetch all local branches */
 export function fetchGitBranches(): Promise<GitBranch[]> {
   return api<GitBranch[]>("/git/branches");

@@ -193,11 +193,14 @@ The Git Manager provides comprehensive repository visualization and management d
 - Identify main vs linked worktrees
 - Track free/used worktree count
 
-**Remotes Tab**: Perform remote operations:
+**Remotes Tab**: Perform remote operations with commit visibility:
 - Fetch from origin
 - Pull latest changes
 - Push current branch
 - View operation results and error states
+- **Commits to Push**: See which local commits are ahead of the upstream tracking branch (pending push) with short hash, message, author, and relative date
+- **Remote Commit Inspection**: Click any remote to view its recent commit history — useful for checking what's on a remote without switching to the terminal
+- Auto-selects the first remote and loads its recent commits on mount
 
 ### File Browser
 Browse and edit task worktree files directly from the task detail modal:
@@ -403,6 +406,8 @@ The dashboard server exposes a REST API at `/api`:
 
 ### GitHub Integration
 - `GET /api/git/remotes` - List GitHub remotes
+- `GET /api/git/commits/ahead` - List local commits ahead of upstream tracking branch (commits pending push)
+- `GET /api/git/remotes/:name/commits?ref=&limit=` - Recent commits for a remote tracking ref (default: remote's HEAD branch, limit: 10, max: 50)
 - `POST /api/github/issues/fetch` - Fetch issues (`{ owner, repo, limit?, labels? }`)
 - `POST /api/github/issues/import` - Import issue (`{ owner, repo, issueNumber }`)
 - `POST /api/github/webhooks` - GitHub App webhook endpoint for badge updates (see GitHub App Setup below)

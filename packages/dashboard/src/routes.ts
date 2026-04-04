@@ -367,6 +367,123 @@ function getGitCommits(limit: number = 20, cwd?: string): GitCommit[] {
 }
 
 /**
+ * Validates a git ref name to prevent command injection.
+ * Refs include branch names, remote tracking branches (remote/branch), and tags.
+ * Must not contain shell metacharacters or start with dashes.
+ */
+function isValidGitRef(ref: string): boolean {
+  if (!ref || ref.length === 0) return false;
+  if (ref.startsWith("-")) return false;
+  if (/[;<>&|`$(){}[\]\r\n]/.test(ref)) return false;
+  if (/\s/.test(ref)) return false;
+  // Allow slashes for remote/branch format, dots, hyphens, underscores, alphanumerics
+  if (!/^[a-zA-Z0-9/_.@-]+$/.test(ref)) return false;
+  if (ref.includes("..")) return false;
+  if (ref.includes("~")) return false;
+  if (ref.includes("^")) return false;
+  if (ref.includes(":")) return false;
+  // Must not look like an option
+  if (ref.startsWith("--")) return false;
+  return true;
+}
+
+/**
+ * Get commits ahead of the upstream tracking branch (commits that would be pushed).
+ * Returns the list of local commits not yet present on the upstream.
+ * Returns an empty array if there is no upstream configured.
+ */
+function getAheadCommits(cwd?: string): GitCommit[] {
+  try {
+    const execOptions = { encoding: "utf-8" as const, timeout: 10000, cwd };
+    // Check if an upstream is configured
+    try {
+      execSync("git rev-parse --abbrev-ref @{u}", execOptions);
+    } catch {
+      // No upstream configured
+      return [];
+    }
+
+    // Format: hash|shortHash|message|author|date|parents
+    const format = "%H|%h|%s|%an|%aI|%P";
+    const output = execSync(`git log @{u}..HEAD --pretty=format:"${format}"`, execOptions);
+
+    const commits: GitCommit[] = [];
+    for (const line of output.split("\n")) {
+      const parts = line.split("|");
+      if (parts.length < 5) continue;
+
+      const [hash, shortHash, message, author, date, parentsStr] = parts;
+      const parents = parentsStr ? parentsStr.split(" ").filter(Boolean) : [];
+
+      commits.push({
+        hash,
+        shortHash,
+        message: message || "",
+        author: author || "",
+        date: date || "",
+        parents,
+      });
+    }
+
+    return commits;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get recent commits reachable from a remote tracking ref.
+ * @param remoteRef The remote ref (e.g. "origin/main") to list commits for
+ * @param limit Maximum number of commits to return (default 10)
+ */
+function getRemoteCommits(remoteRef: string, limit: number = 10, cwd?: string): GitCommit[] {
+  try {
+    if (!isValidGitRef(remoteRef)) {
+      throw new Error("Invalid remote ref");
+    }
+
+    // Verify the ref exists
+    const execOptions = { encoding: "utf-8" as const, timeout: 5000, cwd };
+    try {
+      execSync(`git rev-parse --verify "${remoteRef}"`, execOptions);
+    } catch {
+      return [];
+    }
+
+    // Format: hash|shortHash|message|author|date|parents
+    const format = "%H|%h|%s|%an|%aI|%P";
+    const safeLimit = Math.min(Math.max(1, limit), 50);
+    const output = execSync(`git log --max-count=${safeLimit} --pretty=format:"${format}" "${remoteRef}"`, {
+      encoding: "utf-8",
+      timeout: 10000,
+      cwd,
+    });
+
+    const commits: GitCommit[] = [];
+    for (const line of output.split("\n")) {
+      const parts = line.split("|");
+      if (parts.length < 5) continue;
+
+      const [hash, shortHash, message, author, date, parentsStr] = parts;
+      const parents = parentsStr ? parentsStr.split(" ").filter(Boolean) : [];
+
+      commits.push({
+        hash,
+        shortHash,
+        message: message || "",
+        author: author || "",
+        date: date || "",
+        parents,
+      });
+    }
+
+    return commits;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Get the diff for a specific commit.
  * @param hash The commit hash
  * @returns Object with stat and patch
@@ -2550,6 +2667,107 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
       res.json(diff);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/commits/ahead
+   * Returns local commits ahead of the upstream tracking branch (commits that would be pushed).
+   * Response: Array of GitCommit objects (empty when no upstream is configured)
+   */
+  router.get("/git/commits/ahead", (_req, res) => {
+    try {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+      const commits = getAheadCommits(rootDir);
+      res.json(commits);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/git/remotes/:name/commits
+   * Returns recent commits for a specific remote tracking ref.
+   * Query: ?ref=branchName (defaults to HEAD of the remote's default branch)
+   * Query: ?limit=N (defaults to 10, max 50)
+   * Response: Array of GitCommit objects
+   */
+  router.get("/git/remotes/:name/commits", (req, res) => {
+    try {
+      const rootDir = store.getRootDir();
+      if (!isGitRepo(rootDir)) {
+        res.status(400).json({ error: "Not a git repository" });
+        return;
+      }
+
+      const { name } = req.params;
+      if (!isValidBranchName(name)) {
+        res.status(400).json({ error: "Invalid remote name" });
+        return;
+      }
+
+      const ref = req.query.ref as string | undefined;
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 10, 50);
+
+      // Build the full remote ref: if ref is given, use "remote/ref", otherwise use "remote/HEAD"
+      let remoteRef: string;
+      if (ref) {
+        if (!isValidGitRef(ref)) {
+          res.status(400).json({ error: "Invalid ref name" });
+          return;
+        }
+        // Strip any leading "refs/" or remote prefix the user might accidentally include
+        const cleanRef = ref.replace(/^refs\/(heads\/)?/, "");
+        // If the ref already starts with the remote name, use it as-is
+        if (cleanRef.startsWith(`${name}/`)) {
+          remoteRef = cleanRef;
+        } else {
+          remoteRef = `${name}/${cleanRef}`;
+        }
+      } else {
+        // Default: try remote/HEAD symbolic ref, fall back to remote/main, remote/master
+        try {
+          const headRef = execSync(`git symbolic-ref refs/remotes/${name}/HEAD`, {
+            encoding: "utf-8",
+            timeout: 5000,
+            cwd: rootDir,
+          }).trim();
+          // symbolic-ref returns full ref like refs/remotes/origin/main
+          remoteRef = headRef.replace(/^refs\/remotes\//, "");
+        } catch {
+          // Try common defaults
+          try {
+            execSync(`git rev-parse --verify "${name}/main"`, {
+              encoding: "utf-8",
+              timeout: 5000,
+              cwd: rootDir,
+            });
+            remoteRef = `${name}/main`;
+          } catch {
+            try {
+              execSync(`git rev-parse --verify "${name}/master"`, {
+                encoding: "utf-8",
+                timeout: 5000,
+                cwd: rootDir,
+              });
+              remoteRef = `${name}/master`;
+            } catch {
+              // Remote exists but no common branch found
+              res.json([]);
+              return;
+            }
+          }
+        }
+      }
+
+      const commits = getRemoteCommits(remoteRef, limit, rootDir);
+      res.json(commits);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

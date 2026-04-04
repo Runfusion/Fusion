@@ -379,6 +379,7 @@ Built-in Git repository visualization and management:
 - Manage branches
 - See worktree/task associations
 - Perform fetch/pull/push operations
+- View pending-push commits and inspect recent commit history per remote
 
 ### Activity Log
 

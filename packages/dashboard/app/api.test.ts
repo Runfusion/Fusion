@@ -909,6 +909,8 @@ import {
   fetchGitStatus,
   fetchGitCommits,
   fetchCommitDiff,
+  fetchAheadCommits,
+  fetchRemoteCommits,
   fetchGitBranches,
   fetchGitWorktrees,
   createBranch,
@@ -991,6 +993,66 @@ describe("Git Management API", () => {
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Commit not found" }, 404));
 
       await expect(fetchCommitDiff("invalid")).rejects.toThrow("Commit not found");
+    });
+  });
+
+  describe("fetchAheadCommits", () => {
+    it("returns commits ahead of upstream", async () => {
+      const commits = [
+        { hash: "abc123", shortHash: "abc", message: "Fix bug", author: "User", date: "2026-01-01", parents: [] },
+      ];
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, commits));
+
+      const result = await fetchAheadCommits();
+
+      expect(result).toEqual(commits);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/commits/ahead", {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    it("returns empty array when no upstream", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      const result = await fetchAheadCommits();
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("fetchRemoteCommits", () => {
+    it("fetches commits for a remote with default params", async () => {
+      const commits = [
+        { hash: "def456", shortHash: "def", message: "Remote commit", author: "User", date: "2026-01-01", parents: [] },
+      ];
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, commits));
+
+      const result = await fetchRemoteCommits("origin");
+
+      expect(result).toEqual(commits);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/origin/commits", {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    it("includes ref and limit in query", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      await fetchRemoteCommits("origin", "main", 5);
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/origin/commits?ref=main&limit=5", {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    it("encodes remote name in URL", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      await fetchRemoteCommits("my-remote");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/git/remotes/my-remote/commits", {
+        headers: { "Content-Type": "application/json" },
+      });
     });
   });
 
