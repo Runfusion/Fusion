@@ -17,14 +17,17 @@ const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
   { value: "reviewer", label: "Reviewer", icon: "👁" },
   { value: "merger", label: "Merger", icon: "🔀" },
   { value: "scheduler", label: "Scheduler", icon: "⏰" },
+  { value: "engineer", label: "Engineer", icon: "🛠" },
   { value: "custom", label: "Custom", icon: "🔧" },
 ];
 
 const STATE_COLORS: Record<AgentState, { bg: string; text: string; border: string }> = {
   idle: { bg: "var(--state-idle-bg)", text: "var(--state-idle-text)", border: "var(--state-idle-border)" },
   active: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
+  running: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
   paused: { bg: "var(--state-paused-bg)", text: "var(--state-paused-text)", border: "var(--state-paused-border)" },
   terminated: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
+  error: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
 };
 
 export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentListModalProps) {
@@ -134,8 +137,14 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
     if (agent.state === "terminated") {
       return { label: "Terminated", icon: <Square size={14} />, color: "var(--state-error-text)" };
     }
+    if (agent.state === "error") {
+      return { label: agent.lastError ?? "Error", icon: <Activity size={14} />, color: "var(--state-error-text)" };
+    }
+    if (agent.state === "running") {
+      return { label: "Running", icon: <Activity size={14} />, color: "var(--state-active-text)" };
+    }
     if (agent.state === "paused") {
-      return { label: "Paused", icon: <Pause size={14} />, color: "var(--state-paused-text)" };
+      return { label: agent.pauseReason ?? "Paused", icon: <Pause size={14} />, color: "var(--state-paused-text)" };
     }
     if (!agent.lastHeartbeatAt) {
       return { label: agent.state === "active" ? "Starting..." : "Idle", icon: <Bot size={14} />, color: "var(--text-secondary)" };
@@ -208,7 +217,9 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                 <option value="all">All States</option>
                 <option value="idle">Idle</option>
                 <option value="active">Active</option>
+                <option value="running">Running</option>
                 <option value="paused">Paused</option>
+                <option value="error">Error</option>
                 <option value="terminated">Terminated</option>
               </select>
             </div>
@@ -329,6 +340,42 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "active")}
                             title="Resume"
+                          >
+                            <Play size={14} />
+                          </button>
+                          <button
+                            className="btn btn--sm btn--danger"
+                            onClick={() => void handleStateChange(agent.id, "terminated")}
+                            title="Stop"
+                          >
+                            <Square size={14} />
+                          </button>
+                        </>
+                      )}
+                      {agent.state === "running" && (
+                        <>
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleStateChange(agent.id, "paused")}
+                            title="Pause"
+                          >
+                            <Pause size={14} />
+                          </button>
+                          <button
+                            className="btn btn--sm btn--danger"
+                            onClick={() => void handleStateChange(agent.id, "terminated")}
+                            title="Stop"
+                          >
+                            <Square size={14} />
+                          </button>
+                        </>
+                      )}
+                      {agent.state === "error" && (
+                        <>
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleStateChange(agent.id, "active")}
+                            title="Retry"
                           >
                             <Play size={14} />
                           </button>
@@ -480,6 +527,42 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                             title="Resume"
                           >
                             <Play size={14} /> Resume
+                          </button>
+                          <button
+                            className="btn btn--sm btn--danger"
+                            onClick={() => void handleStateChange(agent.id, "terminated")}
+                            title="Stop"
+                          >
+                            <Square size={14} /> Stop
+                          </button>
+                        </>
+                      )}
+                      {agent.state === "running" && (
+                        <>
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleStateChange(agent.id, "paused")}
+                            title="Pause"
+                          >
+                            <Pause size={14} /> Pause
+                          </button>
+                          <button
+                            className="btn btn--sm btn--danger"
+                            onClick={() => void handleStateChange(agent.id, "terminated")}
+                            title="Stop"
+                          >
+                            <Square size={14} /> Stop
+                          </button>
+                        </>
+                      )}
+                      {agent.state === "error" && (
+                        <>
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleStateChange(agent.id, "active")}
+                            title="Retry"
+                          >
+                            <Play size={14} /> Retry
                           </button>
                           <button
                             className="btn btn--sm btn--danger"

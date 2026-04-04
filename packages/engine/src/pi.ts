@@ -26,6 +26,8 @@ import {
 
 export interface AgentResult {
   session: AgentSession;
+  /** Path to the persisted session file (undefined for in-memory sessions). */
+  sessionFile?: string;
 }
 
 export interface PromptableSession extends AgentSession {
@@ -77,6 +79,10 @@ export interface AgentOptions {
   fallbackModelId?: string;
   /** Default thinking effort level (e.g. "medium", "high"). When provided, sets the session's thinking level after creation. */
   defaultThinkingLevel?: string;
+  /** Optional pre-configured SessionManager. When provided, the agent session
+   *  uses this instead of creating an in-memory session. Pass a file-based
+   *  SessionManager to enable session persistence and pause/resume. */
+  sessionManager?: SessionManager;
 }
 
 function resolveConfiguredModel(
@@ -228,6 +234,8 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
   });
   await resourceLoader.reload();
 
+  const sessionManager = options.sessionManager ?? SessionManager.inMemory();
+
   const createSessionWithModel = async (modelOverride?: typeof selectedModel) => {
     return createAgentSession({
       cwd: options.cwd,
@@ -236,7 +244,7 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
       resourceLoader,
       tools,
       customTools: options.customTools,
-      sessionManager: SessionManager.inMemory(),
+      sessionManager,
       settingsManager,
       ...(modelOverride ? { model: modelOverride } : {}),
     });
@@ -336,5 +344,5 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
     }
   });
 
-  return { session: promptableSession };
+  return { session: promptableSession, sessionFile: promptableSession.sessionFile };
 }

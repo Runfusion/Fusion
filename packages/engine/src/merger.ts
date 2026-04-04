@@ -590,7 +590,7 @@ export async function aiMergeTask(
     throw new Error(`Cannot merge ${taskId}: ${mergeBlocker}`);
   }
 
-  const branch = task.branch || `kb/${taskId.toLowerCase()}`;
+  const branch = task.branch || `fusion/${taskId.toLowerCase()}`;
   const worktreePath = task.worktree;
   const result: MergeResult = {
     task,
@@ -620,6 +620,36 @@ export async function aiMergeTask(
     result.error = `Branch '${branch}' not found — moving to done without merge`;
     await completeTask(store, taskId, result);
     return result;
+  }
+
+  // 3b. Ensure rootDir is on the main branch before merging.
+  // Without this, a merge could land on whatever branch was last checked out,
+  // causing feature code to be committed to the wrong lineage.
+  try {
+    const currentBranch = execSync("git symbolic-ref --short HEAD", {
+      cwd: rootDir,
+      encoding: "utf-8",
+      stdio: "pipe",
+    }).trim();
+    const mainBranch = execSync("git rev-parse --abbrev-ref origin/HEAD", {
+      cwd: rootDir,
+      encoding: "utf-8",
+      stdio: "pipe",
+    }).trim().replace(/^origin\//, "");
+    if (currentBranch !== mainBranch) {
+      mergerLog.log(`${taskId}: rootDir on '${currentBranch}', checking out '${mainBranch}' before merge`);
+      execSync(`git checkout "${mainBranch}"`, {
+        cwd: rootDir,
+        stdio: "pipe",
+      });
+    }
+  } catch {
+    // Fallback: try checking out main directly
+    try {
+      execSync("git checkout main", { cwd: rootDir, stdio: "pipe" });
+    } catch {
+      mergerLog.warn(`${taskId}: unable to verify/checkout main branch — proceeding on current HEAD`);
+    }
   }
 
   // 4. Gather context for the agent (used in all attempts)

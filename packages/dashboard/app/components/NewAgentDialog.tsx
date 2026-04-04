@@ -1,0 +1,273 @@
+import { useState } from "react";
+import type { AgentCapability } from "../api";
+import { createAgent } from "../api";
+
+export interface NewAgentDialogProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onCreated: () => void;
+  projectId?: string;
+}
+
+const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
+  { value: "triage", label: "Triage", icon: "🔍" },
+  { value: "executor", label: "Executor", icon: "⚡" },
+  { value: "reviewer", label: "Reviewer", icon: "👁" },
+  { value: "merger", label: "Merger", icon: "🔀" },
+  { value: "scheduler", label: "Scheduler", icon: "⏰" },
+  { value: "engineer", label: "Engineer", icon: "🛠" },
+  { value: "custom", label: "Custom", icon: "🔧" },
+];
+
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
+
+interface RuntimeConfig {
+  model: string;
+  thinkingLevel: ThinkingLevel;
+  maxTurns: number;
+}
+
+export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAgentDialogProps) {
+  const [step, setStep] = useState(0);
+  const [name, setName] = useState("");
+  const [title, setTitle] = useState("");
+  const [role, setRole] = useState<AgentCapability>("custom");
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>({
+    model: "",
+    thinkingLevel: "off",
+    maxTurns: 10,
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!isOpen) return null;
+
+  const handleClose = () => {
+    setStep(0);
+    setName("");
+    setTitle("");
+    setRole("custom");
+    setRuntimeConfig({ model: "", thinkingLevel: "off", maxTurns: 10 });
+    setError(null);
+    onClose();
+  };
+
+  const handleCreate = async () => {
+    if (!name.trim()) return;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const runtimeCfg: Record<string, unknown> = {};
+      if (runtimeConfig.model.trim()) runtimeCfg.model = runtimeConfig.model.trim();
+      if (runtimeConfig.thinkingLevel !== "off") runtimeCfg.thinkingLevel = runtimeConfig.thinkingLevel;
+      if (runtimeConfig.maxTurns !== 10) runtimeCfg.maxTurns = runtimeConfig.maxTurns;
+      await createAgent({
+        name: name.trim(),
+        role,
+        ...(title.trim() ? { title: title.trim() } : {}),
+        ...(Object.keys(runtimeCfg).length > 0 ? { runtimeConfig: runtimeCfg } : {}),
+      }, projectId);
+      handleClose();
+      onCreated();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to create agent");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const selectedRole = AGENT_ROLES.find(r => r.value === role);
+
+  return (
+    <div className="agent-dialog-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
+      <div className="agent-dialog" role="dialog" aria-modal="true" aria-label="Create new agent">
+        {/* Header */}
+        <div className="agent-dialog-header">
+          <span style={{ fontWeight: 600, fontSize: 15 }}>New Agent</span>
+          <button
+            className="btn-icon"
+            onClick={handleClose}
+            aria-label="Close"
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 18, lineHeight: 1 }}
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Step indicator */}
+        <div className="agent-dialog-steps">
+          {[0, 1, 2].map(i => (
+            <div
+              key={i}
+              className={`agent-dialog-step${i === step ? " active" : i < step ? " completed" : ""}`}
+              aria-label={`Step ${i + 1}`}
+            />
+          ))}
+        </div>
+
+        {/* Body */}
+        <div className="agent-dialog-body">
+          {step === 0 && (
+            <div>
+              <div className="agent-dialog-field">
+                <label htmlFor="agent-name">Name <span style={{ color: "var(--state-error-text, #f85149)" }}>*</span></label>
+                <input
+                  id="agent-name"
+                  type="text"
+                  className="input"
+                  placeholder="e.g. Frontend Reviewer"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  autoFocus
+                  style={{ width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
+              <div className="agent-dialog-field">
+                <label htmlFor="agent-title">Title <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(optional)</span></label>
+                <input
+                  id="agent-title"
+                  type="text"
+                  className="input"
+                  placeholder="e.g. Senior Code Reviewer"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
+              <div className="agent-dialog-field">
+                <label>Role</label>
+                <div className="agent-role-grid">
+                  {AGENT_ROLES.map(r => (
+                    <button
+                      key={r.value}
+                      type="button"
+                      className={`agent-role-option${role === r.value ? " selected" : ""}`}
+                      onClick={() => setRole(r.value)}
+                    >
+                      <span className="agent-role-option-icon">{r.icon}</span>
+                      <span style={{ fontSize: 12, marginTop: 4 }}>{r.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {step === 1 && (
+            <div>
+              <div className="agent-dialog-field">
+                <label htmlFor="agent-model">Model ID</label>
+                <input
+                  id="agent-model"
+                  type="text"
+                  className="input"
+                  placeholder="e.g. claude-sonnet-4-5"
+                  value={runtimeConfig.model}
+                  onChange={e => setRuntimeConfig(c => ({ ...c, model: e.target.value }))}
+                  style={{ width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
+              <div className="agent-dialog-field">
+                <label htmlFor="agent-thinking">Thinking Level</label>
+                <select
+                  id="agent-thinking"
+                  className="select"
+                  value={runtimeConfig.thinkingLevel}
+                  onChange={e => setRuntimeConfig(c => ({ ...c, thinkingLevel: e.target.value as ThinkingLevel }))}
+                  style={{ width: "100%" }}
+                >
+                  <option value="off">Off</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div className="agent-dialog-field">
+                <label htmlFor="agent-max-turns">Max Turns</label>
+                <input
+                  id="agent-max-turns"
+                  type="number"
+                  className="input"
+                  min={1}
+                  max={500}
+                  value={runtimeConfig.maxTurns}
+                  onChange={e => setRuntimeConfig(c => ({ ...c, maxTurns: Math.max(1, parseInt(e.target.value, 10) || 1) }))}
+                  style={{ width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div>
+              <p style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 0, marginBottom: 12 }}>
+                Review your agent configuration before creating.
+              </p>
+              <div className="agent-dialog-summary">
+                <div className="agent-dialog-summary-row">
+                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Name</span>
+                  <span style={{ fontWeight: 600 }}>{name}</span>
+                </div>
+                {title && (
+                  <div className="agent-dialog-summary-row">
+                    <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Title</span>
+                    <span>{title}</span>
+                  </div>
+                )}
+                <div className="agent-dialog-summary-row">
+                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Role</span>
+                  <span>{selectedRole?.icon} {selectedRole?.label}</span>
+                </div>
+                <div className="agent-dialog-summary-row">
+                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Model</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{runtimeConfig.model || <em style={{ color: "var(--text-muted)" }}>default</em>}</span>
+                </div>
+                <div className="agent-dialog-summary-row">
+                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Thinking</span>
+                  <span style={{ textTransform: "capitalize" }}>{runtimeConfig.thinkingLevel}</span>
+                </div>
+                <div className="agent-dialog-summary-row">
+                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Max Turns</span>
+                  <span>{runtimeConfig.maxTurns}</span>
+                </div>
+              </div>
+              {error && (
+                <p style={{ color: "var(--state-error-text, #f85149)", fontSize: 13, marginTop: 12 }}>{error}</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="agent-dialog-footer">
+          {step > 0 && (
+            <button className="btn" onClick={() => setStep(s => s - 1)} disabled={isSubmitting}>
+              Back
+            </button>
+          )}
+          <button className="btn" onClick={handleClose} disabled={isSubmitting}>
+            Cancel
+          </button>
+          {step < 2 ? (
+            <button
+              className="btn btn--primary"
+              onClick={() => setStep(s => s + 1)}
+              disabled={step === 0 && !name.trim()}
+            >
+              Next
+            </button>
+          ) : (
+            <button
+              className="btn btn--primary"
+              onClick={() => void handleCreate()}
+              disabled={isSubmitting || !name.trim()}
+            >
+              {isSubmitting ? "Creating..." : "Create"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

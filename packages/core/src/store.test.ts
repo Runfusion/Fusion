@@ -4301,7 +4301,7 @@ Task with acceptance criteria
 
       const { execSync } = await import("node:child_process");
       try {
-        execSync(`git checkout -b kb/${task.id.toLowerCase()}`, { cwd: rootDir, stdio: "pipe" });
+        execSync(`git checkout -b fusion/${task.id.toLowerCase()}`, { cwd: rootDir, stdio: "pipe" });
         execSync('git commit --allow-empty -m "test commit"', { cwd: rootDir, stdio: "pipe" });
         execSync("git checkout main || git checkout master", { cwd: rootDir, stdio: "pipe" });
       } catch {
@@ -4333,7 +4333,7 @@ Task with acceptance criteria
       // Create branch for merge
       const { execSync } = await import("node:child_process");
       try {
-        execSync(`git checkout -b kb/${task.id.toLowerCase()}`, { cwd: rootDir, stdio: "pipe" });
+        execSync(`git checkout -b fusion/${task.id.toLowerCase()}`, { cwd: rootDir, stdio: "pipe" });
         execSync('git commit --allow-empty -m "test commit"', { cwd: rootDir, stdio: "pipe" });
         execSync("git checkout main || git checkout master", { cwd: rootDir, stdio: "pipe" });
       } catch {

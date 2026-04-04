@@ -3764,7 +3764,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Determine branch name from task
-      const branchName = `kb/${task.id.toLowerCase()}`;
+      const branchName = `fusion/${task.id.toLowerCase()}`;
 
       // Get owner/repo from git remote or GITHUB_REPOSITORY env
       let owner: string;
@@ -6308,6 +6308,38 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * GET /api/agents/stats
+   * Return aggregate stats across all agents.
+   * Must be registered before /agents/:id to avoid "stats" matching :id.
+   */
+  router.get("/agents/stats", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      await agentStore.init();
+
+      const agents = await agentStore.listAgents();
+      const activeCount = agents.filter((a: any) => a.state === "active" || a.state === "running").length;
+      const assignedTaskCount = agents.filter((a: any) => a.taskId).length;
+
+      let completedRuns = 0;
+      let failedRuns = 0;
+      for (const agent of agents) {
+        const runs = await agentStore.getRecentRuns(agent.id, 100);
+        completedRuns += runs.filter((r: any) => r.status === "completed").length;
+        failedRuns += runs.filter((r: any) => r.status === "failed" || r.status === "terminated").length;
+      }
+
+      const total = completedRuns + failedRuns;
+      const successRate = total > 0 ? completedRuns / total : 0;
+      res.json({ activeCount, assignedTaskCount, completedRuns, failedRuns, successRate });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * GET /api/agents/:id
    * Get agent by ID with heartbeat history.
    */
@@ -6448,6 +6480,56 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       res.json(history);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/runs
+   * List recent runs for an agent.
+   * Query: limit (default: 20)
+   */
+  router.get("/agents/:id/runs", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      await agentStore.init();
+
+      const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 20;
+      const runs = await agentStore.getRecentRuns(req.params.id, limit);
+      res.json(runs);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/runs/:runId
+   * Get detail for a specific agent run.
+   */
+  router.get("/agents/:id/runs/:runId", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getRootDir() });
+      await agentStore.init();
+
+      const run = await agentStore.getRunDetail(req.params.id, req.params.runId);
+      if (!run) {
+        res.status(404).json({ error: "Run not found" });
+        return;
+      }
+      res.json(run);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
     }
   });
 

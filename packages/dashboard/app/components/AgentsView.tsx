@@ -2,8 +2,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { JSX } from "react";
 import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
-import { fetchAgents, createAgent, updateAgent, updateAgentState, deleteAgent } from "../api";
+import { fetchAgents, updateAgent, updateAgentState, deleteAgent } from "../api";
 import { AgentDetailView } from "./AgentDetailView";
+import { ActiveAgentsPanel } from "./ActiveAgentsPanel";
+import { AgentMetricsBar } from "./AgentMetricsBar";
+import { useAgents } from "../hooks/useAgents";
+import { NewAgentDialog } from "./NewAgentDialog";
 
 export interface AgentsViewProps {
   addToast: (message: string, type?: "success" | "error") => void;
@@ -16,22 +20,24 @@ const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
   { value: "reviewer", label: "Reviewer", icon: "👁" },
   { value: "merger", label: "Merger", icon: "🔀" },
   { value: "scheduler", label: "Scheduler", icon: "⏰" },
+  { value: "engineer", label: "Engineer", icon: "🛠" },
   { value: "custom", label: "Custom", icon: "🔧" },
 ];
 
 const STATE_COLORS: Record<AgentState, { bg: string; text: string; border: string }> = {
   idle: { bg: "var(--state-idle-bg)", text: "var(--state-idle-text)", border: "var(--state-idle-border)" },
   active: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
+  running: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
   paused: { bg: "var(--state-paused-bg)", text: "var(--state-paused-text)", border: "var(--state-paused-border)" },
+  error: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
   terminated: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
 };
 
 export function AgentsView({ addToast, projectId }: AgentsViewProps) {
+  const { activeAgents, stats } = useAgents(projectId);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [newAgentName, setNewAgentName] = useState("");
-  const [newAgentRole, setNewAgentRole] = useState<AgentCapability>("custom");
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentView, setAgentView] = useState<"board" | "list">(() => {
@@ -64,19 +70,6 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   useEffect(() => {
     void loadAgents();
   }, [loadAgents]);
-
-  const handleCreate = async () => {
-    if (!newAgentName.trim()) return;
-    try {
-      await createAgent({ name: newAgentName.trim(), role: newAgentRole }, projectId);
-      addToast(`Agent "${newAgentName}" created`, "success");
-      setNewAgentName("");
-      setIsCreating(false);
-      void loadAgents();
-    } catch (err: any) {
-      addToast(`Failed to create agent: ${err.message}`, "error");
-    }
-  };
 
   const handleStateChange = async (agentId: string, newState: AgentState) => {
     try {
@@ -132,8 +125,14 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     if (agent.state === "terminated") {
       return { label: "Terminated", icon: <Square size={14} />, color: "var(--state-error-text)" };
     }
+    if (agent.state === "error") {
+      return { label: agent.lastError ?? "Error", icon: <Activity size={14} />, color: "var(--state-error-text)" };
+    }
     if (agent.state === "paused") {
-      return { label: "Paused", icon: <Pause size={14} />, color: "var(--state-paused-text)" };
+      return { label: agent.pauseReason ? `Paused: ${agent.pauseReason}` : "Paused", icon: <Pause size={14} />, color: "var(--state-paused-text)" };
+    }
+    if (agent.state === "running") {
+      return { label: "Running", icon: <Activity size={14} />, color: "var(--state-active-text)" };
     }
     if (!agent.lastHeartbeatAt) {
       return { label: agent.state === "active" ? "Starting..." : "Idle", icon: <Bot size={14} />, color: "var(--text-secondary)" };
@@ -200,48 +199,34 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
               <option value="all">All States</option>
               <option value="idle">Idle</option>
               <option value="active">Active</option>
+              <option value="running">Running</option>
               <option value="paused">Paused</option>
+              <option value="error">Error</option>
               <option value="terminated">Terminated</option>
             </select>
           </div>
 
           <button
             className="btn btn--primary"
-            onClick={() => setIsCreating(!isCreating)}
+            onClick={() => setIsCreating(true)}
           >
             <Plus size={16} />
-            {isCreating ? "Cancel" : "New Agent"}
+            New Agent
           </button>
         </div>
 
-        {/* Create Form */}
-        {isCreating && (
-          <div className="agent-create-form">
-            <input
-              type="text"
-              placeholder="Agent name..."
-              value={newAgentName}
-              onChange={(e) => setNewAgentName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void handleCreate()}
-              className="input"
-              autoFocus
-            />
-            <select
-              className="select"
-              value={newAgentRole}
-              onChange={(e) => setNewAgentRole(e.target.value as AgentCapability)}
-            >
-              {AGENT_ROLES.map(role => (
-                <option key={role.value} value={role.value}>
-                  {role.icon} {role.label}
-                </option>
-              ))}
-            </select>
-            <button className="btn btn--primary" onClick={() => void handleCreate()}>
-              Create
-            </button>
-          </div>
-        )}
+        <NewAgentDialog
+          isOpen={isCreating}
+          onClose={() => setIsCreating(false)}
+          onCreated={() => { setIsCreating(false); void loadAgents(); }}
+          projectId={projectId}
+        />
+
+        {/* Metrics Bar */}
+        <AgentMetricsBar stats={stats} />
+
+        {/* Active Agents Panel - Live streaming cards */}
+        <ActiveAgentsPanel agents={activeAgents} />
 
         {/* Agent List */}
         <div className={agentView === "board" ? "agent-board" : "agent-list"}>
@@ -329,6 +314,42 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
                           className="btn btn--sm"
                           onClick={() => void handleStateChange(agent.id, "active")}
                           title="Resume"
+                        >
+                          <Play size={14} />
+                        </button>
+                        <button
+                          className="btn btn--sm btn--danger"
+                          onClick={() => void handleStateChange(agent.id, "terminated")}
+                          title="Stop"
+                        >
+                          <Square size={14} />
+                        </button>
+                      </>
+                    )}
+                    {agent.state === "running" && (
+                      <>
+                        <button
+                          className="btn btn--sm"
+                          onClick={() => void handleStateChange(agent.id, "paused")}
+                          title="Pause"
+                        >
+                          <Pause size={14} />
+                        </button>
+                        <button
+                          className="btn btn--sm btn--danger"
+                          onClick={() => void handleStateChange(agent.id, "terminated")}
+                          title="Stop"
+                        >
+                          <Square size={14} />
+                        </button>
+                      </>
+                    )}
+                    {agent.state === "error" && (
+                      <>
+                        <button
+                          className="btn btn--sm"
+                          onClick={() => void handleStateChange(agent.id, "active")}
+                          title="Retry"
                         >
                           <Play size={14} />
                         </button>
@@ -491,6 +512,42 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
                           title="Resume"
                         >
                           <Play size={14} /> Resume
+                        </button>
+                        <button
+                          className="btn btn--sm btn--danger"
+                          onClick={() => void handleStateChange(agent.id, "terminated")}
+                          title="Stop"
+                        >
+                          <Square size={14} /> Stop
+                        </button>
+                      </>
+                    )}
+                    {agent.state === "running" && (
+                      <>
+                        <button
+                          className="btn btn--sm"
+                          onClick={() => void handleStateChange(agent.id, "paused")}
+                          title="Pause"
+                        >
+                          <Pause size={14} /> Pause
+                        </button>
+                        <button
+                          className="btn btn--sm btn--danger"
+                          onClick={() => void handleStateChange(agent.id, "terminated")}
+                          title="Stop"
+                        >
+                          <Square size={14} /> Stop
+                        </button>
+                      </>
+                    )}
+                    {agent.state === "error" && (
+                      <>
+                        <button
+                          className="btn btn--sm"
+                          onClick={() => void handleStateChange(agent.id, "active")}
+                          title="Retry"
+                        >
+                          <Play size={14} /> Retry
                         </button>
                         <button
                           className="btn btn--sm btn--danger"

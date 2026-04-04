@@ -1628,8 +1628,8 @@ export function cancelSubtaskBreakdown(sessionId: string, projectId?: string): P
 
 // ── Agent API ────────────────────────────────────────────────────────────
 
-import type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput } from "@fusion/core";
-export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput };
+import type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats } from "@fusion/core";
+export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats };
 
 function withProjectId(path: string, projectId?: string): string {
   if (!projectId) return path;
@@ -1705,6 +1705,25 @@ export function fetchAgentHeartbeats(agentId: string, limit?: number, projectId?
   if (projectId) params.set("projectId", projectId);
   const query = params.size > 0 ? `?${params.toString()}` : "";
   return api<AgentHeartbeatEvent[]>(`/agents/${encodeURIComponent(agentId)}/heartbeats${query}`);
+}
+
+/** Fetch heartbeat runs for an agent */
+export function fetchAgentRuns(agentId: string, limit?: number, projectId?: string): Promise<AgentHeartbeatRun[]> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (projectId) params.set("projectId", projectId);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<AgentHeartbeatRun[]>(`/agents/${encodeURIComponent(agentId)}/runs${query}`);
+}
+
+/** Fetch a single heartbeat run detail */
+export function fetchAgentRunDetail(agentId: string, runId: string, projectId?: string): Promise<AgentHeartbeatRun> {
+  return api<AgentHeartbeatRun>(withProjectId(`/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`, projectId));
+}
+
+/** Fetch aggregate agent stats */
+export function fetchAgentStats(projectId?: string): Promise<AgentStats> {
+  return api<AgentStats>(withProjectId("/agents/stats", projectId));
 }
 
 // --- Backup API ---

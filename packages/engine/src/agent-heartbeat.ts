@@ -10,7 +10,7 @@
  * - onTerminated: Called when an unresponsive agent is terminated
  */
 
-import type { AgentStore, Agent, AgentState } from "@fusion/core";
+import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource } from "@fusion/core";
 
 /** Options for HeartbeatMonitor constructor */
 export interface HeartbeatMonitorOptions {
@@ -20,12 +20,28 @@ export interface HeartbeatMonitorOptions {
   pollIntervalMs?: number;
   /** Heartbeat timeout in milliseconds (default: 60000) */
   heartbeatTimeoutMs?: number;
+  /** Max concurrent runs per agent (default: 1) */
+  maxConcurrentRuns?: number;
   /** Callback when an agent misses its heartbeat */
   onMissed?: (agentId: string) => void;
   /** Callback when an agent recovers after a missed heartbeat */
   onRecovered?: (agentId: string) => void;
   /** Callback when an unresponsive agent is terminated */
   onTerminated?: (agentId: string) => void;
+  /** Callback when a run starts */
+  onRunStarted?: (agentId: string, run: AgentHeartbeatRun) => void;
+  /** Callback when a run completes */
+  onRunCompleted?: (agentId: string, run: AgentHeartbeatRun) => void;
+}
+
+/** Options for waking up an agent */
+export interface WakeupOptions {
+  /** What triggered the wakeup */
+  source: HeartbeatInvocationSource;
+  /** Detail about the trigger (manual, ping, scheduler, system) */
+  triggerDetail?: string;
+  /** Context snapshot for the run */
+  contextSnapshot?: Record<string, unknown>;
 }
 
 /** Session interface for disposing agent resources */
@@ -41,6 +57,8 @@ interface TrackedAgent {
   runId: string;
   lastSeen: number; // timestamp from Date.now()
   missedHeartbeatReported: boolean;
+  /** Session ID before this execution started */
+  sessionIdBefore?: string;
 }
 
 /**
@@ -51,11 +69,15 @@ export class HeartbeatMonitor {
   private store: AgentStore;
   private pollIntervalMs: number;
   private heartbeatTimeoutMs: number;
+  private maxConcurrentRuns: number;
   private onMissed?: (agentId: string) => void;
   private onRecovered?: (agentId: string) => void;
   private onTerminated?: (agentId: string) => void;
+  private onRunStarted?: (agentId: string, run: AgentHeartbeatRun) => void;
+  private onRunCompleted?: (agentId: string, run: AgentHeartbeatRun) => void;
 
   private trackedAgents: Map<string, TrackedAgent> = new Map();
+  private agentStartLocks: Map<string, Promise<unknown>> = new Map();
   private pollInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
@@ -63,9 +85,12 @@ export class HeartbeatMonitor {
     this.store = options.store;
     this.pollIntervalMs = options.pollIntervalMs ?? 30000;
     this.heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 60000;
+    this.maxConcurrentRuns = options.maxConcurrentRuns ?? 1;
     this.onMissed = options.onMissed;
     this.onRecovered = options.onRecovered;
     this.onTerminated = options.onTerminated;
+    this.onRunStarted = options.onRunStarted;
+    this.onRunCompleted = options.onRunCompleted;
   }
 
   /**
@@ -103,24 +128,146 @@ export class HeartbeatMonitor {
   }
 
   /**
-   * Register an agent for monitoring.
+   * Register an agent for monitoring with optional session context.
    * @param agentId - The agent ID
    * @param session - Session with dispose() for cleanup
    * @param runId - The heartbeat run ID
+   * @param sessionIdBefore - Optional session ID from before execution
    */
-  trackAgent(agentId: string, session: AgentSession, runId: string): void {
+  trackAgent(agentId: string, session: AgentSession, runId: string, sessionIdBefore?: string): void {
     const tracked: TrackedAgent = {
       agentId,
       session,
       runId,
       lastSeen: Date.now(),
       missedHeartbeatReported: false,
+      sessionIdBefore,
     };
 
     this.trackedAgents.set(agentId, tracked);
 
     // Record initial heartbeat
     void this.store.recordHeartbeat(agentId, "ok", runId);
+  }
+
+  /**
+   * Serialize run starts per agent to prevent concurrent execution.
+   * @param agentId - The agent ID
+   * @param fn - Function to execute with the lock
+   */
+  async withAgentStartLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+    const existing = this.agentStartLocks.get(agentId) ?? Promise.resolve();
+    const operation = existing.then(fn, fn);
+    this.agentStartLocks.set(agentId, operation);
+    return operation as Promise<T>;
+  }
+
+  /**
+   * Start a rich heartbeat run with full context capture.
+   * Creates a structured run record and saves it to the run store.
+   * @param agentId - The agent ID
+   * @param options - Wakeup options with trigger context
+   * @returns The created run
+   */
+  async startRun(agentId: string, options?: WakeupOptions): Promise<AgentHeartbeatRun> {
+    const run = await this.store.startHeartbeatRun(agentId);
+
+    // Enrich with execution context
+    const enrichedRun: AgentHeartbeatRun = {
+      ...run,
+      invocationSource: options?.source ?? "on_demand",
+      triggerDetail: options?.triggerDetail ?? "manual",
+      contextSnapshot: options?.contextSnapshot,
+      processPid: process.pid,
+    };
+
+    // Save rich run data
+    await this.store.saveRun(enrichedRun);
+
+    // Transition agent to running state
+    try {
+      await this.store.updateAgentState(agentId, "running");
+    } catch {
+      // May fail if already in running state - that's ok
+    }
+
+    this.onRunStarted?.(agentId, enrichedRun);
+    return enrichedRun;
+  }
+
+  /**
+   * Complete a heartbeat run with results.
+   * @param agentId - The agent ID
+   * @param runId - The run ID to complete
+   * @param result - Execution results
+   */
+  async completeRun(
+    agentId: string,
+    runId: string,
+    result: {
+      status: "completed" | "failed" | "terminated";
+      exitCode?: number;
+      sessionIdAfter?: string;
+      usageJson?: { inputTokens: number; outputTokens: number; cachedTokens: number };
+      resultJson?: Record<string, unknown>;
+      stdoutExcerpt?: string;
+      stderrExcerpt?: string;
+    }
+  ): Promise<void> {
+    // Load and update the run
+    const run = await this.store.getRunDetail(agentId, runId);
+    if (!run) return;
+
+    const tracked = this.trackedAgents.get(agentId);
+    const completedRun: AgentHeartbeatRun = {
+      ...run,
+      endedAt: new Date().toISOString(),
+      status: result.status,
+      exitCode: result.exitCode,
+      sessionIdBefore: tracked?.sessionIdBefore,
+      sessionIdAfter: result.sessionIdAfter,
+      usageJson: result.usageJson,
+      resultJson: result.resultJson,
+      stdoutExcerpt: result.stdoutExcerpt,
+      stderrExcerpt: result.stderrExcerpt,
+    };
+
+    await this.store.saveRun(completedRun);
+
+    // Update cumulative usage on agent
+    if (result.usageJson) {
+      try {
+        const agent = await this.store.getAgent(agentId);
+        if (agent) {
+          await this.store.updateAgent(agentId, {
+            totalInputTokens: (agent.totalInputTokens ?? 0) + result.usageJson.inputTokens,
+            totalOutputTokens: (agent.totalOutputTokens ?? 0) + result.usageJson.outputTokens,
+          });
+        }
+      } catch {
+        // Non-critical, skip
+      }
+    }
+
+    // Transition agent state based on result
+    try {
+      if (result.status === "failed") {
+        await this.store.updateAgentState(agentId, "error");
+        await this.store.updateAgent(agentId, { lastError: result.stderrExcerpt ?? "Run failed" });
+      } else if (result.status === "terminated") {
+        await this.store.updateAgentState(agentId, "terminated");
+      } else {
+        // Completed successfully - back to active
+        await this.store.updateAgentState(agentId, "active");
+      }
+    } catch {
+      // State transition may fail if already in target state
+    }
+
+    // End the heartbeat run tracking
+    await this.store.endHeartbeatRun(runId, result.status === "completed" ? "completed" : "terminated");
+
+    this.onRunCompleted?.(agentId, completedRun);
   }
 
   /**

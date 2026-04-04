@@ -524,6 +524,10 @@ export interface Task {
   nextRecoveryAt?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
+  /** Path to the persisted agent session file, enabling pause/resume without
+   *  losing conversation context. Set when execution starts; cleared on
+   *  completion or terminal failure. */
+  sessionFile?: string;
   /** Error message from the last failure, if the task failed during execution */
   error?: string;
   /** Optional summary of what was changed/fixed when task is completed */
@@ -1243,14 +1247,16 @@ export interface PlanningSession {
 // ── Agent Types ────────────────────────────────────────────────────────────
 
 /** Agent lifecycle states */
-export const AGENT_STATES = ["idle", "active", "paused", "terminated"] as const;
+export const AGENT_STATES = ["idle", "active", "running", "paused", "error", "terminated"] as const;
 export type AgentState = (typeof AGENT_STATES)[number];
 
 /** Valid state transitions for agents */
 export const AGENT_VALID_TRANSITIONS: Record<AgentState, AgentState[]> = {
   idle: ["active"],
-  active: ["paused", "terminated"],
+  active: ["running", "paused", "terminated"],
+  running: ["active", "paused", "error", "terminated"],
   paused: ["active", "terminated"],
+  error: ["active", "terminated"],
   terminated: [], // Terminal state - no exits
 };
 
@@ -1264,6 +1270,9 @@ export interface AgentHeartbeatEvent {
   runId: string;
 }
 
+/** What triggered a heartbeat run */
+export type HeartbeatInvocationSource = "on_demand" | "timer" | "assignment" | "automation";
+
 /** A continuous heartbeat session/run for an agent */
 export interface AgentHeartbeatRun {
   /** Unique identifier for this run */
@@ -1275,11 +1284,33 @@ export interface AgentHeartbeatRun {
   /** ISO-8601 timestamp when the run ended (null if active) */
   endedAt: string | null;
   /** Status of the run */
-  status: "active" | "completed" | "terminated";
+  status: "active" | "completed" | "terminated" | "failed";
+  /** What triggered this run */
+  invocationSource?: HeartbeatInvocationSource;
+  /** Trigger detail (manual, ping, scheduler, system) */
+  triggerDetail?: string;
+  /** PID of the agent process */
+  processPid?: number;
+  /** Exit code of the agent process */
+  exitCode?: number;
+  /** Session ID before execution (for continuity tracking) */
+  sessionIdBefore?: string;
+  /** Session ID after execution */
+  sessionIdAfter?: string;
+  /** Token usage for this run */
+  usageJson?: { inputTokens: number; outputTokens: number; cachedTokens: number };
+  /** Structured result from the run */
+  resultJson?: Record<string, unknown>;
+  /** Snapshot of context at run start (taskId, projectId, etc.) */
+  contextSnapshot?: Record<string, unknown>;
+  /** Excerpt of stdout output */
+  stdoutExcerpt?: string;
+  /** Excerpt of stderr output */
+  stderrExcerpt?: string;
 }
 
 /** Capabilities/roles an agent can have */
-export type AgentCapability = "triage" | "executor" | "reviewer" | "merger" | "scheduler" | "custom";
+export type AgentCapability = "triage" | "executor" | "reviewer" | "merger" | "scheduler" | "engineer" | "custom";
 
 /** Agent record stored in the system */
 export interface Agent {
@@ -1301,6 +1332,24 @@ export interface Agent {
   lastHeartbeatAt?: string;
   /** Optional metadata */
   metadata: Record<string, unknown>;
+  /** Job title / description for the agent */
+  title?: string;
+  /** Custom icon identifier */
+  icon?: string;
+  /** Agent ID this agent reports to (org hierarchy) */
+  reportsTo?: string;
+  /** Runtime configuration (maxTurns, thinkingLevel, etc.) */
+  runtimeConfig?: Record<string, unknown>;
+  /** Why the agent was paused (error, manual, etc.) */
+  pauseReason?: string;
+  /** Capability permission flags */
+  permissions?: Record<string, boolean>;
+  /** Cumulative input tokens across all runs */
+  totalInputTokens?: number;
+  /** Cumulative output tokens across all runs */
+  totalOutputTokens?: number;
+  /** Last error message */
+  lastError?: string;
 }
 
 /** Extended agent information including heartbeat history */
@@ -1318,6 +1367,11 @@ export interface AgentCreateInput {
   name: string;
   role: AgentCapability;
   metadata?: Record<string, unknown>;
+  title?: string;
+  icon?: string;
+  reportsTo?: string;
+  runtimeConfig?: Record<string, unknown>;
+  permissions?: Record<string, boolean>;
 }
 
 /** Input for updating an existing agent */
@@ -1325,6 +1379,45 @@ export interface AgentUpdateInput {
   name?: string;
   role?: AgentCapability;
   metadata?: Record<string, unknown>;
+  title?: string;
+  icon?: string;
+  reportsTo?: string;
+  runtimeConfig?: Record<string, unknown>;
+  pauseReason?: string;
+  permissions?: Record<string, boolean>;
+  lastError?: string;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+}
+
+/** Per-task session persistence for an agent */
+export interface AgentTaskSession {
+  /** Agent ID */
+  agentId: string;
+  /** Task ID */
+  taskId: string;
+  /** Session state for resuming context across runs */
+  sessionParams: Record<string, unknown>;
+  /** Human-readable session identifier */
+  sessionDisplayId?: string;
+  /** ISO-8601 timestamp when session was created */
+  createdAt: string;
+  /** ISO-8601 timestamp of last update */
+  updatedAt: string;
+}
+
+/** Aggregate statistics for agents */
+export interface AgentStats {
+  /** Number of agents in active/running state */
+  activeCount: number;
+  /** Number of tasks assigned to agents */
+  assignedTaskCount: number;
+  /** Total completed runs */
+  completedRuns: number;
+  /** Total failed runs */
+  failedRuns: number;
+  /** Success rate (0-1) */
+  successRate: number;
 }
 
 // ── Multi-Project First-Run & Migration Types ───────────────────────────────

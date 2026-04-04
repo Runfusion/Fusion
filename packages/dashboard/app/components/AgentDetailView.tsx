@@ -58,7 +58,9 @@ const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
 const STATE_COLORS: Record<AgentState, { bg: string; text: string; border: string }> = {
   idle: { bg: "var(--state-idle-bg)", text: "var(--state-idle-text)", border: "var(--state-idle-border)" },
   active: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
+  running: { bg: "var(--state-active-bg)", text: "var(--state-active-text)", border: "var(--state-active-border)" },
   paused: { bg: "var(--state-paused-bg)", text: "var(--state-paused-text)", border: "var(--state-paused-border)" },
+  error: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
   terminated: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
 };
 
@@ -183,8 +185,14 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast }: Agent
     if (agent.state === "terminated") {
       return { label: "Terminated", color: "var(--state-error-text, #f85149)" };
     }
+    if (agent.state === "error") {
+      return { label: agent.lastError ?? "Error", color: "var(--state-error-text, #f85149)" };
+    }
     if (agent.state === "paused") {
-      return { label: "Paused", color: "var(--state-paused-text, #e3b541)" };
+      return { label: agent.pauseReason ? `Paused: ${agent.pauseReason}` : "Paused", color: "var(--state-paused-text, #e3b541)" };
+    }
+    if (agent.state === "running") {
+      return { label: "Running", color: "var(--state-active-text, #3fb950)" };
     }
     if (!agent.lastHeartbeatAt) {
       return { label: agent.state === "active" ? "Starting..." : "Idle", color: "var(--state-idle-text, #8b949e)" };
@@ -292,13 +300,37 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast }: Agent
                 </button>
               </>
             )}
+            {agent.state === "running" && (
+              <>
+                <button className="btn" onClick={() => void handleStateChange("paused")}>
+                  <Pause size={16} />
+                  Pause
+                </button>
+                <button className="btn btn--danger" onClick={() => void handleStateChange("terminated")}>
+                  <Square size={16} />
+                  Stop
+                </button>
+              </>
+            )}
+            {agent.state === "error" && (
+              <>
+                <button className="btn btn--primary" onClick={() => void handleStateChange("active")}>
+                  <Play size={16} />
+                  Retry
+                </button>
+                <button className="btn btn--danger" onClick={() => void handleStateChange("terminated")}>
+                  <Square size={16} />
+                  Stop
+                </button>
+              </>
+            )}
             {agent.state === "terminated" && (
               <button className="btn btn--danger" onClick={handleDelete}>
                 <Trash2 size={16} />
                 Delete
               </button>
             )}
-            
+
             <button className="btn-icon" onClick={() => void loadAgent()} title="Refresh">
               <RefreshCw size={16} />
             </button>

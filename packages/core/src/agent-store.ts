@@ -23,6 +23,7 @@ import type {
   AgentHeartbeatEvent,
   AgentHeartbeatRun,
   AgentDetail,
+  AgentTaskSession,
 } from "./types.js";
 import { AGENT_VALID_TRANSITIONS } from "./types.js";
 
@@ -66,6 +67,15 @@ interface AgentData {
   updatedAt: string;
   lastHeartbeatAt?: string;
   metadata: Record<string, unknown>;
+  title?: string;
+  icon?: string;
+  reportsTo?: string;
+  runtimeConfig?: Record<string, unknown>;
+  pauseReason?: string;
+  permissions?: Record<string, boolean>;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  lastError?: string;
 }
 
 /** Per-agent write lock for serialization */
@@ -121,6 +131,11 @@ export class AgentStore extends EventEmitter {
       createdAt: now,
       updatedAt: now,
       metadata: input.metadata ?? {},
+      ...(input.title && { title: input.title }),
+      ...(input.icon && { icon: input.icon }),
+      ...(input.reportsTo && { reportsTo: input.reportsTo }),
+      ...(input.runtimeConfig && { runtimeConfig: input.runtimeConfig }),
+      ...(input.permissions && { permissions: input.permissions }),
     };
 
     await this.writeAgent(agent);
@@ -190,6 +205,15 @@ export class AgentStore extends EventEmitter {
         role: updates.role ?? agent.role,
         metadata: updates.metadata !== undefined ? updates.metadata : agent.metadata,
         updatedAt: new Date().toISOString(),
+        ...(updates.title !== undefined && { title: updates.title }),
+        ...(updates.icon !== undefined && { icon: updates.icon }),
+        ...(updates.reportsTo !== undefined && { reportsTo: updates.reportsTo }),
+        ...(updates.runtimeConfig !== undefined && { runtimeConfig: updates.runtimeConfig }),
+        ...(updates.pauseReason !== undefined && { pauseReason: updates.pauseReason }),
+        ...(updates.permissions !== undefined && { permissions: updates.permissions }),
+        ...(updates.lastError !== undefined && { lastError: updates.lastError }),
+        ...(updates.totalInputTokens !== undefined && { totalInputTokens: updates.totalInputTokens }),
+        ...(updates.totalOutputTokens !== undefined && { totalOutputTokens: updates.totalOutputTokens }),
       };
 
       await this.writeAgent(updated);
@@ -290,7 +314,7 @@ export class AgentStore extends EventEmitter {
    */
   async listAgents(filter?: { state?: AgentState; role?: AgentCapability }): Promise<Agent[]> {
     const files = await readdir(this.agentsDir).catch(() => [] as string[]);
-    const agentFiles = files.filter((f) => f.endsWith(".json") && !f.includes("-heartbeats"));
+    const agentFiles = files.filter((f) => f.endsWith(".json") && !f.includes("-heartbeats") && !f.includes("-sessions") && !f.includes("-runs"));
 
     const agents: Agent[] = [];
     for (const file of agentFiles) {
@@ -331,6 +355,13 @@ export class AgentStore extends EventEmitter {
       // Delete files
       await unlink(agentPath).catch(() => {});
       await unlink(heartbeatPath).catch(() => {});
+
+      // Clean up sessions and runs directories
+      const { rm } = await import("node:fs/promises");
+      const sessionsDir = join(this.agentsDir, `${agentId}-sessions`);
+      const runsDir = join(this.agentsDir, `${agentId}-runs`);
+      await rm(sessionsDir, { recursive: true, force: true }).catch(() => {});
+      await rm(runsDir, { recursive: true, force: true }).catch(() => {});
 
       this.emit("agent:deleted", agentId);
     });
@@ -535,6 +566,146 @@ export class AgentStore extends EventEmitter {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Task Session Management
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get a task session for an agent.
+   * @param agentId - The agent ID
+   * @param taskId - The task ID
+   * @returns The session, or null if not found
+   */
+  async getTaskSession(agentId: string, taskId: string): Promise<AgentTaskSession | null> {
+    const sessionsDir = join(this.agentsDir, `${agentId}-sessions`);
+    const sessionPath = join(sessionsDir, `${taskId}.json`);
+
+    try {
+      const content = await readFile(sessionPath, "utf-8");
+      return JSON.parse(content) as AgentTaskSession;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Create or update a task session for an agent.
+   * @param session - The session data
+   * @returns The saved session
+   */
+  async upsertTaskSession(session: AgentTaskSession): Promise<AgentTaskSession> {
+    const sessionsDir = join(this.agentsDir, `${session.agentId}-sessions`);
+    await mkdir(sessionsDir, { recursive: true });
+
+    const now = new Date().toISOString();
+    const existing = await this.getTaskSession(session.agentId, session.taskId);
+
+    const saved: AgentTaskSession = {
+      ...session,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    const sessionPath = join(sessionsDir, `${session.taskId}.json`);
+    await writeFile(sessionPath, JSON.stringify(saved, null, 2));
+
+    return saved;
+  }
+
+  /**
+   * Delete a task session.
+   * @param agentId - The agent ID
+   * @param taskId - The task ID
+   */
+  async deleteTaskSession(agentId: string, taskId: string): Promise<void> {
+    const sessionPath = join(this.agentsDir, `${agentId}-sessions`, `${taskId}.json`);
+    await unlink(sessionPath).catch(() => {});
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Org Hierarchy
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get agents that report to a specific agent.
+   * @param agentId - The parent agent ID
+   * @returns Array of agents that report to this agent
+   */
+  async getAgentsByReportsTo(agentId: string): Promise<Agent[]> {
+    const all = await this.listAgents();
+    return all.filter((a) => a.reportsTo === agentId);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Rich Run Storage
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Save a rich heartbeat run record (structured JSON, not JSONL events).
+   * @param run - The heartbeat run data
+   */
+  async saveRun(run: AgentHeartbeatRun): Promise<void> {
+    const runsDir = join(this.agentsDir, `${run.agentId}-runs`);
+    await mkdir(runsDir, { recursive: true });
+    const runPath = join(runsDir, `${run.id}.json`);
+    await writeFile(runPath, JSON.stringify(run, null, 2));
+  }
+
+  /**
+   * Get a specific run by ID.
+   * @param agentId - The agent ID
+   * @param runId - The run ID
+   * @returns The run detail, or null if not found
+   */
+  async getRunDetail(agentId: string, runId: string): Promise<AgentHeartbeatRun | null> {
+    const runPath = join(this.agentsDir, `${agentId}-runs`, `${runId}.json`);
+    try {
+      const content = await readFile(runPath, "utf-8");
+      return JSON.parse(content) as AgentHeartbeatRun;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Get recent runs for an agent from structured run storage.
+   * @param agentId - The agent ID
+   * @param limit - Max number of runs to return (default: 20)
+   * @returns Array of runs (newest first)
+   */
+  async getRecentRuns(agentId: string, limit = 20): Promise<AgentHeartbeatRun[]> {
+    const runsDir = join(this.agentsDir, `${agentId}-runs`);
+    let files: string[];
+    try {
+      files = await readdir(runsDir);
+    } catch {
+      return [];
+    }
+
+    const runFiles = files.filter((f) => f.endsWith(".json"));
+    const runs: AgentHeartbeatRun[] = [];
+
+    for (const file of runFiles) {
+      try {
+        const content = await readFile(join(runsDir, file), "utf-8");
+        runs.push(JSON.parse(content) as AgentHeartbeatRun);
+      } catch {
+        // Skip corrupted files
+      }
+    }
+
+    // Sort by startedAt desc and limit
+    return runs
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+      .slice(0, limit);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Private helpers
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -555,6 +726,15 @@ export class AgentStore extends EventEmitter {
       updatedAt: data.updatedAt,
       lastHeartbeatAt: data.lastHeartbeatAt,
       metadata: data.metadata ?? {},
+      title: data.title,
+      icon: data.icon,
+      reportsTo: data.reportsTo,
+      runtimeConfig: data.runtimeConfig,
+      pauseReason: data.pauseReason,
+      permissions: data.permissions,
+      totalInputTokens: data.totalInputTokens,
+      totalOutputTokens: data.totalOutputTokens,
+      lastError: data.lastError,
     };
   }
 
@@ -570,6 +750,15 @@ export class AgentStore extends EventEmitter {
       updatedAt: agent.updatedAt,
       lastHeartbeatAt: agent.lastHeartbeatAt,
       metadata: agent.metadata,
+      title: agent.title,
+      icon: agent.icon,
+      reportsTo: agent.reportsTo,
+      runtimeConfig: agent.runtimeConfig,
+      pauseReason: agent.pauseReason,
+      permissions: agent.permissions,
+      totalInputTokens: agent.totalInputTokens,
+      totalOutputTokens: agent.totalOutputTokens,
+      lastError: agent.lastError,
     };
 
     // Write atomically using temp file
