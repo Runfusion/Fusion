@@ -41,7 +41,7 @@ describe("BackupManager", () => {
     it("should create a backup file with correct name pattern", async () => {
       const backup = await backupManager.createBackup();
 
-      expect(backup.filename).toMatch(/^kb-\d{4}-\d{2}-\d{2}-\d{6}\.db$/);
+      expect(backup.filename).toMatch(/^fusion-\d{4}-\d{2}-\d{2}-\d{6}\.db$/);
       expect(existsSync(backup.path)).toBe(true);
     });
 
@@ -115,7 +115,7 @@ describe("BackupManager", () => {
       const backups = await backupManager.listBackups();
 
       expect(backups).toHaveLength(1);
-      expect(backups[0].filename).toMatch(/^kb-\d{4}-\d{2}-\d{2}-\d{6}\.db$/);
+      expect(backups[0].filename).toMatch(/^fusion-\d{4}-\d{2}-\d{2}-\d{6}\.db$/);
     });
 
     it("should return correct file sizes", async () => {
@@ -123,6 +123,57 @@ describe("BackupManager", () => {
       const backups = await backupManager.listBackups();
 
       expect(backups[0].size).toBe(backup.size);
+    });
+
+    it("should list legacy kb-* backups alongside new fusion-* backups", async () => {
+      // Create a new-style backup
+      await backupManager.createBackup();
+
+      // Create a legacy-style backup file manually
+      const backupDir = join(tempDir, ".fusion/backups");
+      await writeFile(join(backupDir, "kb-2025-12-31-120000.db"), "legacy backup content");
+
+      const backups = await backupManager.listBackups();
+
+      expect(backups).toHaveLength(2);
+      const filenames = backups.map((b) => b.filename);
+      expect(filenames).toContain("kb-2025-12-31-120000.db");
+      expect(filenames.some((f) => f.startsWith("fusion-"))).toBe(true);
+    });
+
+    it("should parse timestamps from legacy kb-* filenames", async () => {
+      const backupDir = join(tempDir, ".fusion/backups");
+      await mkdir(backupDir, { recursive: true });
+      await writeFile(join(backupDir, "kb-2025-06-15-083000.db"), "legacy");
+
+      const backups = await backupManager.listBackups();
+
+      expect(backups).toHaveLength(1);
+      expect(backups[0].createdAt).toBe("2025-06-15T08:30:00Z");
+    });
+
+    it("should parse timestamps from legacy kb-pre-restore filenames", async () => {
+      const backupDir = join(tempDir, ".fusion/backups");
+      await mkdir(backupDir, { recursive: true });
+      await writeFile(join(backupDir, "kb-pre-restore-2025-06-15-083000.db"), "legacy pre-restore");
+
+      const backups = await backupManager.listBackups();
+
+      expect(backups).toHaveLength(1);
+      expect(backups[0].filename).toBe("kb-pre-restore-2025-06-15-083000.db");
+      expect(backups[0].createdAt).toBe("2025-06-15T08:30:00Z");
+    });
+
+    it("should list only legacy kb-* backups when no fusion-* exist", async () => {
+      const backupDir = join(tempDir, ".fusion/backups");
+      await mkdir(backupDir, { recursive: true });
+      await writeFile(join(backupDir, "kb-2025-01-01-000000.db"), "legacy1");
+      await writeFile(join(backupDir, "kb-2025-01-02-000000.db"), "legacy2");
+
+      const backups = await backupManager.listBackups();
+
+      expect(backups).toHaveLength(2);
+      expect(backups.every((b) => b.filename.startsWith("kb-"))).toBe(true);
     });
   });
 
@@ -216,6 +267,7 @@ describe("BackupManager", () => {
       const preRestoreBackup = backups.find((b) => b.filename.includes("pre-restore"));
 
       expect(preRestoreBackup).toBeDefined();
+      expect(preRestoreBackup!.filename).toMatch(/^fusion-pre-restore-/);
     });
   });
 });
@@ -223,7 +275,7 @@ describe("BackupManager", () => {
 describe("generateBackupFilename", () => {
   it("should generate filename with correct pattern", () => {
     const filename = generateBackupFilename();
-    expect(filename).toMatch(/^kb-\d{4}-\d{2}-\d{2}-\d{6}\.db$/);
+    expect(filename).toMatch(/^fusion-\d{4}-\d{2}-\d{2}-\d{6}\.db$/);
   });
 
   it("should generate unique filenames for different timestamps", () => {

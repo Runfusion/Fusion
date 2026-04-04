@@ -112,7 +112,7 @@ export function validateImportData(data: unknown): string[] {
 
 /**
  * Generate a timestamped filename for settings export.
- * Format: kb-settings-YYYY-MM-DD-HHmmss.json
+ * Format: fusion-settings-YYYY-MM-DD-HHmmss.json
  */
 export function generateExportFilename(date: Date = new Date()): string {
   const year = date.getUTCFullYear();
@@ -121,7 +121,7 @@ export function generateExportFilename(date: Date = new Date()): string {
   const hours = String(date.getUTCHours()).padStart(2, "0");
   const minutes = String(date.getUTCMinutes()).padStart(2, "0");
   const seconds = String(date.getUTCSeconds()).padStart(2, "0");
-  return `kb-settings-${year}-${month}-${day}-${hours}${minutes}${seconds}.json`;
+  return `fusion-settings-${year}-${month}-${day}-${hours}${minutes}${seconds}.json`;
 }
 
 /**

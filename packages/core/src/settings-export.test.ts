@@ -70,7 +70,7 @@ describe("settings-export", () => {
     it("should generate filename with correct format", () => {
       const date = new Date("2026-03-31T12:34:56Z");
       const filename = generateExportFilename(date);
-      expect(filename).toBe("kb-settings-2026-03-31-123456.json");
+      expect(filename).toBe("fusion-settings-2026-03-31-123456.json");
     });
 
     it("should use current date by default", () => {
@@ -78,7 +78,7 @@ describe("settings-export", () => {
       const filename = generateExportFilename();
       const after = new Date();
 
-      expect(filename).toMatch(/^kb-settings-\d{4}-\d{2}-\d{2}-\d{6}\.json$/);
+      expect(filename).toMatch(/^fusion-settings-\d{4}-\d{2}-\d{2}-\d{6}\.json$/);
 
       // Parse the timestamp from filename
       const match = filename.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})/);

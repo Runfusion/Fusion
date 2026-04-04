@@ -8,7 +8,7 @@ import type { ProjectSettings } from "./types.js";
  * Metadata for a database backup file.
  */
 export interface BackupInfo {
-  /** Filename of the backup (e.g., "kb-2026-03-31-020000.db") */
+  /** Filename of the backup (e.g., "fusion-2026-03-31-020000.db") */
   filename: string;
   /** ISO-8601 timestamp when the backup was created */
   createdAt: string;
@@ -105,17 +105,21 @@ export class BackupManager {
       const backups: BackupInfo[] = [];
 
       for (const filename of files) {
-        // Match both regular backups (kb-YYYY-MM-DD-HHmmss.db or kb-YYYY-MM-DD-HHmmss-N.db) and pre-restore backups
-        if (!filename.match(/^kb(-pre-restore)?-\d{4}-\d{2}-\d{2}-\d{6}(-\d+)?\.db$/)) {
+        // Match both new fusion-* and legacy kb-* backup patterns:
+        //   fusion-YYYY-MM-DD-HHmmss.db, fusion-YYYY-MM-DD-HHmmss-N.db,
+        //   fusion-pre-restore-YYYY-MM-DD-HHmmss.db,
+        //   kb-YYYY-MM-DD-HHmmss.db, kb-YYYY-MM-DD-HHmmss-N.db,
+        //   kb-pre-restore-YYYY-MM-DD-HHmmss.db
+        if (!filename.match(/^(fusion|kb)(-pre-restore)?-\d{4}-\d{2}-\d{2}-\d{6}(-\d+)?\.db$/)) {
           continue;
         }
 
         const filePath = join(backupDirPath, filename);
         const stats = await stat(filePath);
 
-        // Parse timestamp from filename: kb-YYYY-MM-DD-HHmmss.db or kb-pre-restore-YYYY-MM-DD-HHmmss.db
-        // Also handles counter suffix: kb-YYYY-MM-DD-HHmmss-N.db
-        const match = filename.match(/^(kb(?:-pre-restore)?)-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})(?:-\d+)?\.db$/);
+        // Parse timestamp from filename, supporting both fusion-* and kb-* prefixes
+        // Also handles counter suffix: fusion-YYYY-MM-DD-HHmmss-N.db
+        const match = filename.match(/^((?:fusion|kb)(?:-pre-restore)?)-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})(?:-\d+)?\.db$/);
         const createdAt = match
           ? `${match[2]}-${match[3]}-${match[4]}T${match[5]}:${match[6]}:${match[7]}Z`
           : stats.mtime.toISOString();
@@ -199,7 +203,7 @@ export class BackupManager {
 
     // Optionally create pre-restore backup
     if (options?.createPreRestoreBackup ?? true) {
-      const preRestoreFilename = `kb-pre-restore-${formatTimestamp(new Date())}.db`;
+      const preRestoreFilename = `fusion-pre-restore-${formatTimestamp(new Date())}.db`;
       const preRestorePath = join(backupDirPath, preRestoreFilename);
       await mkdir(backupDirPath, { recursive: true });
       await cp(targetPath, preRestorePath, { preserveTimestamps: true });
@@ -212,10 +216,10 @@ export class BackupManager {
 
 /**
  * Generates a backup filename with timestamp.
- * Format: kb-YYYY-MM-DD-HHmmss.db
+ * Format: fusion-YYYY-MM-DD-HHmmss.db
  */
 export function generateBackupFilename(): string {
-  return `kb-${formatTimestamp(new Date())}.db`;
+  return `fusion-${formatTimestamp(new Date())}.db`;
 }
 
 /**

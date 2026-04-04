@@ -656,7 +656,7 @@ async function main() {
           const file = args[2];
           if (!file) {
             console.error("Usage: fn settings import <file> [--scope global|project|both] [--merge] [--yes]");
-            console.error("Example: fn settings import kb-settings-2026-03-31.json --yes");
+            console.error("Example: fn settings import fusion-settings-2026-03-31.json --yes");
             process.exit(1);
           }
 
