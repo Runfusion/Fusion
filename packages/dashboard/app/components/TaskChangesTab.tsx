@@ -13,19 +13,6 @@ interface TaskChangesTabProps {
   mergeDetails?: MergeDetails;
 }
 
-function getStatusColor(status: "added" | "modified" | "deleted" | "unknown"): string {
-  switch (status) {
-    case "added":
-      return "#3fb950"; // green
-    case "deleted":
-      return "#f85149"; // red
-    case "modified":
-      return "#58a6ff"; // blue
-    default:
-      return "#8b949e"; // gray
-  }
-}
-
 function getStatusLabel(status: "added" | "modified" | "deleted" | "unknown"): string {
   switch (status) {
     case "added":
@@ -251,8 +238,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
                   {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </span>
                 <span
-                  className="changes-file-status"
-                  style={{ color: getStatusColor(file.status) }}
+                  className={`changes-file-status changes-file-status--${file.status}`}
                   title={file.status}
                 >
                   {getStatusLabel(file.status)}

@@ -703,4 +703,76 @@ describe("ChangedFilesModal", () => {
       expect(content?.classList.contains("mobile")).toBe(false);
     });
   });
+
+  describe("status-to-class mapping", () => {
+    it("applies status-specific CSS class to sidebar badges", () => {
+      render(
+        <ChangedFilesModal
+          taskId="KB-651"
+          worktree="/repo/.worktrees/kb-651"
+          column="in-progress"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      // defaultFiles has modified (src/a.ts) and added (src/b.ts)
+      const modifiedBadge = document.querySelector(".changed-files-badge--modified");
+      expect(modifiedBadge).toBeTruthy();
+      expect(modifiedBadge?.textContent).toBe("M");
+
+      const addedBadge = document.querySelector(".changed-files-badge--added");
+      expect(addedBadge).toBeTruthy();
+      expect(addedBadge?.textContent).toBe("A");
+    });
+
+    it("applies status-specific CSS class to toolbar badge in diff section", () => {
+      render(
+        <ChangedFilesModal
+          taskId="KB-651"
+          worktree="/repo/.worktrees/kb-651"
+          column="in-progress"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      // defaultSelectedFile is src/a.ts with status "modified"
+      const toolbarBadge = document.querySelector(".changed-files-diff-section .changed-files-badge--modified");
+      expect(toolbarBadge).toBeTruthy();
+      expect(toolbarBadge?.textContent).toBe("M");
+    });
+
+    it("applies renamed status class for renamed files", () => {
+      const renamedFile = {
+        path: "src/new-name.ts",
+        oldPath: "src/old-name.ts",
+        status: "renamed" as const,
+        diff: "diff --git a/src/old-name.ts b/src/new-name.ts",
+      };
+
+      mockUseChangedFiles.mockReturnValue({
+        files: [renamedFile],
+        loading: false,
+        error: null,
+        selectedFile: renamedFile,
+        setSelectedFile: mockSetSelectedFile,
+        resetSelection: mockResetSelection,
+      });
+
+      render(
+        <ChangedFilesModal
+          taskId="KB-651"
+          worktree="/repo/.worktrees/kb-651"
+          column="in-progress"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      const renamedBadge = document.querySelector(".changed-files-badge--renamed");
+      expect(renamedBadge).toBeTruthy();
+      expect(renamedBadge?.textContent).toBe("R");
+    });
+  });
 });

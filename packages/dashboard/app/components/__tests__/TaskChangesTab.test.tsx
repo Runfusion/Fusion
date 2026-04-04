@@ -396,3 +396,84 @@ describe("TaskChangesTab — regression: non-done tasks still use worktree path"
     expect(mockFetchCommitDiff).not.toHaveBeenCalled();
   });
 });
+
+describe("TaskChangesTab — status-to-class mapping", () => {
+  it("applies semantic status class for each file status", async () => {
+    mockFetchCommitDiff.mockResolvedValue({ stat: "", patch: SAMPLE_PATCH });
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // src/app.ts is modified (no new file mode / deleted file mode markers)
+    const statusBadges = container.querySelectorAll(".changes-file-status");
+    expect(statusBadges.length).toBeGreaterThanOrEqual(2);
+
+    // Verify semantic status classes are present
+    const modifiedBadge = container.querySelector(".changes-file-status--modified");
+    expect(modifiedBadge).toBeTruthy();
+    expect(modifiedBadge?.textContent).toBe("M");
+
+    const addedBadge = container.querySelector(".changes-file-status--added");
+    expect(addedBadge).toBeTruthy();
+    expect(addedBadge?.textContent).toBe("A");
+  });
+
+  it("uses CSS classes instead of inline styles for status colors", async () => {
+    mockFetchCommitDiff.mockResolvedValue({ stat: "", patch: SAMPLE_PATCH });
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // Status badges should NOT have inline style attributes (colors come from CSS)
+    const statusBadges = container.querySelectorAll(".changes-file-status");
+    for (const badge of Array.from(statusBadges)) {
+      expect(badge.getAttribute("style")).toBeNull();
+    }
+  });
+
+  it("renders stat summary with diff-add and diff-del classes", async () => {
+    mockFetchCommitDiff.mockResolvedValue({ stat: "", patch: SAMPLE_PATCH });
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (2)")).toBeTruthy();
+    });
+
+    const statSummary = container.querySelector(".changes-stat-summary");
+    expect(statSummary).toBeTruthy();
+
+    const addStat = statSummary?.querySelector(".diff-add");
+    expect(addStat).toBeTruthy();
+
+    const delStat = statSummary?.querySelector(".diff-del");
+    expect(delStat).toBeTruthy();
+  });
+});

@@ -3374,6 +3374,7 @@ body {
 
 .changes-file-item.expanded {
   border-color: var(--text-dim);
+  background: var(--surface);
 }
 
 .changes-file-header {
@@ -3393,6 +3394,15 @@ body {
   background: var(--card-hover);
 }
 
+.changes-file-header:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.changes-file-header:active {
+  background: var(--border);
+}
+
 .changes-file-toggle {
   display: inline-flex;
   align-items: center;
@@ -3410,6 +3420,41 @@ body {
   font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
+}
+
+/* Semantic status colors for changed-file entries — theme-aware via CSS variables */
+.changes-file-status--added {
+  color: var(--status-color-added, #3fb950);
+}
+
+.changes-file-status--modified {
+  color: var(--status-color-modified, #58a6ff);
+}
+
+.changes-file-status--deleted {
+  color: var(--status-color-deleted, #f85149);
+}
+
+.changes-file-status--unknown {
+  color: var(--status-color-unknown, #8b949e);
+}
+
+/* Stat summary in changes header */
+.changes-stat-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: var(--space-sm);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.changes-stat-summary .diff-add {
+  color: var(--status-color-added, #3fb950);
+}
+
+.changes-stat-summary .diff-del {
+  color: var(--status-color-deleted, #f85149);
 }
 
 .changes-file-path {
@@ -7986,6 +8031,12 @@ html .column.drag-over * {
   --color-success: #1a7f37;
   --color-error: #cf222e;
   --color-muted: #6e7781;
+
+  /* Changed-file status colors (adjusted for light backgrounds) */
+  --status-color-added: #1a7f37;
+  --status-color-modified: #0969da;
+  --status-color-deleted: #cf222e;
+  --status-color-unknown: #6e7781;
 
   /* Shadow for light mode */
   --shadow-sm: 0 1px 2px rgba(31, 35, 40, 0.08);
@@ -13811,6 +13862,28 @@ html .column.drag-over * {
 
 .changed-files-badge {
   margin-left: auto;
+}
+
+/* Status-aware badge colors in the changed-files modal sidebar */
+.changed-files-badge--added {
+  color: var(--status-color-added, #3fb950);
+  border-color: var(--status-color-added, #3fb950);
+}
+
+.changed-files-badge--modified {
+  color: var(--status-color-modified, #58a6ff);
+  border-color: var(--status-color-modified, #58a6ff);
+}
+
+.changed-files-badge--deleted {
+  color: var(--status-color-deleted, #f85149);
+  border-color: var(--status-color-deleted, #f85149);
+}
+
+.changed-files-badge--renamed,
+.changed-files-badge--unknown {
+  color: var(--status-color-unknown, #8b949e);
+  border-color: var(--status-color-unknown, #8b949e);
 }
 
 /* ── Commit Form ── */

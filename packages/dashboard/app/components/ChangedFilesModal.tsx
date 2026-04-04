@@ -238,7 +238,7 @@ export function ChangedFilesModal({
                     >
                       <span className="file-node-icon">{getStatusIcon(file.status)}</span>
                       <span className="file-node-name">{file.path}</span>
-                      <span className="detail-column-badge changed-files-badge">
+                      <span className={`detail-column-badge changed-files-badge changed-files-badge--${file.status}`}>
                         {getStatusLabel(file.status)}
                       </span>
                     </button>
@@ -267,7 +267,7 @@ export function ChangedFilesModal({
                       </button>
                     )}
                     <strong>{selectedFile.path}</strong>
-                    <span className="detail-column-badge changed-files-badge">
+                    <span className={`detail-column-badge changed-files-badge changed-files-badge--${selectedFile.status}`}>
                       {getStatusLabel(selectedFile.status)}
                     </span>
                     {selectedFile.oldPath ? (

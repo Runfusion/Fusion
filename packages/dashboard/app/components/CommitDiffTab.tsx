@@ -17,19 +17,6 @@ export interface ParsedFile {
   patch: string;
 }
 
-function getStatusColor(status: ParsedFile["status"]): string {
-  switch (status) {
-    case "added":
-      return "#3fb950";
-    case "deleted":
-      return "#f85149";
-    case "modified":
-      return "#58a6ff";
-    default:
-      return "#8b949e";
-  }
-}
-
 function getStatusLabel(status: ParsedFile["status"]): string {
   switch (status) {
     case "added":
@@ -225,8 +212,7 @@ export function CommitDiffTab({ commitSha, mergeDetails }: CommitDiffTabProps) {
                   {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </span>
                 <span
-                  className="changes-file-status"
-                  style={{ color: getStatusColor(file.status) }}
+                  className={`changes-file-status changes-file-status--${file.status}`}
                   title={file.status}
                 >
                   {getStatusLabel(file.status)}
