@@ -49,6 +49,53 @@ vi.mock("../../api", () => ({
     workflowStep: { ...mockSteps[0], prompt: "AI-generated detailed prompt" },
   })),
   fetchScripts: vi.fn(() => Promise.resolve({ test: "pnpm test", lint: "pnpm lint" })),
+  fetchModels: vi.fn(() => Promise.resolve({
+    models: [
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: false, contextWindow: 200000 },
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+    ],
+    favoriteProviders: [],
+    favoriteModels: [],
+  })),
+}));
+
+// Mock CustomModelDropdown - renders a simple test-friendly control
+vi.mock("../CustomModelDropdown", () => ({
+  CustomModelDropdown: ({
+    value,
+    onChange,
+    label,
+    disabled,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+    label: string;
+    disabled?: boolean;
+    models?: unknown[];
+    placeholder?: string;
+    id?: string;
+    favoriteProviders?: string[];
+    onToggleFavorite?: (provider: string) => void;
+    favoriteModels?: string[];
+    onToggleModelFavorite?: (modelId: string) => void;
+  }) => (
+    <div data-testid={`custom-model-dropdown-${label}`}>
+      <span data-testid={`dropdown-value-${label}`}>{value || "none"}</span>
+      <button
+        data-testid={`dropdown-select-${label}`}
+        onClick={() => onChange("anthropic/claude-sonnet-4-5")}
+        disabled={disabled}
+      >
+        Select {label}
+      </button>
+      <button
+        data-testid={`dropdown-clear-${label}`}
+        onClick={() => onChange("")}
+      >
+        Clear {label}
+      </button>
+    </div>
+  ),
 }));
 
 import {
@@ -57,6 +104,7 @@ import {
   updateWorkflowStep,
   deleteWorkflowStep,
   refineWorkflowStepPrompt,
+  fetchModels,
 } from "../../api";
 import { fetchScripts } from "../../api";
 
@@ -553,5 +601,297 @@ describe("WorkflowStepManager theme class structure", () => {
     fireEvent.click(screen.getByTestId("mode-script"));
 
     expect(container.querySelector(".wfm-no-scripts")).toBeInTheDocument();
+  });
+});
+
+describe("WorkflowStepManager model override", () => {
+  it("shows model override field in prompt mode", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    // Model override field should be visible in prompt mode
+    expect(screen.getByTestId("workflow-step-model-field")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-step-model-select")).toBeInTheDocument();
+  });
+
+  it("does not show model override field in script mode", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+    fireEvent.click(screen.getByTestId("mode-script"));
+
+    // Model override field should NOT be visible in script mode
+    expect(screen.queryByTestId("workflow-step-model-field")).not.toBeInTheDocument();
+  });
+
+  it("clears model override when switching from prompt to script mode", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    // Select a model via the mock dropdown
+    const selectBtn = screen.getByTestId("dropdown-select-Model override for this workflow step");
+    fireEvent.click(selectBtn);
+
+    // Verify hint shows the selected model
+    await waitFor(() => {
+      expect(screen.getByText("Using anthropic/claude-sonnet-4-5")).toBeInTheDocument();
+    });
+
+    // Switch to script mode
+    fireEvent.click(screen.getByTestId("mode-script"));
+
+    // Switch back to prompt mode — model should be cleared
+    fireEvent.click(screen.getByTestId("mode-prompt"));
+    await waitFor(() => {
+      expect(screen.getByText("Using global default model")).toBeInTheDocument();
+    });
+  });
+
+  it("sends model override when creating a prompt-mode step with model selected", async () => {
+    vi.mocked(fetchWorkflowSteps)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    const nameInput = screen.getByTestId("workflow-step-name");
+    const descInput = screen.getByTestId("workflow-step-description");
+    fireEvent.change(nameInput, { target: { value: "Security Scan" } });
+    fireEvent.change(descInput, { target: { value: "Run security audit" } });
+
+    // Select a model via the mock dropdown
+    const selectBtn = screen.getByTestId("dropdown-select-Model override for this workflow step");
+    fireEvent.click(selectBtn);
+
+    fireEvent.click(screen.getByTestId("save-workflow-step"));
+
+    await waitFor(() => {
+      expect(createWorkflowStep).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Security Scan",
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("sends undefined model fields when creating without model selection", async () => {
+    vi.mocked(fetchWorkflowSteps)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    const nameInput = screen.getByTestId("workflow-step-name");
+    const descInput = screen.getByTestId("workflow-step-description");
+    fireEvent.change(nameInput, { target: { value: "QA Check" } });
+    fireEvent.change(descInput, { target: { value: "Run tests" } });
+
+    fireEvent.click(screen.getByTestId("save-workflow-step"));
+
+    await waitFor(() => {
+      expect(createWorkflowStep).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "QA Check",
+          modelProvider: undefined,
+          modelId: undefined,
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("populates model fields when editing a step with model override", async () => {
+    const stepWithModel: WorkflowStep[] = [
+      {
+        ...mockSteps[0],
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+      },
+    ];
+    vi.mocked(fetchWorkflowSteps)
+      .mockResolvedValueOnce(stepWithModel)
+      .mockResolvedValueOnce(stepWithModel);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Documentation Review")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Documentation Review"));
+
+    // Model dropdown should show the existing override
+    await waitFor(() => {
+      expect(screen.getByText("Using openai/gpt-4o")).toBeInTheDocument();
+    });
+  });
+
+  it("shows use-default hint when editing a step without model override", async () => {
+    vi.mocked(fetchWorkflowSteps).mockReset().mockResolvedValueOnce(mockSteps);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Documentation Review")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Documentation Review"));
+
+    // Wait for the form to render with the model field
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-step-model-field")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Using global default model")).toBeInTheDocument();
+  });
+
+  it("sends model override when updating a step", async () => {
+    vi.mocked(fetchWorkflowSteps)
+      .mockResolvedValueOnce(mockSteps)
+      .mockResolvedValueOnce(mockSteps);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Documentation Review")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Documentation Review"));
+
+    // Select a model via the mock dropdown
+    const selectBtn = screen.getByTestId("dropdown-select-Model override for this workflow step");
+    fireEvent.click(selectBtn);
+
+    fireEvent.click(screen.getByTestId("save-workflow-step"));
+
+    await waitFor(() => {
+      expect(updateWorkflowStep).toHaveBeenCalledWith(
+        "WS-001",
+        expect.objectContaining({
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("clears model override via clear button", async () => {
+    const stepWithModel: WorkflowStep[] = [
+      {
+        ...mockSteps[0],
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+      },
+    ];
+    vi.mocked(fetchWorkflowSteps)
+      .mockReset()
+      .mockResolvedValueOnce(stepWithModel)
+      .mockResolvedValueOnce(stepWithModel);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Documentation Review")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Documentation Review"));
+
+    // Wait for the form to render with the model field
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-step-model-field")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Using openai/gpt-4o")).toBeInTheDocument();
+    });
+
+    // Click the clear button
+    const clearBtn = screen.getByTestId("clear-model-override");
+    fireEvent.click(clearBtn);
+
+    // Should now show default hint
+    expect(screen.getByText("Using global default model")).toBeInTheDocument();
+
+    // Save should send undefined model fields
+    fireEvent.click(screen.getByTestId("save-workflow-step"));
+
+    await waitFor(() => {
+      expect(updateWorkflowStep).toHaveBeenCalledWith(
+        "WS-001",
+        expect.objectContaining({
+          modelProvider: undefined,
+          modelId: undefined,
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("shows clear button only when model override is set", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    // No model selected — clear button should NOT be visible
+    expect(screen.queryByTestId("clear-model-override")).not.toBeInTheDocument();
+
+    // Select a model
+    const selectBtn = screen.getByTestId("dropdown-select-Model override for this workflow step");
+    fireEvent.click(selectBtn);
+
+    // Now clear button should be visible
+    await waitFor(() => {
+      expect(screen.getByTestId("clear-model-override")).toBeInTheDocument();
+    });
+  });
+
+  it("loads models via fetchModels on open", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(fetchModels).toHaveBeenCalled();
+    });
   });
 });

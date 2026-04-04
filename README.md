@@ -679,7 +679,25 @@ When creating or updating a script-mode step, the `scriptName` must reference an
 3. Choose the execution mode: **Prompt** (AI agent) or **Script** (named project script)
 4. For prompt mode, use **Refine with AI** to generate a detailed agent prompt from your description
 5. For script mode, select a script name from your project's configured scripts
-6. Save and enable the step
+6. Optionally set a **Model Override** to use a specific AI model for prompt-mode steps (see below)
+7. Save and enable the step
+
+### Model Override for Prompt-Mode Steps
+
+Prompt-mode workflow steps can specify a **model override** — a specific AI model (provider + model ID pair) that the step's agent will use instead of the global default. This allows teams to:
+
+- Use a stronger model for critical quality gates like security audits
+- Use a cheaper/faster model for lightweight checks like formatting
+- Ensure deterministic behavior by pinning a specific model per gate
+
+**How it works:**
+- When editing a prompt-mode step, the **Model Override** dropdown shows available models from the model registry
+- Select a model to pin it; the executor uses that model for the step's agent session
+- Click **Use default** to clear the override and fall back to global default settings
+- Both provider and model ID must be set together; partial configuration is rejected
+- Model override is not available for script-mode steps
+
+**Execution precedence:** When a workflow step has both `modelProvider` and `modelId` set, the executor uses those values. When either field is missing, the executor falls back to the global `defaultProvider` and `defaultModelId` settings.
 
 ### Built-in Templates
 

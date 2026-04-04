@@ -9,7 +9,9 @@ import {
   fetchWorkflowStepTemplates,
   createWorkflowStepFromTemplate,
   fetchScripts,
+  fetchModels,
   type WorkflowStepTemplate,
+  type ModelInfo,
 } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import {
@@ -30,6 +32,7 @@ import {
   Terminal,
   MessageSquare,
 } from "lucide-react";
+import { CustomModelDropdown } from "./CustomModelDropdown";
 
 interface WorkflowStepManagerProps {
   isOpen: boolean;
@@ -45,6 +48,8 @@ interface StepFormData {
   prompt: string;
   scriptName: string;
   enabled: boolean;
+  modelProvider: string;
+  modelId: string;
 }
 
 type TabId = "my-steps" | "templates";
@@ -56,7 +61,22 @@ const EMPTY_FORM: StepFormData = {
   prompt: "",
   scriptName: "",
   enabled: true,
+  modelProvider: "",
+  modelId: "",
 };
+
+/** Build the combined "provider/modelId" value for CustomModelDropdown */
+function getModelDropdownValue(provider: string, modelId: string): string {
+  return provider && modelId ? `${provider}/${modelId}` : "";
+}
+
+/** Parse "provider/modelId" dropdown value back into separate fields */
+function parseModelDropdownValue(value: string): { provider: string; modelId: string } {
+  if (!value) return { provider: "", modelId: "" };
+  const slashIndex = value.indexOf("/");
+  if (slashIndex === -1) return { provider: "", modelId: "" };
+  return { provider: value.slice(0, slashIndex), modelId: value.slice(slashIndex + 1) };
+}
 
 /** Map template icon names to Lucide components */
 function getTemplateIcon(iconName: string | undefined) {
@@ -102,6 +122,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [addingTemplateId, setAddingTemplateId] = useState<string | null>(null);
   const [availableScripts, setAvailableScripts] = useState<Record<string, string>>({});
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
 
   const loadSteps = useCallback(async () => {
     try {
@@ -124,6 +145,15 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
     }
   }, [projectId]);
 
+  const loadModels = useCallback(async () => {
+    try {
+      const response = await fetchModels();
+      setAvailableModels(response.models || []);
+    } catch {
+      // Silently ignore — models are optional, dropdown will be empty
+    }
+  }, []);
+
   const loadTemplates = useCallback(async () => {
     try {
       setTemplatesLoading(true);
@@ -141,8 +171,9 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
       loadSteps();
       loadTemplates();
       loadScripts();
+      loadModels();
     }
-  }, [isOpen, loadSteps, loadTemplates, loadScripts]);
+  }, [isOpen, loadSteps, loadTemplates, loadScripts, loadModels]);
 
   const handleCreate = useCallback(() => {
     setIsCreating(true);
@@ -160,6 +191,8 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
       prompt: step.prompt,
       scriptName: step.scriptName || "",
       enabled: step.enabled,
+      modelProvider: step.modelProvider || "",
+      modelId: step.modelId || "",
     });
   }, []);
 
@@ -177,6 +210,13 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
 
     setSaving(true);
     try {
+      // Build model override: only include when both fields are set (prompt mode)
+      const modelFields = form.mode === "prompt" && form.modelProvider && form.modelId
+        ? { modelProvider: form.modelProvider, modelId: form.modelId }
+        : form.mode === "prompt"
+          ? { modelProvider: undefined, modelId: undefined }
+          : {};
+
       if (isCreating) {
         const input: WorkflowStepInput = {
           name: form.name.trim(),
@@ -185,6 +225,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           prompt: form.mode === "prompt" ? (form.prompt.trim() || undefined) : undefined,
           scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
+          ...modelFields,
         };
         await createWorkflowStep(input, projectId);
         addToast("Workflow step created", "success");
@@ -196,6 +237,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           prompt: form.mode === "prompt" ? form.prompt : "",
           scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
+          ...modelFields,
         }, projectId);
         addToast("Workflow step updated", "success");
       }
@@ -240,12 +282,17 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
 
       setSaving(true);
       try {
+        // Build model override for the intermediate create-then-refine flow
+        const modelFields = form.modelProvider && form.modelId
+          ? { modelProvider: form.modelProvider, modelId: form.modelId }
+          : {};
         const input: WorkflowStepInput = {
           name: form.name.trim(),
           description: form.description.trim(),
           mode: "prompt",
           prompt: form.prompt.trim() || undefined,
           enabled: form.enabled,
+          ...modelFields,
         };
         const created = await createWorkflowStep(input, projectId);
         setIsCreating(false);
@@ -548,7 +595,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                         </button>
                         <button
                           className={`btn ${form.mode === "script" ? "btn-primary" : "btn-secondary"} wfm-mode-btn`}
-                          onClick={() => setForm((prev) => ({ ...prev, mode: "script", prompt: "" }))}
+                          onClick={() => setForm((prev) => ({ ...prev, mode: "script", prompt: "", modelProvider: "", modelId: "" }))}
                           data-testid="mode-script"
                         >
                           <Terminal size={14} />
@@ -586,6 +633,44 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                           className="wfm-prompt-textarea"
                           data-testid="workflow-step-prompt"
                         />
+                      </div>
+                    )}
+
+                    {/* Model override (prompt mode only) */}
+                    {form.mode === "prompt" && (
+                      <div className="wfm-field" data-testid="workflow-step-model-field">
+                        <div className="wfm-model-header">
+                          <label>Model Override</label>
+                          {form.modelProvider && form.modelId && (
+                            <button
+                              type="button"
+                              className="btn-icon wfm-model-clear-btn"
+                              onClick={() => setForm((prev) => ({ ...prev, modelProvider: "", modelId: "" }))}
+                              title="Clear model override (use global default)"
+                              data-testid="clear-model-override"
+                            >
+                              <X size={12} />
+                              <span>Use default</span>
+                            </button>
+                          )}
+                        </div>
+                        <span className="wfm-model-hint">
+                          {form.modelProvider && form.modelId
+                            ? `Using ${form.modelProvider}/${form.modelId}`
+                            : "Using global default model"}
+                        </span>
+                        <div data-testid="workflow-step-model-select">
+                          <CustomModelDropdown
+                            models={availableModels}
+                            value={getModelDropdownValue(form.modelProvider, form.modelId)}
+                            onChange={(value: string) => {
+                              const parsed = parseModelDropdownValue(value);
+                              setForm((prev) => ({ ...prev, modelProvider: parsed.provider, modelId: parsed.modelId }));
+                            }}
+                            placeholder="Select a model override…"
+                            label="Model override for this workflow step"
+                          />
+                        </div>
                       </div>
                     )}
 

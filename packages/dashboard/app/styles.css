@@ -12329,6 +12329,42 @@ html .column.drag-over * {
   margin: 0 auto var(--space-sm);
 }
 
+.wfm-model-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wfm-model-header label {
+  margin-bottom: 0;
+}
+
+.wfm-model-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.wfm-model-clear-btn:hover {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+.wfm-model-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
 .new-task-modal .form-group small {
   display: block;
   margin-top: var(--space-sm);

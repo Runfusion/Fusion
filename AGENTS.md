@@ -1181,6 +1181,7 @@ The order of IDs in `enabledWorkflowSteps` determines execution order — the en
 
 - **Prompt mode** steps use readonly agent tools (file reading only, no modifications); **script mode** steps execute a named command from project settings (`settings.scripts`) in the task worktree
 - Each prompt-mode step runs as a separate agent session; script-mode steps run via `execSync` with a 2-minute timeout
+- **Model override:** Prompt-mode steps can specify a `modelProvider` + `modelId` pair. When both are set, the executor uses that model instead of global defaults. When either is missing, the executor falls back to `defaultProvider`/`defaultModelId`
 - Steps execute sequentially (not in parallel)
 - If a workflow step fails (agent reports issues or script exits non-zero), the task is marked as failed and moved to in-review for manual inspection
 - Steps with empty prompts (prompt mode) or missing script names (script mode) are skipped with a log entry
