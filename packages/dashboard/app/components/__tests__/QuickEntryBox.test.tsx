@@ -1650,11 +1650,11 @@ describe("QuickEntryBox", () => {
 
       // Now controls should be visible
       expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
-      // Deps/Models/Save should be directly accessible (no actions dropdown needed)
+      // Deps/Models/Save should be directly accessible
       expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
       expect(screen.getByTestId("quick-entry-models-button")).toBeTruthy();
       expect(screen.getByTestId("save-button")).toBeTruthy();
-      // Plan/Subtask are always visible in description-actions when expanded
+      // Plan/Subtask are in the actions area inside the disclosure panel
       expect(screen.getByTestId("plan-button")).toBeTruthy();
       expect(screen.getByTestId("subtask-button")).toBeTruthy();
     });
@@ -1688,57 +1688,57 @@ describe("QuickEntryBox", () => {
     });
   });
 
-  describe("Description-adjacent actions layout (FN-781)", () => {
-    it("renders Plan, Subtask, and Refine in description-actions area when expanded", () => {
+  describe("Consolidated actions layout (FN-781, FN-973)", () => {
+    it("renders Plan, Subtask, and Refine in actions area inside controls panel", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
-      // The description-actions container should exist
-      expect(screen.getByTestId("quick-entry-description-actions")).toBeTruthy();
+      // The actions container should exist inside the controls panel
+      expect(screen.getByTestId("quick-entry-actions")).toBeTruthy();
 
       // Plan, Subtask, and Refine buttons should be inside it
-      const actionsContainer = screen.getByTestId("quick-entry-description-actions");
+      const actionsContainer = screen.getByTestId("quick-entry-actions");
       expect(actionsContainer.contains(screen.getByTestId("plan-button"))).toBe(true);
       expect(actionsContainer.contains(screen.getByTestId("subtask-button"))).toBe(true);
       expect(actionsContainer.contains(screen.getByTestId("refine-button"))).toBe(true);
     });
 
-    it("does not render description-actions when not expanded", () => {
+    it("does not render actions when not expanded", () => {
       renderQuickEntryBox({});
 
-      // Description actions should not exist when collapsed
-      expect(screen.queryByTestId("quick-entry-description-actions")).toBeNull();
+      // Actions should not exist when collapsed
+      expect(screen.queryByTestId("quick-entry-actions")).toBeNull();
     });
 
-    it("Save button is in the controls panel, not description-actions", () => {
+    it("Save button is in the controls panel, not actions area", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
       fireEvent.change(textarea, { target: { value: "Task to save" } });
 
-      const actionsContainer = screen.getByTestId("quick-entry-description-actions");
+      const actionsContainer = screen.getByTestId("quick-entry-actions");
       const saveButton = screen.getByTestId("save-button");
 
-      // Save button should NOT be in the description-actions area (it's in the controls panel)
+      // Save button should NOT be in the actions area (it's in the controls-left panel)
       expect(actionsContainer.contains(saveButton)).toBe(false);
     });
 
-    it("Deps and Models buttons are in the controls panel, not description-actions", () => {
+    it("Deps and Models buttons are in the controls panel, not actions area", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
       fireEvent.change(textarea, { target: { value: "Task text" } });
 
-      const actionsContainer = screen.getByTestId("quick-entry-description-actions");
+      const actionsContainer = screen.getByTestId("quick-entry-actions");
       const depsButton = screen.getByTestId("quick-entry-deps-button");
       const modelsButton = screen.getByTestId("quick-entry-models-button");
 
-      // Deps and Models should NOT be in the description-actions area (they're in the controls panel)
+      // Deps and Models should NOT be in the actions area (they're in the controls-left panel)
       expect(actionsContainer.contains(depsButton)).toBe(false);
       expect(actionsContainer.contains(modelsButton)).toBe(false);
     });
 
-    it("Plan button disabled state still works when in description-actions", () => {
+    it("Plan button disabled state still works in actions area", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
@@ -1749,6 +1749,35 @@ describe("QuickEntryBox", () => {
       // Type something — Plan should become enabled
       fireEvent.change(textarea, { target: { value: "Some task" } });
       expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("shows Plan/Subtask/Refine together with Deps/Models/Save when disclosure is expanded and text entered", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+      fireEvent.change(textarea, { target: { value: "A task with all features" } });
+
+      // All 6 buttons should be visible inside the controls panel
+      const controlsPanel = document.getElementById("quick-entry-controls");
+      expect(controlsPanel?.hasAttribute("hidden")).toBe(false);
+
+      // Plan/Subtask/Refine are in actions area
+      expect(screen.getByTestId("plan-button")).toBeTruthy();
+      expect(screen.getByTestId("subtask-button")).toBeTruthy();
+      expect(screen.getByTestId("refine-button")).toBeTruthy();
+
+      // Deps/Models/Save are in controls-left area
+      expect(screen.getByTestId("quick-entry-deps-button")).toBeTruthy();
+      expect(screen.getByTestId("quick-entry-models-button")).toBeTruthy();
+      expect(screen.getByTestId("save-button")).toBeTruthy();
+
+      // All should be inside the same controls panel
+      expect(controlsPanel?.contains(screen.getByTestId("plan-button"))).toBe(true);
+      expect(controlsPanel?.contains(screen.getByTestId("subtask-button"))).toBe(true);
+      expect(controlsPanel?.contains(screen.getByTestId("refine-button"))).toBe(true);
+      expect(controlsPanel?.contains(screen.getByTestId("quick-entry-deps-button"))).toBe(true);
+      expect(controlsPanel?.contains(screen.getByTestId("quick-entry-models-button"))).toBe(true);
+      expect(controlsPanel?.contains(screen.getByTestId("save-button"))).toBe(true);
     });
   });
 

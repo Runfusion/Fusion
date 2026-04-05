@@ -12415,12 +12415,11 @@ html .column.drag-over * {
   flex-wrap: wrap;
 }
 
-/* AI-assisted description actions — sits between textarea and expanded controls */
-.quick-entry-description-actions {
+/* Consolidated action buttons (Plan, Subtask, Refine) inside disclosure panel */
+.quick-entry-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
