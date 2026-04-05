@@ -473,7 +473,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                       <div className="form-group">
                         <label>Description</label>
                         <textarea
-                          rows={3}
+                          rows={8}
                           value={subtask.description}
                           onChange={(event) => updateSubtask(subtask.id, { description: event.target.value })}
                           disabled={view.type === "creating"}
@@ -482,19 +482,16 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
 
                       <div className="form-group">
                         <label>Size</label>
-                        <div className="planning-size-selector">
-                          {(["S", "M", "L"] as const).map((size) => (
-                            <button
-                              key={size}
-                              type="button"
-                              className={`planning-size-btn ${subtask.suggestedSize === size ? "selected" : ""}`}
-                              onClick={() => updateSubtask(subtask.id, { suggestedSize: size })}
-                              disabled={view.type === "creating"}
-                            >
-                              {size}
-                            </button>
-                          ))}
-                        </div>
+                        <select
+                          className="planning-size-select"
+                          value={subtask.suggestedSize}
+                          onChange={(event) => updateSubtask(subtask.id, { suggestedSize: event.target.value as "S" | "M" | "L" })}
+                          disabled={view.type === "creating"}
+                        >
+                          <option value="S">S</option>
+                          <option value="M">M</option>
+                          <option value="L">L</option>
+                        </select>
                       </div>
 
                       <div className="form-group">
