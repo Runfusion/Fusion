@@ -39,6 +39,56 @@ vi.mock("../ProviderIcon", () => ({
   ),
 }));
 
+// Mock AgentGenerationModal
+vi.mock("../AgentGenerationModal", () => ({
+  AgentGenerationModal: ({ isOpen, onClose, onGenerated }: { isOpen: boolean; onClose: () => void; onGenerated: (spec: any) => void }) => {
+    if (!isOpen) return null;
+    return (
+      <div data-testid="agent-generation-modal">
+        <span data-testid="generation-modal-open">Modal Open</span>
+        <button
+          data-testid="generation-modal-close"
+          onClick={onClose}
+        >
+          Close Modal
+        </button>
+        <button
+          data-testid="generation-modal-apply"
+          onClick={() =>
+            onGenerated({
+              title: "Generated Agent",
+              icon: "🤖",
+              role: "reviewer",
+              description: "Generated description for testing",
+              systemPrompt: "# System prompt\nYou are a helpful agent.",
+              thinkingLevel: "medium",
+              maxTurns: 25,
+            })
+          }
+        >
+          Apply Generated Spec
+        </button>
+        <button
+          data-testid="generation-modal-apply-custom-role"
+          onClick={() =>
+            onGenerated({
+              title: "Custom Role Agent",
+              icon: "🔧",
+              role: "security-auditor",
+              description: "Custom role not in AgentCapability",
+              systemPrompt: "# Security auditor prompt",
+              thinkingLevel: "high",
+              maxTurns: 50,
+            })
+          }
+        >
+          Apply Custom Role Spec
+        </button>
+      </div>
+    );
+  },
+}));
+
 const mockCreateAgent = vi.mocked(apiModule.createAgent);
 const mockFetchModels = vi.mocked(apiModule.fetchModels);
 
@@ -369,6 +419,171 @@ describe("NewAgentDialog", () => {
       // Name should be empty
       const newNameInput = screen.getByLabelText(/Name/) as HTMLInputElement;
       expect(newNameInput.value).toBe("");
+    });
+  });
+
+  describe("AI generation integration", () => {
+    it("shows Generate with AI button in step 0", () => {
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+      expect(screen.getByText("Generate with AI")).toBeTruthy();
+    });
+
+    it("opens AgentGenerationModal when Generate with AI is clicked", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      // Generation modal should not be open initially
+      expect(screen.queryByTestId("agent-generation-modal")).toBeNull();
+
+      // Click the Generate with AI button
+      await user.click(screen.getByText("Generate with AI"));
+
+      // Generation modal should now be open
+      expect(screen.getByTestId("agent-generation-modal")).toBeTruthy();
+    });
+
+    it("populates form fields and advances to step 1 when spec is applied", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Open generation modal and apply spec
+      await user.click(screen.getByText("Generate with AI"));
+      await user.click(screen.getByTestId("generation-modal-apply"));
+
+      // Should advance to step 1 (model config)
+      expect(screen.getByTestId("custom-model-dropdown")).toBeTruthy();
+
+      // Navigate to step 2 to verify the summary
+      await user.click(screen.getByText("Next"));
+
+      // Verify name was populated from spec.title
+      const summaryText = screen.getByText("Generated Agent");
+      expect(summaryText).toBeTruthy();
+
+      // Verify icon is shown
+      expect(screen.getByText("🤖")).toBeTruthy();
+    });
+
+    it("maps known role to AgentCapability", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Open generation modal and apply spec with role "reviewer"
+      await user.click(screen.getByText("Generate with AI"));
+      await user.click(screen.getByTestId("generation-modal-apply"));
+
+      // After generation, we're on Step 1 — navigate to summary (step 2)
+      await user.click(screen.getByText("Next"));
+
+      // Role should be mapped correctly to "Reviewer"
+      const roleRow = screen.getByText("Role").closest(".agent-dialog-summary-row");
+      expect(roleRow?.textContent).toContain("Reviewer");
+    });
+
+    it("maps unknown role to custom", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Open generation modal and apply spec with unknown role "security-auditor"
+      await user.click(screen.getByText("Generate with AI"));
+      await user.click(screen.getByTestId("generation-modal-apply-custom-role"));
+
+      // After generation, we're on Step 1 — navigate to summary (step 2)
+      await user.click(screen.getByText("Next"));
+
+      // Role should default to "Custom"
+      const roleRow = screen.getByText("Role").closest(".agent-dialog-summary-row");
+      expect(roleRow?.textContent).toContain("Custom");
+    });
+
+    it("applies runtime config from generated spec", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Open generation modal and apply spec
+      await user.click(screen.getByText("Generate with AI"));
+      await user.click(screen.getByTestId("generation-modal-apply"));
+
+      // Step 1: verify thinking level and max turns were applied
+      const thinkingSelect = screen.getByLabelText(/Thinking Level/) as HTMLSelectElement;
+      expect(thinkingSelect.value).toBe("medium");
+
+      const maxTurnsInput = screen.getByLabelText(/Max Turns/) as HTMLInputElement;
+      expect(maxTurnsInput.value).toBe("25");
+    });
+
+    it("closes generation modal without affecting form on cancel", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      // Fill in a name first
+      const nameInput = screen.getByLabelText(/Name/);
+      await user.type(nameInput, "Manual Name");
+
+      // Open generation modal
+      await user.click(screen.getByText("Generate with AI"));
+      expect(screen.getByTestId("agent-generation-modal")).toBeTruthy();
+
+      // Close the generation modal without applying
+      await user.click(screen.getByTestId("generation-modal-close"));
+
+      // Should still be on step 0 with original name
+      const nameAfter = screen.getByLabelText(/Name/) as HTMLInputElement;
+      expect(nameAfter.value).toBe("Manual Name");
+      expect(screen.queryByTestId("agent-generation-modal")).toBeNull();
+    });
+
+    it("creates agent with icon from generated spec", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Open generation modal and apply spec
+      await user.click(screen.getByText("Generate with AI"));
+      await user.click(screen.getByTestId("generation-modal-apply"));
+
+      // After generation, we're on Step 1 — navigate to summary (step 2) and create
+      await user.click(screen.getByText("Next"));
+      await user.click(screen.getByText("Create"));
+
+      await waitFor(() => {
+        expect(mockCreateAgent).toHaveBeenCalledOnce();
+      });
+
+      const createCall = mockCreateAgent.mock.calls[0][0];
+      expect(createCall.name).toBe("Generated Agent");
+      expect(createCall.icon).toBe("🤖");
+      expect(createCall.title).toBe("Generated description for testing");
+      expect(createCall.role).toBe("reviewer");
+      expect(createCall.runtimeConfig).toEqual({
+        thinkingLevel: "medium",
+        maxTurns: 25,
+      });
     });
   });
 });

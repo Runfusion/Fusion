@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import type { AgentCapability, ModelInfo } from "../api";
+import type { AgentCapability, ModelInfo, AgentGenerationSpec } from "../api";
 import { createAgent, fetchModels } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
+import { AgentGenerationModal } from "./AgentGenerationModal";
 
 export interface NewAgentDialogProps {
   isOpen: boolean;
@@ -23,6 +24,9 @@ const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
 
+/** Set of valid AgentCapability values for mapping generated roles */
+const VALID_CAPABILITIES = new Set<string>(["triage", "executor", "reviewer", "merger", "scheduler", "engineer", "custom"]);
+
 interface RuntimeConfig {
   model: string;
   thinkingLevel: ThinkingLevel;
@@ -33,6 +37,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
+  const [icon, setIcon] = useState("");
   const [role, setRole] = useState<AgentCapability>("custom");
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>({
     model: "",
@@ -41,6 +46,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isGenerationModalOpen, setIsGenerationModalOpen] = useState(false);
 
   // Model dropdown state
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -67,6 +73,26 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   const selectedModel = runtimeConfig.model.includes("/")
     ? runtimeConfig.model
     : "";
+
+  const handleGenerated = useCallback((spec: AgentGenerationSpec) => {
+    // Map generated role to AgentCapability, default to "custom" if unrecognized
+    const mappedRole = VALID_CAPABILITIES.has(spec.role)
+      ? (spec.role as AgentCapability)
+      : "custom";
+
+    setName(spec.title);
+    setTitle(spec.description);
+    setIcon(spec.icon);
+    setRole(mappedRole);
+    setRuntimeConfig(c => ({
+      ...c,
+      thinkingLevel: spec.thinkingLevel,
+      maxTurns: spec.maxTurns,
+    }));
+    setIsGenerationModalOpen(false);
+    // Advance to Step 1 so user can review model selection
+    setStep(1);
+  }, []);
 
   const handleModelChange = useCallback((value: string) => {
     // value is "provider/modelId" or "" for default
@@ -97,9 +123,11 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     setStep(0);
     setName("");
     setTitle("");
+    setIcon("");
     setRole("custom");
     setRuntimeConfig({ model: "", thinkingLevel: "off", maxTurns: 10 });
     setError(null);
+    setIsGenerationModalOpen(false);
     onClose();
   };
 
@@ -116,6 +144,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
         name: name.trim(),
         role,
         ...(title.trim() ? { title: title.trim() } : {}),
+        ...(icon.trim() ? { icon: icon.trim() } : {}),
         ...(Object.keys(runtimeCfg).length > 0 ? { runtimeConfig: runtimeCfg } : {}),
       }, projectId);
       handleClose();
@@ -130,7 +159,8 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   const selectedRole = AGENT_ROLES.find(r => r.value === role);
 
   return (
-    <div className="agent-dialog-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
+    <>
+      <div className="agent-dialog-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
       <div className="agent-dialog" role="dialog" aria-modal="true" aria-label="Create new agent">
         {/* Header */}
         <div className="agent-dialog-header">
@@ -201,6 +231,21 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   ))}
                 </div>
               </div>
+              {/* AI-assisted generation */}
+              <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setIsGenerationModalOpen(true)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                >
+                  <span>✨</span>
+                  Generate with AI
+                </button>
+                <p style={{ color: "var(--text-muted)", fontSize: 11, textAlign: "center", margin: "6px 0 0" }}>
+                  Describe your agent&apos;s role and let AI generate a specification
+                </p>
+              </div>
             </div>
           )}
 
@@ -265,7 +310,10 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
               <div className="agent-dialog-summary">
                 <div className="agent-dialog-summary-row">
                   <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Name</span>
-                  <span style={{ fontWeight: 600 }}>{name}</span>
+                  <span style={{ fontWeight: 600 }}>
+                    {icon && <span style={{ marginRight: 6 }}>{icon}</span>}
+                    {name}
+                  </span>
                 </div>
                 {title && (
                   <div className="agent-dialog-summary-row">
@@ -342,6 +390,15 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
           )}
         </div>
       </div>
-    </div>
+      </div>
+
+      {/* AI-assisted agent generation modal */}
+      <AgentGenerationModal
+        isOpen={isGenerationModalOpen}
+        onClose={() => setIsGenerationModalOpen(false)}
+        onGenerated={handleGenerated}
+        projectId={projectId}
+      />
+    </>
   );
 }

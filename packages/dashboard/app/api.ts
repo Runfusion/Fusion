@@ -1765,6 +1765,63 @@ export function fetchAgentStats(projectId?: string): Promise<AgentStats> {
   return api<AgentStats>(withProjectId("/agents/stats", projectId));
 }
 
+// ── Agent Generation API ────────────────────────────────────────────────────
+
+/** Generated agent specification returned by the AI */
+export interface AgentGenerationSpec {
+  /** Display name for the agent */
+  title: string;
+  /** Single emoji icon */
+  icon: string;
+  /** Agent capability/role */
+  role: string;
+  /** Brief description of the agent's purpose */
+  description: string;
+  /** Detailed system prompt in markdown */
+  systemPrompt: string;
+  /** Suggested thinking level */
+  thinkingLevel: "off" | "minimal" | "low" | "medium" | "high";
+  /** Suggested max turns (1-500) */
+  maxTurns: number;
+}
+
+/** State of an agent generation session */
+export interface AgentGenerationSession {
+  id: string;
+  roleDescription: string;
+  spec?: AgentGenerationSpec;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Start an agent generation session with a role description */
+export function startAgentGeneration(role: string, projectId?: string): Promise<{ sessionId: string; roleDescription: string }> {
+  return api<{ sessionId: string; roleDescription: string }>(withProjectId("/agents/generate/start", projectId), {
+    method: "POST",
+    body: JSON.stringify({ role }),
+  });
+}
+
+/** Generate the agent specification for an existing session */
+export function generateAgentSpec(sessionId: string, projectId?: string): Promise<{ spec: AgentGenerationSpec }> {
+  return api<{ spec: AgentGenerationSpec }>(withProjectId("/agents/generate/spec", projectId), {
+    method: "POST",
+    body: JSON.stringify({ sessionId }),
+  });
+}
+
+/** Get the current state of an agent generation session */
+export function getAgentGenerationSession(sessionId: string, projectId?: string): Promise<{ session: AgentGenerationSession }> {
+  return api<{ session: AgentGenerationSession }>(withProjectId(`/agents/generate/${encodeURIComponent(sessionId)}`, projectId));
+}
+
+/** Cancel and clean up an agent generation session */
+export function cancelAgentGeneration(sessionId: string, projectId?: string): Promise<{ success: boolean }> {
+  return api<{ success: boolean }>(withProjectId(`/agents/generate/${encodeURIComponent(sessionId)}`, projectId), {
+    method: "DELETE",
+  });
+}
+
 // --- Backup API ---
 
 /** Backup metadata from the API */

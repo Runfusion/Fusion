@@ -28,6 +28,14 @@ import { getOrCreateProjectStore } from "./project-store-resolver.js";
 import { AiSessionStore } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession } from "./planning.js";
 import { getSubtaskSession, cleanupSubtaskSession } from "./subtask-breakdown.js";
+import {
+  startAgentGeneration,
+  generateAgentSpec,
+  getAgentGenerationSession,
+  cleanupAgentGenerationSession,
+  RateLimitError as AgentGenerationRateLimitError,
+  SessionNotFoundError as AgentGenerationSessionNotFoundError,
+} from "./agent-generation.js";
 import { getMissionInterviewSession, cleanupMissionInterviewSession } from "./mission-interview.js";
 
 /**
@@ -6733,6 +6741,114 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       } else {
         res.status(500).json({ error: err.message });
       }
+    }
+  });
+
+  // ── Agent Generation Routes ──────────────────────────────────────────────
+
+  /**
+   * POST /api/agents/generate/start
+   * Start a new agent generation session.
+   * Body: { role: string }
+   * Response: { sessionId, roleDescription }
+   */
+  router.post("/agents/generate/start", async (req, res) => {
+    try {
+      const { role } = req.body as { role?: string };
+      if (!role || typeof role !== "string") {
+        res.status(400).json({ error: "role is required and must be a string" });
+        return;
+      }
+
+      const trimmedRole = role.trim();
+      if (trimmedRole.length === 0) {
+        res.status(400).json({ error: "role must not be empty" });
+        return;
+      }
+      if (trimmedRole.length > 1000) {
+        res.status(400).json({ error: "role must not exceed 1000 characters" });
+        return;
+      }
+
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const session = await startAgentGeneration(ip, trimmedRole);
+
+      res.status(201).json({
+        sessionId: session.id,
+        roleDescription: session.roleDescription,
+      });
+    } catch (err: any) {
+      if (err instanceof AgentGenerationRateLimitError) {
+        res.status(429).json({ error: err.message });
+        return;
+      }
+      console.error("[agent-generation] Error starting session:", err);
+      res.status(500).json({ error: err.message || "Failed to start agent generation session" });
+    }
+  });
+
+  /**
+   * POST /api/agents/generate/spec
+   * Generate the agent specification for an existing session.
+   * Body: { sessionId: string }
+   * Response: { spec: AgentGenerationSpec }
+   */
+  router.post("/agents/generate/spec", async (req, res) => {
+    try {
+      const { sessionId } = req.body as { sessionId?: string };
+      if (!sessionId || typeof sessionId !== "string") {
+        res.status(400).json({ error: "sessionId is required" });
+        return;
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const rootDir = scopedStore.getRootDir();
+
+      const spec = await generateAgentSpec(sessionId, rootDir);
+      res.json({ spec });
+    } catch (err: any) {
+      if (err instanceof AgentGenerationSessionNotFoundError) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
+      console.error("[agent-generation] Error generating spec:", err);
+      res.status(500).json({ error: err.message || "Failed to generate agent specification" });
+    }
+  });
+
+  /**
+   * GET /api/agents/generate/:sessionId
+   * Get the current state of an agent generation session.
+   * Response: { session: AgentGenerationSession }
+   */
+  router.get("/agents/generate/:sessionId", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const session = getAgentGenerationSession(sessionId);
+
+      if (!session) {
+        res.status(404).json({ error: `Session ${sessionId} not found or expired` });
+        return;
+      }
+
+      res.json({ session });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/agents/generate/:sessionId
+   * Cancel and clean up an agent generation session.
+   * Response: { success: true }
+   */
+  router.delete("/agents/generate/:sessionId", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      cleanupAgentGenerationSession(sessionId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
