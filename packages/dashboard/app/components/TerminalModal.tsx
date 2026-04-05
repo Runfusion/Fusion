@@ -117,12 +117,16 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
   // Initialize xterm.js when session is ready
   // Depends on `isReady`, `activeTab`, and xtermReady to properly reinitialize on tab switch
   useEffect(() => {
-    if (!isOpen || !isReady || !activeTab || !terminalRef.current) return;
+    if (!isOpen || !isReady || !activeTab) return;
 
-    // If session changed, we need to reinitialize xterm
     const currentSessionId = activeTab.sessionId;
-    
-    // Clean up existing xterm if switching sessions
+
+    // If already initialized for this session, skip
+    if (xtermInitializedRef.current === currentSessionId && xtermRef.current) {
+      return;
+    }
+
+    // Clean up existing xterm if switching sessions or if DOM was cleared
     if (xtermRef.current && xtermInitializedRef.current !== currentSessionId) {
       xtermRef.current.dispose();
       xtermRef.current = null;
@@ -130,11 +134,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
       xtermInitializedRef.current = false;
       setXtermReady(false);
       setXtermInitError(null);
-    }
-
-    // If already initialized for this session, skip
-    if (xtermInitializedRef.current === currentSessionId && xtermRef.current) {
-      return;
     }
 
     let mounted = true;

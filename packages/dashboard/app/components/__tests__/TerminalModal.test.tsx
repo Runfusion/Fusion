@@ -1695,3 +1695,208 @@ describe("TerminalModal — virtual keyboard overlap handling", () => {
     });
   });
 });
+
+// --- Close/reopen regression tests ---
+describe("TerminalModal — close and reopen scrollback replay", () => {
+  const mockOnClose = vi.fn();
+  const mockSendInput = vi.fn();
+  const mockResize = vi.fn();
+  const mockReconnect = vi.fn();
+
+  const createMockTerminalState = (overrides = {}) => ({
+    connectionStatus: "disconnected" as const,
+    sendInput: mockSendInput,
+    resize: mockResize,
+    onData: vi.fn(() => vi.fn()),
+    onExit: vi.fn(() => vi.fn()),
+    onConnect: vi.fn(() => vi.fn()),
+    onScrollback: vi.fn(() => vi.fn()),
+    reconnect: mockReconnect,
+    ...overrides,
+  });
+
+  const defaultTab = {
+    id: "tab-1",
+    sessionId: "test-session-123",
+    title: "bash",
+    isActive: true,
+    createdAt: Date.now(),
+  };
+
+  const defaultSessionState = {
+    tabs: [defaultTab],
+    activeTab: defaultTab,
+    isReady: true,
+    bootstrapError: null,
+    createTab: vi.fn(),
+    closeTab: vi.fn(),
+    setActiveTab: vi.fn(),
+    updateTabTitle: vi.fn(),
+    restartActiveTab: vi.fn(),
+    retryBootstrap: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseTerminal.mockReturnValue(createMockTerminalState());
+    mockUseTerminalSessions.mockReturnValue(defaultSessionState);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Regression: terminal is empty after closing and reopening the modal
+   * without a page refresh.
+   *
+   * Root cause: the xterm init effect's early-return guard checked
+   * !terminalRef.current, which was null after cleanup. The fix restructures
+   * the guard to check session continuity (xtermInitializedRef) before the
+   * DOM ref, allowing the effect to proceed and reinitialize xterm.
+   *
+   * This test verifies:
+   * 1. xterm initializes on first open
+   * 2. xterm is disposed on close
+   * 3. xterm reinitializes on reopen
+   * 4. scrollback data is delivered to xterm after reopen
+   */
+  it("replays scrollback to xterm after modal close and reopen", async () => {
+    let capturedScrollbackCallback: ((data: string) => void) | null = null;
+    let capturedDataCallback: ((data: string) => void) | null = null;
+
+    const mockOnScrollback = vi.fn((cb: (data: string) => void) => {
+      capturedScrollbackCallback = cb;
+      return vi.fn();
+    });
+    const mockOnData = vi.fn((cb: (data: string) => void) => {
+      capturedDataCallback = cb;
+      return vi.fn();
+    });
+
+    // Phase 1: Open modal — xterm initializes and subscriptions are established
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        connectionStatus: "connected",
+        onScrollback: mockOnScrollback,
+        onData: mockOnData,
+      })
+    );
+
+    const { rerender } = render(
+      <TerminalModal isOpen={true} onClose={mockOnClose} />
+    );
+
+    // Wait for xterm to initialize on first open
+    await waitFor(() => {
+      expect(mockTerminalInstance.open).toHaveBeenCalledTimes(1);
+    });
+
+    // Wait for subscriptions to be established
+    await waitFor(() => {
+      expect(mockOnScrollback).toHaveBeenCalled();
+      expect(mockOnData).toHaveBeenCalled();
+    });
+
+    // Verify scrollback data is delivered on first open
+    act(() => {
+      if (capturedScrollbackCallback) {
+        capturedScrollbackCallback("first-open-output$ ");
+      }
+    });
+    expect(mockTerminalInstance.write).toHaveBeenCalledWith("first-open-output$ ");
+
+    // Phase 2: Close modal — xterm is disposed
+    rerender(<TerminalModal isOpen={false} onClose={mockOnClose} />);
+
+    // Modal is no longer rendered
+    expect(screen.queryByTestId("terminal-modal")).toBeNull();
+
+    // Verify xterm was disposed
+    expect(mockTerminalInstance.dispose).toHaveBeenCalled();
+
+    // Phase 3: Reopen modal — xterm should reinitialize
+    // Reset scrollback/data callbacks for the new subscription cycle
+    capturedScrollbackCallback = null;
+    capturedDataCallback = null;
+
+    const mockOnScrollback2 = vi.fn((cb: (data: string) => void) => {
+      capturedScrollbackCallback = cb;
+      return vi.fn();
+    });
+    const mockOnData2 = vi.fn((cb: (data: string) => void) => {
+      capturedDataCallback = cb;
+      return vi.fn();
+    });
+
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        connectionStatus: "connected",
+        onScrollback: mockOnScrollback2,
+        onData: mockOnData2,
+      })
+    );
+
+    rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    // xterm should reinitialize (open called again)
+    await waitFor(() => {
+      expect(mockTerminalInstance.open).toHaveBeenCalledTimes(2);
+    });
+
+    // Subscriptions should be re-established
+    await waitFor(() => {
+      expect(mockOnScrollback2).toHaveBeenCalled();
+      expect(mockOnData2).toHaveBeenCalled();
+    });
+
+    // Clear previous write calls
+    mockTerminalInstance.write.mockClear();
+
+    // Phase 4: Verify scrollback is replayed after reopen
+    act(() => {
+      if (capturedScrollbackCallback) {
+        capturedScrollbackCallback("reopened-output$ ");
+      }
+      if (capturedDataCallback) {
+        capturedDataCallback("ls -la\r\n");
+      }
+    });
+
+    // xterm must receive scrollback data after reopen
+    expect(mockTerminalInstance.write).toHaveBeenCalledWith("reopened-output$ ");
+    expect(mockTerminalInstance.write).toHaveBeenCalledWith("ls -la\r\n");
+  });
+
+  /**
+   * Verify that xterm open() is called again after close/reopen with the same session.
+   * This confirms the init effect runs again and doesn't skip due to session continuity check.
+   */
+  it("calls xterm.open() again after close/reopen with same session", async () => {
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({
+        connectionStatus: "connected",
+      })
+    );
+
+    const { rerender } = render(
+      <TerminalModal isOpen={true} onClose={mockOnClose} />
+    );
+
+    // Wait for first xterm initialization
+    await waitFor(() => {
+      expect(mockTerminalInstance.open).toHaveBeenCalledTimes(1);
+    });
+
+    // Close modal
+    rerender(<TerminalModal isOpen={false} onClose={mockOnClose} />);
+
+    // Reopen with same session
+    rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    // xterm should be reinitialized
+    await waitFor(() => {
+      expect(mockTerminalInstance.open).toHaveBeenCalledTimes(2);
+    });
+  });
+});
