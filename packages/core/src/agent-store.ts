@@ -244,10 +244,6 @@ export class AgentStore extends EventEmitter {
         return agent; // No change needed
       }
 
-      if (currentState === "terminated") {
-        throw new Error(`Cannot transition from terminated state to ${newState}`);
-      }
-
       const validTransitions = AGENT_VALID_TRANSITIONS[currentState];
       if (!validTransitions.includes(newState)) {
         throw new Error(

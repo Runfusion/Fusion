@@ -405,17 +405,35 @@ describe("AgentStore", () => {
       ).rejects.toThrow("Invalid state transition: idle -> terminated");
     });
 
-    it("transition from terminated to any state throws", async () => {
+    it("transition from terminated to invalid states throws", async () => {
       const agent = await createReadyAgent(store, "Terminated");
       await store.updateAgentState(agent.id, "active");
       await store.updateAgentState(agent.id, "terminated");
 
       await expect(
-        store.updateAgentState(agent.id, "active")
-      ).rejects.toThrow("Cannot transition from terminated");
-      await expect(
         store.updateAgentState(agent.id, "idle")
-      ).rejects.toThrow("Cannot transition from terminated");
+      ).rejects.toThrow("Invalid state transition: terminated -> idle");
+      await expect(
+        store.updateAgentState(agent.id, "paused")
+      ).rejects.toThrow("Invalid state transition: terminated -> paused");
+    });
+
+    it("terminated → active transition succeeds", async () => {
+      const agent = await createReadyAgent(store, "RestartActive");
+      await store.updateAgentState(agent.id, "active");
+      await store.updateAgentState(agent.id, "terminated");
+
+      const updated = await store.updateAgentState(agent.id, "active");
+      expect(updated.state).toBe("active");
+    });
+
+    it("terminated → running transition succeeds", async () => {
+      const agent = await createReadyAgent(store, "RestartRunning");
+      await store.updateAgentState(agent.id, "active");
+      await store.updateAgentState(agent.id, "terminated");
+
+      const updated = await store.updateAgentState(agent.id, "running");
+      expect(updated.state).toBe("running");
     });
 
     it("emits both 'agent:stateChanged' and 'agent:updated' events", async () => {

@@ -1292,7 +1292,7 @@ export const AGENT_VALID_TRANSITIONS: Record<AgentState, AgentState[]> = {
   running: ["active", "paused", "error", "terminated"],
   paused: ["active", "terminated"],
   error: ["active", "terminated"],
-  terminated: [], // Terminal state - no exits
+  terminated: ["active", "running"], // Can be restarted
 };
 
 /** Single heartbeat event recorded for an agent */
