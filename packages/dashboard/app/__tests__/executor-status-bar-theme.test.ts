@@ -5,10 +5,13 @@ import { resolve } from "path";
 /**
  * Stylesheet regression tests for executor status bar theme-token compliance.
  *
- * These tests verify that the executor footer's running/error state backgrounds
- * use semantic CSS custom properties (`--executor-status-running-bg`,
- * `--executor-status-error-bg`) instead of hardcoded RGBA color literals, so the
- * footer adapts to every color theme and light/dark mode without manual overrides.
+ * These tests verify that the executor footer's error state background
+ * uses semantic CSS custom properties (`--executor-status-error-bg`) instead of
+ * hardcoded RGBA color literals, so the footer adapts to every color theme and
+ * light/dark mode without manual overrides.
+ *
+ * The running state no longer applies a visual background — the footer uses a
+ * neutral background regardless of executor state.
  *
  * These checks complement (not replace) `footer-safe-layout.test.ts`, which
  * validates the layout contract (fixed positioning, height tokens, padding).
@@ -52,14 +55,6 @@ function extractMobileMediaBlocks(content: string): string {
 
 describe("executor status bar state tokens", () => {
   describe(":root (dark theme defaults)", () => {
-    it("defines --executor-status-running-bg token using color-mix at 8%", () => {
-      // Search entire stylesheet — there are multiple :root blocks and the token
-      // is in the one that defines color variables (not the first typography one).
-      expect(css).toMatch(
-        /--executor-status-running-bg:\s*color-mix\(in\s+srgb,\s*var\(--color-success\)\s+8%,\s*transparent\)/,
-      );
-    });
-
     it("defines --executor-status-error-bg token using color-mix at 8%", () => {
       expect(css).toMatch(
         /--executor-status-error-bg:\s*color-mix\(in\s+srgb,\s*var\(--color-error\)\s+8%,\s*transparent\)/,
@@ -68,12 +63,6 @@ describe("executor status bar state tokens", () => {
   });
 
   describe('[data-theme="light"] overrides', () => {
-    it("overrides --executor-status-running-bg to 6% intensity", () => {
-      expect(css).toMatch(
-        /\[data-theme="light"\]\s*\{[^}]*--executor-status-running-bg:\s*color-mix\(in\s+srgb,\s*var\(--color-success\)\s+6%,\s*transparent\)/s,
-      );
-    });
-
     it("overrides --executor-status-error-bg to 6% intensity", () => {
       expect(css).toMatch(
         /\[data-theme="light"\]\s*\{[^}]*--executor-status-error-bg:\s*color-mix\(in\s+srgb,\s*var\(--color-error\)\s+6%,\s*transparent\)/s,
@@ -85,14 +74,6 @@ describe("executor status bar state tokens", () => {
 // ── State rule usage ───────────────────────────────────────────────
 
 describe("executor status bar state rules reference tokens", () => {
-  it(".executor-status-bar--running uses the running-bg token in a gradient", () => {
-    const runningBlock = extractRule(css, ".executor-status-bar--running");
-    expect(runningBlock).toBeTruthy();
-    // Must preserve the left-to-right gradient fade
-    expect(runningBlock!).toMatch(/linear-gradient\(to right,\s*var\(--executor-status-running-bg\),\s*transparent\)/);
-    expect(runningBlock!).not.toMatch(/rgba\(/);
-  });
-
   it(".executor-status-bar--error uses the error-bg token as solid background", () => {
     const errorBlock = extractRule(css, ".executor-status-bar--error");
     expect(errorBlock).toBeTruthy();
@@ -104,19 +85,6 @@ describe("executor status bar state rules reference tokens", () => {
 // ── No hardcoded RGBA literals in footer state blocks ──────────────
 
 describe("no hardcoded RGBA literals in executor footer state rules", () => {
-  // Collect all executor-status-bar--running and --error blocks including
-  // theme-qualified variants, and ensure they don't contain raw RGBA values.
-
-  it("running state rules contain no hardcoded green RGBA literals", () => {
-    // Match all blocks with selector containing "executor-status-bar--running"
-    const runningMatches = css.matchAll(
-      /\.executor-status-bar--running\s*\{[^}]*\}/gs,
-    );
-    for (const match of runningMatches) {
-      expect(match[0]).not.toMatch(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,/);
-    }
-  });
-
   it("error state rules contain no hardcoded red RGBA literals", () => {
     const errorMatches = css.matchAll(
       /\.executor-status-bar--error\s*\{[^}]*\}/gs,
@@ -146,10 +114,9 @@ describe("light theme uses tokens instead of direct selector overrides", () => {
 // ── Gradient structure preserved ───────────────────────────────────
 
 describe("running state gradient structure", () => {
-  it("uses linear-gradient for running state (not flat fill)", () => {
+  it("running state has no dedicated CSS rule (neutral footer)", () => {
     const runningBlock = extractRule(css, ".executor-status-bar--running");
-    expect(runningBlock).toBeTruthy();
-    expect(runningBlock!).toContain("linear-gradient");
+    expect(runningBlock).toBeNull();
   });
 
   it("error state uses flat fill (no gradient)", () => {

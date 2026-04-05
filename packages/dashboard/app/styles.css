@@ -103,7 +103,6 @@
   --color-info: #1f6feb;
 
   /* Executor status bar state accents */
-  --executor-status-running-bg: color-mix(in srgb, var(--color-success) 8%, transparent);
   --executor-status-error-bg: color-mix(in srgb, var(--color-error) 8%, transparent);
 
   /* Logo & branding tokens */
@@ -8199,7 +8198,6 @@ html .column.drag-over * {
   --color-muted: #6e7781;
 
   /* Executor status bar state accents (lower intensity for light backgrounds) */
-  --executor-status-running-bg: color-mix(in srgb, var(--color-success) 6%, transparent);
   --executor-status-error-bg: color-mix(in srgb, var(--color-error) 6%, transparent);
 
   /* Changed-file status colors (adjusted for light backgrounds) */
@@ -16287,10 +16285,6 @@ html .column.drag-over * {
 }
 
 /* State variants */
-.executor-status-bar--running {
-  background: linear-gradient(to right, var(--executor-status-running-bg), transparent);
-}
-
 .executor-status-bar--error {
   background: var(--executor-status-error-bg);
 }
