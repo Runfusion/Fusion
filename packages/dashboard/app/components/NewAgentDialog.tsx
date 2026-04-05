@@ -159,17 +159,15 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   const selectedRole = AGENT_ROLES.find(r => r.value === role);
 
   return (
-    <>
-      <div className="agent-dialog-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
+    <div className="agent-dialog-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
       <div className="agent-dialog" role="dialog" aria-modal="true" aria-label="Create new agent">
         {/* Header */}
         <div className="agent-dialog-header">
-          <span style={{ fontWeight: 600, fontSize: 15 }}>New Agent</span>
+          <span className="agent-dialog-header-title">New Agent</span>
           <button
             className="btn-icon"
             onClick={handleClose}
             aria-label="Close"
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 18, lineHeight: 1 }}
           >
             ×
           </button>
@@ -191,7 +189,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
           {step === 0 && (
             <div>
               <div className="agent-dialog-field">
-                <label htmlFor="agent-name">Name <span style={{ color: "var(--state-error-text, #f85149)" }}>*</span></label>
+                <label htmlFor="agent-name">Name <span className="agent-dialog-required">*</span></label>
                 <input
                   id="agent-name"
                   type="text"
@@ -200,11 +198,10 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   value={name}
                   onChange={e => setName(e.target.value)}
                   autoFocus
-                  style={{ width: "100%", boxSizing: "border-box" }}
                 />
               </div>
               <div className="agent-dialog-field">
-                <label htmlFor="agent-title">Title <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(optional)</span></label>
+                <label htmlFor="agent-title">Title <span className="agent-dialog-optional">(optional)</span></label>
                 <input
                   id="agent-title"
                   type="text"
@@ -212,7 +209,6 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   placeholder="e.g. Senior Code Reviewer"
                   value={title}
                   onChange={e => setTitle(e.target.value)}
-                  style={{ width: "100%", boxSizing: "border-box" }}
                 />
               </div>
               <div className="agent-dialog-field">
@@ -226,23 +222,22 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                       onClick={() => setRole(r.value)}
                     >
                       <span className="agent-role-option-icon">{r.icon}</span>
-                      <span style={{ fontSize: 12, marginTop: 4 }}>{r.label}</span>
+                      <span className="agent-role-option-label">{r.label}</span>
                     </button>
                   ))}
                 </div>
               </div>
               {/* AI-assisted generation */}
-              <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+              <div className="agent-dialog-ai-generate">
                 <button
                   type="button"
-                  className="btn"
+                  className="btn btn--ai-generate"
                   onClick={() => setIsGenerationModalOpen(true)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
                 >
                   <span>✨</span>
                   Generate with AI
                 </button>
-                <p style={{ color: "var(--text-muted)", fontSize: 11, textAlign: "center", margin: "6px 0 0" }}>
+                <p className="agent-dialog-ai-hint">
                   Describe your agent&apos;s role and let AI generate a specification
                 </p>
               </div>
@@ -254,7 +249,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
               <div className="agent-dialog-field">
                 <label>Model</label>
                 {modelsLoading ? (
-                  <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "8px 0" }}>Loading models…</div>
+                  <div className="agent-dialog-loading">Loading models…</div>
                 ) : (
                   <CustomModelDropdown
                     id="agent-model"
@@ -277,7 +272,6 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   className="select"
                   value={runtimeConfig.thinkingLevel}
                   onChange={e => setRuntimeConfig(c => ({ ...c, thinkingLevel: e.target.value as ThinkingLevel }))}
-                  style={{ width: "100%" }}
                 >
                   <option value="off">Off</option>
                   <option value="minimal">Minimal</option>
@@ -296,7 +290,6 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   max={500}
                   value={runtimeConfig.maxTurns}
                   onChange={e => setRuntimeConfig(c => ({ ...c, maxTurns: Math.max(1, parseInt(e.target.value, 10) || 1) }))}
-                  style={{ width: "100%", boxSizing: "border-box" }}
                 />
               </div>
             </div>
@@ -304,30 +297,30 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
 
           {step === 2 && (
             <div>
-              <p style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 0, marginBottom: 12 }}>
+              <p className="agent-dialog-info">
                 Review your agent configuration before creating.
               </p>
               <div className="agent-dialog-summary">
                 <div className="agent-dialog-summary-row">
-                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Name</span>
-                  <span style={{ fontWeight: 600 }}>
-                    {icon && <span style={{ marginRight: 6 }}>{icon}</span>}
+                  <span className="agent-dialog-summary-row-label">Name</span>
+                  <span className="agent-dialog-summary-row-value">
+                    {icon && <span className="agent-dialog-icon-prefix">{icon}</span>}
                     {name}
                   </span>
                 </div>
                 {title && (
                   <div className="agent-dialog-summary-row">
-                    <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Title</span>
+                    <span className="agent-dialog-summary-row-label">Title</span>
                     <span>{title}</span>
                   </div>
                 )}
                 <div className="agent-dialog-summary-row">
-                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Role</span>
+                  <span className="agent-dialog-summary-row-label">Role</span>
                   <span>{selectedRole?.icon} {selectedRole?.label}</span>
                 </div>
                 <div className="agent-dialog-summary-row">
-                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Model</span>
-                  <span style={{ fontSize: 13 }}>
+                  <span className="agent-dialog-summary-row-label">Model</span>
+                  <span>
                     {selectedModel ? (
                       <>
                         <ProviderIcon provider={selectedModel.split("/")[0]} size="sm" />
@@ -341,21 +334,21 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                         })()}
                       </>
                     ) : (
-                      <em style={{ color: "var(--text-muted)" }}>default</em>
+                      <em className="agent-dialog-summary-row-value--muted">default</em>
                     )}
                   </span>
                 </div>
                 <div className="agent-dialog-summary-row">
-                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Thinking</span>
-                  <span style={{ textTransform: "capitalize" }}>{runtimeConfig.thinkingLevel}</span>
+                  <span className="agent-dialog-summary-row-label">Thinking</span>
+                  <span className="agent-dialog-summary-row-value--capitalize">{runtimeConfig.thinkingLevel}</span>
                 </div>
                 <div className="agent-dialog-summary-row">
-                  <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Max Turns</span>
+                  <span className="agent-dialog-summary-row-label">Max Turns</span>
                   <span>{runtimeConfig.maxTurns}</span>
                 </div>
               </div>
               {error && (
-                <p style={{ color: "var(--state-error-text, #f85149)", fontSize: 13, marginTop: 12 }}>{error}</p>
+                <p className="agent-dialog-error">{error}</p>
               )}
             </div>
           )}
@@ -390,7 +383,6 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
           )}
         </div>
       </div>
-      </div>
 
       {/* AI-assisted agent generation modal */}
       <AgentGenerationModal
@@ -399,6 +391,6 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
         onGenerated={handleGenerated}
         projectId={projectId}
       />
-    </>
+    </div>
   );
 }

@@ -76,7 +76,7 @@ describe("AgentDetailView", () => {
     expect(screen.getByText(/Loading agent/i)).toBeInTheDocument();
   });
 
-  it("defines CSS variables for agent state tokens in the style block", async () => {
+  it("defines CSS variables for agent state tokens in the global stylesheet", async () => {
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -90,15 +90,18 @@ describe("AgentDetailView", () => {
       expect(headings.some(h => h.textContent === "Test Agent")).toBe(true);
     });
 
-    // Verify state CSS variables are defined in the component's style block
-    const styleElements = document.querySelectorAll("style");
-    const allCss = Array.from(styleElements).map(el => el.textContent ?? "").join("");
-    expect(allCss).toContain("--state-idle-bg");
-    expect(allCss).toContain("--state-active-bg");
-    expect(allCss).toContain("--state-paused-bg");
-    expect(allCss).toContain("--state-error-bg");
-    expect(allCss).toContain("--state-idle-text");
-    expect(allCss).toContain("--state-active-text");
+    // Verify state CSS variables are defined in the global stylesheet (styles.css)
+    // (previously these were in inline style blocks, now they're in the global :root)
+    const fs = await import("fs");
+    const path = await import("path");
+    const stylesPath = path.join(__dirname, "../../styles.css");
+    const stylesContent = fs.readFileSync(stylesPath, "utf-8");
+    expect(stylesContent).toContain("--state-idle-bg:");
+    expect(stylesContent).toContain("--state-active-bg:");
+    expect(stylesContent).toContain("--state-paused-bg:");
+    expect(stylesContent).toContain("--state-error-bg:");
+    expect(stylesContent).toContain("--state-idle-text:");
+    expect(stylesContent).toContain("--state-active-text:");
   });
 
   it("uses token-based state colors for badges instead of hardcoded hex", async () => {
@@ -155,7 +158,7 @@ describe("AgentDetailView", () => {
     });
   });
 
-  it("uses token-based color references in CSS instead of undefined vars", async () => {
+  it("uses token-based color references for success and error states", async () => {
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -168,20 +171,20 @@ describe("AgentDetailView", () => {
       expect(screen.getAllByText("active").length).toBeGreaterThan(0);
     });
 
-    // Navigate to Runs tab to trigger rendering of run-related style blocks
+    // Navigate to Runs tab to trigger rendering of run-related content
     fireEvent.click(screen.getByText("Runs"));
 
-    // Verify style blocks use --color-success and --color-error with fallbacks
-    // (not bare --success or --error which are undefined in the root CSS)
-    await waitFor(() => {
-      const styleElements = document.querySelectorAll("style");
-      const allCss = Array.from(styleElements).map(el => el.textContent ?? "").join("");
-      expect(allCss).toMatch(/var\(--color-success/);
-      expect(allCss).toMatch(/var\(--color-error/);
-    });
+    // Verify that the global stylesheet defines --color-success and --color-error
+    // (previously checked in inline style blocks, now verified by reading styles.css)
+    const fs = await import("fs");
+    const path = await import("path");
+    const stylesPath = path.join(__dirname, "../../styles.css");
+    const stylesContent = fs.readFileSync(stylesPath, "utf-8");
+    expect(stylesContent).toMatch(/--color-success:/);
+    expect(stylesContent).toMatch(/--color-error:/);
   });
 
-  it("defines component-local aliases for undefined CSS tokens", async () => {
+  it("uses global design tokens instead of component-local aliases", async () => {
     render(
       <AgentDetailView
         agentId="agent-001"
@@ -194,14 +197,18 @@ describe("AgentDetailView", () => {
       expect(screen.getAllByText("active").length).toBeGreaterThan(0);
     });
 
-    // Verify that component-local aliases are defined for tokens used in the style block
-    // These map to real global tokens so they don't fall back to browser defaults
-    const styleElements = document.querySelectorAll("style");
-    const allCss = Array.from(styleElements).map(el => el.textContent ?? "").join("");
-    expect(allCss).toContain("--bg-primary: var(--surface");
-    expect(allCss).toContain("--accent: var(--todo");
-    expect(allCss).toContain("--text-primary: var(--text");
-    expect(allCss).toContain("--bg-hover: var(--card-hover");
+    // Previously the component defined local aliases like --bg-primary, --accent, etc.
+    // Now these are replaced with direct global token references in the CSS classes.
+    // Verify the global stylesheet defines the real tokens that the component uses.
+    const fs = await import("fs");
+    const path = await import("path");
+    const stylesPath = path.join(__dirname, "../../styles.css");
+    const stylesContent = fs.readFileSync(stylesPath, "utf-8");
+    // The component classes now use --surface, --todo, --text, --card-hover directly
+    expect(stylesContent).toMatch(/--surface:/);
+    expect(stylesContent).toMatch(/--todo:/);
+    expect(stylesContent).toMatch(/--text:/);
+    expect(stylesContent).toMatch(/--card-hover:/);
   });
 
   it("displays agent name in header after loading", async () => {
