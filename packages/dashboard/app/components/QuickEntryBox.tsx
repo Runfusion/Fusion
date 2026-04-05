@@ -114,6 +114,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
   const refineMenuRef = useRef<HTMLDivElement>(null);
+  const refineMenuPortalRef = useRef<HTMLDivElement>(null);
+  const [refineMenuPosition, setRefineMenuPosition] = useState<{ top: number; left: number } | null>(null);
 
   // Use parent-provided favorites when available, otherwise internal state
   const effectiveFavoriteProviders = parentFavoriteProviders ?? favoriteProviders;
@@ -264,7 +266,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     if (!isRefineMenuOpen) return;
 
     const handleClickOutside = (e: MouseEvent) => {
-      if (refineMenuRef.current && !refineMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const clickedInsideTrigger = refineMenuRef.current?.contains(target);
+      const clickedInsidePortal = refineMenuPortalRef.current?.contains(target);
+
+      if (!clickedInsideTrigger && !clickedInsidePortal) {
         setIsRefineMenuOpen(false);
       }
     };
@@ -493,6 +499,24 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     });
   }, [updateModelMenuPosition]);
 
+  const updateRefineMenuPosition = useCallback(() => {
+    const trigger = refineMenuRef.current?.querySelector(".refine-button") as HTMLElement | null;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const isMobile = viewportWidth <= 640;
+
+    // Ensure the menu doesn't overflow off the right edge on small screens
+    const menuWidth = Math.min(200, viewportWidth - 16);
+    const left = Math.min(rect.left, viewportWidth - menuWidth - 8);
+
+    setRefineMenuPosition({
+      top: rect.bottom + 4,
+      left,
+    });
+  }, []);
+
   // Keep model menu portal anchored during scroll/resize
   useEffect(() => {
     if (!isModelMenuOpen) return;
@@ -507,6 +531,21 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       window.removeEventListener("scroll", handleReposition, true);
     };
   }, [isModelMenuOpen, updateModelMenuPosition]);
+
+  // Keep refine menu portal anchored during scroll/resize
+  useEffect(() => {
+    if (!isRefineMenuOpen) return;
+
+    const handleReposition = () => updateRefineMenuPosition();
+
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+  }, [isRefineMenuOpen, updateRefineMenuPosition]);
 
   const handlePlanningModelChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
@@ -724,7 +763,18 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             <button
               type="button"
               className={`btn btn-sm refine-button ${isRefining ? "refine-button--loading" : ""}`}
-              onClick={() => setIsRefineMenuOpen((prev) => !prev)}
+              onClick={() => {
+                setIsRefineMenuOpen((prev) => {
+                  const next = !prev;
+                  if (next) {
+                    // Compute position synchronously so the portal renders on first paint
+                    updateRefineMenuPosition();
+                  } else {
+                    setRefineMenuPosition(null);
+                  }
+                  return next;
+                });
+              }}
               disabled={!description.trim() || isRefining}
               data-testid="refine-button"
               title="Refine description with AI"
@@ -732,10 +782,16 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               <Sparkles size={12} style={{ verticalAlign: "middle" }} />
               {isRefining ? "Refining..." : "Refine"}
             </button>
-            {isRefineMenuOpen && (
+            {isRefineMenuOpen && portalRoot && refineMenuPosition && createPortal(
               <div
-                className="refine-menu"
+                ref={refineMenuPortalRef}
+                className="refine-menu refine-menu--portal"
                 onMouseDown={(e) => e.preventDefault()}
+                style={{
+                  position: "fixed",
+                  top: `${refineMenuPosition.top}px`,
+                  left: `${refineMenuPosition.left}px`,
+                }}
               >
                 <div
                   className="refine-menu-item"
@@ -769,7 +825,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   <div className="refine-menu-item-title">Simplify</div>
                   <div className="refine-menu-item-desc">Simplify and make more concise</div>
                 </div>
-              </div>
+              </div>,
+              portalRoot,
             )}
           </div>
         </div>
