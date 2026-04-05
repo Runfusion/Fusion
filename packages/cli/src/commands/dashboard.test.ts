@@ -4,12 +4,16 @@ import { EventEmitter } from "node:events";
 // ── Capture instances & arguments ───────────────────────────────────
 
 let capturedExecutorOpts: Record<string, unknown> | undefined;
+let capturedSelfHealingOpts: Record<string, unknown> | undefined;
 
 const {
   mockAuthStorage,
   mockModelRegistry,
   mockDiscoverAndLoadExtensions,
   mockCreateExtensionRuntime,
+  mockSelfHealingStart,
+  mockSelfHealingStop,
+  mockCheckStuckBudget,
 } = vi.hoisted(() => ({
   mockAuthStorage: { getAuth: vi.fn(), setAuth: vi.fn() },
   mockModelRegistry: {
@@ -21,6 +25,9 @@ const {
     errors: [],
   }),
   mockCreateExtensionRuntime: vi.fn(),
+  mockSelfHealingStart: vi.fn(),
+  mockSelfHealingStop: vi.fn(),
+  mockCheckStuckBudget: vi.fn().mockResolvedValue(true),
 }));
 
 // Minimal mock store backed by EventEmitter so `store.on` works
@@ -195,6 +202,14 @@ vi.mock("@fusion/engine", async (importOriginal) => {
       start: vi.fn(),
       stop: vi.fn(),
     })),
+    SelfHealingManager: vi.fn().mockImplementation((_store: unknown, opts: unknown) => {
+      capturedSelfHealingOpts = opts as Record<string, unknown>;
+      return {
+        start: mockSelfHealingStart,
+        stop: mockSelfHealingStop,
+        checkStuckBudget: mockCheckStuckBudget,
+      };
+    }),
     scanIdleWorktrees: vi.fn().mockResolvedValue([]),
     cleanupOrphanedWorktrees: vi.fn().mockResolvedValue(0),
   };
@@ -574,6 +589,7 @@ describe("runDashboard — auto-merge pause exclusion", () => {
 
   beforeEach(async () => {
     capturedExecutorOpts = undefined;
+    capturedSelfHealingOpts = undefined;
     vi.clearAllMocks();
     resetGitHubMocks();
     mockStore = makeMockStore();
@@ -757,6 +773,17 @@ describe("runDashboard — immediate resume on unpause", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(resumeOrphaned).toHaveBeenCalled();
+  });
+
+  it("passes executor recovery callbacks into SelfHealingManager", async () => {
+    await runDashboard(0, { open: false });
+
+    expect(capturedSelfHealingOpts).toMatchObject({
+      rootDir: process.cwd(),
+      recoverCompletedTask: expect.any(Function),
+      getExecutingTaskIds: expect.any(Function),
+    });
+    expect(mockSelfHealingStart).toHaveBeenCalled();
   });
 
   it("sweeps merge queue on unpause when autoMerge is enabled", async () => {

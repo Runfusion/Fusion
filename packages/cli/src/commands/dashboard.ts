@@ -568,7 +568,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     });
 
     // ── Self-healing: auto-unpause, stuck kill budgets, maintenance ─────
-    const selfHealing = new SelfHealingManager(store, { rootDir: cwd });
+    const selfHealing = new SelfHealingManager(store, {
+      rootDir: cwd,
+      recoverCompletedTask: (task) => executorRef.current?.recoverCompletedTask(task) ?? Promise.resolve(false),
+      getExecutingTaskIds: () => executorRef.current?.getExecutingTaskIds() ?? new Set(),
+    });
 
     // ── Stuck task detector: monitors agent sessions for stagnation ────
     // Created before the executor so it can be passed in options.

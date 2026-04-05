@@ -7527,12 +7527,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         const rootDir = scopedStore.getRootDir();
         const sha = task.mergeDetails.commitSha;
 
-        // Resolve the diff base using the same priority as resolveDiffBase():
+        // Resolve the diff base:
         // 1. task.baseCommitSha (exact starting commit of the worktree)
-        // 2. merge-base between the merge commit and the base branch
-        // 3. First parent of the merge commit as fallback
+        // 2. First parent of the merge commit (safe for squash merges)
         let mergeBase: string | undefined;
-        const baseBranch = task.baseBranch ?? "main";
 
         // Priority 1: Use task.baseCommitSha if it's a valid ancestor of the merge commit
         if (task.baseCommitSha) {
@@ -7547,19 +7545,9 @@ Output ONLY the prompt text (no markdown, no explanations).`;
           }
         }
 
-        // Priority 2: Compute merge-base between merge commit and base branch
-        if (!mergeBase) {
-          try {
-            mergeBase = nodeChildProcess.execSync(
-              `git merge-base ${sha} origin/${baseBranch} 2>/dev/null || git merge-base ${sha} ${baseBranch}`,
-              { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
-            ).trim();
-          } catch {
-            // merge-base with branch failed — fall through
-          }
-        }
-
-        // Priority 3: Fall back to first parent of the merge commit
+        // Priority 2: Fall back to first parent of the merge commit (safe for squash merges)
+        // This is more reliable than merge-base with baseBranch, which can return incorrect
+        // results when baseBranch is another merged feature branch (for dependent tasks).
         if (!mergeBase) {
           try {
             mergeBase = nodeChildProcess.execSync(
@@ -7724,12 +7712,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         const rootDir = scopedStore.getRootDir();
         const sha = task.mergeDetails.commitSha;
 
-        // Resolve the diff base using the same priority as resolveDiffBase():
+        // Resolve the diff base:
         // 1. task.baseCommitSha (exact starting commit of the worktree)
-        // 2. merge-base between the merge commit and the base branch
-        // 3. First parent of the merge commit as fallback
+        // 2. First parent of the merge commit (safe for squash merges)
         let mergeBase: string | undefined;
-        const baseBranch = task.baseBranch ?? "main";
 
         // Priority 1: Use task.baseCommitSha if it's a valid ancestor of the merge commit
         if (task.baseCommitSha) {
@@ -7744,19 +7730,9 @@ Output ONLY the prompt text (no markdown, no explanations).`;
           }
         }
 
-        // Priority 2: Compute merge-base between merge commit and base branch
-        if (!mergeBase) {
-          try {
-            mergeBase = nodeChildProcess.execSync(
-              `git merge-base ${sha} origin/${baseBranch} 2>/dev/null || git merge-base ${sha} ${baseBranch}`,
-              { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
-            ).trim();
-          } catch {
-            // merge-base with branch failed — fall through
-          }
-        }
-
-        // Priority 3: Fall back to first parent of the merge commit
+        // Priority 2: Fall back to first parent of the merge commit (safe for squash merges)
+        // This is more reliable than merge-base with baseBranch, which can return incorrect
+        // results when baseBranch is another merged feature branch (for dependent tasks).
         if (!mergeBase) {
           try {
             mergeBase = nodeChildProcess.execSync(

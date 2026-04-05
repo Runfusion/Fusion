@@ -330,6 +330,83 @@ describe("In-progress task resume after restart", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-040", "Resumed after engine restart");
     expect(store.logEntry).toHaveBeenCalledWith("FN-041", "Resumed after engine restart");
   });
+
+  it("resumeOrphaned() fast-paths already-complete tasks to in-review", async () => {
+    const store = createMockStore();
+    const completedTask = makeTask("FN-963", "in-progress", {
+      worktree: "/tmp/wt/FN-963",
+      baseCommitSha: "base123",
+      steps: makeSteps("done", "done", "skipped"),
+    });
+    store.listTasks.mockResolvedValue([completedTask]);
+    store.getTask.mockResolvedValue(makeTaskDetail("FN-963", "in-progress", {
+      worktree: "/tmp/wt/FN-963",
+      baseCommitSha: "base123",
+      steps: makeSteps("done", "done", "skipped"),
+    }));
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const executeSpy = vi.spyOn(executor, "execute");
+
+    mockedExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd === 'git diff --name-only base123..HEAD') {
+        return "packages/dashboard/app/components/SettingsModal.tsx\n" as any;
+      }
+      return "" as any;
+    });
+
+    await executor.resumeOrphaned();
+
+    expect(executeSpy).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-963", {
+      modifiedFiles: ["packages/dashboard/app/components/SettingsModal.tsx"],
+    });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-963", "in-review");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-963",
+      "Auto-recovered: task work was complete but stuck in in-progress — moved to in-review",
+    );
+  });
+
+  it("recoverCompletedTask() marks task failed then moves to in-review when workflow fails", async () => {
+    const store = createMockStore({
+      getTask: vi.fn().mockResolvedValue(makeTaskDetail("FN-963", "in-progress", {
+        worktree: "/tmp/wt/FN-963",
+        steps: makeSteps("done"),
+        enabledWorkflowSteps: ["wf-1"],
+      })),
+      getWorkflowStep: vi.fn().mockResolvedValue({
+        id: "wf-1",
+        name: "Build",
+        mode: "script",
+        scriptName: "pnpm test",
+        phase: "pre-merge",
+      }),
+    });
+    const task = makeTask("FN-963", "in-progress", {
+      worktree: "/tmp/wt/FN-963",
+      steps: makeSteps("done"),
+    });
+
+    mockedExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd === "pnpm test") {
+        throw new Error("tests failed");
+      }
+      return "" as any;
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const recovered = await executor.recoverCompletedTask(task);
+
+    expect(recovered).toBe(true);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-963", {
+      status: "failed",
+      error: "Workflow step failed during recovery",
+    });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-963", "in-review");
+  });
 });
 
 // ── Step 3: In-review merge re-queue tests ────────────────────────────────

@@ -16,7 +16,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { TaskStore, Settings } from "@fusion/core";
+import type { TaskStore, Settings, Task } from "@fusion/core";
 import { createLogger } from "./logger.js";
 import { scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
 
@@ -25,6 +25,21 @@ const log = createLogger("self-healing");
 export interface SelfHealingOptions {
   /** Project root directory (parent of .worktrees/) */
   rootDir: string;
+  /**
+   * Callback to recover a completed task that is stuck in in-progress.
+   * Called by the periodic maintenance cycle when it detects a task whose
+   * work is done but was never transitioned to in-review (e.g., killed by
+   * stuck detector after task_done but before moveTask).
+   *
+   * Should return true if the task was successfully transitioned out of
+   * in-progress, false if recovery failed.
+   */
+  recoverCompletedTask?: (task: Task) => Promise<boolean>;
+  /**
+   * Returns the set of task IDs currently being executed by the executor.
+   * Used to avoid recovering tasks that are actively being worked on.
+   */
+  getExecutingTaskIds?: () => Set<string>;
 }
 
 export class SelfHealingManager {
@@ -235,11 +250,61 @@ export class SelfHealingManager {
       await this.cleanupOrphanedBranches();
       this.checkpointWal();
       await this.enforceWorktreeCap();
+      await this.recoverCompletedTasks();
 
       const elapsedMs = Date.now() - startMs;
       log.log(`Maintenance cycle completed in ${elapsedMs}ms`);
     } catch (err: any) {
       log.error(`Maintenance cycle failed: ${err.message}`);
+    }
+  }
+
+  // ── Completed task recovery ──────────────────────────────────────
+
+  /**
+   * Recover tasks stuck in in-progress whose work is actually complete.
+   *
+   * This catches tasks where the agent called task_done() (all steps marked
+   * done, summary written) but the session was killed before the executor
+   * could call moveTask("in-review"). Without this, such tasks sit
+   * indefinitely in in-progress with no active session.
+   *
+   * @returns Number of tasks recovered
+   */
+  async recoverCompletedTasks(): Promise<number> {
+    const recoverFn = this.options.recoverCompletedTask;
+    if (!recoverFn) return 0;
+
+    try {
+      const tasks = await this.store.listTasks();
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+
+      const stuckCompleted = tasks.filter((t) =>
+        t.column === "in-progress" &&
+        !t.paused &&
+        !executingIds.has(t.id) &&
+        t.steps.length > 0 &&
+        t.steps.every((s) => s.status === "done" || s.status === "skipped"),
+      );
+
+      if (stuckCompleted.length === 0) return 0;
+
+      log.warn(`Found ${stuckCompleted.length} completed task(s) stuck in in-progress`);
+
+      let recovered = 0;
+      for (const task of stuckCompleted) {
+        log.log(`Recovering completed task ${task.id}: ${task.title || task.description.slice(0, 60)}`);
+        const success = await recoverFn(task);
+        if (success) recovered++;
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} completed task(s) → in-review`);
+      }
+      return recovered;
+    } catch (err: any) {
+      log.error(`Completed task recovery failed: ${err.message}`);
+      return 0;
     }
   }
 

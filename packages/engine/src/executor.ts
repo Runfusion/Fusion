@@ -251,6 +251,11 @@ export class TaskExecutor {
   /** Total count of currently spawned agents (across all parents). */
   private totalSpawnedCount = 0;
 
+  /** Returns the set of task IDs currently being executed. */
+  getExecutingTaskIds(): Set<string> {
+    return new Set(this.executing);
+  }
+
   /**
    * @param store — Task store instance (also used to listen for events)
    * @param rootDir — Project root directory
@@ -375,8 +380,60 @@ export class TaskExecutor {
   }
 
   /**
+   * Check whether a task's work is complete — all steps are done or skipped.
+   * Used to detect tasks that called task_done() but never transitioned to in-review
+   * (e.g., killed by stuck detector after task_done but before moveTask).
+   */
+  private isTaskWorkComplete(task: Task): boolean {
+    if (task.steps.length === 0) return false;
+    return task.steps.every((s) => s.status === "done" || s.status === "skipped");
+  }
+
+  /**
+   * Fast-path a completed task directly to in-review without spawning a new agent.
+   * Captures modified files, runs workflow steps, and transitions the task.
+   *
+   * @returns true if the task was successfully transitioned, false otherwise.
+   */
+  async recoverCompletedTask(task: Task): Promise<boolean> {
+    try {
+      const settings = await this.store.getSettings();
+
+      // Capture modified files if the worktree still exists
+      if (task.worktree && existsSync(task.worktree)) {
+        const modifiedFiles = this.captureModifiedFiles(task.worktree, task.baseCommitSha);
+        if (modifiedFiles.length > 0) {
+          await this.store.updateTask(task.id, { modifiedFiles });
+          executorLog.log(`${task.id}: recovered ${modifiedFiles.length} modified files`);
+        }
+
+        // Run workflow steps before transitioning
+        const workflowSuccess = await this.runWorkflowSteps(task, task.worktree, settings);
+        if (!workflowSuccess) {
+          await this.store.updateTask(task.id, { status: "failed", error: "Workflow step failed during recovery" });
+          await this.store.moveTask(task.id, "in-review");
+          executorLog.log(`✗ ${task.id} workflow step failed during recovery → in-review`);
+          return true; // Still transitioned out of in-progress
+        }
+      }
+
+      await this.store.moveTask(task.id, "in-review");
+      await this.store.logEntry(task.id, "Auto-recovered: task work was complete but stuck in in-progress — moved to in-review");
+      executorLog.log(`✓ ${task.id} auto-recovered completed task → in-review`);
+      this.options.onComplete?.(task);
+      return true;
+    } catch (err: any) {
+      executorLog.error(`Failed to recover completed task ${task.id}: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
    * Resume orphaned in-progress tasks (e.g., after crash/restart).
    * Call once after engine startup.
+   *
+   * Tasks that are already complete (all steps done/skipped) are fast-pathed
+   * directly to in-review without spawning a new agent session.
    */
   async resumeOrphaned(): Promise<void> {
     const tasks = await this.store.listTasks();
@@ -388,6 +445,14 @@ export class TaskExecutor {
 
     executorLog.log(`Found ${inProgress.length} orphaned in-progress task(s)`);
     for (const task of inProgress) {
+      // Fast-path: if the task already completed its work (all steps done),
+      // move it directly to in-review instead of re-executing from scratch.
+      if (this.isTaskWorkComplete(task)) {
+        executorLog.log(`${task.id} is already complete — fast-pathing to in-review`);
+        await this.recoverCompletedTask(task);
+        continue;
+      }
+
       executorLog.log(`Resuming ${task.id}: ${task.title || task.description.slice(0, 60)}`);
       try {
         await this.store.logEntry(task.id, "Resumed after engine restart");

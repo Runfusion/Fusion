@@ -386,4 +386,212 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(0);
     });
   });
+
+  // ── Completed task recovery ─────────────────────────────────────────
+
+  describe("recoverCompletedTasks", () => {
+    it("recovers tasks with all steps done that are stuck in in-progress", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-001",
+          column: "in-progress",
+          paused: false,
+          steps: [
+            { status: "done" },
+            { status: "done" },
+            { status: "skipped" },
+          ],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverCompletedTasks();
+
+      expect(result).toBe(1);
+      expect(recoverFn).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "FN-001" }),
+      );
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks that are actively executing", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const getExecuting = vi.fn().mockReturnValue(new Set(["FN-001"]));
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-001",
+          column: "in-progress",
+          paused: false,
+          steps: [{ status: "done" }, { status: "done" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverCompletedTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks with incomplete steps", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-002",
+          column: "in-progress",
+          paused: false,
+          steps: [
+            { status: "done" },
+            { status: "in-progress" },
+            { status: "pending" },
+          ],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverCompletedTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips paused tasks", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-003",
+          column: "in-progress",
+          paused: true,
+          steps: [{ status: "done" }, { status: "done" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverCompletedTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips tasks with no steps", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-004",
+          column: "in-progress",
+          paused: false,
+          steps: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverCompletedTasks();
+
+      expect(result).toBe(0);
+
+      managerWithRecovery.stop();
+    });
+
+    it("returns 0 when no recoverCompletedTask callback is provided", async () => {
+      // Default manager has no recovery callback
+      const result = await manager.recoverCompletedTasks();
+      expect(result).toBe(0);
+    });
+
+    it("counts only successfully recovered tasks", async () => {
+      const recoverFn = vi.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-005",
+          column: "in-progress",
+          paused: false,
+          steps: [{ status: "done" }],
+        },
+        {
+          id: "FN-006",
+          column: "in-progress",
+          paused: false,
+          steps: [{ status: "done" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverCompletedTasks();
+
+      expect(result).toBe(1);
+      expect(recoverFn).toHaveBeenCalledTimes(2);
+
+      managerWithRecovery.stop();
+    });
+
+    it("returns 0 when listTasks throws", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("DB error"));
+
+      const result = await managerWithRecovery.recoverCompletedTasks();
+
+      expect(result).toBe(0);
+
+      managerWithRecovery.stop();
+    });
+  });
 });

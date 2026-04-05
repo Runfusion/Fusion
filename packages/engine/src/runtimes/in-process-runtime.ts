@@ -230,6 +230,8 @@ export class InProcessRuntime
       // 7. Initialize SelfHealingManager
       this.selfHealingManager = new SelfHealingManager(this.taskStore, {
         rootDir: this.config.workingDirectory,
+        recoverCompletedTask: (task) => this.executor.recoverCompletedTask(task),
+        getExecutingTaskIds: () => this.executor.getExecutingTaskIds(),
       });
       this.selfHealingManager.start();
 

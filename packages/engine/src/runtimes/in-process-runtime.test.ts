@@ -4,6 +4,16 @@ import type { Task, TaskStore, CentralCore } from "@fusion/core";
 import { InProcessRuntime } from "./in-process-runtime.js";
 import type { ProjectRuntimeConfig } from "../project-runtime.js";
 
+const {
+  mockSelfHealingStart,
+  mockSelfHealingStop,
+  mockSelfHealingCtor,
+} = vi.hoisted(() => ({
+  mockSelfHealingStart: vi.fn(),
+  mockSelfHealingStop: vi.fn(),
+  mockSelfHealingCtor: vi.fn(),
+}));
+
 // Mock the TaskStore class
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
@@ -50,6 +60,18 @@ vi.mock("../scheduler.js", async () => {
       self.start = vi.fn();
       self.stop = vi.fn();
       return self;
+    }),
+  };
+});
+
+vi.mock("../self-healing.js", async () => {
+  return {
+    SelfHealingManager: vi.fn().mockImplementation((_store, opts) => {
+      mockSelfHealingCtor(opts);
+      return {
+        start: mockSelfHealingStart,
+        stop: mockSelfHealingStop,
+      };
     }),
   };
 });
@@ -109,6 +131,19 @@ describe("InProcessRuntime", () => {
     it("should transition to 'active' after start", async () => {
       await runtime.start();
       expect(runtime.getStatus()).toBe("active");
+    });
+
+    it("passes executor recovery callbacks into SelfHealingManager", async () => {
+      await runtime.start();
+
+      expect(mockSelfHealingCtor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rootDir: "/tmp/test-project",
+          recoverCompletedTask: expect.any(Function),
+          getExecutingTaskIds: expect.any(Function),
+        }),
+      );
+      expect(mockSelfHealingStart).toHaveBeenCalled();
     });
 
     it("should transition to 'stopped' after stop", async () => {
