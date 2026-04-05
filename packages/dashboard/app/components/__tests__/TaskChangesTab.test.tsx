@@ -13,6 +13,7 @@ vi.mock("lucide-react", () => ({
   FileCode: () => null,
   ChevronDown: ({ size }: any) => <span data-testid="chevron-down" />,
   ChevronRight: ({ size }: any) => <span data-testid="chevron-right" />,
+  ChevronLeft: ({ size }: any) => <span data-testid="chevron-left" />,
   AlertCircle: () => null,
   GitCommit: () => null,
 }));
@@ -442,5 +443,178 @@ describe("TaskChangesTab — status-to-class mapping", () => {
 
     const delStat = statSummary?.querySelector(".diff-del");
     expect(delStat).toBeTruthy();
+  });
+});
+
+describe("TaskChangesTab — file navigation", () => {
+  it("renders Previous and Next navigation buttons", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (2)")).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText("Previous file")).toBeTruthy();
+    expect(screen.getByLabelText("Next file")).toBeTruthy();
+  });
+
+  it("shows file position indicator in current/total format", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+  });
+
+  it("disables Previous button on first file", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText("Previous file")).toBeDisabled();
+  });
+
+  it("enables Next button on first file", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText("Next file")).not.toBeDisabled();
+  });
+
+  it("navigates to next file when Next is clicked", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    // Click Next
+    fireEvent.click(screen.getByLabelText("Next file"));
+
+    // Indicator should update to 2/2
+    expect(screen.getByText("2/2")).toBeTruthy();
+  });
+
+  it("disables Next button on last file", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    // Navigate to last file
+    fireEvent.click(screen.getByLabelText("Next file"));
+
+    expect(screen.getByText("2/2")).toBeTruthy();
+    expect(screen.getByLabelText("Next file")).toBeDisabled();
+    expect(screen.getByLabelText("Previous file")).not.toBeDisabled();
+  });
+
+  it("navigates back to previous file when Previous is clicked", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    // Go to next, then back
+    fireEvent.click(screen.getByLabelText("Next file"));
+    expect(screen.getByText("2/2")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Previous file"));
+    expect(screen.getByText("1/2")).toBeTruthy();
+  });
+
+  it("expands only the navigated file", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeTruthy();
+    });
+
+    // Initially only first file expanded
+    expect(container.querySelectorAll(".changes-file-content")).toHaveLength(1);
+
+    // Navigate to second file
+    fireEvent.click(screen.getByLabelText("Next file"));
+
+    // Still only one file expanded (the second one)
+    expect(container.querySelectorAll(".changes-file-content")).toHaveLength(1);
   });
 });

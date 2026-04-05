@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { FileCode, ChevronDown, ChevronRight, AlertCircle, GitCommit } from "lucide-react";
+import { FileCode, ChevronDown, ChevronRight, ChevronLeft, AlertCircle, GitCommit } from "lucide-react";
 import type { MergeDetails, Column } from "@fusion/core";
 import { fetchTaskDiff, type TaskDiff } from "../api";
 import { highlightDiff } from "../utils/highlightDiff";
@@ -49,6 +49,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+  const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null);
 
   const canLoad = column === "in-progress" || column === "in-review" || column === "done";
 
@@ -73,6 +74,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
       setStats(data.stats);
       if (normalized.length > 0) {
         setExpandedFiles(new Set([normalized[0].path]));
+        setCurrentFileIndex(0);
       }
     } catch (err: any) {
       setError(err.message || "Failed to load diff");
@@ -92,10 +94,26 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
         next.delete(filePath);
       } else {
         next.add(filePath);
+        // Update currentFileIndex to the newly expanded file
+        const idx = files.findIndex((f) => f.path === filePath);
+        if (idx !== -1) {
+          setCurrentFileIndex(idx);
+        }
       }
       return next;
     });
   };
+
+  const navigateToFile = (index: number) => {
+    if (index < 0 || index >= files.length) return;
+    const targetPath = files[index].path;
+    // Collapse all files and expand only the target
+    setExpandedFiles(new Set([targetPath]));
+    setCurrentFileIndex(index);
+  };
+
+  const canGoPrev = currentFileIndex !== null && currentFileIndex > 0;
+  const canGoNext = currentFileIndex !== null && currentFileIndex < files.length - 1;
 
   if (loading) {
     return (
@@ -183,13 +201,40 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
             <span className="diff-del">-{stats.deletions}</span>
           </span>
         </h4>
-        <button
-          className="btn btn-sm"
-          onClick={loadDiff}
-          disabled={loading}
-        >
-          Refresh
-        </button>
+        <div className="changes-header-actions">
+          {files.length > 0 && (
+            <div className="changes-nav">
+              <button
+                className="btn btn-sm btn-icon"
+                onClick={() => canGoPrev && navigateToFile(currentFileIndex! - 1)}
+                disabled={!canGoPrev}
+                title="Previous file"
+                aria-label="Previous file"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="changes-nav-indicator" aria-live="polite">
+                {currentFileIndex !== null ? `${currentFileIndex + 1}/${files.length}` : `—/${files.length}`}
+              </span>
+              <button
+                className="btn btn-sm btn-icon"
+                onClick={() => canGoNext && navigateToFile(currentFileIndex! + 1)}
+                disabled={!canGoNext}
+                title="Next file"
+                aria-label="Next file"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+          <button
+            className="btn btn-sm"
+            onClick={loadDiff}
+            disabled={loading}
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="changes-file-list">
