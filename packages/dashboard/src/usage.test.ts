@@ -1476,6 +1476,99 @@ describe("usage", () => {
       expect(sessionWindow!.percentUsed).toBe(67.5);
       expect(sessionWindow!.percentLeft).toBe(32.5);
     });
+
+    it("sets resetAt from reset_at timestamp", async () => {
+      const resetAtTimestamp = Math.floor(Date.now() / 1000) + 2 * 60 * 60; // 2 hours from now in seconds
+      const mockResponse = {
+        rate_limit: {
+          primary_window: {
+            used_percent: 50,
+            reset_at: resetAtTimestamp,
+            limit_window_seconds: 5 * 60 * 60,
+          },
+        },
+      };
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("codex")) {
+          return JSON.stringify({
+            tokens: {
+              access_token: "test-token",
+            },
+          });
+        }
+        throw new Error("File not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const codex = providers.find((p) => p.name === "Codex")!;
+
+      expect(codex.status).toBe("ok");
+      const sessionWindow = codex.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow.resetAt).toBe(new Date(resetAtTimestamp * 1000).toISOString());
+    });
+
+    it("sets resetAt from reset_after_seconds fallback", async () => {
+      const mockResponse = {
+        rate_limit: {
+          primary_window: {
+            used_percent: 50,
+            reset_after_seconds: 7200, // 2 hours
+            limit_window_seconds: 5 * 60 * 60,
+          },
+        },
+      };
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("codex")) {
+          return JSON.stringify({
+            tokens: {
+              access_token: "test-token",
+            },
+          });
+        }
+        throw new Error("File not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const codex = providers.find((p) => p.name === "Codex")!;
+
+      expect(codex.status).toBe("ok");
+      const sessionWindow = codex.windows.find((w) => w.label.includes("Session"))!;
+      expect(sessionWindow.resetAt).toBeDefined();
+      // resetAt should be approximately Date.now() + 7200000
+      const resetAtDate = new Date(sessionWindow.resetAt!);
+      const expectedMs = Date.now() + 7200 * 1000;
+      expect(Math.abs(resetAtDate.getTime() - expectedMs)).toBeLessThan(1000);
+    });
   });
 
   describe("Gemini provider", () => {
@@ -1556,6 +1649,53 @@ describe("usage", () => {
       expect(flashWindow).toBeDefined();
       expect(flashWindow!.percentUsed).toBe(15); // 100 - 85
       expect(flashWindow!.percentLeft).toBe(85);
+    });
+
+    it("sets resetAt from resetTime in bucket data", async () => {
+      const resetTime = new Date(Date.now() + 2 * 60 * 60 * 1000);
+      const mockResponse = {
+        buckets: [
+          {
+            modelId: "gemini-2.0-flash",
+            remainingFraction: 0.85,
+            resetTime: resetTime.toISOString(),
+          },
+        ],
+      };
+
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path.includes("gemini")) {
+          if (path.includes("oauth_creds")) {
+            return JSON.stringify({
+              access_token: "test-token",
+              id_token: "header.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20ifQ.signature",
+            });
+          }
+          throw new Error("File not found");
+        }
+        throw new Error("File not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini")!;
+
+      expect(gemini.status).toBe("ok");
+      const flashWindow = gemini.windows.find((w) => w.label.includes("Flash"))!;
+      expect(flashWindow.resetAt).toBe(new Date(resetTime).toISOString());
     });
 
     it("handles unsupported auth type (api-key)", async () => {
@@ -1840,6 +1980,57 @@ describe("usage", () => {
       expect(minimax.status).toBe("error");
       expect(minimax.error).toContain("Auth expired");
     });
+
+    it("sets resetAt from remains_time", async () => {
+      const remainsTimeMs = 3 * 60 * 60 * 1000; // 3 hours
+      const mockResponse = {
+        model_remains: [
+          {
+            model_name: "MiniMax-M*",
+            current_interval_total_count: 4500,
+            current_interval_usage_count: 4000,
+            remains_time: remainsTimeMs,
+            start_time: Date.now() - 2 * 60 * 60 * 1000,
+            end_time: Date.now() + remainsTimeMs,
+          },
+        ],
+      };
+
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes(".pi/agent/auth.json")) {
+          return JSON.stringify({ minimax: { type: "api_key", key: "test-key" } });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const minimax = providers.find((p) => p.name === "Minimax")!;
+
+      expect(minimax.status).toBe("ok");
+      const modelWindow = minimax.windows.find((w) => w.label === "MiniMax-M*")!;
+      expect(modelWindow.resetAt).toBeDefined();
+      // resetAt should be approximately Date.now() + remainsTimeMs
+      const resetAtDate = new Date(modelWindow.resetAt!);
+      const expectedMs = Date.now() + remainsTimeMs;
+      expect(Math.abs(resetAtDate.getTime() - expectedMs)).toBeLessThan(1000);
+    });
   });
 
   describe("Zai provider", () => {
@@ -2111,6 +2302,114 @@ describe("usage", () => {
 
       expect(zai.status).toBe("error");
       expect(zai.error).toContain("Auth expired");
+    });
+
+    it("sets resetAt from nextResetTime for TOKENS_LIMIT", async () => {
+      const nextReset = Date.now() + 3 * 60 * 60 * 1000;
+      const mockResponse = {
+        code: 200,
+        msg: "Operation successful",
+        data: {
+          limits: [
+            {
+              type: "TOKENS_LIMIT",
+              percentage: 25,
+              nextResetTime: nextReset,
+            },
+          ],
+          level: "max",
+        },
+        success: true,
+      };
+
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes(".pi/agent/auth.json")) {
+          return JSON.stringify({ zai: { type: "api_key", key: "test-api-key" } });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const zai = providers.find((p) => p.name === "Zai")!;
+
+      expect(zai.status).toBe("ok");
+      const sessionWindow = zai.windows.find((w) => w.label === "Session (5h)")!;
+      expect(sessionWindow.resetAt).toBe(new Date(nextReset).toISOString());
+    });
+
+    it("sets resetAt from nextResetTime for TIME_LIMIT", async () => {
+      const nextReset = Date.now() + 25 * 24 * 60 * 60 * 1000;
+      const mockResponse = {
+        code: 200,
+        msg: "Operation successful",
+        data: {
+          limits: [
+            {
+              type: "TOKENS_LIMIT",
+              percentage: 10,
+              nextResetTime: Date.now() + 3 * 60 * 60 * 1000,
+            },
+            {
+              type: "TIME_LIMIT",
+              usage: 4000,
+              currentValue: 100,
+              remaining: 3900,
+              percentage: 2.5,
+              nextResetTime: nextReset,
+            },
+          ],
+          level: "pro",
+        },
+        success: true,
+      };
+
+      mockReadFileSync.mockImplementation((filePath: string) => {
+        if (filePath.includes(".pi/agent/auth.json")) {
+          return JSON.stringify({ zai: { type: "api_key", key: "test-api-key" } });
+        }
+        throw new Error("File not found");
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const zai = providers.find((p) => p.name === "Zai")!;
+
+      expect(zai.status).toBe("ok");
+      const mcpWindow = zai.windows.find((w) => w.label === "MCP Monthly")!;
+      expect(mcpWindow.resetAt).toBe(new Date(nextReset).toISOString());
     });
   });
 

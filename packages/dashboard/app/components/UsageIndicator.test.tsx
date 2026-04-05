@@ -1250,7 +1250,7 @@ describe("UsageIndicator", () => {
     expect(document.querySelector(".usage-window-reset-at")).not.toBeInTheDocument();
   });
 
-  it("Claude weekly window does not show absolute reset time (relative only)", () => {
+  it("Claude weekly window shows absolute reset time when resetAt is provided", () => {
     const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
     mockUseUsageData.mockReturnValue({
       providers: [
@@ -1280,8 +1280,8 @@ describe("UsageIndicator", () => {
 
     // Relative reset text should be present
     expect(screen.getByText("resets in 3d")).toBeInTheDocument();
-    // Claude weekly windows intentionally suppress the absolute timestamp
-    expect(document.querySelector(".usage-window-reset-at")).not.toBeInTheDocument();
+    // All windows now show the absolute timestamp when resetAt is available
+    expect(document.querySelector(".usage-window-reset-at")).toBeInTheDocument();
   });
 
   it("Claude 5h session row shows both relative reset text and absolute reset time", () => {
@@ -1330,10 +1330,9 @@ describe("UsageIndicator", () => {
     expect(screen.getByText("resets in 2h")).toBeInTheDocument();
     expect(screen.getByText("resets in 5d")).toBeInTheDocument();
 
-    // Only the Session row should show the absolute reset time;
-    // the Weekly row intentionally suppresses it (relative-only for Claude weekly).
+    // Both rows show the absolute reset time (no more suppression for Claude weekly)
     const resetAtElements = document.querySelectorAll(".usage-window-reset-at");
-    expect(resetAtElements.length).toBe(1);
+    expect(resetAtElements.length).toBe(2);
 
     // Session row should show the absolute time formatted for today (just time like "2:30 PM")
     const sessionResetAtEl = resetAtElements[0];
@@ -1439,7 +1438,7 @@ describe("UsageIndicator", () => {
     expect(screen.getByText("resets in 6h")).toBeInTheDocument();
   });
 
-  it("Claude weekly variant labels also suppress absolute reset time", () => {
+  it("Claude weekly variant labels show absolute reset time when resetAt is provided", () => {
     const resetAt = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
     mockUseUsageData.mockReturnValue({
       providers: [
@@ -1479,11 +1478,11 @@ describe("UsageIndicator", () => {
     const resetTexts = screen.getAllByText("resets in 4d");
     expect(resetTexts.length).toBe(2);
 
-    // Neither weekly variant should show absolute timestamp
-    expect(document.querySelectorAll(".usage-window-reset-at").length).toBe(0);
+    // Both weekly variants now show absolute timestamp
+    expect(document.querySelectorAll(".usage-window-reset-at").length).toBe(2);
   });
 
-  it("Anthropic provider name also suppresses weekly absolute reset time", () => {
+  it("Anthropic provider name shows absolute reset time for weekly windows", () => {
     const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
     mockUseUsageData.mockReturnValue({
       providers: [
@@ -1512,8 +1511,8 @@ describe("UsageIndicator", () => {
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
 
     expect(screen.getByText("resets in 3d")).toBeInTheDocument();
-    // "Anthropic" is treated as a Claude provider — weekly should suppress absolute time
-    expect(document.querySelector(".usage-window-reset-at")).not.toBeInTheDocument();
+    // All providers now show the absolute reset time for all windows
+    expect(document.querySelector(".usage-window-reset-at")).toBeInTheDocument();
   });
 
   it("non-Claude weekly windows still show absolute reset time when provided", () => {
@@ -1705,7 +1704,7 @@ describe("UsageIndicator", () => {
     expect(document.querySelector(".usage-window-reset")).not.toBeInTheDocument();
   });
 
-  it("Claude session window does not generate fallback text (only weekly)", () => {
+  it("Claude session window generates fallback reset text from resetAt", () => {
     const resetAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
     mockUseUsageData.mockReturnValue({
       providers: [
@@ -1733,7 +1732,7 @@ describe("UsageIndicator", () => {
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} />);
 
-    // Session window should NOT get the weekly fallback treatment
-    expect(document.querySelector(".usage-window-reset")).not.toBeInTheDocument();
+    // All windows now get fallback text generation when resetText is null but resetAt exists
+    expect(document.querySelector(".usage-window-reset")).toBeInTheDocument();
   });
 });

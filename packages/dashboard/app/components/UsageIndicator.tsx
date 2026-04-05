@@ -70,22 +70,6 @@ interface UsageWindowRowProps {
 }
 
 /**
- * Determine whether a usage window is a Claude weekly window.
- *
- * Claude weekly windows (e.g. "Weekly", "Weekly (Sonnet)", "Weekly (Opus)")
- * intentionally suppress the absolute reset timestamp display because the
- * relative text ("resets in 3d") already provides the most useful information
- * for weekly quota planning. Session windows (e.g. "Session (5h)") and
- * non-Claude providers continue to show the absolute timestamp when available.
- */
-function isClaudeWeeklyWindow(providerName: string, windowLabel: string): boolean {
-  const normalizedProvider = providerName.toLowerCase();
-  const isClaudeProvider = normalizedProvider.includes("claude") || normalizedProvider.includes("anthropic");
-  const isWeeklyWindow = windowLabel.toLowerCase().startsWith("weekly");
-  return isClaudeProvider && isWeeklyWindow;
-}
-
-/**
  * Single usage window row with progress bar
  */
 function UsageWindowRow({ window, viewMode, providerName }: UsageWindowRowProps) {
@@ -98,10 +82,9 @@ function UsageWindowRow({ window, viewMode, providerName }: UsageWindowRowProps)
   const headerText = isRemainingMode ? `${Math.round(window.percentLeft)}% remaining` : `${Math.round(window.percentUsed)}% used`;
   const footerText = isRemainingMode ? `${Math.round(window.percentUsed)}% used` : `${Math.round(window.percentLeft)}% left`;
 
-  // If resetText is null but resetAt exists (and this is a Claude weekly window),
-  // generate relative text from resetAt as a fallback
+  // If resetText is null but resetAt exists, generate relative text from resetAt as a fallback
   let displayResetText = window.resetText;
-  if (!displayResetText && window.resetAt && isClaudeWeeklyWindow(providerName, window.label)) {
+  if (!displayResetText && window.resetAt) {
     const msLeft = new Date(window.resetAt).getTime() - Date.now();
     if (msLeft > 0) {
       const hours = Math.floor(msLeft / (60 * 60 * 1000));
@@ -173,10 +156,8 @@ function UsageWindowRow({ window, viewMode, providerName }: UsageWindowRowProps)
           {displayResetText && (
             <span className="usage-window-reset">{displayResetText}</span>
           )}
-          {/* Absolute reset timestamp: shown for session windows and non-Claude providers.
-              Claude weekly windows intentionally suppress this — the relative "resets in Xd"
-              text is more useful for weekly quota planning than an exact calendar timestamp. */}
-          {window.resetAt && !isClaudeWeeklyWindow(providerName, window.label) && (
+          {/* Absolute reset timestamp: shown for all windows when resetAt is available. */}
+          {window.resetAt && (
             <span className="usage-window-reset-at">
               {formatResetAt(window.resetAt)}
             </span>

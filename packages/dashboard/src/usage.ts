@@ -948,13 +948,16 @@ async function fetchCodexUsage(): Promise<ProviderUsage> {
         ? win.limit_window_seconds * 1000
         : undefined;
 
+      let resetAt: string | undefined;
       if (win.reset_at) {
         const msLeft = win.reset_at * 1000 - Date.now();
         resetMs = msLeft > 0 ? msLeft : 0;
         resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
+        resetAt = new Date(win.reset_at * 1000).toISOString();
       } else if (win.reset_after_seconds) {
         resetMs = win.reset_after_seconds * 1000;
         resetText = `resets in ${formatDuration(resetMs)}`;
+        resetAt = new Date(Date.now() + resetMs).toISOString();
       }
       return {
         label,
@@ -963,6 +966,7 @@ async function fetchCodexUsage(): Promise<ProviderUsage> {
         resetText,
         windowDurationMs,
         resetMs,
+        resetAt,
       };
     };
 
@@ -1056,7 +1060,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
     const buckets: any[] = data.buckets || [];
     if (Array.isArray(buckets) && buckets.length > 0) {
       // Group by model family, pick lowest remainingFraction per family
-      const modelGroups = new Map<string, { pctLeft: number; resetText: string | null; resetMs: number | undefined; models: string[] }>();
+      const modelGroups = new Map<string, { pctLeft: number; resetText: string | null; resetMs: number | undefined; resetAt: string | undefined; models: string[] }>();
 
       for (const b of buckets) {
         const modelId: string = b.modelId || "unknown";
@@ -1065,10 +1069,12 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
 
         let resetText: string | null = null;
         let resetMs: number | undefined;
+        let resetAt: string | undefined;
         if (b.resetTime) {
           const msLeft = new Date(b.resetTime).getTime() - Date.now();
           resetMs = msLeft > 0 ? msLeft : 0;
           resetText = msLeft > 0 ? `resets in ${formatDuration(msLeft)}` : "resetting now";
+          resetAt = new Date(b.resetTime).toISOString();
         }
 
         // Skip _vertex duplicates, classify by family
@@ -1086,6 +1092,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
             pctLeft,
             resetText,
             resetMs,
+            resetAt,
             models: existing ? [...existing.models, modelId] : [modelId],
           });
         } else {
@@ -1103,6 +1110,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
           percentLeft: Math.min(100, Math.max(0, info.pctLeft)),
           resetText: info.resetText,
           resetMs: info.resetMs,
+          resetAt: info.resetAt,
           windowDurationMs: DAILY_WINDOW_MS,
         });
       }
@@ -1174,9 +1182,11 @@ async function fetchMinimaxUsage(): Promise<ProviderUsage> {
         let windowDurationMs: number | undefined;
 
         const remainsTime: number = model.remains_time;
+        let resetAt: string | undefined;
         if (remainsTime && remainsTime > 0) {
           resetMs = remainsTime;
           resetText = `resets in ${formatDuration(remainsTime)}`;
+          resetAt = new Date(Date.now() + remainsTime).toISOString();
         }
 
         const startTime: number = model.start_time;
@@ -1193,6 +1203,7 @@ async function fetchMinimaxUsage(): Promise<ProviderUsage> {
             percentLeft: Math.min(100, Math.max(0, 100 - percentUsed)),
             resetText,
             resetMs,
+            resetAt,
             windowDurationMs,
           });
         }
@@ -1270,11 +1281,13 @@ async function fetchZaiUsage(): Promise<ProviderUsage> {
       let resetText: string | null = null;
       let resetMs: number | undefined;
       let windowDurationMs: number | undefined;
+      let resetAt: string | undefined;
 
       const nextResetTime: number | undefined = tokensLimit.nextResetTime;
       if (nextResetTime) {
         resetMs = Math.max(0, nextResetTime - Date.now());
         resetText = resetMs > 0 ? `resets in ${formatDuration(resetMs)}` : "resetting now";
+        resetAt = new Date(nextResetTime).toISOString();
         // 5-hour window
         windowDurationMs = 5 * 60 * 60 * 1000;
       }
@@ -1285,6 +1298,7 @@ async function fetchZaiUsage(): Promise<ProviderUsage> {
         percentLeft: Math.min(100, Math.max(0, 100 - percentage)),
         resetText,
         resetMs,
+        resetAt,
         windowDurationMs,
       });
     }
@@ -1299,11 +1313,13 @@ async function fetchZaiUsage(): Promise<ProviderUsage> {
 
       let resetText: string | null = null;
       let resetMs: number | undefined;
+      let resetAt2: string | undefined;
 
       const nextResetTime: number | undefined = timeLimit.nextResetTime;
       if (nextResetTime) {
         resetMs = Math.max(0, nextResetTime - Date.now());
         resetText = resetMs > 0 ? `resets in ${formatDuration(resetMs)}` : "resetting now";
+        resetAt2 = new Date(nextResetTime).toISOString();
       }
 
       usage.windows.push({
@@ -1312,6 +1328,7 @@ async function fetchZaiUsage(): Promise<ProviderUsage> {
         percentLeft: Math.min(100, Math.max(0, 100 - percentage)),
         resetText,
         resetMs,
+        resetAt: resetAt2,
         windowDurationMs: 30 * 24 * 60 * 60 * 1000,
       });
     }
