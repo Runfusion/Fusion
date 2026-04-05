@@ -887,9 +887,13 @@ function LogsTab({
             </p>
           </div>
         ) : (
-          logs.map((entry, i) => (
-            <LogEntry key={`${entry.timestamp}-${i}`} entry={entry} />
-          ))
+          logs.map((entry, i) => {
+            const prevEntry = i > 0 ? logs[i - 1] : undefined;
+            const showTimestamp = !prevEntry || prevEntry.agent !== entry.agent;
+            return (
+              <LogEntry key={`${entry.timestamp}-${i}`} entry={entry} showTimestamp={showTimestamp} />
+            );
+          })
         )}
       </div>
 
@@ -962,7 +966,7 @@ function LogsTab({
   );
 }
 
-function LogEntry({ entry }: { entry: AgentLogEntry }) {
+function LogEntry({ entry, showTimestamp }: { entry: AgentLogEntry; showTimestamp: boolean }) {
   const getEntryStyles = () => {
     switch (entry.type) {
       case "tool":
@@ -1001,7 +1005,9 @@ function LogEntry({ entry }: { entry: AgentLogEntry }) {
 
   return (
     <div className="log-entry" style={styles}>
-      <span className="log-timestamp">[{timestamp}]</span>
+      {showTimestamp && (
+        <span className="log-timestamp">[{timestamp}]</span>
+      )}
       {entry.agent && (
         <span className="log-agent">[{entry.agent}]</span>
       )}
