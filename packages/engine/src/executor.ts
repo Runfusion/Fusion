@@ -1450,10 +1450,11 @@ export class TaskExecutor {
     for (const wsId of workflowStepIds) {
       const ws = await this.store.getWorkflowStep(wsId);
       if (!ws) {
-        await this.store.logEntry(task.id, `Workflow step ${wsId} not found — skipping`);
+        await this.store.logEntry(task.id, `[pre-merge] Workflow step ${wsId} not found — skipping`);
         results.push({
           workflowStepId: wsId,
           workflowStepName: "Unknown",
+          phase: "pre-merge",
           status: "skipped",
           output: "Workflow step definition not found",
         });
@@ -1461,15 +1462,22 @@ export class TaskExecutor {
         continue;
       }
 
+      // Normalize legacy steps: undefined phase → "pre-merge"
+      const stepPhase = ws.phase || "pre-merge";
+
+      // Skip post-merge steps — those run in the merger after merge
+      if (stepPhase === "post-merge") continue;
+
       // Normalize legacy steps without mode to prompt-mode
       const stepMode: "prompt" | "script" = ws.mode || "prompt";
 
       // Skip validation per mode
       if (stepMode === "prompt" && !ws.prompt?.trim()) {
-        await this.store.logEntry(task.id, `Workflow step '${ws.name}' has no prompt — skipping`);
+        await this.store.logEntry(task.id, `[pre-merge] Workflow step '${ws.name}' has no prompt — skipping`);
         results.push({
           workflowStepId: ws.id,
           workflowStepName: ws.name,
+          phase: stepPhase,
           status: "skipped",
           output: "No prompt configured for this workflow step",
         });
@@ -1478,10 +1486,11 @@ export class TaskExecutor {
       }
 
       if (stepMode === "script" && !ws.scriptName?.trim()) {
-        await this.store.logEntry(task.id, `Workflow step '${ws.name}' has no scriptName — skipping`);
+        await this.store.logEntry(task.id, `[pre-merge] Workflow step '${ws.name}' has no scriptName — skipping`);
         results.push({
           workflowStepId: ws.id,
           workflowStepName: ws.name,
+          phase: stepPhase,
           status: "skipped",
           output: "No scriptName configured for this workflow step",
         });
@@ -1489,8 +1498,8 @@ export class TaskExecutor {
         continue;
       }
 
-      await this.store.logEntry(task.id, `Starting workflow step: ${ws.name} (${stepMode} mode)`);
-      executorLog.log(`${task.id} — running workflow step: ${ws.name} (${stepMode} mode)`);
+      await this.store.logEntry(task.id, `[pre-merge] Starting workflow step: ${ws.name} (${stepMode} mode)`);
+      executorLog.log(`${task.id} — [pre-merge] running workflow step: ${ws.name} (${stepMode} mode)`);
 
       const startedAt = new Date().toISOString();
 
@@ -1501,11 +1510,12 @@ export class TaskExecutor {
         const completedAt = new Date().toISOString();
 
         if (result.success) {
-          await this.store.logEntry(task.id, `Workflow step completed: ${ws.name}`);
-          executorLog.log(`${task.id} — workflow step passed: ${ws.name}`);
+          await this.store.logEntry(task.id, `[pre-merge] Workflow step completed: ${ws.name}`);
+          executorLog.log(`${task.id} — [pre-merge] workflow step passed: ${ws.name}`);
           results.push({
             workflowStepId: ws.id,
             workflowStepName: ws.name,
+            phase: stepPhase,
             status: "passed",
             output: result.output,
             startedAt,
@@ -1515,13 +1525,14 @@ export class TaskExecutor {
         } else {
           await this.store.logEntry(
             task.id,
-            `Workflow step failed: ${ws.name}`,
+            `[pre-merge] Workflow step failed: ${ws.name}`,
             result.error || "Unknown error",
           );
-          executorLog.error(`${task.id} — workflow step failed: ${ws.name} — ${result.error}`);
+          executorLog.error(`${task.id} — [pre-merge] workflow step failed: ${ws.name} — ${result.error}`);
           results.push({
             workflowStepId: ws.id,
             workflowStepName: ws.name,
+            phase: stepPhase,
             status: "failed",
             output: result.error || "Workflow step failed",
             startedAt,
@@ -1534,13 +1545,14 @@ export class TaskExecutor {
         const completedAt = new Date().toISOString();
         await this.store.logEntry(
           task.id,
-          `Workflow step failed: ${ws.name}`,
+          `[pre-merge] Workflow step failed: ${ws.name}`,
           err.message || "Unknown error",
         );
-        executorLog.error(`${task.id} — workflow step error: ${ws.name} — ${err.message}`);
+        executorLog.error(`${task.id} — [pre-merge] workflow step error: ${ws.name} — ${err.message}`);
         results.push({
           workflowStepId: ws.id,
           workflowStepName: ws.name,
+          phase: stepPhase,
           status: "failed",
           output: err.message || "Workflow step error",
           startedAt,

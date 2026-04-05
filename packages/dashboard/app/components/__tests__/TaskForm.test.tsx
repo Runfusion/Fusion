@@ -738,4 +738,32 @@ describe("TaskForm workflow step reordering (FN-836)", () => {
 
     expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001", "WS-003"]);
   });
+
+  it("shows phase badge for workflow steps with phase info", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", phase: "pre-merge", enabled: true, createdAt: "", updatedAt: "" },
+      { id: "WS-002", name: "Post-merge Notify", description: "Notify team", prompt: "Notify", phase: "post-merge", enabled: true, createdAt: "", updatedAt: "" },
+    ]);
+
+    renderTaskForm({ selectedWorkflowSteps: [] });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-step-phase-WS-001")).toHaveTextContent("Pre-merge");
+      expect(screen.getByTestId("workflow-step-phase-WS-002")).toHaveTextContent("Post-merge");
+    });
+  });
+
+  it("shows Pre-merge phase badge for legacy steps without phase", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { id: "WS-001", name: "Legacy Check", description: "No phase field", prompt: "Check", enabled: true, createdAt: "", updatedAt: "" },
+    ]);
+
+    renderTaskForm({ selectedWorkflowSteps: [] });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workflow-step-phase-WS-001")).toHaveTextContent("Pre-merge");
+    });
+  });
 });

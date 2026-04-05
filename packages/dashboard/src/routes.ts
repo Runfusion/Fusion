@@ -5988,7 +5988,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/workflow-steps", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const { name, description, mode, prompt, scriptName, enabled, modelProvider, modelId } = req.body;
+      const { name, description, mode, phase, prompt, scriptName, enabled, modelProvider, modelId } = req.body;
 
       if (!name || typeof name !== "string" || !name.trim()) {
         res.status(400).json({ error: "name is required" });
@@ -6003,6 +6003,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const resolvedMode: "prompt" | "script" = mode || "prompt";
       if (resolvedMode !== "prompt" && resolvedMode !== "script") {
         res.status(400).json({ error: "mode must be 'prompt' or 'script'" });
+        return;
+      }
+
+      // Validate phase
+      if (phase !== undefined && phase !== "pre-merge" && phase !== "post-merge") {
+        res.status(400).json({ error: "phase must be 'pre-merge' or 'post-merge'" });
         return;
       }
 
@@ -6047,6 +6053,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         name: name.trim(),
         description: description.trim(),
         mode: resolvedMode,
+        phase,
         prompt: prompt?.trim(),
         scriptName: scriptName?.trim(),
         enabled,
@@ -6069,7 +6076,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.patch("/workflow-steps/:id", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const { name, description, mode, prompt, scriptName, enabled, modelProvider, modelId } = req.body;
+      const { name, description, mode, phase, prompt, scriptName, enabled, modelProvider, modelId } = req.body;
 
       const updates: Record<string, unknown> = {};
       if (name !== undefined) {
@@ -6092,6 +6099,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           return;
         }
         updates.mode = mode;
+      }
+      if (phase !== undefined) {
+        if (phase !== "pre-merge" && phase !== "post-merge") {
+          res.status(400).json({ error: "phase must be 'pre-merge' or 'post-merge'" });
+          return;
+        }
+        updates.phase = phase;
       }
       if (prompt !== undefined) {
         if (typeof prompt !== "string") {

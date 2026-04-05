@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { WorkflowStep, WorkflowStepInput, WorkflowStepMode } from "@fusion/core";
+import type { WorkflowStep, WorkflowStepInput, WorkflowStepMode, WorkflowStepPhase } from "@fusion/core";
 import {
   fetchWorkflowSteps,
   createWorkflowStep,
@@ -45,6 +45,7 @@ interface StepFormData {
   name: string;
   description: string;
   mode: WorkflowStepMode;
+  phase: WorkflowStepPhase;
   prompt: string;
   scriptName: string;
   enabled: boolean;
@@ -58,6 +59,7 @@ const EMPTY_FORM: StepFormData = {
   name: "",
   description: "",
   mode: "prompt",
+  phase: "pre-merge" as WorkflowStepPhase,
   prompt: "",
   scriptName: "",
   enabled: true,
@@ -188,6 +190,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
       name: step.name,
       description: step.description,
       mode: step.mode || "prompt",
+      phase: step.phase || "pre-merge",
       prompt: step.prompt,
       scriptName: step.scriptName || "",
       enabled: step.enabled,
@@ -222,6 +225,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           name: form.name.trim(),
           description: form.description.trim(),
           mode: form.mode,
+          phase: form.phase,
           prompt: form.mode === "prompt" ? (form.prompt.trim() || undefined) : undefined,
           scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
@@ -234,6 +238,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           name: form.name.trim(),
           description: form.description.trim(),
           mode: form.mode,
+          phase: form.phase,
           prompt: form.mode === "prompt" ? form.prompt : "",
           scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
@@ -421,6 +426,9 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                                 <span className={`wfm-badge ${(step.mode || "prompt") === "script" ? "wfm-badge-script" : "wfm-badge-prompt"}`}>
                                   {(step.mode || "prompt") === "script" ? "Script" : "AI Prompt"}
                                 </span>
+                                <span className={`wfm-badge ${(step.phase || "pre-merge") === "post-merge" ? "wfm-badge-post-merge" : "wfm-badge-pre-merge"}`}>
+                                  {(step.phase || "pre-merge") === "post-merge" ? "Post-merge" : "Pre-merge"}
+                                </span>
                               </div>
                               <div className="wfm-step-card-desc">
                                 {step.description}
@@ -601,6 +609,32 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                           <Terminal size={14} />
                           Run Script
                         </button>
+                      </div>
+                    </div>
+
+                    {/* Phase Selector */}
+                    <div className="wfm-field">
+                      <label>Execution Phase</label>
+                      <div className="wfm-mode-selector" data-testid="workflow-step-phase-selector">
+                        <button
+                          className={`btn ${form.phase === "pre-merge" ? "btn-primary" : "btn-secondary"} wfm-mode-btn`}
+                          onClick={() => setForm((prev) => ({ ...prev, phase: "pre-merge" }))}
+                          data-testid="phase-pre-merge"
+                        >
+                          Pre-merge
+                        </button>
+                        <button
+                          className={`btn ${form.phase === "post-merge" ? "btn-primary" : "btn-secondary"} wfm-mode-btn`}
+                          onClick={() => setForm((prev) => ({ ...prev, phase: "post-merge" }))}
+                          data-testid="phase-post-merge"
+                        >
+                          Post-merge
+                        </button>
+                      </div>
+                      <div className="wfm-field-hint">
+                        {form.phase === "pre-merge"
+                          ? "Runs before merge — can block merge on failure"
+                          : "Runs after merge success — failures are logged but do not block"}
                       </div>
                     </div>
 

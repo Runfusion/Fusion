@@ -4871,6 +4871,81 @@ Task with acceptance criteria
 
       expect(task.enabledWorkflowSteps).toEqual(["WS-001", "WS-002"]);
     });
+
+    // ── Workflow Step Phase ──────────────────────────────────────────────
+
+    it("should default phase to 'pre-merge' when creating a workflow step", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Pre-merge Check",
+        description: "Runs before merge",
+      });
+
+      expect(ws.phase).toBe("pre-merge");
+    });
+
+    it("should create a workflow step with explicit 'post-merge' phase", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Post-merge Notify",
+        description: "Runs after merge",
+        phase: "post-merge",
+      });
+
+      expect(ws.phase).toBe("post-merge");
+    });
+
+    it("should create a workflow step with explicit 'pre-merge' phase", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Pre-merge Gate",
+        description: "Runs before merge",
+        phase: "pre-merge",
+      });
+
+      expect(ws.phase).toBe("pre-merge");
+    });
+
+    it("should update a workflow step phase from pre-merge to post-merge", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Phase Switch",
+        description: "Will switch phase",
+      });
+
+      expect(ws.phase).toBe("pre-merge");
+
+      const updated = await store.updateWorkflowStep(ws.id, { phase: "post-merge" });
+      expect(updated.phase).toBe("post-merge");
+    });
+
+    it("should persist phase across list/get", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Phase Persist",
+        description: "Check phase persistence",
+        phase: "post-merge",
+      });
+
+      const listed = await store.listWorkflowSteps();
+      expect(listed[0].phase).toBe("post-merge");
+
+      const found = await store.getWorkflowStep(ws.id);
+      expect(found!.phase).toBe("post-merge");
+    });
+
+    it("should normalize legacy workflow steps without phase to pre-merge", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Legacy Step",
+        description: "Pre-existing step",
+        prompt: "Review the code.",
+      });
+
+      // Simulate legacy data by removing phase from the stored step
+      const config = await (store as any).readConfig();
+      delete config.workflowSteps[0].phase;
+      await (store as any).writeConfig(config);
+
+      // Re-read: phase should be undefined (legacy), but when used by engine
+      // it should be treated as "pre-merge"
+      const found = await store.getWorkflowStep(ws.id);
+      expect(found!.phase).toBeUndefined();
+    });
   });
 
   // ── Title Summarization Tests ────────────────────────────────────────────

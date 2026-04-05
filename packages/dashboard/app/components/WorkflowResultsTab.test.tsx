@@ -8,6 +8,7 @@ describe("WorkflowResultsTab", () => {
     {
       workflowStepId: "WS-001",
       workflowStepName: "QA Check",
+      phase: "pre-merge",
       status: "passed",
       output: "All tests passed successfully.",
       startedAt: "2026-03-31T10:00:00Z",
@@ -16,6 +17,7 @@ describe("WorkflowResultsTab", () => {
     {
       workflowStepId: "WS-002",
       workflowStepName: "Security Audit",
+      phase: "pre-merge",
       status: "failed",
       output: "Found 2 security issues in auth.ts",
       startedAt: "2026-03-31T10:02:35Z",
@@ -24,6 +26,7 @@ describe("WorkflowResultsTab", () => {
     {
       workflowStepId: "WS-003",
       workflowStepName: "Documentation Review",
+      phase: "post-merge",
       status: "skipped",
       output: undefined,
       startedAt: undefined,
@@ -32,6 +35,7 @@ describe("WorkflowResultsTab", () => {
     {
       workflowStepId: "WS-004",
       workflowStepName: "Performance Check",
+      phase: "post-merge",
       status: "pending",
       output: undefined,
       startedAt: "2026-03-31T10:03:20Z",
@@ -125,6 +129,7 @@ describe("WorkflowResultsTab", () => {
       {
         workflowStepId: "WS-005",
         workflowStepName: "Simple Check",
+        phase: "pre-merge",
         status: "passed",
         output: "Done",
       },
@@ -134,5 +139,32 @@ describe("WorkflowResultsTab", () => {
 
     expect(screen.getByText("Simple Check")).toBeInTheDocument();
     // Should not crash without timestamps
+  });
+
+  it("displays phase badges for each result", () => {
+    render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+    // Pre-merge results (WS-001, WS-002)
+    expect(screen.getByTestId("workflow-result-phase-WS-001")).toHaveTextContent("Pre-merge");
+    expect(screen.getByTestId("workflow-result-phase-WS-002")).toHaveTextContent("Pre-merge");
+
+    // Post-merge results (WS-003, WS-004)
+    expect(screen.getByTestId("workflow-result-phase-WS-003")).toHaveTextContent("Post-merge");
+    expect(screen.getByTestId("workflow-result-phase-WS-004")).toHaveTextContent("Post-merge");
+  });
+
+  it("defaults to Pre-merge phase badge when phase is undefined", () => {
+    const resultsWithoutPhase: WorkflowStepResult[] = [
+      {
+        workflowStepId: "WS-005",
+        workflowStepName: "Legacy Check",
+        status: "passed",
+        output: "Done",
+      },
+    ];
+
+    render(<WorkflowResultsTab taskId="FN-001" results={resultsWithoutPhase} />);
+
+    expect(screen.getByTestId("workflow-result-phase-WS-005")).toHaveTextContent("Pre-merge");
   });
 });

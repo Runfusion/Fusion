@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { getTaskMergeBlocker, type TaskStore, type MergeResult } from "@fusion/core";
-import { createKbAgent, promptWithFallback } from "./pi.js";
+import { getTaskMergeBlocker, type TaskStore, type MergeResult, type WorkflowStep, type WorkflowStepResult, type Settings } from "@fusion/core";
+import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
 import { mergerLog } from "./logger.js";
@@ -823,7 +823,15 @@ export async function aiMergeTask(
     }
   }
 
-  // 8. Move task to done
+  // 8. Run post-merge workflow steps (failures logged but do not block completion)
+  try {
+    await runPostMergeWorkflowSteps(store, taskId, rootDir, settings);
+  } catch (err: any) {
+    mergerLog.error(`${taskId}: post-merge workflow steps error: ${err.message}`);
+    // Non-fatal — task still moves to done
+  }
+
+  // 9. Move task to done
   await completeTask(store, taskId, result);
   return result;
 }
@@ -1367,6 +1375,234 @@ function buildMergePrompt(params: MergePromptParams): string {
   }
 
   return parts.join("\n");
+}
+
+/**
+ * Run post-merge workflow steps for a task after the merge succeeds.
+ * These steps run in the root directory (after merge, worktree may be cleaned up).
+ * Failures are logged but do NOT block task completion — the merge is already committed.
+ */
+async function runPostMergeWorkflowSteps(
+  store: TaskStore,
+  taskId: string,
+  rootDir: string,
+  settings: Settings,
+): Promise<void> {
+  const task = await store.getTask(taskId);
+  if (!task.enabledWorkflowSteps?.length) return;
+
+  // Get existing pre-merge results to append to
+  const existingResults: WorkflowStepResult[] = task.workflowStepResults || [];
+
+  for (const wsId of task.enabledWorkflowSteps) {
+    const ws = await store.getWorkflowStep(wsId);
+    if (!ws) {
+      mergerLog.log(`${taskId}: [post-merge] workflow step ${wsId} not found — skipping`);
+      continue;
+    }
+
+    // Normalize legacy steps: undefined phase → "pre-merge"
+    const stepPhase = ws.phase || "pre-merge";
+
+    // Only run post-merge steps here
+    if (stepPhase !== "post-merge") continue;
+
+    // Normalize legacy steps without mode to prompt-mode
+    const stepMode: "prompt" | "script" = ws.mode || "prompt";
+
+    // Skip validation per mode
+    if (stepMode === "prompt" && !ws.prompt?.trim()) {
+      await store.logEntry(taskId, `[post-merge] Workflow step '${ws.name}' has no prompt — skipping`);
+      existingResults.push({
+        workflowStepId: ws.id,
+        workflowStepName: ws.name,
+        phase: "post-merge",
+        status: "skipped",
+        output: "No prompt configured for this workflow step",
+      });
+      await store.updateTask(taskId, { workflowStepResults: existingResults });
+      continue;
+    }
+
+    if (stepMode === "script" && !ws.scriptName?.trim()) {
+      await store.logEntry(taskId, `[post-merge] Workflow step '${ws.name}' has no scriptName — skipping`);
+      existingResults.push({
+        workflowStepId: ws.id,
+        workflowStepName: ws.name,
+        phase: "post-merge",
+        status: "skipped",
+        output: "No scriptName configured for this workflow step",
+      });
+      await store.updateTask(taskId, { workflowStepResults: existingResults });
+      continue;
+    }
+
+    await store.logEntry(taskId, `[post-merge] Starting workflow step: ${ws.name} (${stepMode} mode)`);
+    mergerLog.log(`${taskId}: [post-merge] running workflow step: ${ws.name} (${stepMode} mode)`);
+
+    const startedAt = new Date().toISOString();
+
+    try {
+      const result = stepMode === "script"
+        ? await executePostMergeScriptStep(store, taskId, ws, rootDir, settings)
+        : await executePostMergePromptStep(store, taskId, ws, rootDir, settings);
+      const completedAt = new Date().toISOString();
+
+      if (result.success) {
+        await store.logEntry(taskId, `[post-merge] Workflow step completed: ${ws.name}`);
+        mergerLog.log(`${taskId}: [post-merge] workflow step passed: ${ws.name}`);
+        existingResults.push({
+          workflowStepId: ws.id,
+          workflowStepName: ws.name,
+          phase: "post-merge",
+          status: "passed",
+          output: result.output,
+          startedAt,
+          completedAt,
+        });
+      } else {
+        // Post-merge failures are logged but do NOT block task completion
+        await store.logEntry(taskId, `[post-merge] Workflow step failed: ${ws.name}`, result.error || "Unknown error");
+        mergerLog.error(`${taskId}: [post-merge] workflow step failed: ${ws.name} — ${result.error}`);
+        existingResults.push({
+          workflowStepId: ws.id,
+          workflowStepName: ws.name,
+          phase: "post-merge",
+          status: "failed",
+          output: result.error || "Workflow step failed",
+          startedAt,
+          completedAt,
+        });
+      }
+    } catch (err: any) {
+      const completedAt = new Date().toISOString();
+      await store.logEntry(taskId, `[post-merge] Workflow step error: ${ws.name}`, err.message || "Unknown error");
+      mergerLog.error(`${taskId}: [post-merge] workflow step error: ${ws.name} — ${err.message}`);
+      existingResults.push({
+        workflowStepId: ws.id,
+        workflowStepName: ws.name,
+        phase: "post-merge",
+        status: "failed",
+        output: err.message || "Workflow step error",
+        startedAt,
+        completedAt,
+      });
+    }
+
+    // Save results after each step (partial results preserved on crash)
+    await store.updateTask(taskId, { workflowStepResults: existingResults });
+  }
+}
+
+/** Execute a script-mode post-merge workflow step */
+async function executePostMergeScriptStep(
+  store: TaskStore,
+  taskId: string,
+  workflowStep: WorkflowStep,
+  rootDir: string,
+  settings: Settings,
+): Promise<{ success: boolean; output?: string; error?: string }> {
+  const scriptName = workflowStep.scriptName!.trim();
+  const scripts = settings.scripts || {};
+  const scriptCommand = scripts[scriptName];
+
+  if (!scriptCommand) {
+    return { success: false, error: `Script '${scriptName}' not found in project settings` };
+  }
+
+  try {
+    const output = execSync(scriptCommand, {
+      cwd: rootDir,
+      encoding: "utf-8",
+      timeout: 120_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return { success: true, output: output.trim() };
+  } catch (err: any) {
+    const stderr = err.stderr?.toString()?.trim() || "";
+    const stdout = err.stdout?.toString()?.trim() || "";
+    const exitCode = err.status;
+    const parts: string[] = [];
+    if (exitCode !== undefined) parts.push(`Exit code: ${exitCode}`);
+    if (stdout) parts.push(`stdout: ${stdout}`);
+    if (stderr) parts.push(`stderr: ${stderr}`);
+    if (!parts.length) parts.push(err.message || "Unknown error");
+    return { success: false, error: parts.join("\n") };
+  }
+}
+
+/** Execute a prompt-mode post-merge workflow step using AI agent */
+async function executePostMergePromptStep(
+  store: TaskStore,
+  taskId: string,
+  workflowStep: WorkflowStep,
+  rootDir: string,
+  settings: Settings,
+): Promise<{ success: boolean; output?: string; error?: string }> {
+  const systemPrompt = `You are a post-merge workflow step agent executing: ${workflowStep.name}
+
+Task Context:
+- Task ID: ${taskId}
+- The merge has already been completed successfully.
+- You are running in the project's root directory with the merged code.
+
+Your Instructions:
+${workflowStep.prompt}
+
+You have access to the file system to review the merged changes.
+When your review is complete and everything looks good, simply state your findings.
+If issues are found that need attention, describe them clearly.`;
+
+  const agentLogger = new AgentLogger({
+    store,
+    taskId,
+    agent: "merger",
+  });
+
+  try {
+    const stepProvider = workflowStep.modelProvider || settings.defaultProvider;
+    const stepModelId = workflowStep.modelId || settings.defaultModelId;
+    const useOverride = !!(workflowStep.modelProvider && workflowStep.modelId);
+
+    const { session } = await createKbAgent({
+      cwd: rootDir,
+      systemPrompt,
+      tools: "readonly",
+      defaultProvider: stepProvider,
+      defaultModelId: stepModelId,
+      fallbackProvider: settings.fallbackProvider,
+      fallbackModelId: settings.fallbackModelId,
+      defaultThinkingLevel: settings.defaultThinkingLevel,
+    });
+
+    mergerLog.log(`${taskId}: [post-merge] workflow step '${workflowStep.name}' using model ${describeModel(session)}${useOverride ? " (workflow step override)" : ""}`);
+    await store.logEntry(taskId, `[post-merge] Workflow step '${workflowStep.name}' using model: ${describeModel(session)}${useOverride ? " (workflow step override)" : ""}`);
+
+    let output = "";
+    session.subscribe((event) => {
+      if (event.type === "message_update") {
+        const msgEvent = event.assistantMessageEvent;
+        if (msgEvent.type === "text_delta") {
+          output += msgEvent.delta;
+        }
+      }
+    });
+
+    await promptWithFallback(
+      session,
+      `Execute the post-merge workflow step "${workflowStep.name}" for task ${taskId}.\n\n` +
+      `Review the merged code in the project root and evaluate it against your instructions.`,
+    );
+
+    checkSessionError(session);
+    session.dispose();
+    await agentLogger.flush();
+
+    return { success: true, output };
+  } catch (err: any) {
+    await agentLogger.flush();
+    return { success: false, error: err.message };
+  }
 }
 
 async function completeTask(

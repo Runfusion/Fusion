@@ -70,7 +70,7 @@ export function WorkflowResultsTab({ taskId, results, loading }: WorkflowResults
       <div className="workflow-results-empty" data-testid="workflow-results-empty">
         <p>No workflow steps have run yet.</p>
         <p className="workflow-results-empty-hint">
-          Workflow steps will execute after the main task implementation completes.
+          Pre-merge steps run after implementation, before merge. Post-merge steps run after merge succeeds.
         </p>
       </div>
     );
@@ -78,52 +78,75 @@ export function WorkflowResultsTab({ taskId, results, loading }: WorkflowResults
 
   return (
     <div className="workflow-results-list" data-testid="workflow-results-list">
-      {results.map((result, index) => (
-        <div
-          key={`${result.workflowStepId}-${index}`}
-          className={`workflow-result-item workflow-result-item--${result.status}`}
-          data-testid={`workflow-result-item-${result.workflowStepId}`}
-        >
-          <div className="workflow-result-header">
-            <div className="workflow-result-name">{result.workflowStepName}</div>
-            <span
-              className={`workflow-result-badge workflow-result-badge--${result.status}`}
-              style={{
-                backgroundColor: getStatusColor(result.status),
-                color: result.status === "skipped" ? "var(--text-muted)" : "#fff",
-              }}
-              data-testid={`workflow-result-badge-${result.workflowStepId}`}
-            >
-              {getStatusLabel(result.status)}
-            </span>
-          </div>
-
-          <div className="workflow-result-meta">
-            {result.startedAt && (
-              <span className="workflow-result-timestamp">
-                Started: {formatTimestamp(result.startedAt)}
-              </span>
-            )}
-            {result.completedAt && (
-              <span className="workflow-result-duration">
-                {formatDuration(result.startedAt, result.completedAt)}
-              </span>
-            )}
-          </div>
-
-          {result.output && (
-            <div className="workflow-result-output-section">
-              <div className="workflow-result-output-label">Output:</div>
-              <pre
-                className="workflow-result-output"
-                data-testid={`workflow-result-output-${result.workflowStepId}`}
+      {results.map((result, index) => {
+        const phase = result.phase || "pre-merge";
+        return (
+          <div
+            key={`${result.workflowStepId}-${index}`}
+            className={`workflow-result-item workflow-result-item--${result.status}`}
+            data-testid={`workflow-result-item-${result.workflowStepId}`}
+          >
+            <div className="workflow-result-header">
+              <div className="workflow-result-name">
+                {result.workflowStepName}
+                <span
+                  className={`workflow-result-phase-badge workflow-result-phase-badge--${phase}`}
+                  data-testid={`workflow-result-phase-${result.workflowStepId}`}
+                  style={{
+                    marginLeft: "8px",
+                    fontSize: "11px",
+                    padding: "1px 6px",
+                    borderRadius: "4px",
+                    background: phase === "post-merge"
+                      ? "rgba(139, 92, 246, 0.15)"
+                      : "rgba(59, 130, 246, 0.15)",
+                    color: phase === "post-merge"
+                      ? "#8b5cf6"
+                      : "#3b82f6",
+                  }}
+                >
+                  {phase === "post-merge" ? "Post-merge" : "Pre-merge"}
+                </span>
+              </div>
+              <span
+                className={`workflow-result-badge workflow-result-badge--${result.status}`}
+                style={{
+                  backgroundColor: getStatusColor(result.status),
+                  color: result.status === "skipped" ? "var(--text-muted)" : "#fff",
+                }}
+                data-testid={`workflow-result-badge-${result.workflowStepId}`}
               >
-                {result.output}
-              </pre>
+                {getStatusLabel(result.status)}
+              </span>
             </div>
-          )}
-        </div>
-      ))}
+
+            <div className="workflow-result-meta">
+              {result.startedAt && (
+                <span className="workflow-result-timestamp">
+                  Started: {formatTimestamp(result.startedAt)}
+                </span>
+              )}
+              {result.completedAt && (
+                <span className="workflow-result-duration">
+                  {formatDuration(result.startedAt, result.completedAt)}
+                </span>
+              )}
+            </div>
+
+            {result.output && (
+              <div className="workflow-result-output-section">
+                <div className="workflow-result-output-label">Output:</div>
+                <pre
+                  className="workflow-result-output"
+                  data-testid={`workflow-result-output-${result.workflowStepId}`}
+                >
+                  {result.output}
+                </pre>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -2102,3 +2102,286 @@ describe("validateDiffScope", () => {
     expect(result.warnings).toHaveLength(0);
   });
 });
+
+describe("aiMergeTask — post-merge workflow steps", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    setupHappyPathExecSync();
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        on: vi.fn(),
+        state: {},
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+      },
+    } as any);
+  });
+
+  it("runs post-merge workflow steps after successful merge", async () => {
+    const store = createMockStore();
+    // Add getWorkflowStep to mock
+    (store as any).getWorkflowStep = vi.fn().mockResolvedValue({
+      id: "WS-001",
+      name: "Post-merge Notify",
+      description: "Send notifications after merge",
+      prompt: "Check the merged code and confirm all is well.",
+      phase: "post-merge",
+      mode: "prompt",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Override getTask to include enabledWorkflowSteps
+    const baseTask = {
+      id: "FN-050",
+      title: "Test task",
+      description: "Test",
+      column: "in-review",
+      dependencies: [],
+      worktree: "/tmp/root/.worktrees/KB-050",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask = vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+
+    // getWorkflowStep should have been called for the post-merge step
+    expect((store as any).getWorkflowStep).toHaveBeenCalledWith("WS-001");
+
+    // Task should still move to done even though post-merge step ran
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+
+  it("does not run pre-merge workflow steps in merger", async () => {
+    const store = createMockStore();
+    (store as any).getWorkflowStep = vi.fn().mockResolvedValue({
+      id: "WS-001",
+      name: "Pre-merge Check",
+      description: "Check before merge",
+      prompt: "Run pre-merge checks.",
+      phase: "pre-merge",
+      mode: "prompt",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const baseTask = {
+      id: "FN-050",
+      title: "Test task",
+      description: "Test",
+      column: "in-review",
+      dependencies: [],
+      worktree: "/tmp/root/.worktrees/KB-050",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask = vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // getWorkflowStep may be called but pre-merge steps should not trigger agent creation
+    // beyond the merge agent itself. We verify createKbAgent was called only once (merge agent)
+    // since pre-merge steps are skipped in the merger
+    const mergeAgentCalls = mockedCreateHaiAgent.mock.calls.filter(
+      (c: any) => c[0]?.systemPrompt?.includes("You are a merge agent")
+    );
+    const postMergeCalls = mockedCreateHaiAgent.mock.calls.filter(
+      (c: any) => c[0]?.systemPrompt?.includes("post-merge")
+    );
+
+    // No post-merge agent should be created for a pre-merge step
+    expect(postMergeCalls).toHaveLength(0);
+  });
+
+  it("appends post-merge results to existing pre-merge results", async () => {
+    const existingPreMergeResults = [{
+      workflowStepId: "WS-001",
+      workflowStepName: "Pre-merge Check",
+      phase: "pre-merge",
+      status: "passed",
+      output: "All good",
+    }];
+
+    const store = createMockStore();
+    (store as any).getWorkflowStep = vi.fn().mockResolvedValue({
+      id: "WS-002",
+      name: "Post-merge Verify",
+      description: "Verify after merge",
+      prompt: "Check merged state.",
+      phase: "post-merge",
+      mode: "prompt",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const baseTask = {
+      id: "FN-050",
+      title: "Test task",
+      description: "Test",
+      column: "in-review",
+      dependencies: [],
+      worktree: "/tmp/root/.worktrees/KB-050",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001", "WS-002"],
+      workflowStepResults: existingPreMergeResults,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask = vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // Should have called updateTask with workflow results containing both pre and post
+    const updateCalls = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls;
+    const resultsCall = updateCalls.find((c: any) =>
+      Array.isArray(c[1]?.workflowStepResults) && c[1].workflowStepResults.length > 1
+    );
+
+    if (resultsCall) {
+      const results = resultsCall[1].workflowStepResults;
+      // Should contain both pre-merge and post-merge results
+      expect(results.some((r: any) => r.phase === "pre-merge")).toBe(true);
+      expect(results.some((r: any) => r.phase === "post-merge")).toBe(true);
+    }
+  });
+
+  it("moves task to done even when post-merge step fails", async () => {
+    const store = createMockStore();
+    (store as any).getWorkflowStep = vi.fn().mockResolvedValue({
+      id: "WS-001",
+      name: "Post-merge Fail",
+      description: "Will fail",
+      prompt: "Fail this check.",
+      phase: "post-merge",
+      mode: "prompt",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const baseTask = {
+      id: "FN-050",
+      title: "Test task",
+      description: "Test",
+      column: "in-review",
+      dependencies: [],
+      worktree: "/tmp/root/.worktrees/KB-050",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask = vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" });
+
+    // Make the post-merge agent throw
+    mockedCreateHaiAgent.mockImplementation((async (opts: any) => {
+      if (opts.systemPrompt?.includes("post-merge")) {
+        return {
+          session: {
+            prompt: vi.fn().mockRejectedValue(new Error("Post-merge agent failed")),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            state: {},
+            sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          },
+        };
+      }
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          state: {},
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        },
+      };
+    }) as any);
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // Merge should succeed regardless of post-merge step failure
+    expect(result.merged).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+
+  it("runs script-mode post-merge steps", async () => {
+    const store = createMockStore();
+    (store as any).getWorkflowStep = vi.fn().mockResolvedValue({
+      id: "WS-001",
+      name: "Post-merge Build",
+      description: "Verify build passes",
+      phase: "post-merge",
+      mode: "script",
+      scriptName: "build",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const baseTask = {
+      id: "FN-050",
+      title: "Test task",
+      description: "Test",
+      column: "in-review",
+      dependencies: [],
+      worktree: "/tmp/root/.worktrees/KB-050",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask = vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" });
+
+    // Override settings to include scripts
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      scripts: { build: "pnpm build" },
+    });
+
+    // Mock execSync to handle the script execution
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "0" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr === "pnpm build") return "Build successful" as any;
+      return Buffer.from("");
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+  });
+});

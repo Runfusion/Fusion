@@ -239,7 +239,7 @@ The AI engine starts automatically with the dashboard. Three components run:
 
 - **Scheduler** - Watches todo column. Resolves dependency graphs. Moves tasks to in-progress when deps are satisfied and concurrency allows (default: 2 concurrent). When `groupOverlappingFiles` is enabled in settings, tasks whose `## File Scope` sections share files are serialized to prevent merge conflicts.
 
-- **TaskExecutor** - Listens for tasks entering in-progress. Creates a git worktree, spawns a pi agent session with full coding tools scoped to the worktree, and executes the specification. If the task has enabled workflow steps, runs them sequentially before moving to in-review.
+- **TaskExecutor** - Listens for tasks entering in-progress. Creates a git worktree, spawns a pi agent session with full coding tools scoped to the worktree, and executes the specification. If the task has enabled pre-merge workflow steps, runs them sequentially before moving to in-review.
 
 Each pi agent session gets:
 
@@ -645,9 +645,22 @@ The **Changes** tab in the task detail modal uses the merge commit to load file-
 
 ## Workflow Steps
 
-Workflow steps are reusable quality gates that run after task implementation but before the task moves to in-review. Each step can run in one of two modes: **prompt** (AI agent review) or **script** (deterministic command execution).
+Workflow steps are reusable quality gates that run at configurable lifecycle phases. Each step can run in one of two modes: **prompt** (AI agent review) or **script** (deterministic command execution), and at one of two phases: **pre-merge** (before merge, can block) or **post-merge** (after merge, informational).
 
 The dashboard's Workflow Step Manager dialog follows the global theme system (dark/light/color themes) using consistent modal styling, spacing, and form controls.
+
+### Execution Phases
+
+| Phase | When it runs | Failure behavior |
+|-------|-------------|-----------------|
+| **Pre-merge** (default) | After task implementation, before the task moves to in-review | Blocks merge — task stays in in-review for manual inspection |
+| **Post-merge** | After the task's branch is successfully merged to main | Informational only — failures are logged but do not block or rollback the merge |
+
+Legacy workflow steps without an explicit phase are treated as **pre-merge**. Existing steps continue working without changes.
+
+**Typical setup:**
+- Pre-merge steps: QA checks, security audits, documentation reviews — anything that should block merging if it fails
+- Post-merge steps: deployment notifications, cache invalidation, monitoring alerts — follow-up actions that should run after code lands
 
 ### Execution Modes
 
@@ -718,10 +731,11 @@ Click **Add** on any template to create a customizable workflow step.
 1. When creating or editing a task, check the workflow steps you want to run
 2. **Reorder steps** - When two or more steps are selected, an execution-order panel appears showing the numbered sequence. Use the ▲/▼ buttons to change the order
 3. Steps execute sequentially in the saved order - the first selected step runs first, then the next, and so on
-4. The task only moves to in-review after all workflow steps pass
-5. View results in the **Workflow** tab of the task detail modal
+4. Pre-merge steps run after implementation and must all pass before the task moves to in-review
+5. Post-merge steps run automatically after the merge succeeds — their results appear in the task's Workflow tab
+6. View results in the **Workflow** tab of the task detail modal
 
-Workflow step agents use **readonly tools** (no modifications). Script-mode steps execute their named command in the task worktree. If a workflow step fails (agent reports issues or script exits non-zero), the task is marked as failed and stays in in-review for manual inspection.
+Workflow step agents use **readonly tools** (no modifications). Script-mode steps execute their named command in the task worktree. If a pre-merge workflow step fails (agent reports issues or script exits non-zero), the task is marked as failed and stays in in-review for manual inspection. Post-merge step failures are logged but do not block the merge or rollback git state.
 
 ## Scheduled Tasks
 

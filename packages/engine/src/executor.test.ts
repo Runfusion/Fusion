@@ -6060,6 +6060,259 @@ describe("Workflow Steps Execution", () => {
     // Task should move to in-review
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
+
+  // ── Workflow Step Phase Filtering ────────────────────────────────────
+
+  it("skips post-merge workflow steps during executor pre-merge execution", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001", "WS-002"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    store.getWorkflowStep.mockImplementation(async (id: string) => {
+      if (id === "WS-001") {
+        return {
+          id: "WS-001",
+          name: "Pre-merge Check",
+          description: "Before merge",
+          prompt: "Run pre-merge checks",
+          phase: "pre-merge",
+          enabled: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      if (id === "WS-002") {
+        return {
+          id: "WS-002",
+          name: "Post-merge Notify",
+          description: "After merge",
+          prompt: "Send notifications",
+          phase: "post-merge",
+          enabled: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return undefined;
+    });
+
+    // Main agent calls task_done, then a workflow step agent for pre-merge only
+    let callIdx = 0;
+    mockedCreateHaiAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        const session = {
+          prompt: vi.fn().mockImplementation(async () => {
+            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        };
+        return { session };
+      } else {
+        return {
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            state: {},
+          },
+        };
+      }
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001", "WS-002"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // createKbAgent called twice: main agent + 1 pre-merge step (post-merge skipped)
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(2);
+
+    // Verify the workflow step results only contain pre-merge
+    const updateCalls = store.updateTask.mock.calls;
+    const resultsCall = updateCalls.find((c: any) =>
+      c[1]?.workflowStepResults?.length > 0
+    );
+    expect(resultsCall).toBeDefined();
+    const results = resultsCall![1].workflowStepResults;
+    expect(results).toHaveLength(1);
+    expect(results[0].workflowStepId).toBe("WS-001");
+    expect(results[0].phase).toBe("pre-merge");
+  });
+
+  it("normalizes legacy workflow steps without phase as pre-merge", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Legacy step without phase field
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Legacy Check",
+      description: "No phase field",
+      prompt: "Run checks",
+      // phase is undefined — should be treated as pre-merge
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    let callIdx = 0;
+    mockedCreateHaiAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        const session = {
+          prompt: vi.fn().mockImplementation(async () => {
+            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        };
+        return { session };
+      } else {
+        return {
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            state: {},
+          },
+        };
+      }
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Legacy step should have been executed (treated as pre-merge)
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(2);
+
+    // Verify result has phase: "pre-merge"
+    const updateCalls = store.updateTask.mock.calls;
+    const resultsCall = updateCalls.find((c: any) =>
+      c[1]?.workflowStepResults?.some((r: any) => r.workflowStepId === "WS-001")
+    );
+    expect(resultsCall).toBeDefined();
+    const results = resultsCall![1].workflowStepResults;
+    expect(results[0].phase).toBe("pre-merge");
+  });
+
+  it("only runs post-merge steps when all are post-merge (skips all in executor)", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Post-merge Notify",
+      description: "After merge",
+      prompt: "Send notifications",
+      phase: "post-merge",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    createAgentWithTaskDone();
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Only main agent called (no workflow step agent since all are post-merge)
+    expect(mockedCreateHaiAgent).toHaveBeenCalledTimes(1);
+
+    // Task should still move to in-review
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+  });
 });
 
 describe("Real-time steering injection", () => {

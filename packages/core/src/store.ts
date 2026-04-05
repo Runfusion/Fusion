@@ -2587,6 +2587,7 @@ ${stepsSection}`;
         name: input.name,
         description: input.description,
         mode,
+        phase: input.phase || "pre-merge",
         prompt: mode === "prompt" ? (input.prompt || "") : "",
         scriptName: mode === "script" ? input.scriptName : undefined,
         enabled: input.enabled !== undefined ? input.enabled : true,
@@ -2662,6 +2663,7 @@ ${stepsSection}`;
 
       if (updates.name !== undefined) step.name = updates.name;
       if (updates.description !== undefined) step.description = updates.description;
+      if (updates.phase !== undefined) step.phase = updates.phase;
       if (updates.prompt !== undefined && step.mode === "prompt") step.prompt = updates.prompt;
       if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
       if (updates.enabled !== undefined) step.enabled = updates.enabled;

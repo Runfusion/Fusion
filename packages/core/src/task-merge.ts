@@ -12,7 +12,6 @@ const NON_TERMINAL_STEP_STATUSES = new Set([
 
 const NON_TERMINAL_WORKFLOW_STATUSES = new Set<WorkflowStepResult["status"]>([
   "pending",
-  "failed",
 ]);
 
 /**
@@ -40,10 +39,24 @@ export function getTaskMergeBlocker(
     return "task has incomplete steps";
   }
 
+  // Only pre-merge workflow step failures block merge.
+  // Post-merge failures run after merge and do not block it.
   if (
-    task.workflowStepResults?.some((result) => NON_TERMINAL_WORKFLOW_STATUSES.has(result.status))
+    task.workflowStepResults?.some((result) => {
+      const phase = result.phase || "pre-merge";
+      return phase === "pre-merge" && NON_TERMINAL_WORKFLOW_STATUSES.has(result.status);
+    })
   ) {
-    return "task has incomplete or failed workflow steps";
+    return "task has incomplete or failed pre-merge workflow steps";
+  }
+
+  if (
+    task.workflowStepResults?.some((result) => {
+      const phase = result.phase || "pre-merge";
+      return phase === "pre-merge" && result.status === "failed";
+    })
+  ) {
+    return "task has failed pre-merge workflow steps";
   }
 
   return undefined;

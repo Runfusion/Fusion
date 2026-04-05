@@ -1130,15 +1130,24 @@ When `unarchiveTask()` is called:
 
 ## Workflow Steps
 
-Workflow steps are reusable quality gates that run after task implementation but before the task moves to in-review. They enable post-implementation review, documentation checks, QA validation, and other automated checks.
+Workflow steps are reusable quality gates that run at configurable lifecycle phases. Each step can be configured to run as **pre-merge** (after implementation, before merge — can block) or **post-merge** (after merge success — informational only). They enable post-implementation review, documentation checks, QA validation, deployment notifications, and other automated checks.
+
+### Execution Phases
+
+| Phase | When | Failure behavior |
+|-------|------|-----------------|
+| **Pre-merge** (default) | After task implementation, before merge | Blocks merge — task stays in in-review |
+| **Post-merge** | After successful merge to main | Logged only — does not block or rollback |
+
+Legacy workflow steps without an explicit `phase` field are treated as **pre-merge** for backward compatibility.
 
 ### How It Works
 
-1. **Define globally** — Workflow steps are defined once in the dashboard (Workflow Steps button in header) with a name, description, and agent prompt
+1. **Define globally** — Workflow steps are defined once in the dashboard (Workflow Steps button in header) with a name, description, mode, and phase
 2. **AI-assisted prompts** — Use the "Refine with AI" button to convert a rough description into a detailed agent prompt
 3. **Enable per-task** — When creating a new task, check the workflow steps you want to run
-4. **Automatic execution** — After the main task executor calls `task_done()`, enabled workflow steps run sequentially
-5. **Review gate** — The task only moves to in-review after all workflow steps complete successfully
+4. **Automatic execution** — Pre-merge steps run after the main task executor calls `task_done()`; post-merge steps run after the merger completes a successful merge
+5. **Review gate** — Only pre-merge steps must pass before the task moves to in-review; post-merge failures are logged but non-blocking
 
 ### Storage
 
@@ -1150,6 +1159,8 @@ Workflow step definitions are stored in `.fusion/config.json`:
       "id": "WS-001",
       "name": "Documentation Review",
       "description": "Verify all public APIs have documentation",
+      "mode": "prompt",
+      "phase": "pre-merge",
       "prompt": "Review the task changes and verify that all new public functions...",
       "enabled": true,
       "createdAt": "2026-03-31T00:00:00.000Z",
@@ -1182,8 +1193,10 @@ The order of IDs in `enabledWorkflowSteps` determines execution order — the en
 - **Prompt mode** steps use readonly agent tools (file reading only, no modifications); **script mode** steps execute a named command from project settings (`settings.scripts`) in the task worktree
 - Each prompt-mode step runs as a separate agent session; script-mode steps run via `execSync` with a 2-minute timeout
 - **Model override:** Prompt-mode steps can specify a `modelProvider` + `modelId` pair. When both are set, the executor uses that model instead of global defaults. When either is missing, the executor falls back to `defaultProvider`/`defaultModelId`
-- Steps execute sequentially (not in parallel)
-- If a workflow step fails (agent reports issues or script exits non-zero), the task is marked as failed and moved to in-review for manual inspection
+- Steps execute sequentially within their phase (pre-merge steps first, then post-merge steps after merge)
+- Pre-merge steps run in the executor; post-merge steps run in the merger after successful merge
+- If a pre-merge workflow step fails (agent reports issues or script exits non-zero), the task is marked as failed and stays in in-review for manual inspection
+- Post-merge step failures are logged to the task's workflow results but do not block the merge or rollback git state
 - Steps with empty prompts (prompt mode) or missing script names (script mode) are skipped with a log entry
 - All workflow step activity is logged to the task's agent log
 

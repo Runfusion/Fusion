@@ -187,6 +187,7 @@ describe("WorkflowStepManager", () => {
         name: "New Step",
         description: "New description",
         mode: "prompt",
+        phase: "pre-merge",
         prompt: undefined,
         scriptName: undefined,
         enabled: true,
@@ -297,25 +298,39 @@ describe("WorkflowStepManager", () => {
     });
   });
 
-  it("shows AI Prompt mode badge for prompt steps", async () => {
+  it("shows AI Prompt mode badge and Pre-merge phase badge for legacy prompt steps", async () => {
     vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce(mockSteps);
-
     render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
-
     await waitFor(() => {
       expect(screen.getAllByText("AI Prompt")).toHaveLength(2);
+      // Legacy steps without phase default to Pre-merge
+      expect(screen.queryAllByText("Pre-merge")).toHaveLength(2);
     });
   });
 
   it("shows Script mode badge for script steps", async () => {
     vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "" },
+      { ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "", phase: "pre-merge" },
     ]);
 
     render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
 
     await waitFor(() => {
       expect(screen.getByText("Script")).toBeInTheDocument();
+    });
+  });
+
+  it("shows Pre-merge and Post-merge phase badges for steps with explicit phases", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { ...mockSteps[0], phase: "pre-merge" as const },
+      { ...mockSteps[1], phase: "post-merge" as const },
+    ]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Pre-merge")).toBeInTheDocument();
+      expect(screen.getByText("Post-merge")).toBeInTheDocument();
     });
   });
 
@@ -404,6 +419,76 @@ describe("WorkflowStepManager", () => {
     // Save should be disabled (no script selected)
     const saveBtn = screen.getByTestId("save-workflow-step") as HTMLButtonElement;
     expect(saveBtn.disabled).toBe(true);
+  });
+
+  it("submits new workflow step with post-merge phase", async () => {
+    vi.mocked(fetchWorkflowSteps)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    const nameInput = screen.getByTestId("workflow-step-name");
+    const descInput = screen.getByTestId("workflow-step-description");
+
+    fireEvent.change(nameInput, { target: { value: "Post Step" } });
+    fireEvent.change(descInput, { target: { value: "Post desc" } });
+
+    // Default phase is pre-merge; switch to post-merge
+    fireEvent.click(screen.getByTestId("phase-post-merge"));
+
+    fireEvent.click(screen.getByTestId("save-workflow-step"));
+
+    await waitFor(() => {
+      expect(createWorkflowStep).toHaveBeenCalledWith({
+        name: "Post Step",
+        description: "Post desc",
+        mode: "prompt",
+        phase: "post-merge",
+        prompt: undefined,
+        scriptName: undefined,
+        enabled: true,
+      }, undefined);
+      expect(addToast).toHaveBeenCalledWith("Workflow step created", "success");
+    });
+  });
+
+  it("edits existing workflow step phase from pre-merge to post-merge", async () => {
+    vi.mocked(fetchWorkflowSteps).mockReset();
+    vi.mocked(fetchWorkflowSteps)
+      .mockResolvedValueOnce(mockSteps)
+      .mockResolvedValueOnce(mockSteps);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    // Wait for steps to render (not just the fetch call)
+    await waitFor(() => {
+      expect(screen.getByText("Documentation Review")).toBeInTheDocument();
+    });
+
+    // Click edit button for the first step
+    const editBtn = screen.getByLabelText("Edit Documentation Review");
+    fireEvent.click(editBtn);
+
+    expect(screen.getByTestId("workflow-step-form")).toBeInTheDocument();
+
+    // Switch phase to post-merge
+    fireEvent.click(screen.getByTestId("phase-post-merge"));
+
+    fireEvent.click(screen.getByTestId("save-workflow-step"));
+
+    await waitFor(() => {
+      expect(updateWorkflowStep).toHaveBeenCalledWith("WS-001", expect.objectContaining({
+        phase: "post-merge",
+      }), undefined);
+      expect(addToast).toHaveBeenCalledWith("Workflow step updated", "success");
+    });
   });
 });
 
@@ -517,7 +602,7 @@ describe("WorkflowStepManager theme class structure", () => {
     fireEvent.click(screen.getByTestId("add-workflow-step"));
 
     expect(container.querySelector(".wfm-mode-selector")).toBeInTheDocument();
-    expect(container.querySelectorAll(".wfm-mode-btn")).toHaveLength(2);
+    expect(container.querySelectorAll(".wfm-mode-btn")).toHaveLength(4); // 2 mode + 2 phase
   });
 
   it("uses wfm-prompt-textarea class for the prompt textarea", async () => {

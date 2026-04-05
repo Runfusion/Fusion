@@ -47,6 +47,9 @@ export interface ModelPreset {
 /** Execution mode for a workflow step. */
 export type WorkflowStepMode = "prompt" | "script";
 
+/** Lifecycle phase for workflow step execution. */
+export type WorkflowStepPhase = "pre-merge" | "post-merge";
+
 export interface WorkflowStep {
   /** Unique identifier (e.g., "WS-001") */
   id: string;
@@ -56,6 +59,8 @@ export interface WorkflowStep {
   description: string;
   /** Execution mode — "prompt" runs an AI agent, "script" runs a named project script */
   mode: WorkflowStepMode;
+  /** Lifecycle phase — "pre-merge" runs before merge (default), "post-merge" runs after merge success */
+  phase?: WorkflowStepPhase;
   /** Full agent prompt to execute when this step runs (used when mode is "prompt") */
   prompt: string;
   /** Name of a script from project settings `scripts` map to execute (required when mode is "script") */
@@ -88,6 +93,8 @@ export interface WorkflowStepInput {
   description: string;
   /** Execution mode — defaults to "prompt" if not specified */
   mode?: WorkflowStepMode;
+  /** Lifecycle phase — defaults to "pre-merge" if not specified */
+  phase?: WorkflowStepPhase;
   /** Agent prompt (used when mode is "prompt"). Optional — can be AI-generated later via refinement. */
   prompt?: string;
   /** Script name from project settings (required when mode is "script").
@@ -110,6 +117,8 @@ export interface WorkflowStepResult {
   workflowStepId: string;
   /** Name of the workflow step at execution time */
   workflowStepName: string;
+  /** Lifecycle phase at execution time */
+  phase?: WorkflowStepPhase;
   /** Execution status */
   status: "passed" | "failed" | "skipped" | "pending";
   /** Output from the workflow step agent (findings, errors, etc.) */

@@ -6262,6 +6262,7 @@ describe("POST /workflow-steps", () => {
       name: "Docs",
       description: "Check docs",
       mode: "prompt",
+      phase: undefined,
       prompt: undefined,
       scriptName: undefined,
       enabled: undefined,
@@ -6316,6 +6317,7 @@ describe("POST /workflow-steps", () => {
       name: "Security",
       description: "Security audit",
       mode: "prompt",
+      phase: undefined,
       prompt: undefined,
       scriptName: undefined,
       enabled: undefined,
@@ -6362,6 +6364,7 @@ describe("POST /workflow-steps", () => {
       name: "Docs",
       description: "Check docs",
       mode: "prompt",
+      phase: undefined,
       prompt: undefined,
       scriptName: undefined,
       enabled: undefined,
@@ -6389,6 +6392,7 @@ describe("POST /workflow-steps", () => {
       name: "Run Tests",
       description: "Execute tests",
       mode: "script",
+      phase: undefined,
       prompt: undefined,
       scriptName: "test",
       enabled: undefined,
@@ -6431,6 +6435,39 @@ describe("POST /workflow-steps", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("mode must be");
+  });
+
+  it("creates a workflow step with 'post-merge' phase", async () => {
+    const created = { id: "WS-001", name: "Post Merge", description: "After merge", mode: "prompt", phase: "post-merge", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Post Merge",
+      description: "After merge",
+      phase: "post-merge",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(store.createWorkflowStep).toHaveBeenCalledWith({
+      name: "Post Merge",
+      description: "After merge",
+      mode: "prompt",
+      phase: "post-merge",
+      prompt: undefined,
+      scriptName: undefined,
+      enabled: undefined,
+    });
+  });
+
+  it("returns 400 for invalid phase value", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Test",
+      description: "Test",
+      phase: "during-merge",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("phase must be");
   });
 });
 
@@ -6553,6 +6590,36 @@ describe("PATCH /workflow-steps/:id", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("scriptName is required when mode is 'script'");
+  });
+
+  it("updates a workflow step phase", async () => {
+    const updated = { id: "WS-001", name: "Post Merge", description: "After merge", phase: "post-merge", createdAt: "2026-01-01", updatedAt: "2026-01-02" };
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated);
+    (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "WS-001", name: "Pre Merge", description: "Before merge", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01",
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-001", JSON.stringify({
+      phase: "post-merge",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.updateWorkflowStep).toHaveBeenCalledWith("WS-001", expect.objectContaining({
+      phase: "post-merge",
+    }));
+  });
+
+  it("returns 400 for invalid phase value on update", async () => {
+    (store.getWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "WS-001", name: "Test", description: "Test", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01",
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-001", JSON.stringify({
+      phase: "during-merge",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("phase must be");
   });
 });
 

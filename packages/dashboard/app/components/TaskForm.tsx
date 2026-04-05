@@ -647,7 +647,26 @@ export function TaskForm({
                 style={{ marginTop: "2px" }}
               />
               <div>
-                <span style={{ fontWeight: 500, fontSize: "13px" }}>{step.name}</span>
+                <span style={{ fontWeight: 500, fontSize: "13px" }}>
+                  {step.name}
+                  <span
+                    style={{
+                      marginLeft: "6px",
+                      fontSize: "11px",
+                      padding: "1px 6px",
+                      borderRadius: "4px",
+                      background: (step.phase || "pre-merge") === "post-merge"
+                        ? "rgba(139, 92, 246, 0.15)"
+                        : "rgba(59, 130, 246, 0.15)",
+                      color: (step.phase || "pre-merge") === "post-merge"
+                        ? "#8b5cf6"
+                        : "#3b82f6",
+                    }}
+                    data-testid={`workflow-step-phase-${step.id}`}
+                  >
+                    {(step.phase || "pre-merge") === "post-merge" ? "Post-merge" : "Pre-merge"}
+                  </span>
+                </span>
                 <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
                   {step.description}
                 </div>
