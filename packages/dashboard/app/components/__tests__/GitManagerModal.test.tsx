@@ -1195,6 +1195,37 @@ describe("GitManagerModal", () => {
     });
   });
 
+  it("applies mobile-friendly edit button class for touch targets", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/a/b.git", pushUrl: "https://github.com/a/b.git" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    // Both edit buttons should have the mobile-friendly class for adequate touch targets
+    const nameEditBtn = screen.getByTitle("Edit remote name");
+    const urlEditBtn = screen.getByTitle("Edit remote URL");
+
+    expect(nameEditBtn.classList.contains("gm-remote-edit-btn")).toBe(true);
+    expect(urlEditBtn.classList.contains("gm-remote-edit-btn")).toBe(true);
+
+    // Both should be visible and have 16px icons
+    expect(nameEditBtn).toBeVisible();
+    expect(urlEditBtn).toBeVisible();
+
+    const nameSvg = nameEditBtn.querySelector("svg");
+    const urlSvg = urlEditBtn.querySelector("svg");
+    expect(nameSvg).toBeTruthy();
+    expect(urlSvg).toBeTruthy();
+  });
+
   it("handles API errors gracefully", async () => {
     (fetchGitRemotesDetailed as any).mockRejectedValue(new Error("Failed to load remotes"));
 

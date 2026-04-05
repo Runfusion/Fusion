@@ -5439,6 +5439,22 @@ body {
     width: 16px;
     height: 16px;
   }
+
+  /* Git Manager remote edit buttons: always visible on mobile (no hover) */
+  .gm-remote-edit-btn {
+    opacity: 1;
+    width: 44px;
+    height: 44px;
+    margin-right: -8px;
+    margin-top: -8px;
+    margin-bottom: -8px;
+    border-radius: var(--radius-md);
+  }
+
+  .gm-remote-edit-btn svg {
+    width: 16px;
+    height: 16px;
+  }
 }
 
 /* === Tablet Responsive Tier (769px–1024px) === */

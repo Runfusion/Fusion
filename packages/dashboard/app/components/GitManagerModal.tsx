@@ -1951,12 +1951,12 @@ function RemotesPanel({
                   <div className="gm-remote-name-row">
                     <span className="gm-remote-name">{remote.name}</span>
                     <button
-                      className="btn btn-icon"
+                      className="btn btn-icon gm-remote-edit-btn"
                       onClick={(e) => { e.stopPropagation(); startEditingName(remote); }}
                       disabled={remoteActionLoading !== null}
                       title="Edit remote name"
                     >
-                      <Pencil size={12} color="var(--text-muted)" />
+                      <Pencil size={16} />
                     </button>
                   </div>
                 )}
@@ -2005,12 +2005,12 @@ function RemotesPanel({
                         {remote.pushUrl || remote.fetchUrl}
                       </span>
                       <button
-                        className="btn btn-icon"
+                        className="btn btn-icon gm-remote-edit-btn"
                         onClick={(e) => { e.stopPropagation(); startEditingUrl(remote); }}
                         disabled={remoteActionLoading !== null}
                         title="Edit remote URL"
                       >
-                        <Pencil size={12} color="var(--text-muted)" />
+                        <Pencil size={16} />
                       </button>
                     </div>
                   )}
