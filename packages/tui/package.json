@@ -13,20 +13,22 @@
     "README.md"
   ],
   "scripts": {
+    "dev": "tsx src/index.tsx",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'No tests yet' && exit 0"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@fusion/core": "workspace:*",
     "ink": "^6.8.0",
-    "ink-text-input": "^6.0.0",
     "react": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/react": "^19.0.0",
-    "typescript": "^5.7.0"
+    "@vitest/coverage-v8": "^3.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.1.0"
   },
   "engines": {
     "node": ">=22.5.0"
