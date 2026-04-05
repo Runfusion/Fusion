@@ -16,6 +16,7 @@ vi.mock("lucide-react", () => ({
   ChevronLeft: ({ size }: any) => <span data-testid="chevron-left" />,
   AlertCircle: () => null,
   GitCommit: () => null,
+  WrapText: ({ size }: any) => <span data-testid="wrap-text-icon" />,
 }));
 
 vi.mock("../../utils/highlightDiff", () => ({
@@ -616,5 +617,121 @@ describe("TaskChangesTab — file navigation", () => {
 
     // Still only one file expanded (the second one)
     expect(container.querySelectorAll(".changes-file-content")).toHaveLength(1);
+  });
+});
+
+describe("TaskChangesTab — word wrap toggle", () => {
+  it("renders the word wrap toggle button", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Toggle word wrap")).toBeTruthy();
+    });
+  });
+
+  it("defaults to word wrap ON (btn-primary active)", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      const toggle = screen.getByLabelText("Toggle word wrap");
+      expect(toggle.className).toContain("btn-primary");
+    });
+  });
+
+  it("applies wrap CSS class when word wrap is ON", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    const diffPatch = container.querySelector(".changes-diff-patch");
+    expect(diffPatch).toBeTruthy();
+    expect(diffPatch?.classList.contains("changes-diff-patch--wrap")).toBe(true);
+    expect(diffPatch?.classList.contains("changes-diff-patch--nowrap")).toBe(false);
+  });
+
+  it("toggles to nowrap when clicked", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // Default: wrap ON
+    let diffPatch = container.querySelector(".changes-diff-patch");
+    expect(diffPatch?.classList.contains("changes-diff-patch--wrap")).toBe(true);
+
+    // Click toggle
+    fireEvent.click(screen.getByLabelText("Toggle word wrap"));
+
+    // Now wrap should be OFF
+    diffPatch = container.querySelector(".changes-diff-patch");
+    expect(diffPatch?.classList.contains("changes-diff-patch--nowrap")).toBe(true);
+    expect(diffPatch?.classList.contains("changes-diff-patch--wrap")).toBe(false);
+
+    // Button should no longer have btn-primary
+    const toggle = screen.getByLabelText("Toggle word wrap");
+    expect(toggle.className).not.toContain("btn-primary");
+  });
+
+  it("updates tooltip based on wrap state", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    const toggle = screen.getByLabelText("Toggle word wrap");
+    expect(toggle.getAttribute("title")).toBe("Disable word wrap");
+
+    // Click to toggle OFF
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("title")).toBe("Enable word wrap");
   });
 });

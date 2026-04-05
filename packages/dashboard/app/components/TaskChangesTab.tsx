@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { FileCode, ChevronDown, ChevronRight, ChevronLeft, AlertCircle, GitCommit } from "lucide-react";
+import { FileCode, ChevronDown, ChevronRight, ChevronLeft, AlertCircle, GitCommit, WrapText } from "lucide-react";
 import type { MergeDetails, Column } from "@fusion/core";
 import { fetchTaskDiff, type TaskDiff } from "../api";
 import { highlightDiff } from "../utils/highlightDiff";
@@ -50,6 +50,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
   const [error, setError] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null);
+  const [wordWrap, setWordWrap] = useState(true);
 
   const canLoad = column === "in-progress" || column === "in-review" || column === "done";
 
@@ -228,6 +229,14 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
             </div>
           )}
           <button
+            className={`btn btn-sm ${wordWrap ? "btn-primary" : ""}`}
+            onClick={() => setWordWrap((prev) => !prev)}
+            title={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+            aria-label="Toggle word wrap"
+          >
+            <WrapText size={14} />
+          </button>
+          <button
             className="btn btn-sm"
             onClick={loadDiff}
             disabled={loading}
@@ -272,7 +281,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
 
               {isExpanded && file.patch && (
                 <div className="changes-file-content">
-                  <pre className="changes-diff-patch">
+                  <pre className={`changes-diff-patch ${wordWrap ? "changes-diff-patch--wrap" : "changes-diff-patch--nowrap"}`}>
                     <code>{highlightDiff(file.patch)}</code>
                   </pre>
                 </div>

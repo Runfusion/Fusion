@@ -3608,6 +3608,16 @@ body {
   word-break: break-word;
 }
 
+.changes-diff-patch.changes-diff-patch--wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.changes-diff-patch.changes-diff-patch--nowrap {
+  white-space: pre;
+  word-break: normal;
+}
+
 /* Summary section - styled for done tasks with success accent */
 .detail-summary {
   background: rgba(63, 185, 80, 0.08);
