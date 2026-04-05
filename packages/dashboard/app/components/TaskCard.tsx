@@ -721,6 +721,20 @@ function TaskCardComponent({
             </button>
           );
         }
+        const modifiedCount = task.modifiedFiles?.length;
+        if (modifiedCount != null && modifiedCount > 0) {
+          return (
+            <button
+              type="button"
+              className="card-session-files"
+              onClick={handleOpenFiles}
+              disabled={!onOpenDetailWithTab}
+            >
+              <Folder size={12} />
+              <span>{modifiedCount} files changed</span>
+            </button>
+          );
+        }
         if (task.worktree && sessionFiles.length > 0) {
           return (
             <button

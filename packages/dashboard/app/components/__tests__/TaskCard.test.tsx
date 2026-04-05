@@ -3039,7 +3039,7 @@ describe("TaskCard files-changed in done column", () => {
     expect(screen.getByText("3 files changed")).toBeInTheDocument();
   });
 
-  it("shows nothing for done column without worktree and without mergeDetails.filesChanged", () => {
+  it("shows nothing for done column without worktree, modifiedFiles, and mergeDetails.filesChanged", () => {
     const task = makeTask({ column: "done" });
     mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
 
@@ -3052,6 +3052,44 @@ describe("TaskCard files-changed in done column", () => {
     );
 
     expect(screen.queryByText(/files changed/)).not.toBeInTheDocument();
+  });
+
+  it("shows modifiedFiles count for done column without mergeDetails", () => {
+    const task = makeTask({
+      column: "done",
+      modifiedFiles: ["src/a.ts", "src/b.ts", "src/c.ts"],
+    });
+    mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByText("3 files changed")).toBeInTheDocument();
+  });
+
+  it("prefers mergeDetails.filesChanged over modifiedFiles for done column", () => {
+    const task = makeTask({
+      column: "done",
+      modifiedFiles: ["src/a.ts", "src/b.ts"],
+      mergeDetails: { filesChanged: 7, mergedAt: "2026-01-01T00:00:00Z", targetBranch: "main" },
+    });
+    mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByText("7 files changed")).toBeInTheDocument();
+    expect(screen.queryByText("2 files changed")).not.toBeInTheDocument();
   });
 
   it("prefers mergeDetails.filesChanged over sessionFiles for done column", () => {
