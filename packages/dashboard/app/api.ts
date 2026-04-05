@@ -2468,6 +2468,42 @@ export function unlinkFeatureFromTask(featureId: string, projectId?: string): Pr
   });
 }
 
+/** Triage a feature — create a task from the feature and link it */
+export function triageFeature(featureId: string, taskTitle?: string, taskDescription?: string, projectId?: string): Promise<MissionFeature> {
+  return api<MissionFeature>(withProjectId(`/missions/features/${encodeURIComponent(featureId)}/triage`, projectId), {
+    method: "POST",
+    body: JSON.stringify({ taskTitle, taskDescription }),
+  });
+}
+
+/** Triage all "defined" features in a slice */
+export function triageAllSliceFeatures(sliceId: string, projectId?: string): Promise<{ triaged: MissionFeature[]; count: number }> {
+  return api<{ triaged: MissionFeature[]; count: number }>(withProjectId(`/missions/slices/${encodeURIComponent(sliceId)}/triage-all`, projectId), {
+    method: "POST",
+  });
+}
+
+/** Pause a mission (sets status to "blocked", in-flight tasks continue) */
+export function pauseMission(missionId: string, projectId?: string): Promise<Mission> {
+  return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}/pause`, projectId), {
+    method: "POST",
+  });
+}
+
+/** Resume a paused mission (sets status back to "active") */
+export function resumeMission(missionId: string, projectId?: string): Promise<Mission> {
+  return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}/resume`, projectId), {
+    method: "POST",
+  });
+}
+
+/** Stop a mission (sets status to "blocked" and pauses all linked tasks) */
+export function stopMission(missionId: string, projectId?: string): Promise<Mission & { pausedTaskIds: string[] }> {
+  return api<Mission & { pausedTaskIds: string[] }>(withProjectId(`/missions/${encodeURIComponent(missionId)}/stop`, projectId), {
+    method: "POST",
+  });
+}
+
 // ── Mission Interview API ─────────────────────────────────────────────────
 
 /** Mission plan types returned by the interview AI */

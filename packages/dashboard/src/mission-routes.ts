@@ -1120,6 +1120,192 @@ export function createMissionRouter(store: TaskStore): Router {
     })
   );
 
+  // ── Feature Triage Endpoints ────────────────────────────────────────────────
+
+  /**
+   * POST /api/missions/features/:featureId/triage
+   * Triage a feature by creating a task and linking it.
+   * Body: { taskTitle?: string, taskDescription?: string }
+   */
+  router.post(
+    "/features/:featureId/triage",
+    asyncHandler(async (req, res) => {
+      const { featureId } = req.params;
+      const { taskTitle, taskDescription } = req.body || {};
+
+      if (!validateFeatureId(featureId)) {
+        res.status(400).json({ error: "Invalid feature ID format" });
+        return;
+      }
+
+      const existing = missionStore.getFeature(featureId);
+      if (!existing) {
+        res.status(404).json({ error: "Feature not found" });
+        return;
+      }
+
+      try {
+        const feature = await missionStore.triageFeature(
+          featureId,
+          taskTitle || undefined,
+          taskDescription || undefined,
+        );
+        res.json(feature);
+      } catch (err: any) {
+        if (err.message?.includes("already")) {
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        if (err.message?.includes("TaskStore")) {
+          res.status(503).json({ error: "TaskStore not available for triage operations" });
+          return;
+        }
+        throw err;
+      }
+    })
+  );
+
+  /**
+   * POST /api/missions/slices/:sliceId/triage-all
+   * Triage all "defined" features in a slice.
+   * Returns: { triaged: MissionFeature[], count: number }
+   */
+  router.post(
+    "/slices/:sliceId/triage-all",
+    asyncHandler(async (req, res) => {
+      const { sliceId } = req.params;
+
+      if (!validateSliceId(sliceId)) {
+        res.status(400).json({ error: "Invalid slice ID format" });
+        return;
+      }
+
+      const slice = missionStore.getSlice(sliceId);
+      if (!slice) {
+        res.status(404).json({ error: "Slice not found" });
+        return;
+      }
+
+      try {
+        const triaged = await missionStore.triageSlice(sliceId);
+        res.json({ triaged, count: triaged.length });
+      } catch (err: any) {
+        if (err.message?.includes("TaskStore")) {
+          res.status(503).json({ error: "TaskStore not available for triage operations" });
+          return;
+        }
+        throw err;
+      }
+    })
+  );
+
+  // ── Mission Pause/Stop/Resume Endpoints ─────────────────────────────────────
+
+  /**
+   * POST /api/missions/:missionId/pause
+   * Pause a mission by setting status to "blocked".
+   * In-flight tasks continue running; no new tasks are scheduled.
+   */
+  router.post(
+    "/:missionId/pause",
+    asyncHandler(async (req, res) => {
+      const { missionId } = req.params;
+
+      if (!validateMissionId(missionId)) {
+        res.status(400).json({ error: "Invalid mission ID format" });
+        return;
+      }
+
+      const mission = missionStore.getMission(missionId);
+      if (!mission) {
+        res.status(404).json({ error: "Mission not found" });
+        return;
+      }
+
+      if (mission.status === "blocked") {
+        res.status(400).json({ error: "Mission is already paused (blocked)" });
+        return;
+      }
+
+      const updated = missionStore.updateMission(missionId, { status: "blocked" });
+      res.json(updated);
+    })
+  );
+
+  /**
+   * POST /api/missions/:missionId/resume
+   * Resume a paused mission by setting status to "active".
+   */
+  router.post(
+    "/:missionId/resume",
+    asyncHandler(async (req, res) => {
+      const { missionId } = req.params;
+
+      if (!validateMissionId(missionId)) {
+        res.status(400).json({ error: "Invalid mission ID format" });
+        return;
+      }
+
+      const mission = missionStore.getMission(missionId);
+      if (!mission) {
+        res.status(404).json({ error: "Mission not found" });
+        return;
+      }
+
+      if (mission.status !== "blocked") {
+        res.status(400).json({ error: "Mission is not paused (status must be 'blocked' to resume)" });
+        return;
+      }
+
+      const updated = missionStore.updateMission(missionId, { status: "active" });
+      res.json(updated);
+    })
+  );
+
+  /**
+   * POST /api/missions/:missionId/stop
+   * Stop a mission: set status to "blocked" and pause all linked tasks.
+   */
+  router.post(
+    "/:missionId/stop",
+    asyncHandler(async (req, res) => {
+      const { missionId } = req.params;
+
+      if (!validateMissionId(missionId)) {
+        res.status(400).json({ error: "Invalid mission ID format" });
+        return;
+      }
+
+      const hierarchy = missionStore.getMissionWithHierarchy(missionId);
+      if (!hierarchy) {
+        res.status(404).json({ error: "Mission not found" });
+        return;
+      }
+
+      // Set mission status to blocked
+      const updated = missionStore.updateMission(missionId, { status: "blocked" });
+
+      // Pause all tasks linked to features in this mission
+      const pausedTaskIds: string[] = [];
+      for (const milestone of hierarchy.milestones) {
+        for (const slice of milestone.slices) {
+          for (const feature of slice.features) {
+            if (feature.taskId) {
+              try {
+                await store.pauseTask(feature.taskId, true);
+                pausedTaskIds.push(feature.taskId);
+              } catch (err: any) {
+                // Log but don't fail — task may already be paused or not found
+              }
+            }
+          }
+        }
+      }
+
+      res.json({ ...updated, pausedTaskIds });
+    })
+  );
+
   // ── Interview Endpoints ─────────────────────────────────────────────────────
   // Note: These are mounted at /api/missions/interview/* via the router
 

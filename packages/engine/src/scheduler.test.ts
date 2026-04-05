@@ -110,6 +110,22 @@ describe("pathsOverlap", () => {
 });
 
 describe("Scheduler", () => {
+  // Helper to create mock MissionStore (shared across mission-related test suites)
+  function createMockMissionStore(overrides = {}) {
+    return {
+      getFeatureByTaskId: vi.fn(),
+      updateFeatureStatus: vi.fn().mockResolvedValue(undefined),
+      getSlice: vi.fn(),
+      getMilestone: vi.fn(),
+      computeSliceStatus: vi.fn(),
+      getMission: vi.fn(),
+      getMissionWithHierarchy: vi.fn(),
+      findNextPendingSlice: vi.fn(),
+      activateSlice: vi.fn(),
+      ...overrides,
+    };
+  }
+
   describe("constructor", () => {
     it("initializes with default options", () => {
       const store = createMockStore();
@@ -1004,22 +1020,6 @@ describe("Scheduler", () => {
   });
 
   describe("mission integration", () => {
-    // Helper to create mock MissionStore
-    function createMockMissionStore(overrides = {}) {
-      return {
-        getFeatureByTaskId: vi.fn(),
-        updateFeatureStatus: vi.fn().mockResolvedValue(undefined),
-        getSlice: vi.fn(),
-        getMilestone: vi.fn(),
-        computeSliceStatus: vi.fn(),
-        getMission: vi.fn(),
-        getMissionWithHierarchy: vi.fn(),
-        findNextPendingSlice: vi.fn(),
-        activateSlice: vi.fn(),
-        ...overrides,
-      };
-    }
-
     it("activateNextPendingSlice returns null when no missionStore", async () => {
       const store = createMockStore();
       const scheduler = new Scheduler(store);
@@ -1279,6 +1279,97 @@ describe("Scheduler", () => {
 
       expect(result).toBeNull();
       expect(mockMissionStore.activateSlice).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("blocked mission scheduling", () => {
+    it("skips tasks belonging to a blocked mission", async () => {
+      const task = createMockTask({
+        id: "FN-100",
+        column: "todo",
+        sliceId: "SL-001",
+      });
+
+      const mockMissionStore = createMockMissionStore({
+        getSlice: vi.fn().mockReturnValue({ id: "SL-001", milestoneId: "MS-001" }),
+        getMilestone: vi.fn().mockReturnValue({ id: "MS-001", missionId: "M-001" }),
+        getMission: vi.fn().mockReturnValue({ id: "M-001", status: "blocked" }),
+      });
+
+      (existsSync as any).mockReturnValue(true);
+      (readFile as any).mockResolvedValue("# Task\n\nSome content\n");
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+        getTasksDir: vi.fn().mockReturnValue("/test/project/.fusion/tasks"),
+      });
+
+      const onSchedule = vi.fn();
+      const scheduler = new Scheduler(store, { onSchedule, missionStore: mockMissionStore as any });
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      // Task should NOT be scheduled because its mission is blocked
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(onSchedule).not.toHaveBeenCalled();
+    });
+
+    it("schedules tasks when mission is active", async () => {
+      const task = createMockTask({
+        id: "FN-100",
+        column: "todo",
+        sliceId: "SL-001",
+      });
+
+      const mockMissionStore = createMockMissionStore({
+        getSlice: vi.fn().mockReturnValue({ id: "SL-001", milestoneId: "MS-001" }),
+        getMilestone: vi.fn().mockReturnValue({ id: "MS-001", missionId: "M-001" }),
+        getMission: vi.fn().mockReturnValue({ id: "M-001", status: "active" }),
+      });
+
+      (existsSync as any).mockReturnValue(true);
+      (readFile as any).mockResolvedValue("# Task\n\nSome content\n");
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+        getTasksDir: vi.fn().mockReturnValue("/test/project/.fusion/tasks"),
+      });
+
+      const onSchedule = vi.fn();
+      const scheduler = new Scheduler(store, { onSchedule, missionStore: mockMissionStore as any });
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.moveTask).toHaveBeenCalledWith("FN-100", "in-progress");
+    });
+
+    it("schedules tasks without sliceId regardless of mission state", async () => {
+      const task = createMockTask({
+        id: "FN-100",
+        column: "todo",
+        // No sliceId — not associated with any mission
+      });
+
+      (existsSync as any).mockReturnValue(true);
+      (readFile as any).mockResolvedValue("# Task\n\nSome content\n");
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+        getTasksDir: vi.fn().mockReturnValue("/test/project/.fusion/tasks"),
+      });
+
+      const onSchedule = vi.fn();
+      const scheduler = new Scheduler(store, { onSchedule, missionStore: createMockMissionStore() as any });
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.moveTask).toHaveBeenCalledWith("FN-100", "in-progress");
     });
   });
 

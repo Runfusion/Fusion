@@ -211,6 +211,36 @@ function createMockMissionStore() {
     reorderMilestones: vi.fn(),
     reorderSlices: vi.fn(),
 
+    // Triage methods
+    triageFeature: vi.fn(async (featureId: string) => {
+      const feature = features.get(featureId);
+      if (!feature) throw new Error("Feature " + featureId + " not found");
+      if (feature.status !== "defined") throw new Error("Feature " + featureId + " is already " + feature.status);
+      const taskId = "FN-" + String(features.size + 1).padStart(3, "0");
+      const updated = { ...feature, taskId, status: "triaged" as const, updatedAt: new Date().toISOString() };
+      features.set(featureId, updated);
+      return updated;
+    }),
+
+    triageSlice: vi.fn(async (sliceId: string) => {
+      const slice = slices.get(sliceId);
+      if (!slice) throw new Error("Slice " + sliceId + " not found");
+      const sliceFeatures = Array.from(features.values()).filter((f) => f.sliceId === sliceId && f.status === "defined");
+      const triaged: MissionFeature[] = [];
+      for (const f of sliceFeatures) {
+        const taskId = "FN-" + String(features.size + triaged.size + 1).padStart(3, "0");
+        const updated = { ...f, taskId, status: "triaged" as const, updatedAt: new Date().toISOString() };
+        features.set(f.id, updated);
+        triaged.push(updated);
+      }
+      return triaged;
+    }),
+
+    // Mission status helpers for pause/stop
+    computeMissionStatus: vi.fn(() => "active"),
+    getMilestone: vi.fn((id: string) => milestones.get(id)),
+    getMission: vi.fn((id: string) => missions.get(id)),
+
     on: vi.fn(),
     off: vi.fn(),
     emit: vi.fn(),
@@ -220,6 +250,7 @@ function createMockMissionStore() {
 function createMockStore(): TaskStore {
   return {
     getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
+    pauseTask: vi.fn(),
   } as unknown as TaskStore;
 }
 
@@ -770,6 +801,243 @@ describe("Mission API", () => {
         JSON.stringify({ taskId: "FN-001" }),
         { "content-type": "application/json" }
       );
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // ── Feature Triage Endpoints ────────────────────────────────────────────
+
+  describe("POST /api/missions/features/:featureId/triage", () => {
+    it("should triage a defined feature", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      // Create mission hierarchy
+      const mission = ms.createMission({ title: "Test Mission" });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice" });
+      const feature = ms.addFeature(slice.id, { title: "Feature" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/features/${feature.id}/triage`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("triaged");
+      expect(res.body.taskId).toBeTruthy();
+    });
+
+    it("should return 404 for non-existent feature", async () => {
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/features/F-NONEXISTENT-XXX/triage",
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it("should return 400 for already triaged feature", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice" });
+      const feature = ms.addFeature(slice.id, { title: "Feature" });
+
+      // Triage it first
+      await ms.triageFeature(feature.id);
+
+      // Try again — should fail
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/features/${feature.id}/triage`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("POST /api/missions/slices/:sliceId/triage-all", () => {
+    it("should triage all defined features in a slice", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice" });
+      ms.addFeature(slice.id, { title: "Feature 1" });
+      ms.addFeature(slice.id, { title: "Feature 2" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/slices/${slice.id}/triage-all`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.count).toBe(2);
+      expect(res.body.triaged).toHaveLength(2);
+      expect(res.body.triaged.every((f: MissionFeature) => f.status === "triaged")).toBe(true);
+    });
+
+    it("should return 404 for non-existent slice", async () => {
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/slices/SL-NONEXISTENT-XXX/triage-all",
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // ── Mission Pause/Stop/Resume Endpoints ──────────────────────────────────
+
+  describe("POST /api/missions/:missionId/pause", () => {
+    it("should pause an active mission", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      // Set to active
+      ms.updateMission(mission.id, { status: "active" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/pause`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("blocked");
+    });
+
+    it("should return 404 for non-existent mission", async () => {
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/M-NONEXISTENT-XXX/pause",
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it("should return 400 if mission is already blocked", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      ms.updateMission(mission.id, { status: "blocked" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/pause`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("POST /api/missions/:missionId/resume", () => {
+    it("should resume a blocked mission", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      ms.updateMission(mission.id, { status: "blocked" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/resume`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("active");
+    });
+
+    it("should return 400 if mission is not blocked", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      // Mission starts as "planning"
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/resume`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("POST /api/missions/:missionId/stop", () => {
+    it("should stop a mission and return paused task IDs", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Test Mission" });
+      ms.updateMission(mission.id, { status: "active" });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice" });
+      const feature = ms.addFeature(slice.id, { title: "Feature" });
+      // Simulate a linked task
+      ms.linkFeatureToTask(feature.id, "FN-001");
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/stop`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("blocked");
+      expect(res.body.pausedTaskIds).toContain("FN-001");
+    });
+
+    it("should return 404 for non-existent mission", async () => {
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/M-NONEXISTENT-XXX/stop",
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
       expect(res.status).toBe(404);
     });
   });

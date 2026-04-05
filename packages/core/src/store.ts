@@ -2972,7 +2972,7 @@ ${notificationsSection}`;
    */
   getMissionStore(): MissionStore {
     if (!this.missionStore) {
-      this.missionStore = new MissionStore(this.kbDir, this.db);
+      this.missionStore = new MissionStore(this.kbDir, this.db, this);
     }
     return this.missionStore;
   }

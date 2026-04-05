@@ -450,12 +450,39 @@ export class Scheduler {
       if (available <= 0) return;
 
       const now = Date.now();
-      const todo = tasks.filter((t) => {
+      let todo = tasks.filter((t) => {
         if (t.column !== "todo" || t.paused) return false;
         // Skip tasks with a recovery backoff that hasn't elapsed yet
         if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
         return true;
       });
+
+      // Filter out tasks belonging to blocked missions
+      if (todo.length > 0 && this.options.missionStore) {
+        const blockedSliceIds = new Set<string>();
+        for (const t of todo) {
+          if (t.sliceId && !blockedSliceIds.has(t.sliceId)) {
+            try {
+              const slice = this.options.missionStore.getSlice(t.sliceId);
+              if (slice) {
+                const milestone = this.options.missionStore.getMilestone(slice.milestoneId);
+                if (milestone) {
+                  const mission = this.options.missionStore.getMission(milestone.missionId);
+                  if (mission && mission.status === "blocked") {
+                    blockedSliceIds.add(t.sliceId);
+                  }
+                }
+              }
+            } catch {
+              // If lookup fails, don't block the task
+            }
+          }
+        }
+        if (blockedSliceIds.size > 0) {
+          todo = todo.filter((t) => !t.sliceId || !blockedSliceIds.has(t.sliceId));
+        }
+      }
+
       if (todo.length === 0) return;
 
       /**

@@ -945,6 +945,208 @@ describe("MissionStore", () => {
       );
     });
   });
+
+  describe("triageFeature", () => {
+    it("throws if TaskStore reference is not available", async () => {
+      const mission = store.createMission({ title: "Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Feature" });
+
+      await expect(store.triageFeature(feature.id)).rejects.toThrow(
+        "TaskStore reference is required for triage operations",
+      );
+    });
+
+    it("throws if feature not found", async () => {
+      // Need a TaskStore reference for this test
+      const { TaskStore } = await import("./store.js");
+      const ts = new TaskStore(kbDir);
+      const msWithTs = ts.getMissionStore();
+
+      await expect(msWithTs.triageFeature("F-NONEXISTENT")).rejects.toThrow(
+        "Feature F-NONEXISTENT not found",
+      );
+    });
+
+    it("throws if feature is already triaged", async () => {
+      const { TaskStore } = await import("./store.js");
+      const ts = new TaskStore(kbDir);
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({ title: "Mission" });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const feature = msWithTs.addFeature(slice.id, { title: "Feature" });
+
+      // Triaging once should work
+      await msWithTs.triageFeature(feature.id);
+
+      // Triaging again should fail
+      const updated = msWithTs.getFeature(feature.id)!;
+      await expect(msWithTs.triageFeature(updated.id)).rejects.toThrow(
+        `already triaged`,
+      );
+    });
+
+    it("creates a task and links it to the feature", async () => {
+      const { TaskStore } = await import("./store.js");
+      const ts = new TaskStore(kbDir);
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({ title: "Mission" });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const feature = msWithTs.addFeature(slice.id, {
+        title: "Login Page",
+        description: "Build a login page",
+        acceptanceCriteria: "User can log in",
+      });
+
+      const triaged = await msWithTs.triageFeature(feature.id);
+
+      // Feature should be triaged with a taskId
+      expect(triaged.status).toBe("triaged");
+      expect(triaged.taskId).toBeTruthy();
+
+      // Task should exist with correct properties
+      const task = await ts.getTask(triaged.taskId!);
+      expect(task).toBeDefined();
+      expect(task!.title).toBe("Login Page");
+      expect(task!.description).toContain("Build a login page");
+      expect(task!.description).toContain("Acceptance Criteria");
+      expect(task!.sliceId).toBe(slice.id);
+      expect(task!.missionId).toBe(mission.id);
+    });
+
+    it("uses provided title and description overrides", async () => {
+      const { TaskStore } = await import("./store.js");
+      const ts = new TaskStore(kbDir);
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({ title: "Mission" });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const feature = msWithTs.addFeature(slice.id, { title: "Original" });
+
+      const triaged = await msWithTs.triageFeature(
+        feature.id,
+        "Custom Title",
+        "Custom description for the task",
+      );
+
+      const task = await ts.getTask(triaged.taskId!);
+      expect(task!.title).toBe("Custom Title");
+      expect(task!.description).toBe("Custom description for the task");
+    });
+
+    it("emits feature:linked event", async () => {
+      const { TaskStore } = await import("./store.js");
+      const ts = new TaskStore(kbDir);
+      const msWithTs = ts.getMissionStore();
+
+      const linkedHandler = vi.fn();
+      msWithTs.on("feature:linked", linkedHandler);
+
+      const mission = msWithTs.createMission({ title: "Mission" });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const feature = msWithTs.addFeature(slice.id, { title: "Feature" });
+
+      const triaged = await msWithTs.triageFeature(feature.id);
+
+      expect(linkedHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          feature: expect.objectContaining({ id: feature.id }),
+          taskId: triaged.taskId,
+        }),
+      );
+    });
+  });
+
+  describe("triageSlice", () => {
+    it("throws if TaskStore reference is not available", async () => {
+      const mission = store.createMission({ title: "Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+
+      await expect(store.triageSlice(slice.id)).rejects.toThrow(
+        "TaskStore reference is required for triage operations",
+      );
+    });
+
+    it("throws if slice not found", async () => {
+      const { TaskStore } = await import("./store.js");
+      const ts = new TaskStore(kbDir);
+      const msWithTs = ts.getMissionStore();
+
+      await expect(msWithTs.triageSlice("SL-NONEXISTENT")).rejects.toThrow(
+        "Slice SL-NONEXISTENT not found",
+      );
+    });
+
+    it("triages all defined features in a slice", async () => {
+      const { TaskStore } = await import("./store.js");
+      const ts = new TaskStore(kbDir);
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({ title: "Mission" });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const f1 = msWithTs.addFeature(slice.id, { title: "Feature 1" });
+      const f2 = msWithTs.addFeature(slice.id, { title: "Feature 2" });
+      const f3 = msWithTs.addFeature(slice.id, { title: "Feature 3" });
+
+      const triaged = await msWithTs.triageSlice(slice.id);
+
+      expect(triaged).toHaveLength(3);
+      expect(triaged.every((f) => f.status === "triaged")).toBe(true);
+      expect(triaged.every((f) => f.taskId)).toBe(true);
+
+      // All tasks should exist and be linked to the slice/mission
+      for (const feature of triaged) {
+        const task = await ts.getTask(feature.taskId!);
+        expect(task).toBeDefined();
+        expect(task!.sliceId).toBe(slice.id);
+        expect(task!.missionId).toBe(mission.id);
+      }
+    });
+
+    it("skips already triaged features", async () => {
+      const { TaskStore } = await import("./store.js");
+      const ts = new TaskStore(kbDir);
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({ title: "Mission" });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const f1 = msWithTs.addFeature(slice.id, { title: "Feature 1" });
+      const f2 = msWithTs.addFeature(slice.id, { title: "Feature 2" });
+
+      // Triage f1 first
+      await msWithTs.triageFeature(f1.id);
+
+      // Now triage the whole slice — should only triage f2
+      const triaged = await msWithTs.triageSlice(slice.id);
+
+      expect(triaged).toHaveLength(1);
+      expect(triaged[0].id).toBe(f2.id);
+      expect(triaged[0].status).toBe("triaged");
+    });
+
+    it("returns empty array if no defined features", async () => {
+      const { TaskStore } = await import("./store.js");
+      const ts = new TaskStore(kbDir);
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({ title: "Mission" });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+
+      const triaged = await msWithTs.triageSlice(slice.id);
+      expect(triaged).toEqual([]);
+    });
+  });
 });
 
 // vi import for vitest mocking

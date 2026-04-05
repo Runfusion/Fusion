@@ -16,7 +16,11 @@ import {
   Link,
   Unlink,
   Play,
+  Pause,
+  Square,
+  RefreshCw,
   Sparkles,
+  Zap,
 } from "lucide-react";
 import type { ToastType } from "../hooks/useToast";
 import { MissionInterviewModal } from "./MissionInterviewModal";
@@ -51,6 +55,11 @@ import {
   deleteFeature,
   linkFeatureToTask,
   unlinkFeatureFromTask,
+  triageFeature,
+  triageAllSliceFeatures,
+  pauseMission,
+  resumeMission,
+  stopMission,
 } from "../api";
 
 interface MissionManagerProps {
@@ -572,6 +581,71 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
     }
   }, [addToast, loadMissionDetail, selectedMission, projectId]);
 
+  // Triage a single feature — creates a task and links it
+  const handleTriageFeature = useCallback(async (featureId: string) => {
+    try {
+      setSaving(true);
+      await triageFeature(featureId, undefined, undefined, projectId);
+      addToast("Feature triaged — task created", "success");
+      await loadMissionDetail(selectedMission!.id);
+    } catch (err: any) {
+      addToast(err.message || "Failed to triage feature", "error");
+    } finally {
+      setSaving(false);
+    }
+  }, [addToast, loadMissionDetail, selectedMission, projectId]);
+
+  // Triage all defined features in a slice
+  const handleTriageAllSliceFeatures = useCallback(async (sliceId: string) => {
+    try {
+      setSaving(true);
+      const result = await triageAllSliceFeatures(sliceId, projectId);
+      addToast(`Triaged ${result.count} feature${result.count !== 1 ? "s" : ""}`, "success");
+      await loadMissionDetail(selectedMission!.id);
+    } catch (err: any) {
+      addToast(err.message || "Failed to triage slice features", "error");
+    } finally {
+      setSaving(false);
+    }
+  }, [addToast, loadMissionDetail, selectedMission, projectId]);
+
+  // Pause mission — set status to "blocked"
+  const handlePauseMission = useCallback(async (missionId: string) => {
+    try {
+      await pauseMission(missionId, projectId);
+      addToast("Mission paused", "success");
+      await loadMissionDetail(missionId);
+      loadMissions();
+    } catch (err: any) {
+      addToast(err.message || "Failed to pause mission", "error");
+    }
+  }, [addToast, loadMissionDetail, loadMissions, projectId]);
+
+  // Resume a paused mission — set status back to "active"
+  const handleResumeMission = useCallback(async (missionId: string) => {
+    try {
+      await resumeMission(missionId, projectId);
+      addToast("Mission resumed", "success");
+      await loadMissionDetail(missionId);
+      loadMissions();
+    } catch (err: any) {
+      addToast(err.message || "Failed to resume mission", "error");
+    }
+  }, [addToast, loadMissionDetail, loadMissions, projectId]);
+
+  // Stop mission — set status to "blocked" and pause all linked tasks
+  const handleStopMission = useCallback(async (missionId: string) => {
+    try {
+      const result = await stopMission(missionId, projectId);
+      const count = result.pausedTaskIds?.length ?? 0;
+      addToast(`Mission stopped (${count} task${count !== 1 ? "s" : ""} paused)`, "success");
+      await loadMissionDetail(missionId);
+      loadMissions();
+    } catch (err: any) {
+      addToast(err.message || "Failed to stop mission", "error");
+    }
+  }, [addToast, loadMissionDetail, loadMissions, projectId]);
+
   const handleSelectMission = useCallback((mission: Mission) => {
     loadMissionDetail(mission.id);
   }, [loadMissionDetail]);
@@ -713,6 +787,36 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                   </span>
                 </div>
                 <div className="mission-detail__actions">
+                  {selectedMission.status === "active" && (
+                    <>
+                      <button
+                        className="mission-icon-btn"
+                        onClick={() => handlePauseMission(selectedMission.id)}
+                        title="Pause mission"
+                        aria-label="Pause mission"
+                      >
+                        <Pause size={14} />
+                      </button>
+                      <button
+                        className="mission-icon-btn mission-icon-btn--danger"
+                        onClick={() => handleStopMission(selectedMission.id)}
+                        title="Stop mission"
+                        aria-label="Stop mission"
+                      >
+                        <Square size={14} />
+                      </button>
+                    </>
+                  )}
+                  {selectedMission.status === "blocked" && (
+                    <button
+                      className="mission-icon-btn mission-icon-btn--success"
+                      onClick={() => handleResumeMission(selectedMission.id)}
+                      title="Resume mission"
+                      aria-label="Resume mission"
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                  )}
                   <button
                     className="mission-icon-btn"
                     onClick={() => handleEditMission(selectedMission)}
@@ -886,6 +990,16 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                                       <Play size={14} />
                                     </button>
                                   )}
+                                  {slice.status === "active" && slice.features?.some((f) => f.status === "defined") && (
+                                    <button
+                                      className="mission-icon-btn"
+                                      onClick={() => handleTriageAllSliceFeatures(slice.id)}
+                                      title="Triage all features"
+                                      disabled={saving}
+                                    >
+                                      {saving ? <Loader2 size={14} className="spinner" /> : <Zap size={14} />}
+                                    </button>
+                                  )}
                                   <button
                                     className="mission-icon-btn"
                                     onClick={() => handleCreateFeature(slice.id)}
@@ -1004,6 +1118,16 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                                             </span>
                                           )}
                                           <div className="mission-feature__actions">
+                                            {feature.status === "defined" && !feature.taskId && (
+                                              <button
+                                                className="mission-icon-btn"
+                                                onClick={() => handleTriageFeature(feature.id)}
+                                                title="Triage — create task"
+                                                disabled={saving}
+                                              >
+                                                {saving ? <Loader2 size={14} className="spinner" /> : <Zap size={14} />}
+                                              </button>
+                                            )}
                                             {feature.taskId ? (
                                               <button
                                                 className="mission-icon-btn"
@@ -1012,7 +1136,7 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                                               >
                                                 <Unlink size={14} />
                                               </button>
-                                            ) : (
+                                            ) : feature.status !== "defined" ? (
                                               <button
                                                 className="mission-icon-btn"
                                                 onClick={() => setLinkTaskFeatureId(feature.id)}
@@ -1020,7 +1144,7 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                                               >
                                                 <Link size={14} />
                                               </button>
-                                            )}
+                                            ) : null}
                                             <button
                                               className="mission-icon-btn"
                                               onClick={() => handleEditFeature(feature)}
@@ -1254,6 +1378,33 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                     )}
                   </div>
                   <div className="mission-list__item-actions" onClick={(e) => e.stopPropagation()}>
+                    {m.status === "active" && (
+                      <>
+                        <button
+                          className="mission-icon-btn"
+                          onClick={() => handlePauseMission(m.id)}
+                          title="Pause mission"
+                        >
+                          <Pause size={14} />
+                        </button>
+                        <button
+                          className="mission-icon-btn mission-icon-btn--danger"
+                          onClick={() => handleStopMission(m.id)}
+                          title="Stop mission"
+                        >
+                          <Square size={14} />
+                        </button>
+                      </>
+                    )}
+                    {m.status === "blocked" && (
+                      <button
+                        className="mission-icon-btn mission-icon-btn--success"
+                        onClick={() => handleResumeMission(m.id)}
+                        title="Resume mission"
+                      >
+                        <RefreshCw size={14} />
+                      </button>
+                    )}
                     <button
                       className="mission-icon-btn"
                       onClick={() => handleEditMission(mission)}

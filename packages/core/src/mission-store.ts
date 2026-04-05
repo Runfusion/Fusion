@@ -72,10 +72,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    *
    * @param kbDir - Path to the .fusion directory (e.g., /path/to/project/.fusion)
    * @param db - Shared Database instance (same instance used by TaskStore)
+   * @param taskStore - Optional TaskStore reference for triage operations that create tasks
    */
   constructor(
     private kbDir: string,
     private db: Database,
+    private taskStore?: import("./store.js").TaskStore,
   ) {
     super();
     this.setMaxListeners(100);
@@ -1046,6 +1048,92 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const row = this.db.prepare("SELECT * FROM mission_features WHERE taskId = ?").get(taskId);
     if (!row) return undefined;
     return this.rowToFeature(row);
+  }
+
+  // ── Triage Operations ────────────────────────────────────────────────
+
+  /**
+   * Triage a feature by creating a new task and linking it.
+   *
+   * Creates a kb task from the feature's title and description, then links
+   * the feature to the newly created task using `linkFeatureToTask()`.
+   * The feature status transitions from "defined" to "triaged".
+   *
+   * Requires MissionStore to have been constructed with a TaskStore reference.
+   *
+   * @param featureId - Feature ID to triage
+   * @param taskTitle - Optional title override (defaults to feature title)
+   * @param taskDescription - Optional description override (defaults to feature description + acceptance criteria)
+   * @returns The updated feature with taskId set
+   * @throws Error if feature not found, already triaged, or TaskStore not available
+   */
+  async triageFeature(
+    featureId: string,
+    taskTitle?: string,
+    taskDescription?: string,
+  ): Promise<MissionFeature> {
+    if (!this.taskStore) {
+      throw new Error("TaskStore reference is required for triage operations");
+    }
+
+    const feature = this.getFeature(featureId);
+    if (!feature) {
+      throw new Error(`Feature ${featureId} not found`);
+    }
+
+    if (feature.status !== "defined") {
+      throw new Error(`Feature ${featureId} is already ${feature.status} (status must be "defined" to triage)`);
+    }
+
+    // Build description from feature + acceptance criteria
+    const description = taskDescription || [
+      feature.description,
+      feature.acceptanceCriteria ? `\n**Acceptance Criteria:**\n${feature.acceptanceCriteria}` : "",
+    ].filter(Boolean).join("\n\n") || feature.title;
+
+    // Create the task
+    const task = await this.taskStore.createTask({
+      title: taskTitle || feature.title,
+      description,
+    });
+
+    // Link the feature to the new task (this also updates feature status to "triaged")
+    const updated = this.linkFeatureToTask(featureId, task.id);
+
+    return updated;
+  }
+
+  /**
+   * Triage all "defined" features in a slice.
+   *
+   * Convenience method that iterates over all features in a slice with
+   * status "defined" and triages each one, creating a task and linking it.
+   * Features that are already triaged or in-progress are skipped.
+   *
+   * @param sliceId - Slice ID whose features should be triaged
+   * @returns Array of updated features that were triaged
+   * @throws Error if slice not found or TaskStore not available
+   */
+  async triageSlice(sliceId: string): Promise<MissionFeature[]> {
+    if (!this.taskStore) {
+      throw new Error("TaskStore reference is required for triage operations");
+    }
+
+    const slice = this.getSlice(sliceId);
+    if (!slice) {
+      throw new Error(`Slice ${sliceId} not found`);
+    }
+
+    const features = this.listFeatures(sliceId);
+    const definedFeatures = features.filter((f) => f.status === "defined");
+
+    const triaged: MissionFeature[] = [];
+    for (const feature of definedFeatures) {
+      const updated = await this.triageFeature(feature.id);
+      triaged.push(updated);
+    }
+
+    return triaged;
   }
 
   // ── Status Rollup Logic ───────────────────────────────────────────
