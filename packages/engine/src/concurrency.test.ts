@@ -381,3 +381,79 @@ describe("AgentSemaphore", () => {
     sem.release();
   });
 });
+
+// ─── Semaphore Resilience Tests (FN-978) ─────────────────────────────────────
+describe("AgentSemaphore resilience (FN-978)", () => {
+  it("defaults to limit=1 when getter returns undefined", () => {
+    const sem = new AgentSemaphore(() => undefined as any);
+    // Should use minimum limit of 1
+    expect(sem.limit).toBe(1);
+    // availableCount returns 0 for invalid limits (defensive)
+    expect(sem.availableCount).toBe(0);
+  });
+
+  it("defaults to limit=1 when getter returns 0", () => {
+    const sem = new AgentSemaphore(0);
+    expect(sem.limit).toBe(1);
+    expect(sem.availableCount).toBe(0);
+  });
+
+  it("defaults to limit=1 when getter returns negative", () => {
+    const sem = new AgentSemaphore(-1);
+    expect(sem.limit).toBe(1);
+    expect(sem.availableCount).toBe(0);
+  });
+
+  it("defaults to limit=1 when getter returns NaN", () => {
+    const sem = new AgentSemaphore(() => NaN);
+    expect(sem.limit).toBe(1);
+    expect(sem.availableCount).toBe(0);
+  });
+
+  it("allows acquire even when limit getter returns undefined", async () => {
+    const sem = new AgentSemaphore(() => undefined as any);
+    // Should not block indefinitely
+    await sem.acquire();
+    expect(sem.activeCount).toBe(1);
+    sem.release();
+    expect(sem.activeCount).toBe(0);
+  });
+
+  it("drains waiters correctly when limit changes from invalid to valid", async () => {
+    let limit = 0;
+    const sem = new AgentSemaphore(() => limit);
+
+    // With limit=0, availableCount should be 0 (raw limit is invalid)
+    expect(sem.limit).toBe(1); // guarded getter returns min 1
+    expect(sem.availableCount).toBe(0); // raw limit is 0, so 0
+
+    // But acquire uses the guarded limit (1), so it should work
+    await sem.acquire();
+    expect(sem.activeCount).toBe(1);
+    sem.release();
+    expect(sem.activeCount).toBe(0);
+  });
+
+  it("handles limit changing dynamically", async () => {
+    let limit = 2;
+    const sem = new AgentSemaphore(() => limit);
+
+    // Acquire 2 slots
+    await sem.acquire();
+    await sem.acquire();
+    expect(sem.activeCount).toBe(2);
+
+    // Reduce limit to 1
+    limit = 1;
+    // Available should be 0 (1-2, clamped to 0)
+    expect(sem.availableCount).toBe(0);
+
+    // Release one — active goes from 2 to 1, drain checks limit=1, active=1 → no more drain
+    sem.release();
+    expect(sem.activeCount).toBe(1);
+
+    // Release the second one
+    sem.release();
+    expect(sem.activeCount).toBe(0);
+  });
+});

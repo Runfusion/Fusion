@@ -37,15 +37,19 @@ export interface PromptableSession extends AgentSession {
 export async function promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
   const maybePromptable = session as Partial<PromptableSession>;
   if (typeof maybePromptable.promptWithFallback === "function") {
+    console.log(`[pi] promptWithFallback: delegating to session.promptWithFallback (prompt length=${prompt.length})`);
     await maybePromptable.promptWithFallback(prompt, options);
+    console.log(`[pi] promptWithFallback: completed`);
     return;
   }
 
+  console.log(`[pi] promptWithFallback: calling session.prompt (prompt length=${prompt.length})`);
   if (options === undefined) {
     await session.prompt(prompt);
   } else {
     await (session.prompt as any)(prompt, options);
   }
+  console.log(`[pi] promptWithFallback: prompt completed`);
 }
 
 /**
@@ -243,6 +247,7 @@ async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegis
  * Reuses the user's existing pi auth and model configuration.
  */
 export async function createKbAgent(options: AgentOptions): Promise<AgentResult> {
+  console.log(`[pi] createKbAgent called (cwd=${options.cwd}, tools=${options.tools}, provider=${options.defaultProvider}, model=${options.defaultModelId})`);
   const authStorage = AuthStorage.create();
   const modelRegistry = new ModelRegistry(authStorage);
   await registerExtensionProviders(options.cwd, modelRegistry);
@@ -304,12 +309,16 @@ export async function createKbAgent(options: AgentOptions): Promise<AgentResult>
   let usingFallback = false;
   try {
     sessionResult = await createSessionWithModel(selectedModel);
+    console.log(`[pi] Session created successfully (model=${selectedModel ? `${selectedModel.provider}/${selectedModel.id}` : "default"})`);
   } catch (err: any) {
     if (!fallbackModel || !selectedModel || !isRetryableModelSelectionError(err?.message || "")) {
+      console.error(`[pi] Session creation failed: ${err.message}`);
       throw err;
     }
+    console.log(`[pi] Primary model failed (${err.message}), trying fallback`);
     usingFallback = true;
     sessionResult = await createSessionWithModel(fallbackModel);
+    console.log(`[pi] Fallback session created successfully`);
   }
 
   const { session } = sessionResult;

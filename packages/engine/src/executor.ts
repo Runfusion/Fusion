@@ -268,8 +268,12 @@ export class TaskExecutor {
     private rootDir: string,
     private options: TaskExecutorOptions = {},
   ) {
+    executorLog.log(`TaskExecutor constructed (rootDir=${rootDir}, hasSemaphore=${!!options.semaphore}, hasStuckDetector=${!!options.stuckTaskDetector})`);
+
     store.on("task:moved", ({ task, to }) => {
+      executorLog.log(`[event:task:moved] ${task.id} → ${to}`);
       if (to === "in-progress") {
+        executorLog.log(`[event:task:moved] Initiating execute() for ${task.id}`);
         this.execute(task).catch((err) =>
           executorLog.error(`Failed to start ${task.id}:`, err),
         );
@@ -449,6 +453,7 @@ export class TaskExecutor {
    * as-is. Branches remain task-scoped (`kb/{task-id}`).
    */
   async execute(task: Task): Promise<void> {
+    executorLog.log(`execute() called for ${task.id} (already executing=${this.executing.has(task.id)})`);
     if (this.executing.has(task.id)) return;
     this.executing.add(task.id);
 
@@ -618,10 +623,12 @@ export class TaskExecutor {
       }
 
       this.activeWorktrees.set(task.id, worktreePath);
+      executorLog.log(`${task.id}: worktree ready at ${worktreePath}`);
 
       this.options.onStart?.(task, worktreePath);
 
       const detail = await this.store.getTask(task.id);
+      executorLog.log(`${task.id}: fetched task detail (${detail.steps.length} steps, prompt length=${detail.prompt?.length ?? 0})`);
 
       // Initialize steps from PROMPT.md if empty
       if (detail.steps.length === 0) {
@@ -688,6 +695,8 @@ export class TaskExecutor {
           ? SessionManager.open(task.sessionFile!)
           : SessionManager.create(worktreePath);
 
+        executorLog.log(`${task.id}: creating agent session (provider=${executorProvider ?? "default"}, model=${executorModelId ?? "default"}, resuming=${isResuming})`);
+
         let { session, sessionFile } = await createKbAgent({
           cwd: worktreePath,
           systemPrompt: EXECUTOR_SYSTEM_PROMPT,
@@ -732,11 +741,13 @@ export class TaskExecutor {
 
         // Register with stuck task detector for heartbeat monitoring
         stuckDetector?.trackTask(task.id, session);
+        executorLog.log(`${task.id}: session registered (model=${describeModel(session)}, stuckDetector=${!!stuckDetector})`);
 
         try {
           // Record activity on prompt start (heartbeat for stuck detection)
           stuckDetector?.recordActivity(task.id);
 
+          executorLog.log(`${task.id}: calling promptWithFallback()...`);
           if (isResuming) {
             // Session already has full conversation history — just tell the
             // agent it was paused and should pick up where it left off.

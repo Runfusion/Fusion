@@ -137,6 +137,7 @@ export class StuckTaskDetector {
       lastProgressAt: now,
       activitySinceProgress: 0,
     });
+    stuckLog.log(`Tracking task ${taskId} (total tracked: ${this.tracked.size})`);
   }
 
   /**
@@ -157,6 +158,9 @@ export class StuckTaskDetector {
     if (entry) {
       entry.lastActivity = Date.now();
       entry.activitySinceProgress++;
+      if (entry.activitySinceProgress <= 3 || entry.activitySinceProgress % 50 === 0) {
+        stuckLog.log(`Activity recorded for ${taskId} (sinceProgress=${entry.activitySinceProgress})`);
+      }
     }
   }
 

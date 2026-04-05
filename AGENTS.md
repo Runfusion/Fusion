@@ -750,6 +750,31 @@ Use `useBadgeWebSocket()` when a UI surface needs live badge snapshots for speci
 - The server verifies webhook signatures using `FUSION_GITHUB_WEBHOOK_SECRET`, fetches canonical badge state with GitHub App installation tokens, and broadcasts updates via the existing `task:updated` → `/api/ws` bridge.
 - Keep the existing 5-minute refresh endpoints (`/api/tasks/:id/pr/status`, `/api/tasks/:id/issue/status`) as a fallback path when webhook delivery is unavailable.
 
+## Engine Diagnostic Logging
+
+The task executor, scheduler, and related subsystems use structured logging via `createLogger()` from `packages/engine/src/logger.ts`. All log lines are prefixed with the subsystem name (e.g., `[executor]`, `[scheduler]`, `[stuck-detector]`, `[pi]`).
+
+### Key Diagnostic Points
+
+When debugging agent execution issues (agents stuck on "starting"), check these log points:
+
+1. **`[executor] TaskExecutor constructed`** — Confirms the executor initialized with expected options (semaphore, stuck detector)
+2. **`[executor] [event:task:moved] FN-XXX → in-progress`** — Confirms the scheduler moved the task and the executor received the event
+3. **`[executor] execute() called for FN-XXX`** — Confirms execute() was entered (includes executing guard status)
+4. **`[executor] FN-XXX: worktree ready at ...`** — Confirms worktree creation
+5. **`[executor] FN-XXX: creating agent session`** — Confirms model resolution and session creation started
+6. **`[pi] createKbAgent called`** — Confirms the agent factory was invoked with correct parameters
+7. **`[pi] Session created successfully`** — Confirms the AI session was created
+8. **`[executor] FN-XXX: calling promptWithFallback()...`** — Confirms the prompt was sent to the agent
+9. **`[stuck-detector] Tracking task FN-XXX`** — Confirms heartbeat monitoring started
+
+### Semaphore Resilience
+
+The `AgentSemaphore` (`packages/engine/src/concurrency.ts`) has defensive guards against invalid `maxConcurrent` settings:
+- `limit` getter returns minimum 1 (prevents indefinite blocking)
+- `availableCount` returns 0 for invalid limits (NaN, Infinity, ≤0)
+- If agents are stuck and logs show no `execute()` calls, check if the semaphore is blocking
+
 ## Git
 
 - Commit messages: `feat(FN-XXX):`, `fix(FN-XXX):`, `test(FN-XXX):`

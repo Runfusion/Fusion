@@ -61,14 +61,20 @@ export class AgentSemaphore {
   }
 
   /** Number of slots available for immediate acquisition. May be 0 or negative
-   *  if the limit was reduced below the current active count. */
+   *  if the limit was reduced below the current active count.
+   *  Returns 0 when the limit is not a valid positive number (defensive guard). */
   get availableCount(): number {
-    return Math.max(0, this._getLimit() - this._active);
+    const limit = this._getLimit();
+    if (!Number.isFinite(limit) || limit <= 0) return 0;
+    return Math.max(0, limit - this._active);
   }
 
-  /** Current concurrency limit. */
+  /** Current concurrency limit.
+   *  Returns a minimum of 1 to prevent indefinite blocking. */
   get limit(): number {
-    return this._getLimit();
+    const limit = this._getLimit();
+    if (!Number.isFinite(limit) || limit <= 0) return 1;
+    return limit;
   }
 
   /**
@@ -83,7 +89,8 @@ export class AgentSemaphore {
    *   agents and {@link PRIORITY_EXECUTE} (`1`) for execution agents.
    */
   acquire(priority: number = 0): Promise<void> {
-    if (this._active < this._getLimit()) {
+    const limit = this.limit; // Uses the guarded getter (returns min 1)
+    if (this._active < limit) {
       this._active++;
       return Promise.resolve();
     }
@@ -131,7 +138,8 @@ export class AgentSemaphore {
    * priority, the one that was enqueued first (FIFO) is chosen.
    */
   private _drain(): void {
-    while (this._waiters.length > 0 && this._active < this._getLimit()) {
+    const limit = this.limit; // Uses the guarded getter (returns min 1)
+    while (this._waiters.length > 0 && this._active < limit) {
       const idx = this._highestPriorityIndex();
       const [waiter] = this._waiters.splice(idx, 1);
       waiter.resolve();

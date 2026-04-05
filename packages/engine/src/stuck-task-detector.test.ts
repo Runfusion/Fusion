@@ -979,3 +979,131 @@ describe("StuckTaskDetector", () => {
     });
   });
 });
+
+// ─── Heartbeat Tracking Integration Tests (FN-978) ────────────────────────────
+//
+// These tests verify the complete heartbeat tracking lifecycle:
+// trackTask → recordActivity → getLastActivity → untrackTask
+describe("StuckTaskDetector heartbeat tracking (FN-978)", () => {
+  let store: TaskStore;
+  let detector: StuckTaskDetector;
+
+  beforeEach(() => {
+    store = createMockStore();
+    detector = new StuckTaskDetector(store);
+  });
+
+  afterEach(() => {
+    detector.stop();
+  });
+
+  it("records activity and updates lastActivity timestamp", () => {
+    const session = createMockSession();
+    const beforeTrack = Date.now();
+    detector.trackTask("FN-001", session);
+
+    // Record some activity
+    const beforeActivity = Date.now();
+    detector.recordActivity("FN-001");
+
+    const lastActivity = detector.getLastActivity("FN-001");
+    expect(lastActivity).toBeDefined();
+    expect(lastActivity!).toBeGreaterThanOrEqual(beforeActivity);
+    expect(lastActivity!).toBeLessThanOrEqual(Date.now());
+
+    // Activity counter should increment
+    expect(detector.getActivitySinceProgress("FN-001")).toBe(1);
+  });
+
+  it("accumulates multiple activity recordings", () => {
+    const session = createMockSession();
+    detector.trackTask("FN-001", session);
+
+    // Record multiple activities
+    for (let i = 0; i < 10; i++) {
+      detector.recordActivity("FN-001");
+    }
+
+    expect(detector.getActivitySinceProgress("FN-001")).toBe(10);
+  });
+
+  it("resets activity counter on recordProgress", () => {
+    const session = createMockSession();
+    detector.trackTask("FN-001", session);
+
+    // Record some activity
+    detector.recordActivity("FN-001");
+    detector.recordActivity("FN-001");
+    detector.recordActivity("FN-001");
+    expect(detector.getActivitySinceProgress("FN-001")).toBe(3);
+
+    // Record progress (step transition)
+    detector.recordProgress("FN-001");
+    expect(detector.getActivitySinceProgress("FN-001")).toBe(0);
+
+    // Activity counter resets but lastActivity still updates
+    const lastProgress = detector.getLastProgressAt("FN-001");
+    expect(lastProgress).toBeDefined();
+  });
+
+  it("tracks task and untracks on completion", () => {
+    const session = createMockSession();
+
+    // Track task
+    detector.trackTask("FN-001", session);
+    expect(detector.trackedCount).toBe(1);
+
+    // Simulate completion
+    detector.untrackTask("FN-001");
+    expect(detector.trackedCount).toBe(0);
+    expect(detector.getLastActivity("FN-001")).toBeUndefined();
+    expect(detector.getActivitySinceProgress("FN-001")).toBeUndefined();
+  });
+
+  it("handles multiple tasks independently", () => {
+    const session1 = createMockSession();
+    const session2 = createMockSession();
+
+    detector.trackTask("FN-001", session1);
+    detector.trackTask("FN-002", session2);
+    expect(detector.trackedCount).toBe(2);
+
+    // Record activity for one task
+    detector.recordActivity("FN-001");
+    expect(detector.getActivitySinceProgress("FN-001")).toBe(1);
+    expect(detector.getActivitySinceProgress("FN-002")).toBe(0);
+
+    // Untrack one task
+    detector.untrackTask("FN-001");
+    expect(detector.trackedCount).toBe(1);
+    expect(detector.getLastActivity("FN-001")).toBeUndefined();
+    expect(detector.getLastActivity("FN-002")).toBeDefined();
+  });
+
+  it("does not crash when recording activity for untracked task", () => {
+    // Should not throw
+    expect(() => detector.recordActivity("FN-999")).not.toThrow();
+    expect(detector.getLastActivity("FN-999")).toBeUndefined();
+  });
+
+  it("does not crash when untracking untracked task", () => {
+    // Should not throw
+    expect(() => detector.untrackTask("FN-999")).not.toThrow();
+    expect(detector.trackedCount).toBe(0);
+  });
+
+  it("re-tracking a task resets its counters", () => {
+    const session = createMockSession();
+    detector.trackTask("FN-001", session);
+
+    // Record some activity
+    detector.recordActivity("FN-001");
+    detector.recordActivity("FN-001");
+    expect(detector.getActivitySinceProgress("FN-001")).toBe(2);
+
+    // Re-track (e.g., after a retry)
+    detector.trackTask("FN-001", session);
+    expect(detector.getActivitySinceProgress("FN-001")).toBe(0);
+    expect(detector.trackedCount).toBe(1);
+  });
+});
