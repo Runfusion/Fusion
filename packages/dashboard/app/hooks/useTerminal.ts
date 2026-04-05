@@ -41,7 +41,7 @@ interface BufferedMessages {
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const INITIAL_RECONNECT_DELAY = 1000;
-const HEARTBEAT_INTERVAL = 30000;
+const HEARTBEAT_INTERVAL = 45000; // 45 seconds — slightly longer than server's 30s interval
 
 function createEmptyBuffer(): BufferedMessages {
   return { scrollback: null, connected: null, data: [] };

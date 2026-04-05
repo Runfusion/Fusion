@@ -9,7 +9,7 @@ import { createApiRoutes } from "./routes.js";
 import { createSSE } from "./sse.js";
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
 import { getOrCreateProjectStore, evictAllProjectStores } from "./project-store-resolver.js";
-import { getTerminalService, type TerminalSession } from "./terminal-service.js";
+import { getTerminalService, type TerminalSession, STALE_SESSION_THRESHOLD_MS } from "./terminal-service.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import { terminalSessionManager } from "./terminal.js";
 import { getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
@@ -379,10 +379,21 @@ export function setupTerminalWebSocket(
       return;
     }
 
+    const MAX_MISSED_PONGS = 2; // Allow 2 missed pongs (~90s) before terminating
+
     // Track if connection is alive
     let isAlive = true;
+    let missedPongs = 0; // Track consecutive missed pongs
     let dataUnsub: (() => void) | null = null;
     let exitUnsub: (() => void) | null = null;
+
+    // Detect potentially stale sessions on reconnect
+    const idleMs = Date.now() - session.lastActivityAt.getTime();
+    if (idleMs > STALE_SESSION_THRESHOLD_MS) {
+      console.warn(
+        `[terminal] Session ${sessionId} reconnect after ${Math.round(idleMs / 1000)}s idle — PTY may be stale`
+      );
+    }
 
     // Send scrollback buffer first
     const scrollback = terminalService.getScrollbackAndClearPending(sessionId);
@@ -413,6 +424,8 @@ export function setupTerminalWebSocket(
       if (id === sessionId && isAlive) {
         try {
           ws.send(JSON.stringify({ type: "exit", exitCode }));
+          const idleSec = id ? Math.round((Date.now() - (terminalService.getSession(id)?.lastActivityAt?.getTime() ?? Date.now())) / 1000) : 0;
+          console.info(`[terminal] Session ${id} exited with code ${exitCode} (was ${idleSec}s idle)`);
         } catch {
           // WebSocket might be closing
         }
@@ -422,7 +435,13 @@ export function setupTerminalWebSocket(
     // Heartbeat ping/pong
     const pingInterval = setInterval(() => {
       if (!isAlive) {
-        ws.terminate();
+        missedPongs++;
+        if (missedPongs >= MAX_MISSED_PONGS) {
+          console.warn(`[terminal] Connection dead after ${missedPongs} missed pongs, terminating`);
+          ws.terminate();
+          return;
+        }
+        console.info(`[terminal] Missed pong #${missedPongs}, waiting for response...`);
         return;
       }
       isAlive = false;
@@ -435,6 +454,7 @@ export function setupTerminalWebSocket(
 
     ws.on("pong", () => {
       isAlive = true;
+      missedPongs = 0; // Reset on successful pong
     });
 
     ws.on("message", (message: Buffer) => {
@@ -457,6 +477,7 @@ export function setupTerminalWebSocket(
             break;
           case "pong":
             isAlive = true;
+            missedPongs = 0; // Reset on successful pong
             break;
         }
       } catch {

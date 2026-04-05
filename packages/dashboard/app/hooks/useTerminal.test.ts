@@ -505,4 +505,51 @@ describe("useTerminal", () => {
       expect(onConnect).toHaveBeenLastCalledWith({ shell: "/bin/zsh", cwd: "/new" });
     });
   });
+
+  describe("heartbeat interval", () => {
+    it("sends client ping at 45-second interval (not 30s)", () => {
+      vi.useFakeTimers();
+      renderHook(() => useTerminal("heartbeat-test"));
+      const ws = MockWebSocket.instances[0];
+
+      act(() => {
+        ws.emitOpen();
+      });
+
+      // Clear any messages sent during open
+      ws.sent.length = 0;
+
+      // At 30 seconds, no ping should be sent yet (old interval was 30s)
+      act(() => {
+        vi.advanceTimersByTime(30000);
+      });
+
+      const pingsAt30s = ws.sent.filter((m) => {
+        try { return JSON.parse(m).type === "ping"; } catch { return false; }
+      });
+      expect(pingsAt30s).toHaveLength(0);
+
+      // At 45 seconds, the first ping should be sent
+      act(() => {
+        vi.advanceTimersByTime(15000);
+      });
+
+      const pingsAt45s = ws.sent.filter((m) => {
+        try { return JSON.parse(m).type === "ping"; } catch { return false; }
+      });
+      expect(pingsAt45s).toHaveLength(1);
+
+      // At 90 seconds, second ping should be sent
+      act(() => {
+        vi.advanceTimersByTime(45000);
+      });
+
+      const pingsAt90s = ws.sent.filter((m) => {
+        try { return JSON.parse(m).type === "ping"; } catch { return false; }
+      });
+      expect(pingsAt90s).toHaveLength(2);
+
+      vi.useRealTimers();
+    });
+  });
 });

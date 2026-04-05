@@ -1,9 +1,33 @@
 // @vitest-environment node
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createServer } from "./server.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import http from "node:http";
+import express from "express";
+import { createServer, setupTerminalWebSocket } from "./server.js";
 import type { TaskStore } from "@fusion/core";
 import { get as performGet, request as performRequest } from "./test-request.js";
+
+// Mock terminal-service before any imports that use it
+vi.mock("./terminal-service.js", () => {
+  const mockTerminalService = {
+    getSession: vi.fn(),
+    getScrollbackAndClearPending: vi.fn().mockReturnValue(null),
+    onData: vi.fn().mockReturnValue(() => {}),
+    onExit: vi.fn().mockReturnValue(() => {}),
+    write: vi.fn(),
+    resize: vi.fn(),
+    evictStaleSessions: vi.fn().mockReturnValue(0),
+  };
+
+  return {
+    getTerminalService: vi.fn(() => mockTerminalService),
+    STALE_SESSION_THRESHOLD_MS: 300_000,
+    __mockTerminalService: mockTerminalService,
+  };
+});
+
+// Access the mock terminal service
+const { __mockTerminalService: mockTerminalService } = await import("./terminal-service.js") as any;
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
@@ -246,5 +270,195 @@ describe("API Error Handling Middleware", () => {
         error: "name is required and must be a non-empty string",
       });
     });
+  });
+});
+
+describe("Terminal WebSocket heartbeat", () => {
+  let app: ReturnType<typeof express>;
+  let server: http.Server;
+
+  beforeEach(() => {
+    app = express();
+    server = http.createServer(app);
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    server.close();
+  });
+
+  /** Create a mock WebSocket that simulates the ws library's WebSocket */
+  function createMockWs(): any {
+    const listeners: Record<string, Function[]> = {};
+    return {
+      readyState: 1, // OPEN
+      _listeners: listeners,
+      on(event: string, handler: Function) {
+        if (!listeners[event]) listeners[event] = [];
+        listeners[event].push(handler);
+      },
+      emit(event: string, ...args: any[]) {
+        (listeners[event] || []).forEach((h) => h(...args));
+      },
+      send: vi.fn(),
+      close: vi.fn(),
+      terminate: vi.fn(),
+    };
+  }
+
+  /** Create a mock HTTP request with sessionId */
+  function createMockReq(sessionId: string): any {
+    return {
+      url: `/api/terminal/ws?sessionId=${sessionId}`,
+      headers: { host: "localhost:3000" },
+    };
+  }
+
+  /** Setup terminal WebSocket and trigger a connection */
+  function setupAndConnect(ws: any, req: any): void {
+    const wss = setupTerminalWebSocket(app, server);
+
+    // The function sets up wss on the server's upgrade event.
+    // We need to access the WebSocketServer directly to emit a connection.
+    // setupTerminalWebSocket stores wss on the app
+    const storedWss = (app as any).terminalWsServer;
+    if (storedWss) {
+      storedWss.emit("connection", ws, req);
+    }
+  }
+
+  it("does NOT terminate connection after 1 missed pong", () => {
+    const ws = createMockWs();
+    const req = createMockReq("session-1");
+
+    // Setup a mock session
+    mockTerminalService.getSession.mockReturnValue({
+      id: "session-1",
+      shell: "/bin/bash",
+      cwd: "/project",
+      lastActivityAt: new Date(),
+    });
+
+    setupAndConnect(ws, req);
+
+    // First ping interval: mark as not alive
+    vi.advanceTimersByTime(30000);
+    // The server sends a ping, ws is marked as not alive
+    expect(ws.send).toHaveBeenCalled();
+
+    // Don't send a pong response — simulate missed pong
+    // Second ping interval: first missed pong — should NOT terminate
+    vi.advanceTimersByTime(30000);
+
+    // Connection should still be alive after 1 missed pong
+    expect(ws.terminate).not.toHaveBeenCalled();
+  });
+
+  it("terminates connection after 2 consecutive missed pongs", () => {
+    const ws = createMockWs();
+    const req = createMockReq("session-2");
+
+    mockTerminalService.getSession.mockReturnValue({
+      id: "session-2",
+      shell: "/bin/bash",
+      cwd: "/project",
+      lastActivityAt: new Date(),
+    });
+
+    setupAndConnect(ws, req);
+
+    // First ping interval: mark as not alive (isAlive = false)
+    vi.advanceTimersByTime(30000);
+    expect(ws.send).toHaveBeenCalled();
+
+    // Don't send pong — missed pong #1
+    vi.advanceTimersByTime(30000);
+    expect(ws.terminate).not.toHaveBeenCalled();
+
+    // Don't send pong — missed pong #2: should terminate
+    vi.advanceTimersByTime(30000);
+    expect(ws.terminate).toHaveBeenCalled();
+  });
+
+  it("resets missed pong counter on successful pong", () => {
+    const ws = createMockWs();
+    const req = createMockReq("session-3");
+
+    mockTerminalService.getSession.mockReturnValue({
+      id: "session-3",
+      shell: "/bin/bash",
+      cwd: "/project",
+      lastActivityAt: new Date(),
+    });
+
+    setupAndConnect(ws, req);
+
+    // First interval: mark as not alive
+    vi.advanceTimersByTime(30000);
+
+    // Miss first pong — interval 2: missedPongs = 1
+    vi.advanceTimersByTime(30000);
+    expect(ws.terminate).not.toHaveBeenCalled();
+
+    // Now respond with pong (application-level "pong" message)
+    const msgHandler = ws._listeners["message"]?.[0];
+    expect(msgHandler).toBeDefined();
+    msgHandler!(Buffer.from(JSON.stringify({ type: "pong" })));
+
+    // Interval 3: isAlive is true again, missedPongs is 0
+    vi.advanceTimersByTime(30000);
+    // Still alive — missed pong counter was reset
+    expect(ws.terminate).not.toHaveBeenCalled();
+
+    // Miss 2 more pongs — should still be alive after just 1 more miss
+    vi.advanceTimersByTime(30000);
+    expect(ws.terminate).not.toHaveBeenCalled();
+  });
+
+  it("logs warning for stale session reconnect", () => {
+    const ws = createMockWs();
+    const req = createMockReq("stale-session");
+
+    // Session last active 10 minutes ago (past the 5-minute threshold)
+    const tenMinutesAgo = new Date(Date.now() - 600_000);
+    mockTerminalService.getSession.mockReturnValue({
+      id: "stale-session",
+      shell: "/bin/bash",
+      cwd: "/project",
+      lastActivityAt: tenMinutesAgo,
+    });
+
+    setupAndConnect(ws, req);
+
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining("stale-session"),
+    );
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining("PTY may be stale"),
+    );
+  });
+
+  it("does not warn for fresh session reconnect", () => {
+    const ws = createMockWs();
+    const req = createMockReq("fresh-session");
+
+    // Session last active 1 minute ago (under the 5-minute threshold)
+    mockTerminalService.getSession.mockReturnValue({
+      id: "fresh-session",
+      shell: "/bin/bash",
+      cwd: "/project",
+      lastActivityAt: new Date(Date.now() - 60_000),
+    });
+
+    setupAndConnect(ws, req);
+
+    expect(console.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("PTY may be stale"),
+    );
   });
 });
