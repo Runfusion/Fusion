@@ -6882,3 +6882,557 @@ describe("TaskExecutor loop recovery", () => {
     expect(result).toBe(false);
   });
 });
+
+// ── Agent Spawning Tests ─────────────────────────────────────────────────
+
+function createMockAgentStore() {
+  let nextId = 1;
+  const agents = new Map<string, any>();
+
+  return {
+    createAgent: vi.fn(async (input: any) => {
+      const agentId = `agent-${String(nextId++).padStart(8, "0")}`;
+      const agent = {
+        id: agentId,
+        name: input.name,
+        role: input.role,
+        state: "idle" as string,
+        reportsTo: input.reportsTo,
+        metadata: input.metadata ?? {},
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      agents.set(agentId, agent);
+      return agent;
+    }),
+    updateAgentState: vi.fn(async (agentId: string, newState: string) => {
+      const agent = agents.get(agentId);
+      if (agent) {
+        agent.state = newState;
+        agent.updatedAt = new Date().toISOString();
+      }
+      return agent;
+    }),
+    _agents: agents,
+  };
+}
+
+async function captureToolsWithAgentStore(agentStore?: any, settingsOverride?: any): Promise<{
+  tools: Record<string, (id: string, params: any) => Promise<any>>;
+  store: ReturnType<typeof createMockStore>;
+  executor: TaskExecutor;
+}> {
+  const store = createMockStore();
+  store.updateStep.mockResolvedValue({
+    steps: [
+      { name: "Preflight", status: "done" },
+      { name: "Implement", status: "in-progress" },
+      { name: "Testing", status: "pending" },
+    ],
+  });
+  const mergedSettings = {
+    maxConcurrent: 2,
+    maxWorktrees: 4,
+    pollIntervalMs: 15000,
+    groupOverlappingFiles: false,
+    autoMerge: false,
+    worktreeInitCommand: undefined,
+    ...settingsOverride,
+  };
+  store.getSettings.mockResolvedValue(mergedSettings);
+
+  let capturedTools: any[] = [];
+  mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+    capturedTools = opts.customTools || [];
+    return {
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        sessionManager: {
+          getLeafId: vi.fn().mockReturnValue("leaf-id"),
+          branchWithSummary: vi.fn(),
+        },
+        navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+      },
+    } as any;
+  });
+
+  mockedExistsSync.mockReturnValue(true);
+  // Mock execSync for worktree operations
+  vi.mocked(execSync).mockReturnValue("");
+
+  const options: any = {};
+  if (agentStore) {
+    options.agentStore = agentStore;
+  }
+
+  const executor = new TaskExecutor(store, "/tmp/test", options);
+
+  await executor.execute({
+    id: "FN-SPAWN",
+    title: "Spawn Test",
+    description: "Spawn test task",
+    column: "in-progress",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  const tools: Record<string, any> = {};
+  for (const t of capturedTools) {
+    tools[t.name] = t.execute;
+  }
+  return { tools, store, executor };
+}
+
+describe("Agent Spawning", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    vi.mocked(execSync).mockReturnValue("");
+  });
+
+  it("spawn_agent tool is registered in customTools", async () => {
+    const { tools } = await captureToolsWithAgentStore();
+    expect(tools.spawn_agent).toBeDefined();
+    expect(typeof tools.spawn_agent).toBe("function");
+  });
+
+  it("returns error when AgentStore is not configured", async () => {
+    const { tools } = await captureToolsWithAgentStore(undefined);
+    const result = await tools.spawn_agent("call1", {
+      name: "researcher",
+      role: "engineer",
+      task: "Research something",
+    });
+
+    expect(result.content[0].text).toContain("not available");
+    expect(result.content[0].text).toContain("no AgentStore configured");
+    expect(result.details.state).toBe("error");
+  });
+
+  it("creates agent in AgentStore with correct reportsTo", async () => {
+    const agentStore = createMockAgentStore();
+    const { tools } = await captureToolsWithAgentStore(agentStore);
+
+    const result = await tools.spawn_agent("call1", {
+      name: "researcher",
+      role: "engineer",
+      task: "Research authentication patterns",
+    });
+
+    expect(agentStore.createAgent).toHaveBeenCalledOnce();
+    const createInput = agentStore.createAgent.mock.calls[0][0];
+    expect(createInput.name).toBe("researcher");
+    expect(createInput.role).toBe("engineer");
+    expect(createInput.reportsTo).toBe("FN-SPAWN");
+    expect(createInput.metadata.type).toBe("spawned");
+    expect(createInput.metadata.parentTaskId).toBe("FN-SPAWN");
+  });
+
+  it("returns correct SpawnAgentResult structure with state", async () => {
+    const agentStore = createMockAgentStore();
+    const { tools } = await captureToolsWithAgentStore(agentStore);
+
+    const result = await tools.spawn_agent("call1", {
+      name: "researcher",
+      role: "engineer",
+      task: "Research authentication patterns",
+    });
+
+    // Parse the JSON from the text content
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toHaveProperty("agentId");
+    expect(parsed).toHaveProperty("name", "researcher");
+    expect(parsed).toHaveProperty("state", "running");
+    expect(parsed).toHaveProperty("role", "engineer");
+    expect(parsed).toHaveProperty("message");
+    expect(parsed.message).toContain("researcher");
+    expect(parsed.message).toContain("Research authentication patterns");
+
+    // Also check details object
+    expect(result.details.agentId).toBe(parsed.agentId);
+    expect(result.details.state).toBe("running");
+  });
+
+  it("transitions agent to active state after creation", async () => {
+    const agentStore = createMockAgentStore();
+    const { tools } = await captureToolsWithAgentStore(agentStore);
+
+    await tools.spawn_agent("call1", {
+      name: "worker",
+      role: "custom",
+      task: "Do some work",
+    });
+
+    // Agent is created in idle, then transitioned to active
+    const agentId = agentStore.createAgent.mock.calls[0][0];
+    expect(agentStore.updateAgentState).toHaveBeenCalledWith(
+      expect.any(String),
+      "active"
+    );
+  });
+
+  it("creates child agent session via createKbAgent", async () => {
+    const agentStore = createMockAgentStore();
+    const { tools } = await captureToolsWithAgentStore(agentStore);
+
+    await tools.spawn_agent("call1", {
+      name: "worker",
+      role: "engineer",
+      task: "Do some work",
+    });
+
+    // createKbAgent is called at least twice: once for parent, once for child
+    expect(mockedCreateHaiAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
+    
+    // Find the child session call
+    const childCall = mockedCreateHaiAgent.mock.calls.find(
+      (call: any) => call[0].systemPrompt?.includes("child agent spawned")
+    );
+    expect(childCall).toBeDefined();
+    expect(childCall![0].tools).toBe("coding");
+    expect(childCall![0].systemPrompt).toContain("FN-SPAWN");
+  });
+
+  it("respects per-parent maxSpawnedAgentsPerParent limit", async () => {
+    const agentStore = createMockAgentStore();
+    const { tools } = await captureToolsWithAgentStore(agentStore, {
+      maxSpawnedAgentsPerParent: 2,
+    });
+
+    // Spawn 2 agents (limit)
+    await tools.spawn_agent("call1", { name: "a1", role: "engineer", task: "task 1" });
+    await tools.spawn_agent("call2", { name: "a2", role: "engineer", task: "task 2" });
+
+    // 3rd should be rejected
+    const result = await tools.spawn_agent("call3", { name: "a3", role: "engineer", task: "task 3" });
+    expect(result.content[0].text).toContain("Per-parent spawn limit reached");
+    expect(result.content[0].text).toContain("2/2");
+    expect(result.details.state).toBe("error");
+  });
+
+  it("respects global maxSpawnedAgentsGlobal limit", async () => {
+    const agentStore = createMockAgentStore();
+    const { tools } = await captureToolsWithAgentStore(agentStore, {
+      maxSpawnedAgentsGlobal: 3,
+    });
+
+    // Spawn 3 agents (global limit)
+    await tools.spawn_agent("call1", { name: "a1", role: "engineer", task: "task 1" });
+    await tools.spawn_agent("call2", { name: "a2", role: "engineer", task: "task 2" });
+    await tools.spawn_agent("call3", { name: "a3", role: "engineer", task: "task 3" });
+
+    // 4th should hit global limit
+    const result = await tools.spawn_agent("call4", { name: "a4", role: "engineer", task: "task 4" });
+    expect(result.content[0].text).toContain("Global spawn limit reached");
+    expect(result.content[0].text).toContain("3/3");
+    expect(result.details.state).toBe("error");
+  });
+
+  it("uses default limits when settings are not specified", async () => {
+    const agentStore = createMockAgentStore();
+    // No spawn settings in the store — defaults should apply
+    const { tools } = await captureToolsWithAgentStore(agentStore);
+
+    // Should be able to spawn (defaults: 5 per parent, 20 global)
+    const result = await tools.spawn_agent("call1", {
+      name: "worker",
+      role: "engineer",
+      task: "task 1",
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.state).toBe("running");
+  });
+
+  it("handles errors during agent creation gracefully", async () => {
+    const agentStore = createMockAgentStore();
+    agentStore.createAgent.mockRejectedValue(new Error("DB connection failed"));
+
+    const { tools } = await captureToolsWithAgentStore(agentStore);
+
+    const result = await tools.spawn_agent("call1", {
+      name: "worker",
+      role: "engineer",
+      task: "task 1",
+    });
+
+    expect(result.content[0].text).toContain("Failed to spawn agent");
+    expect(result.content[0].text).toContain("DB connection failed");
+    expect(result.details.state).toBe("error");
+  });
+
+  it("trims whitespace from agent name", async () => {
+    const agentStore = createMockAgentStore();
+    const { tools } = await captureToolsWithAgentStore(agentStore);
+
+    await tools.spawn_agent("call1", {
+      name: "  researcher  ",
+      role: "engineer",
+      task: "task 1",
+    });
+
+    const createInput = agentStore.createAgent.mock.calls[0][0];
+    expect(createInput.name).toBe("researcher");
+  });
+
+  it("truncates long task descriptions in result message", async () => {
+    const agentStore = createMockAgentStore();
+    const { tools } = await captureToolsWithAgentStore(agentStore);
+
+    const longTask = "A".repeat(200);
+    const result = await tools.spawn_agent("call1", {
+      name: "worker",
+      role: "engineer",
+      task: longTask,
+    });
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.message).toContain("...");
+    // The message should contain the first 100 chars
+    expect(parsed.message.length).toBeLessThan(longTask.length + 50);
+  });
+});
+
+describe("Agent Spawning - Child Termination", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    vi.mocked(execSync).mockReturnValue("");
+  });
+
+  it("parent termination triggers all child terminations", async () => {
+    const agentStore = createMockAgentStore();
+    const mockDispose = vi.fn();
+
+    mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: mockDispose,
+          sessionManager: {
+            getLeafId: vi.fn().mockReturnValue("leaf-id"),
+            branchWithSummary: vi.fn(),
+          },
+          navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+        },
+      } as any;
+    });
+
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+
+    await executor.execute({
+      id: "FN-PARENT",
+      title: "Parent Task",
+      description: "Parent",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // execute() should have completed, disposing the parent session
+    // and any child sessions that were spawned
+    expect(mockDispose).toHaveBeenCalled();
+  });
+
+  it("terminateChildAgent cleans up maps and decrements count", async () => {
+    const agentStore = createMockAgentStore();
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+    });
+
+    const mockDispose = vi.fn();
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: mockDispose,
+        sessionManager: {
+          getLeafId: vi.fn().mockReturnValue("leaf-id"),
+          branchWithSummary: vi.fn(),
+        },
+        navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+
+    // Access internal state via any for testing
+    const internals = executor as any;
+    
+    // Simulate spawned agent tracking state
+    const childId = "agent-test-child";
+    const mockSession = { dispose: vi.fn() };
+    internals.childSessions.set(childId, mockSession);
+    internals.spawnedAgents.set("FN-PARENT", new Set([childId]));
+    internals.totalSpawnedCount = 1;
+
+    // Terminate the child
+    await internals.terminateChildAgent(childId);
+
+    expect(mockSession.dispose).toHaveBeenCalled();
+    expect(internals.childSessions.has(childId)).toBe(false);
+    expect(internals.spawnedAgents.get("FN-PARENT")?.has(childId)).toBe(false);
+    expect(internals.totalSpawnedCount).toBe(0);
+    expect(agentStore.updateAgentState).toHaveBeenCalledWith(childId, "terminated");
+  });
+
+  it("terminateChildAgent handles missing session gracefully", async () => {
+    const agentStore = createMockAgentStore();
+    const store = createMockStore();
+
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+    const internals = executor as any;
+
+    internals.totalSpawnedCount = 1;
+
+    // Terminate a child that doesn't have a session in the map
+    await internals.terminateChildAgent("nonexistent-agent");
+
+    // Should still decrement counter and attempt state update
+    expect(internals.totalSpawnedCount).toBe(0);
+    expect(agentStore.updateAgentState).toHaveBeenCalledWith("nonexistent-agent", "terminated");
+  });
+
+  it("terminateAllChildren handles no children gracefully", async () => {
+    const agentStore = createMockAgentStore();
+    const store = createMockStore();
+
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+    const internals = executor as any;
+
+    // Should not throw when there are no children
+    await internals.terminateAllChildren("FN-NONE");
+    expect(agentStore.updateAgentState).not.toHaveBeenCalled();
+  });
+
+  it("terminateAllChildren terminates all children and cleans up", async () => {
+    const agentStore = createMockAgentStore();
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+    const internals = executor as any;
+
+    // Set up multiple children
+    const child1 = { dispose: vi.fn() };
+    const child2 = { dispose: vi.fn() };
+    internals.childSessions.set("c1", child1);
+    internals.childSessions.set("c2", child2);
+    internals.spawnedAgents.set("FN-PARENT", new Set(["c1", "c2"]));
+    internals.totalSpawnedCount = 2;
+
+    await internals.terminateAllChildren("FN-PARENT");
+
+    expect(child1.dispose).toHaveBeenCalled();
+    expect(child2.dispose).toHaveBeenCalled();
+    expect(internals.spawnedAgents.has("FN-PARENT")).toBe(false);
+    expect(internals.totalSpawnedCount).toBe(0);
+    expect(agentStore.updateAgentState).toHaveBeenCalledWith("c1", "terminated");
+    expect(agentStore.updateAgentState).toHaveBeenCalledWith("c2", "terminated");
+  });
+
+  it("terminateChildAgent handles AgentStore errors gracefully", async () => {
+    const agentStore = createMockAgentStore();
+    agentStore.updateAgentState.mockRejectedValue(new Error("DB error"));
+    const store = createMockStore();
+
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+    const internals = executor as any;
+
+    const mockSession = { dispose: vi.fn() };
+    internals.childSessions.set("c1", mockSession);
+    internals.totalSpawnedCount = 1;
+
+    // Should not throw even when AgentStore fails
+    await internals.terminateChildAgent("c1");
+    expect(mockSession.dispose).toHaveBeenCalled();
+    expect(internals.totalSpawnedCount).toBe(0);
+  });
+});
+
+describe("Agent Spawning - runSpawnedChild", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("updates agent state to running then active on success", async () => {
+    const agentStore = createMockAgentStore();
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+    const internals = executor as any;
+
+    const mockSession = { dispose: vi.fn() };
+    internals.childSessions.set("agent-test", mockSession);
+    internals.totalSpawnedCount = 1;
+
+    await internals.runSpawnedChild("agent-test", mockSession, "Do the research");
+
+    // Should transition: running → active
+    expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-test", "running");
+    expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-test", "active");
+    // Should clean up
+    expect(internals.childSessions.has("agent-test")).toBe(false);
+    expect(internals.totalSpawnedCount).toBe(0);
+  });
+
+  it("updates agent state to error on failure", async () => {
+    const agentStore = createMockAgentStore();
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+    const internals = executor as any;
+
+    const mockSession = { dispose: vi.fn() };
+    internals.childSessions.set("agent-test", mockSession);
+    internals.totalSpawnedCount = 1;
+
+    // Make promptWithFallback throw
+    const { promptWithFallback } = await import("./pi.js");
+    vi.mocked(promptWithFallback).mockRejectedValueOnce(new Error("API error"));
+
+    await internals.runSpawnedChild("agent-test", mockSession, "Do the research");
+
+    expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-test", "running");
+    expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-test", "error");
+    // Should still clean up
+    expect(internals.childSessions.has("agent-test")).toBe(false);
+    expect(internals.totalSpawnedCount).toBe(0);
+  });
+
+  it("cleans up even when state update fails", async () => {
+    const agentStore = createMockAgentStore();
+    agentStore.updateAgentState.mockRejectedValue(new Error("DB down"));
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
+    const internals = executor as any;
+
+    const mockSession = { dispose: vi.fn() };
+    internals.childSessions.set("agent-test", mockSession);
+    internals.totalSpawnedCount = 1;
+
+    // Should not throw even when state updates fail
+    await internals.runSpawnedChild("agent-test", mockSession, "Do the research");
+
+    expect(internals.childSessions.has("agent-test")).toBe(false);
+    expect(internals.totalSpawnedCount).toBe(0);
+  });
+});

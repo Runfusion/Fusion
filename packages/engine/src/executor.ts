@@ -1,7 +1,8 @@
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, MissionStore, Slice } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability } from "@fusion/core";
+import type { AgentStore } from "@fusion/core";
 import { findWorktreeUser } from "./merger.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -50,6 +51,28 @@ const taskAddDepParams = Type.Object({
   task_id: Type.String({ description: "The ID of the task to depend on (e.g. \"KB-001\")" }),
   confirm: Type.Optional(Type.Boolean({ description: "Set to true to confirm adding the dependency. Required because adding a dep to an in-progress task will stop execution and discard current work." })),
 });
+
+const spawnAgentParams = Type.Object({
+  name: Type.String({ description: "Name for the child agent" }),
+  role: Type.Union([
+    Type.Literal("triage"),
+    Type.Literal("executor"),
+    Type.Literal("reviewer"),
+    Type.Literal("merger"),
+    Type.Literal("engineer"),
+    Type.Literal("custom"),
+  ], { description: "Role for the child agent" }),
+  task: Type.String({ description: "Task description for the child agent to execute" }),
+});
+
+/** Result returned from spawn_agent tool */
+interface SpawnAgentResult {
+  agentId: string;
+  name: string;
+  state: AgentState;
+  role: AgentCapability;
+  message: string;
+}
 
 
 const reviewStepParams = Type.Object({
@@ -145,6 +168,34 @@ model, read-only access) to independently assess your work.
 - Removing code is acceptable ONLY when it is explicitly part of your task's mission
 - If you remove existing functionality, you MUST create a changeset in \`.changeset/\` explaining the removal and rationale
 
+## Spawning Child Agents
+
+You can spawn child agents to handle parallel work or specialized sub-tasks:
+
+**When to use \`spawn_agent\`:**
+- Parallel work that can be divided into independent chunks
+- Specialized tasks requiring different expertise or tools
+- Delegation of sub-tasks to specialized agents
+
+**How to spawn:**
+\`\`\`javascript
+spawn_agent({
+  name: "researcher",
+  role: "engineer",
+  task: "Research best practices for authentication in React applications"
+})
+\`\`\`
+
+**Child agent behavior:**
+- Each child runs in its own git worktree (branched from your worktree)
+- Children execute autonomously and report completion
+- When you end (task_done), all spawned children are terminated
+- Check AgentStore for spawned agent status
+
+**Limits:**
+- Max 5 spawned agents per parent by default (configurable via settings)
+- Max 20 total spawned agents system-wide (configurable via settings)
+
 ## Completion
 After all steps are done, tests pass, and docs are updated:
 \`\`\`bash
@@ -164,6 +215,8 @@ export interface TaskExecutorOptions {
   usageLimitPauser?: UsageLimitPauser;
   /** Stuck task detector — monitors agent sessions for stagnation and triggers recovery. */
   stuckTaskDetector?: StuckTaskDetector;
+  /** AgentStore for tracking spawned child agents. If not provided, spawning is disabled. */
+  agentStore?: import("@fusion/core").AgentStore;
   missionStore?: MissionStore;
   onSliceComplete?: (slice: Slice) => void;
   onStart?: (task: Task, worktreePath: string) => void;
@@ -191,6 +244,12 @@ export class TaskExecutor {
    *  Tracks compact-and-resume attempt count per execute() lifecycle.
    *  Reset at execute() lifecycle end (finally block). */
   private loopRecoveryState = new Map<string, { attempts: number; pending: boolean }>();
+  /** Spawned child agent IDs per parent task ID. Used for lifecycle tracking. */
+  private spawnedAgents = new Map<string, Set<string>>();
+  /** Child agent sessions keyed by agent ID. Used for termination. */
+  private childSessions = new Map<string, AgentSession>();
+  /** Total count of currently spawned agents (across all parents). */
+  private totalSpawnedCount = 0;
 
   /**
    * @param store — Task store instance (also used to listen for events)
@@ -592,6 +651,7 @@ export class TaskExecutor {
         this.createTaskAddDepTool(task.id),
         this.createTaskDoneTool(task.id, () => { taskDone = true; }),
         this.createReviewStepTool(task.id, worktreePath, detail.prompt, codeReviewVerdicts, sessionRef, stepCheckpoints, detail),
+        this.createSpawnAgentTool(task.id, worktreePath, settings),
       ];
 
       const agentLogger = new AgentLogger({
@@ -863,6 +923,8 @@ export class TaskExecutor {
           stuckDetector?.untrackTask(task.id);
           await agentLogger.flush();
           session.dispose();
+          // Terminate all spawned child agents when parent session ends
+          await this.terminateAllChildren(task.id);
           // Clear session file when task completes or fails (not when paused —
           // the file is preserved so unpause can resume the conversation).
           // Check both the local flag (graceful exit) and the instance set
@@ -2358,6 +2420,186 @@ If issues are found that need attention, describe them clearly.`;
 
   getWorktreePath(taskId: string): string | undefined {
     return this.activeWorktrees.get(taskId);
+  }
+
+  // ── Agent Spawning ─────────────────────────────────────────────────────
+
+  /**
+   * Terminate all child agents spawned by a parent task.
+   * Called from the finally block of agentWork when the parent session ends.
+   */
+  private async terminateAllChildren(parentTaskId: string): Promise<void> {
+    const childIds = this.spawnedAgents.get(parentTaskId);
+    if (!childIds || childIds.size === 0) return;
+
+    executorLog.log(`Terminating ${childIds.size} child agents for parent ${parentTaskId}`);
+
+    for (const childId of childIds) {
+      await this.terminateChildAgent(childId);
+    }
+    this.spawnedAgents.delete(parentTaskId);
+  }
+
+  /**
+   * Terminate a single child agent by ID.
+   * Disposes the session, updates AgentStore state, and cleans up tracking Maps.
+   */
+  private async terminateChildAgent(childId: string): Promise<void> {
+    const childSession = this.childSessions.get(childId);
+    if (childSession) {
+      childSession.dispose();
+      this.childSessions.delete(childId);
+    }
+
+    try {
+      await this.options.agentStore?.updateAgentState(childId, "terminated");
+    } catch {
+      // Agent may not exist in store — that's ok for cleanup
+    }
+
+    this.totalSpawnedCount = Math.max(0, this.totalSpawnedCount - 1);
+  }
+
+  /**
+   * Run a spawned child agent's task to completion.
+   * Handles state transitions and cleanup.
+   */
+  private async runSpawnedChild(
+    agentId: string,
+    childSession: AgentSession,
+    taskPrompt: string,
+  ): Promise<void> {
+    try {
+      await this.options.agentStore?.updateAgentState(agentId, "running");
+    } catch {
+      // State update failure shouldn't block execution
+    }
+
+    try {
+      await promptWithFallback(childSession, taskPrompt);
+      // Normal completion — mark as active (available)
+      try {
+        await this.options.agentStore?.updateAgentState(agentId, "active");
+      } catch { /* non-critical */ }
+    } catch (err: any) {
+      // Error during execution — mark as error
+      try {
+        await this.options.agentStore?.updateAgentState(agentId, "error");
+      } catch { /* non-critical */ }
+      executorLog.warn(`Child agent ${agentId} failed: ${err.message}`);
+    } finally {
+      this.childSessions.delete(agentId);
+      this.totalSpawnedCount = Math.max(0, this.totalSpawnedCount - 1);
+    }
+  }
+
+  /**
+   * Create the spawn_agent tool definition.
+   * Allows the parent agent to spawn child agents with delegated tasks.
+   */
+  private createSpawnAgentTool(taskId: string, worktreePath: string, settings: Settings): ToolDefinition {
+    return {
+      name: "spawn_agent",
+      label: "Spawn Agent",
+      description:
+        "Spawn a child agent to handle parallel work or specialized sub-tasks. " +
+        "Each child runs in its own git worktree (branched from your worktree) and executes autonomously. " +
+        "When you end (task_done), all spawned children are terminated.",
+      parameters: spawnAgentParams,
+      execute: async (_id: string, params: Static<typeof spawnAgentParams>) => {
+        const { name, role, task: taskPrompt } = params;
+
+        // Check if AgentStore is available
+        if (!this.options.agentStore) {
+          return {
+            content: [{ type: "text" as const, text: "Agent spawning is not available (no AgentStore configured)" }],
+            details: { agentId: "", state: "error" },
+          };
+        }
+
+        // Read spawn limits from settings
+        const maxPerParent = settings.maxSpawnedAgentsPerParent ?? 5;
+        const maxGlobal = settings.maxSpawnedAgentsGlobal ?? 20;
+
+        // Check per-parent limit
+        const currentPerParent = this.spawnedAgents.get(taskId)?.size ?? 0;
+        if (currentPerParent >= maxPerParent) {
+          return {
+            content: [{ type: "text" as const, text: `Per-parent spawn limit reached (${currentPerParent}/${maxPerParent}). Wait for children to finish or reduce parallelism.` }],
+            details: { agentId: "", state: "error" },
+          };
+        }
+
+        // Check global limit
+        if (this.totalSpawnedCount >= maxGlobal) {
+          return {
+            content: [{ type: "text" as const, text: `Global spawn limit reached (${this.totalSpawnedCount}/${maxGlobal}). Cannot spawn more agents.` }],
+            details: { agentId: "", state: "error" },
+          };
+        }
+
+        try {
+          // Create agent in AgentStore with reportsTo = parent task ID
+          const agent = await this.options.agentStore.createAgent({
+            name: name.trim(),
+            role: role as AgentCapability,
+            reportsTo: taskId,
+            metadata: { type: "spawned", parentTaskId: taskId },
+          });
+
+          // Create git worktree for child (branched from parent's worktree)
+          const childWorktreeName = generateWorktreeName(this.rootDir);
+          const childWorktreePath = join(this.rootDir, ".worktrees", childWorktreeName);
+          const childBranch = `fusion/spawn-${agent.id}`;
+          await this.createWorktree(childBranch, childWorktreePath, taskId, worktreePath);
+
+          // Transition agent to active state
+          await this.options.agentStore.updateAgentState(agent.id, "active");
+
+          // Create child agent session
+          const { session: childSession } = await createKbAgent({
+            cwd: childWorktreePath,
+            systemPrompt: `You are a child agent spawned by a parent task executor. Your job is to complete the following delegated task. Work autonomously and thoroughly. Report your findings and results.\n\nParent task: ${taskId}\nChild agent: ${agent.id} (${name})`,
+            tools: "coding",
+            defaultProvider: settings.defaultProvider,
+            defaultModelId: settings.defaultModelId,
+            fallbackProvider: settings.fallbackProvider,
+            fallbackModelId: settings.fallbackModelId,
+          });
+
+          // Store tracking state
+          this.childSessions.set(agent.id, childSession);
+          if (!this.spawnedAgents.has(taskId)) {
+            this.spawnedAgents.set(taskId, new Set());
+          }
+          this.spawnedAgents.get(taskId)!.add(agent.id);
+          this.totalSpawnedCount++;
+
+          // Run child asynchronously (don't await — parent continues working)
+          this.runSpawnedChild(agent.id, childSession, taskPrompt).catch((err: any) => {
+            executorLog.warn(`Child agent ${agent.id} async error: ${err.message}`);
+          });
+
+          const result: SpawnAgentResult = {
+            agentId: agent.id,
+            name: agent.name,
+            state: "running",
+            role: agent.role,
+            message: `Agent "${name}" spawned and executing task: ${taskPrompt.slice(0, 100)}${taskPrompt.length > 100 ? "..." : ""}`,
+          };
+
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+            details: result,
+          };
+        } catch (err: any) {
+          return {
+            content: [{ type: "text" as const, text: `Failed to spawn agent: ${err.message}` }],
+            details: { agentId: "", state: "error", message: err.message },
+          };
+        }
+      },
+    };
   }
 }
 

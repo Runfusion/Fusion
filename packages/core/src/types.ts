@@ -830,6 +830,14 @@ export interface ProjectSettings {
   /** Maximum number of times the stuck-task detector can kill and re-queue a task
    *  before it is marked as permanently failed. Default: 3. */
   maxStuckKills?: number;
+  /** Maximum number of child agents a single parent agent can spawn.
+   *  Limits the fan-out per executor task to prevent resource exhaustion.
+   *  Default: 5. */
+  maxSpawnedAgentsPerParent?: number;
+  /** Maximum total spawned agents across all parent agents in a single executor instance.
+   *  Provides a global safety cap regardless of how many parent agents are running.
+   *  Default: 20. */
+  maxSpawnedAgentsGlobal?: number;
   /** Interval in milliseconds for periodic maintenance (worktree pruning, WAL checkpoint,
    *  orphan cleanup). 0 disables. Default: 900000 (15 min). */
   maintenanceIntervalMs?: number;
@@ -962,6 +970,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   autoUnpauseBaseDelayMs: 300_000,
   autoUnpauseMaxDelayMs: 3_600_000,
   maxStuckKills: 3,
+  maxSpawnedAgentsPerParent: 5,
+  maxSpawnedAgentsGlobal: 20,
   maintenanceIntervalMs: 900_000,
   autoUpdatePrStatus: false,
   autoCreatePr: false,
@@ -1055,6 +1065,8 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "insightExtractionSchedule",
   "insightExtractionMinIntervalMs",
   "memoryEnabled",
+  "maxSpawnedAgentsPerParent",
+  "maxSpawnedAgentsGlobal",
 ] as const;
 
 export interface BoardConfig {

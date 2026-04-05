@@ -575,6 +575,65 @@ Update it when:
 
 The extension has no skills — tool descriptions, `promptSnippet`, and `promptGuidelines` give the LLM everything it needs.
 
+## Agent Spawning (`spawn_agent` tool)
+
+The executor agent has a `spawn_agent` tool that enables hierarchical agent spawning. Parent agents can create and delegate work to child agents that run in parallel.
+
+### How It Works
+
+Each spawned child agent:
+1. Runs in its own git worktree (branched from the parent's worktree)
+2. Receives a task prompt describing what to do
+3. Executes autonomously until completion or termination
+4. Reports status back to the parent via AgentStore
+
+### Usage
+
+```javascript
+spawn_agent({
+  name: "researcher",
+  role: "engineer",
+  task: "Research best practices for authentication in React applications"
+})
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | `string` | Name for the child agent |
+| `role` | `string` | Role: `"triage"`, `"executor"`, `"reviewer"`, `"merger"`, `"engineer"`, or `"custom"` |
+| `task` | `string` | Task description for the child agent to execute |
+
+### Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxSpawnedAgentsPerParent` | `5` | Maximum children per parent agent |
+| `maxSpawnedAgentsGlobal` | `20` | Maximum total spawned agents per executor instance |
+
+### Lifecycle
+
+- Child agents are tracked in `AgentStore` with `reportsTo` set to the parent task ID
+- When the parent session ends (via `task_done()` or error), all spawned children are terminated
+- Child agent state transitions: `idle` → `active` → `running` → `active` (success) or `error` (failure)
+- Terminated children transition to `terminated` state
+
+### Error Handling
+
+- If no `AgentStore` is configured, spawning returns an error
+- Per-parent and global limits are enforced with descriptive error messages
+- Failures during agent creation or worktree setup return error results
+- State update failures are non-blocking (logged but don't prevent execution)
+
+### Implementation
+
+- **File:** `packages/engine/src/executor.ts`
+- **Tool:** `createSpawnAgentTool()` method
+- **Child execution:** `runSpawnedChild()` method
+- **Cleanup:** `terminateAllChildren()` / `terminateChildAgent()` methods
+- **Settings:** `packages/core/src/types.ts` (`ProjectSettings` interface)
+
 ## Dashboard Task Creation
 
 The dashboard provides two UI surfaces for creating tasks:
