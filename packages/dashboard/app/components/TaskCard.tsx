@@ -7,6 +7,7 @@ import { pickPreferredBadge } from "./TaskCardBadge";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
 import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import { useSessionFiles } from "../hooks/useSessionFiles";
+import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
 
@@ -344,6 +345,7 @@ function TaskCardComponent({
 
   const liveBadgeData = badgeUpdates.get(task.id);
   const { files: sessionFiles, loading: sessionFilesLoading } = useSessionFiles(task.id, task.worktree, task.column, projectId);
+  const { stats: diffStats } = useTaskDiffStats(task.id, task.column, task.mergeDetails?.commitSha, projectId);
 
   // Get fresh batch data if available
   const batchData = useMemo(() => getFreshBatchData(task.id, projectId), [task.id, projectId]);
@@ -707,8 +709,12 @@ function TaskCardComponent({
         </button>
       )}
       {task.column === "done" && (() => {
+        // Prefer diff stats from the same endpoint the modal uses so the
+        // count is always consistent with the Changes tab.
+        const diffCount = diffStats?.filesChanged;
         const mergedCount = task.mergeDetails?.filesChanged;
-        if (mergedCount != null && mergedCount > 0) {
+        const displayCount = diffCount ?? mergedCount;
+        if (displayCount != null && displayCount > 0) {
           return (
             <button
               type="button"
@@ -717,7 +723,7 @@ function TaskCardComponent({
               disabled={!onOpenDetailWithTab}
             >
               <Folder size={12} />
-              <span>{mergedCount} files changed</span>
+              <span>{displayCount} files changed</span>
             </button>
           );
         }
