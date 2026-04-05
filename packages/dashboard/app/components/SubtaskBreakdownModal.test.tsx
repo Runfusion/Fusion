@@ -92,15 +92,37 @@ describe("SubtaskBreakdownModal", () => {
     await waitFor(() => expect(screen.queryByDisplayValue("First")).not.toBeInTheDocument());
   });
 
+  it("renders description textarea with 8 rows", async () => {
+    renderModal();
+    await waitFor(() => expect(streamHandlers).toBeDefined());
+    streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
+    const textareas = await screen.findAllByRole("textbox");
+    const descriptionTextarea = textareas.find((t) => t.tagName === "TEXTAREA");
+    expect(descriptionTextarea).toHaveAttribute("rows", "8");
+  });
+
   it("changes size and dependency selection", async () => {
     renderModal();
     await waitFor(() => expect(streamHandlers).toBeDefined());
     streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
 
-    fireEvent.click(await screen.findAllByText("L").then((buttons) => buttons[0]!));
+    const selects = await screen.findAllByRole("combobox");
+    fireEvent.change(selects[0], { target: { value: "L" } });
     // Use findAllByText to get all occurrences of subtask-1 and check the first one
     const subtaskLabels = await screen.findAllByText("subtask-1");
     expect(subtaskLabels.length).toBeGreaterThan(0);
+  });
+
+  it("changes size via dropdown selection", async () => {
+    renderModal();
+    await waitFor(() => expect(streamHandlers).toBeDefined());
+    streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
+    const selects = await screen.findAllByRole("combobox");
+    expect(selects.length).toBeGreaterThan(0);
+    fireEvent.change(selects[0], { target: { value: "L" } });
+    // Verify state was updated (the API call will receive the updated value)
+    fireEvent.click(screen.getByText("Create Tasks"));
+    await waitFor(() => expect(mockCreateTasksFromBreakdown).toHaveBeenCalled());
   });
 
   it("saves via API with edited data", async () => {
