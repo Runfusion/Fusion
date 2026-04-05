@@ -74,6 +74,7 @@ import {
   CheckCircle,
   XCircle,
   Send,
+  Pencil,
 } from "lucide-react";
 
 // ── Types & Constants ─────────────────────────────────────────────
@@ -1953,9 +1954,9 @@ function RemotesPanel({
                       className="btn btn-icon"
                       onClick={(e) => { e.stopPropagation(); startEditingName(remote); }}
                       disabled={remoteActionLoading !== null}
-                      title="Rename remote"
+                      title="Edit remote name"
                     >
-                      <GitBranchIcon size={12} color="var(--text-muted)" />
+                      <Pencil size={12} color="var(--text-muted)" />
                     </button>
                   </div>
                 )}
@@ -2007,9 +2008,9 @@ function RemotesPanel({
                         className="btn btn-icon"
                         onClick={(e) => { e.stopPropagation(); startEditingUrl(remote); }}
                         disabled={remoteActionLoading !== null}
-                        title="Edit URL"
+                        title="Edit remote URL"
                       >
-                        <FileEdit size={12} color="var(--text-muted)" />
+                        <Pencil size={12} color="var(--text-muted)" />
                       </button>
                     </div>
                   )}

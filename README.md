@@ -115,7 +115,7 @@ Real-time kanban board at `localhost:4040`:
 - **Board view** — Drag-and-drop cards between columns, real-time search, column visibility toggle
 - **List view** — Group by column or size, inline title editing, duplicate tasks
 - **Interactive terminal** — Full PTY-based terminal with xterm.js, multiple tabs, mobile-aware
-- **Git manager** — View commits/diffs, manage branches, worktree associations, push/pull
+- **Git manager** — View commits/diffs, manage branches, worktree associations, push/pull, inline edit controls for remote name and URL
 - **Activity log** — Task lifecycle events, settings changes, filter by type, auto-refresh
 - **Files browser** — Browse project root or task worktrees, edit files with syntax highlighting
 - **Theme system** — Dark/Light/System modes, 17 color themes (Ocean, Forest, Nord, Dracula, and more)

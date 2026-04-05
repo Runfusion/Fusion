@@ -989,7 +989,7 @@ describe("GitManagerModal", () => {
       expect(screen.getByText("origin")).toBeInTheDocument();
     });
 
-    const renameButton = screen.getByTitle("Rename remote");
+    const renameButton = screen.getByTitle("Edit remote name");
     await user.click(renameButton);
 
     // The input should appear - find it by its autoFocus or by looking for an input
@@ -1023,7 +1023,7 @@ describe("GitManagerModal", () => {
       expect(screen.getByText("origin")).toBeInTheDocument();
     });
 
-    const editButton = screen.getByTitle("Edit URL");
+    const editButton = screen.getByTitle("Edit remote URL");
     await user.click(editButton);
 
     const urlInput = screen.getByDisplayValue("https://old-url.com/repo.git");
@@ -1037,6 +1037,161 @@ describe("GitManagerModal", () => {
     await waitFor(() => {
       expect(updateGitRemoteUrl).toHaveBeenCalledWith("origin", "https://new-url.com/repo.git");
       expect(mockAddToast).toHaveBeenCalledWith("Remote URL updated", "success");
+    });
+  });
+
+  // ── Edit Affordance Regression ──────────────────────────────────
+
+  it("shows editor-style icon for remote name edit action", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/a/b.git", pushUrl: "https://github.com/a/b.git" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    // The name edit button should have an accessible title distinguishing it as a name edit
+    const nameEditBtn = screen.getByTitle("Edit remote name");
+    expect(nameEditBtn).toBeInTheDocument();
+    expect(nameEditBtn).toBeVisible();
+
+    // Verify it does not propagate clicks to row selection
+    const remoteItem = nameEditBtn.closest(".gm-remote-item");
+    const selectedBefore = remoteItem?.classList.contains("selected");
+    fireEvent.click(nameEditBtn);
+    // After clicking, the editing state activates (input appears), selection should not change unexpectedly
+    expect(screen.getByDisplayValue("origin")).toBeInTheDocument();
+  });
+
+  it("shows editor-style icon for remote URL edit action", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/a/b.git", pushUrl: "https://github.com/a/b.git" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    // The URL edit button should have an accessible title distinguishing it as a URL edit
+    const urlEditBtn = screen.getByTitle("Edit remote URL");
+    expect(urlEditBtn).toBeInTheDocument();
+    expect(urlEditBtn).toBeVisible();
+
+    // Verify it does not propagate clicks to row selection
+    fireEvent.click(urlEditBtn);
+    // After clicking, the URL editing state activates
+    expect(screen.getByDisplayValue("https://github.com/a/b.git")).toBeInTheDocument();
+  });
+
+  it("distinguishes name edit and URL edit controls with unique titles", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/a/b.git", pushUrl: "https://github.com/a/b.git" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    // Both edit controls should be present and distinguishable by title
+    const nameEditBtn = screen.getByTitle("Edit remote name");
+    const urlEditBtn = screen.getByTitle("Edit remote URL");
+    expect(nameEditBtn).not.toBe(urlEditBtn);
+
+    // Each enters the correct edit mode
+    fireEvent.click(nameEditBtn);
+    expect(screen.getByDisplayValue("origin")).toBeInTheDocument();
+
+    // Cancel name edit
+    const cancelBtn = nameEditBtn.closest(".gm-remote-edit")?.querySelector(".btn.btn-sm:not(.btn-primary)");
+    expect(cancelBtn).toBeTruthy();
+    fireEvent.click(cancelBtn as HTMLButtonElement);
+
+    // Now click URL edit
+    fireEvent.click(urlEditBtn);
+    expect(screen.getByDisplayValue("https://github.com/a/b.git")).toBeInTheDocument();
+  });
+
+  it("preserves rename API call behavior through edit affordance", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://github.com/a/b.git", pushUrl: "https://github.com/a/b.git" },
+    ]);
+    (renameGitRemote as any).mockResolvedValue(undefined);
+
+    const user = userEvent.setup();
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    // Click the name edit affordance
+    const nameEditBtn = screen.getByTitle("Edit remote name");
+    await user.click(nameEditBtn);
+
+    // Edit the name and save
+    const nameInput = screen.getByDisplayValue("origin");
+    await user.clear(nameInput);
+    await user.type(nameInput, "upstream");
+
+    const saveButton = nameInput.closest(".gm-remote-edit")?.querySelector(".btn.btn-sm.btn-primary");
+    expect(saveButton).toBeTruthy();
+    await user.click(saveButton as HTMLButtonElement);
+
+    await waitFor(() => {
+      expect(renameGitRemote).toHaveBeenCalledWith("origin", "upstream");
+    });
+  });
+
+  it("preserves URL update API call behavior through edit affordance", async () => {
+    (fetchGitRemotesDetailed as any).mockResolvedValue([
+      { name: "origin", fetchUrl: "https://old-url.com/repo.git", pushUrl: "https://old-url.com/repo.git" },
+    ]);
+    (updateGitRemoteUrl as any).mockResolvedValue(undefined);
+
+    const user = userEvent.setup();
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("origin")).toBeInTheDocument();
+    });
+
+    // Click the URL edit affordance
+    const urlEditBtn = screen.getByTitle("Edit remote URL");
+    await user.click(urlEditBtn);
+
+    // Edit the URL and save
+    const urlInput = screen.getByDisplayValue("https://old-url.com/repo.git");
+    await user.clear(urlInput);
+    await user.type(urlInput, "https://new-url.com/repo.git");
+
+    const saveButton = urlInput.closest(".gm-remote-edit")?.querySelector(".btn.btn-sm.btn-primary");
+    expect(saveButton).toBeTruthy();
+    await user.click(saveButton as HTMLButtonElement);
+
+    await waitFor(() => {
+      expect(updateGitRemoteUrl).toHaveBeenCalledWith("origin", "https://new-url.com/repo.git");
     });
   });
 
