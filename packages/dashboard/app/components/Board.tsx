@@ -35,7 +35,7 @@ interface BoardProps {
    * Called when the user clicks the "Subtask" button in the inline create card.
    */
   onSubtaskBreakdown?: (description: string) => void;
-  onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  onOpenDetailWithTab?: (task: TaskDetail, initialTab: "changes") => void;
   favoriteProviders?: string[];
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;
@@ -60,7 +60,7 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const { fetchBatch } = useBatchBadgeFetch(projectId);
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -171,7 +171,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onOpenDetai
             onUnarchiveTask={onUnarchiveTask}
             allTasks={filteredTasks}
             availableModels={availableModels}
-            onOpenFilesForTask={onOpenFilesForTask}
+            onOpenDetailWithTab={onOpenDetailWithTab}
             favoriteProviders={favoriteProviders}
             favoriteModels={favoriteModels}
             onToggleFavorite={onToggleFavorite}

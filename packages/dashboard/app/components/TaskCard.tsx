@@ -45,7 +45,7 @@ interface TaskCardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  onOpenDetailWithTab?: (task: TaskDetail, initialTab: "changes") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
 }
@@ -91,7 +91,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onUpdateTask === next.onUpdateTask &&
     previous.onArchiveTask === next.onArchiveTask &&
     previous.onUnarchiveTask === next.onUnarchiveTask &&
-    previous.onOpenFilesForTask === next.onOpenFilesForTask &&
+    previous.onOpenDetailWithTab === next.onOpenDetailWithTab &&
     previousTask.id === nextTask.id &&
     previousTask.title === nextTask.title &&
     previousTask.description === nextTask.description &&
@@ -133,7 +133,7 @@ function TaskCardComponent({
   onUpdateTask,
   onArchiveTask,
   onUnarchiveTask,
-  onOpenFilesForTask,
+  onOpenDetailWithTab,
   taskStuckTimeoutMs,
 }: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
@@ -499,6 +499,16 @@ function TaskCardComponent({
     });
   }, [addToast, onUnarchiveTask, task.id]);
 
+  const handleOpenFiles = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const detail = await fetchTaskDetail(task.id, projectId);
+      onOpenDetailWithTab?.(detail, "changes");
+    } catch {
+      addToast("Failed to load task details", "error");
+    }
+  }, [task.id, projectId, onOpenDetailWithTab, addToast]);
+
   const handleToggleSteps = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     setShowSteps((current) => !current);
@@ -687,11 +697,8 @@ function TaskCardComponent({
         <button
           type="button"
           className="card-session-files"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenFilesForTask?.(task.id, task.worktree, task.column);
-          }}
-          disabled={!onOpenFilesForTask}
+          onClick={handleOpenFiles}
+          disabled={!onOpenDetailWithTab}
         >
           <Folder size={12} />
           <span>
@@ -703,11 +710,8 @@ function TaskCardComponent({
         <button
           type="button"
           className="card-session-files"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenFilesForTask?.(task.id, task.worktree, task.column);
-          }}
-          disabled={!onOpenFilesForTask}
+          onClick={handleOpenFiles}
+          disabled={!onOpenDetailWithTab}
         >
           <Folder size={12} />
           <span>{task.mergeDetails.filesChanged} files changed</span>

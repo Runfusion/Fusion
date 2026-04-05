@@ -158,6 +158,8 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+type TabId = "definition" | "logs" | "changes" | "commits" | "comments" | "model" | "workflow";
+
 interface TaskDetailModalProps {
   task: TaskDetail;
   projectId?: string;
@@ -172,6 +174,8 @@ interface TaskDetailModalProps {
   onTaskUpdated?: (task: Task) => void;
   addToast: (message: string, type?: ToastType) => void;
   githubTokenConfigured?: boolean;
+  /** Open the modal with this tab active instead of "definition" */
+  initialTab?: TabId;
 }
 
 function truncate(s: string, max: number): string {
@@ -194,8 +198,15 @@ export function TaskDetailModal({
   onTaskUpdated,
   addToast,
   githubTokenConfigured,
+  initialTab = "definition",
 }: TaskDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<"definition" | "logs" | "changes" | "commits" | "comments" | "model" | "workflow">("definition");
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+
+  // Sync activeTab when the caller changes initialTab (e.g. opening a different tab)
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
   const [logSubview, setLogSubview] = useState<"activity" | "agent-log">("activity");
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);

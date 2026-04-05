@@ -46,7 +46,7 @@ interface ColumnProps {
    * Called when the user clicks the "Subtask" button in the inline create card.
    */
   onSubtaskBreakdown?: (description: string) => void;
-  onOpenFilesForTask?: (taskId: string, worktree: string | undefined, column: string) => void;
+  onOpenDetailWithTab?: (task: TaskDetail, initialTab: "changes") => void;
   favoriteProviders?: string[];
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;
@@ -57,7 +57,7 @@ interface ColumnProps {
   taskStuckTimeoutMs?: number;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenFilesForTask, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
@@ -226,7 +226,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   addToast={addToast}
                   globalPaused={globalPaused}
                   onUpdateTask={onUpdateTask}
-                  onOpenFilesForTask={onOpenFilesForTask}
+                  onOpenDetailWithTab={onOpenDetailWithTab}
                   taskStuckTimeoutMs={taskStuckTimeoutMs}
                 />
               ))
@@ -246,7 +246,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   onUpdateTask={onUpdateTask}
                   onArchiveTask={onArchiveTask}
                   onUnarchiveTask={onUnarchiveTask}
-                  onOpenFilesForTask={onOpenFilesForTask}
+                  onOpenDetailWithTab={onOpenDetailWithTab}
                   taskStuckTimeoutMs={taskStuckTimeoutMs}
                 />
               ))}

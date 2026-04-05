@@ -10,7 +10,6 @@ import { SetupWizardModal } from "./components/SetupWizardModal";
 import { TaskDetailModal } from "./components/TaskDetailModal";
 import { TerminalModal } from "./components/TerminalModal";
 import { FileBrowserModal } from "./components/FileBrowserModal";
-import { ChangedFilesModal } from "./components/ChangedFilesModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { ModelOnboardingModal } from "./components/ModelOnboardingModal";
 import { PlanningModeModal } from "./components/PlanningModeModal";
@@ -81,6 +80,7 @@ function AppInner() {
   const [isSubtaskOpen, setIsSubtaskOpen] = useState(false);
   const [subtaskInitialDescription, setSubtaskInitialDescription] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<TaskDetail | null>(null);
+  const [detailTaskInitialTab, setDetailTaskInitialTab] = useState<"definition" | "logs" | "changes" | "commits" | "comments" | "model" | "workflow">("definition");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [githubImportOpen, setGitHubImportOpen] = useState(false);
@@ -88,7 +88,6 @@ function AppInner() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [fileBrowserWorkspace, setFileBrowserWorkspace] = useState("project");
-  const [changedFilesState, setChangedFilesState] = useState<{ taskId: string; worktree: string | undefined; column: string } | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
@@ -487,6 +486,12 @@ function AppInner() {
 
   const handleDetailOpen = useCallback((task: TaskDetail) => {
     setDetailTask(task);
+    setDetailTaskInitialTab("definition");
+  }, []);
+
+  const handleOpenDetailWithTab = useCallback((task: TaskDetail, initialTab: "changes") => {
+    setDetailTask(task);
+    setDetailTaskInitialTab(initialTab);
   }, []);
 
   const handleDetailClose = useCallback(() => {
@@ -517,14 +522,6 @@ function AppInner() {
 
   const handleOpenFiles = useCallback(() => {
     setFilesOpen(true);
-  }, []);
-
-  const handleOpenChangedFiles = useCallback((taskId: string, worktree: string | undefined, column: string) => {
-    setChangedFilesState({ taskId, worktree, column });
-  }, []);
-
-  const handleCloseChangedFiles = useCallback(() => {
-    setChangedFilesState(null);
   }, []);
 
   const handleWorkspaceChange = useCallback((workspace: string) => {
@@ -606,7 +603,7 @@ function AppInner() {
           onArchiveAllDone={archiveAllDone}
           searchQuery={searchQuery}
           availableModels={availableModels}
-          onOpenFilesForTask={handleOpenChangedFiles}
+          onOpenDetailWithTab={handleOpenDetailWithTab}
           favoriteProviders={favoriteProviders}
           favoriteModels={favoriteModels}
           onToggleFavorite={handleToggleFavorite}
@@ -715,6 +712,7 @@ function AppInner() {
           onTaskUpdated={(updated) => setDetailTask(prev => prev ? { ...prev, ...updated } : prev)}
           addToast={addToast}
           githubTokenConfigured={githubTokenConfigured}
+          initialTab={detailTaskInitialTab}
         />
       )}
       {settingsOpen && (
@@ -774,16 +772,6 @@ function AppInner() {
           isOpen={true}
           onClose={() => setFilesOpen(false)}
           onWorkspaceChange={handleWorkspaceChange}
-        />
-      )}
-      {changedFilesState && (
-        <ChangedFilesModal
-          taskId={changedFilesState.taskId}
-          worktree={changedFilesState.worktree}
-          column={changedFilesState.column}
-          projectId={currentProject?.id}
-          isOpen={true}
-          onClose={handleCloseChangedFiles}
         />
       )}
       <UsageIndicator
