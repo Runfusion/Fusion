@@ -19439,6 +19439,70 @@ html .column.drag-over * {
   text-transform: capitalize;
 }
 
+/* Agent preset quick-start cards */
+.agent-presets {
+  margin-bottom: var(--space-lg);
+}
+
+.agent-presets-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.agent-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+.agent-preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: var(--bg-secondary);
+  font-family: var(--font-primary);
+  color: var(--text);
+}
+
+.agent-preset-card:hover {
+  border-color: var(--todo);
+  background: var(--bg-tertiary);
+}
+
+.agent-preset-card.selected {
+  border-color: var(--todo);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.agent-preset-icon {
+  font-size: 24px;
+  margin-bottom: var(--space-xs);
+}
+
+.agent-preset-name {
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  margin-bottom: var(--space-xs);
+}
+
+.agent-preset-role {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: capitalize;
+}
+
 .agent-dialog-required {
   color: var(--state-error-text);
 }

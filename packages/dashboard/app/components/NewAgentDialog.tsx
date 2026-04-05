@@ -33,6 +33,45 @@ interface RuntimeConfig {
   maxTurns: number;
 }
 
+/** Preset agent template for one-click creation */
+interface AgentPreset {
+  /** Unique identifier for the preset */
+  id: string;
+  /** Display name (e.g., "CEO", "CTO") */
+  name: string;
+  /** Emoji icon */
+  icon: string;
+  /** Professional title (e.g., "Chief Executive Officer") */
+  title: string;
+  /** Agent capability role */
+  role: AgentCapability;
+  /** Optional description of the agent's responsibilities */
+  description?: string;
+}
+
+const AGENT_PRESETS: AgentPreset[] = [
+  { id: "ceo", name: "CEO", icon: "👔", title: "Chief Executive Officer", role: "custom" },
+  { id: "cto", name: "CTO", icon: "🧠", title: "Chief Technology Officer", role: "custom" },
+  { id: "cmo", name: "CMO", icon: "📢", title: "Chief Marketing Officer", role: "custom" },
+  { id: "cfo", name: "CFO", icon: "💰", title: "Chief Financial Officer", role: "custom" },
+  { id: "engineer", name: "Engineer", icon: "👨‍💻", title: "Software Engineer", role: "engineer" },
+  { id: "backend-engineer", name: "Backend Engineer", icon: "⚙️", title: "Backend Engineer", role: "engineer" },
+  { id: "frontend-engineer", name: "Frontend Engineer", icon: "🎨", title: "Frontend Engineer", role: "engineer" },
+  { id: "fullstack-engineer", name: "Fullstack Engineer", icon: "🚀", title: "Full Stack Engineer", role: "engineer" },
+  { id: "qa-engineer", name: "QA Engineer", icon: "🧪", title: "Quality Assurance Engineer", role: "engineer" },
+  { id: "devops-engineer", name: "DevOps Engineer", icon: "🔧", title: "DevOps Engineer", role: "engineer" },
+  { id: "ci-engineer", name: "CI Engineer", icon: "⚡", title: "CI/CD Engineer", role: "engineer" },
+  { id: "security-engineer", name: "Security Engineer", icon: "🛡️", title: "Security Engineer", role: "engineer" },
+  { id: "data-engineer", name: "Data Engineer", icon: "📊", title: "Data Engineer", role: "engineer" },
+  { id: "ml-engineer", name: "ML Engineer", icon: "🤖", title: "Machine Learning Engineer", role: "engineer" },
+  { id: "product-manager", name: "Product Manager", icon: "📋", title: "Product Manager", role: "custom" },
+  { id: "designer", name: "Designer", icon: "✏️", title: "Product Designer", role: "custom" },
+  { id: "marketing-manager", name: "Marketing Manager", icon: "📣", title: "Marketing Manager", role: "custom" },
+  { id: "technical-writer", name: "Technical Writer", icon: "📝", title: "Technical Writer", role: "custom" },
+  { id: "triage", name: "Triage Agent", icon: "🔍", title: "Task Triage Agent", role: "triage" },
+  { id: "reviewer", name: "Reviewer", icon: "👁️", title: "Code Reviewer", role: "reviewer" },
+];
+
 export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAgentDialogProps) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
@@ -44,6 +83,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     thinkingLevel: "off",
     maxTurns: 10,
   });
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isGenerationModalOpen, setIsGenerationModalOpen] = useState(false);
@@ -117,6 +157,16 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     setFavoriteModels(newFavorites);
   }, [favoriteModels]);
 
+  const handlePresetSelect = useCallback((preset: AgentPreset) => {
+    setSelectedPresetId(preset.id);
+    setName(preset.name);
+    setIcon(preset.icon);
+    setTitle(preset.title);
+    setRole(preset.role);
+    // Advance to Step 1 so user can review model selection
+    setStep(1);
+  }, []);
+
   if (!isOpen) return null;
 
   const handleClose = () => {
@@ -126,6 +176,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     setIcon("");
     setRole("custom");
     setRuntimeConfig({ model: "", thinkingLevel: "off", maxTurns: 10 });
+    setSelectedPresetId(null);
     setError(null);
     setIsGenerationModalOpen(false);
     onClose();
@@ -188,6 +239,28 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
         <div className="agent-dialog-body">
           {step === 0 && (
             <div>
+              {/* Quick Start Presets */}
+              <div className="agent-presets">
+                <div className="agent-presets-header">
+                  Choose a preset or fill in details manually
+                </div>
+                <div className="agent-presets-grid">
+                  {AGENT_PRESETS.map(preset => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={`agent-preset-card${selectedPresetId === preset.id ? " selected" : ""}`}
+                      data-testid={`preset-${preset.id}`}
+                      onClick={() => handlePresetSelect(preset)}
+                      title={preset.title}
+                    >
+                      <span className="agent-preset-icon">{preset.icon}</span>
+                      <span className="agent-preset-name">{preset.name}</span>
+                      <span className="agent-preset-role">{preset.role}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="agent-dialog-field">
                 <label htmlFor="agent-name">Name <span className="agent-dialog-required">*</span></label>
                 <input

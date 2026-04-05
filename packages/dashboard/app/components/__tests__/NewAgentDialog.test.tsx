@@ -586,4 +586,202 @@ describe("NewAgentDialog", () => {
       });
     });
   });
+
+  describe("preset selection", () => {
+    it("renders all 20 preset cards in step 0", () => {
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+      const presetCards = screen.getAllByTestId(/^preset-/);
+      expect(presetCards).toHaveLength(20);
+    });
+
+    it("shows the quick start header text", () => {
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+      expect(screen.getByText("Choose a preset or fill in details manually")).toBeTruthy();
+    });
+
+    it("clicking a preset populates name, title, icon, and role", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Click the "Engineer" preset
+      await user.click(screen.getByTestId("preset-engineer"));
+
+      // Should advance to step 1 (model config), go back to verify fields
+      await user.click(screen.getByText("Back"));
+
+      // Verify form fields were populated
+      const nameInput = screen.getByLabelText(/Name/) as HTMLInputElement;
+      expect(nameInput.value).toBe("Engineer");
+
+      const titleInput = screen.getByLabelText(/Title/) as HTMLInputElement;
+      expect(titleInput.value).toBe("Software Engineer");
+
+      // Verify role was set to engineer
+      const roleGrid = document.querySelector(".agent-role-grid");
+      const engineerRoleButton = roleGrid?.querySelector(".agent-role-option.selected");
+      expect(engineerRoleButton?.textContent).toContain("Engineer");
+    });
+
+    it("clicking a preset advances directly to step 1", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Click the "CTO" preset
+      await user.click(screen.getByTestId("preset-cto"));
+
+      // Should be on step 1 — model dropdown visible
+      expect(screen.getByTestId("custom-model-dropdown")).toBeTruthy();
+    });
+
+    it("selected preset card has .selected CSS class", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Click the "CEO" preset
+      await user.click(screen.getByTestId("preset-ceo"));
+
+      // Go back to step 0 to verify visual feedback
+      await user.click(screen.getByText("Back"));
+
+      const ceoCard = screen.getByTestId("preset-ceo");
+      expect(ceoCard.classList.contains("selected")).toBe(true);
+    });
+
+    it("clicking a different preset updates the selection", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Click CEO preset
+      await user.click(screen.getByTestId("preset-ceo"));
+      await user.click(screen.getByText("Back"));
+
+      // Click CTO preset
+      await user.click(screen.getByTestId("preset-cto"));
+      await user.click(screen.getByText("Back"));
+
+      // Only CTO should be selected
+      expect(screen.getByTestId("preset-cto").classList.contains("selected")).toBe(true);
+      expect(screen.getByTestId("preset-ceo").classList.contains("selected")).toBe(false);
+
+      // Name should be updated
+      const nameInput = screen.getByLabelText(/Name/) as HTMLInputElement;
+      expect(nameInput.value).toBe("CTO");
+    });
+
+    it("user can override preset values with manual entry after selection", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Select a preset
+      await user.click(screen.getByTestId("preset-engineer"));
+      await user.click(screen.getByText("Back"));
+
+      // Override the name manually
+      const nameInput = screen.getByLabelText(/Name/) as HTMLInputElement;
+      await user.clear(nameInput);
+      await user.type(nameInput, "My Custom Engineer");
+
+      expect(nameInput.value).toBe("My Custom Engineer");
+    });
+
+    it("dialog reset clears preset selection", async () => {
+      const user = userEvent.setup();
+      const { unmount } = render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Select a preset
+      await user.click(screen.getByTestId("preset-ceo"));
+
+      // Close the dialog
+      await user.click(screen.getByLabelText("Close"));
+      expect(mockOnClose).toHaveBeenCalled();
+
+      // Re-open — state should be reset
+      unmount();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      // Name should be empty (no preset selected)
+      const nameInput = screen.getByLabelText(/Name/) as HTMLInputElement;
+      expect(nameInput.value).toBe("");
+
+      // No preset cards should be selected
+      const selectedCards = document.querySelectorAll(".agent-preset-card.selected");
+      expect(selectedCards).toHaveLength(0);
+    });
+
+    it("creates agent with preset fields through the full flow", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Click the "Reviewer" preset (advances to step 1)
+      await user.click(screen.getByTestId("preset-reviewer"));
+
+      // Step 1: navigate to summary
+      await user.click(screen.getByText("Next"));
+
+      // Step 2: verify summary and create
+      // Verify name
+      expect(screen.getByText("Reviewer")).toBeTruthy();
+      // Verify icon
+      expect(screen.getByText("👁️")).toBeTruthy();
+
+      // Create
+      await user.click(screen.getByText("Create"));
+
+      await waitFor(() => {
+        expect(mockCreateAgent).toHaveBeenCalledOnce();
+      });
+
+      const createCall = mockCreateAgent.mock.calls[0][0];
+      expect(createCall.name).toBe("Reviewer");
+      expect(createCall.icon).toBe("👁️");
+      expect(createCall.title).toBe("Code Reviewer");
+      expect(createCall.role).toBe("reviewer");
+    });
+
+    it("preset card titles show the professional title", () => {
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      const ceoCard = screen.getByTestId("preset-ceo");
+      expect(ceoCard.getAttribute("title")).toBe("Chief Executive Officer");
+
+      const ctoCard = screen.getByTestId("preset-cto");
+      expect(ctoCard.getAttribute("title")).toBe("Chief Technology Officer");
+    });
+  });
 });
