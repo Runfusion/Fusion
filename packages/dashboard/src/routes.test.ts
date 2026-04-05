@@ -704,7 +704,7 @@ describe("POST /tasks/:id/retry", () => {
     expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
   });
 
-  it("returns 400 when task is not in failed state", async () => {
+  it("returns 400 when task is not in a retryable state", async () => {
     const activeTask = { ...FAKE_TASK_DETAIL, status: "executing" };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(activeTask);
 
@@ -713,7 +713,7 @@ describe("POST /tasks/:id/retry", () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("not in a failed state");
+    expect(res.body.error).toContain("not in a retryable state");
   });
 
   it("retries a failed task in any column (not just in-progress)", async () => {
@@ -730,6 +730,23 @@ describe("POST /tasks/:id/retry", () => {
     expect(res.status).toBe(200);
     expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined, error: undefined });
     expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+  });
+
+  it("retries a stuck-killed task and moves it to todo", async () => {
+    const stuckTask = { ...FAKE_TASK_DETAIL, status: "stuck-killed", column: "in-progress" };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo", status: undefined };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(stuckTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(stuckTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/retry", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { status: undefined, error: undefined });
+    expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
+    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Retry requested from dashboard");
   });
 });
 

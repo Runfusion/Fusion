@@ -1849,7 +1849,7 @@ describe("runTaskRetry", () => {
       column: "in-progress"
     }));
 
-    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task FN-001 is not failed (status: none)");
+    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task FN-001 is not in a retryable state (status: none)");
   });
 
   it("throws error with correct status when task has different status", async () => {
@@ -1859,7 +1859,32 @@ describe("runTaskRetry", () => {
       column: "in-progress"
     }));
 
-    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task FN-001 is not failed (status: paused)");
+    await expect(runTaskRetry("FN-001")).rejects.toThrow("Task FN-001 is not in a retryable state (status: paused)");
+  });
+
+  it("retries stuck-killed task successfully", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({ 
+      id: "FN-001", 
+      status: "stuck-killed",
+      column: "in-progress"
+    }));
+    mockUpdateTask.mockResolvedValueOnce(makeTask({ id: "FN-001", status: undefined, error: undefined }));
+    mockMoveTask.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "todo" }));
+    mockLogEntry.mockResolvedValueOnce(makeTask({ id: "FN-001" }));
+
+    await runTaskRetry("FN-001");
+
+    expect(mockGetTask).toHaveBeenCalledWith("FN-001");
+    expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Retry requested from CLI", "Task reset to todo for retry");
+
+    const successLine = logSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("✓ Retried"),
+    );
+    expect(successLine).toBeDefined();
+    expect(successLine![0]).toContain("FN-001");
+    expect(successLine![0]).toContain("todo");
   });
 });
 

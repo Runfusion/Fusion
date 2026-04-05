@@ -451,10 +451,10 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
       
-      // Validate task is in failed state
-      if (task.status !== 'failed') {
+      // Validate task is in a retryable state
+      if (task.status !== 'failed' && task.status !== 'stuck-killed') {
         return {
-          content: [{ type: "text", text: `Task ${params.id} is not failed (status: ${task.status || 'none'})` }],
+          content: [{ type: "text", text: `Task ${params.id} is not in a retryable state (status: ${task.status || 'none'})` }],
           isError: true,
           details: { taskId: params.id, currentStatus: task.status },
         };

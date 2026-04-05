@@ -628,9 +628,9 @@ export async function runTaskRetry(id: string, projectName?: string) {
     throw new Error(`Task ${id} not found`);
   }
   
-  // Validate task is in failed state
-  if (task.status !== 'failed') {
-    throw new Error(`Task ${id} is not failed (status: ${task.status || 'none'})`);
+  // Validate task is in a retryable state
+  if (task.status !== 'failed' && task.status !== 'stuck-killed') {
+    throw new Error(`Task ${id} is not in a retryable state (status: ${task.status || 'none'})`);
   }
   
   // Clear failure state

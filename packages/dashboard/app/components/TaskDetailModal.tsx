@@ -1243,7 +1243,7 @@ export function TaskDetailModal({
               Refine
             </button>
           )}
-          {task.status === "failed" && onRetryTask && (
+          {(task.status === "failed" || task.status === "stuck-killed") && onRetryTask && (
             <button className="btn btn-warning btn-sm" onClick={handleRetry}>
               Retry
             </button>

@@ -1784,13 +1784,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
-  // Retry failed task
+  // Retry failed or stuck-killed task
   router.post("/tasks/:id/retry", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
       const task = await scopedStore.getTask(req.params.id);
-      if (task.status !== "failed") {
-        res.status(400).json({ error: "Task is not in a failed state" });
+      if (task.status !== "failed" && task.status !== "stuck-killed") {
+        res.status(400).json({ error: `Task is not in a retryable state (current status: ${task.status || 'none'})` });
         return;
       }
       await scopedStore.updateTask(req.params.id, { status: undefined, error: undefined });
