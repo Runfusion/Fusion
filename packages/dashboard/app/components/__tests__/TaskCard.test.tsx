@@ -21,6 +21,12 @@ vi.mock("../../hooks/useBadgeWebSocket", () => ({
   useBadgeWebSocket: () => mockUseBadgeWebSocket(),
 }));
 
+const mockUseSessionFiles = vi.fn(() => ({ files: [], loading: false }));
+
+vi.mock("../../hooks/useSessionFiles", () => ({
+  useSessionFiles: (...args: unknown[]) => mockUseSessionFiles(...args),
+}));
+
 vi.mock("lucide-react", () => ({
   Link: ({ size }: { size?: number }) => <span data-testid="link-icon">🔗</span>,
   Clock: ({ size }: { size?: number }) => <span data-testid="clock-icon">🕐</span>,
@@ -41,6 +47,8 @@ beforeEach(() => {
     subscribeToBadge: vi.fn(),
     unsubscribeFromBadge: vi.fn(),
   });
+  mockUseSessionFiles.mockReset();
+  mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
 });
 
 /**
@@ -2982,5 +2990,109 @@ describe("TaskCard awaiting-approval state", () => {
     expect(card?.classList.contains("agent-active")).toBe(false);
     expect(card?.classList.contains("failed")).toBe(false);
     expect(card?.classList.contains("paused")).toBe(false);
+  });
+});
+
+describe("TaskCard files-changed in done column", () => {
+  const noopToast = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+  });
+
+  it("shows mergeDetails.filesChanged for done column when set", () => {
+    const task = makeTask({
+      column: "done",
+      mergeDetails: { filesChanged: 7, mergedAt: "2026-01-01T00:00:00Z", targetBranch: "main" },
+    });
+    mockUseSessionFiles.mockReturnValue({ files: ["a.ts"], loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByText("7 files changed")).toBeInTheDocument();
+    // Should NOT show session files count since mergeDetails takes priority
+    expect(screen.queryByText("1 files changed")).not.toBeInTheDocument();
+  });
+
+  it("shows session files count for done column with worktree but no mergeDetails.filesChanged", () => {
+    const task = makeTask({
+      column: "done",
+      worktree: "/repo/.worktrees/fn-099",
+    });
+    mockUseSessionFiles.mockReturnValue({ files: ["src/a.ts", "src/b.ts", "src/c.ts"], loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByText("3 files changed")).toBeInTheDocument();
+  });
+
+  it("shows nothing for done column without worktree and without mergeDetails.filesChanged", () => {
+    const task = makeTask({ column: "done" });
+    mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.queryByText(/files changed/)).not.toBeInTheDocument();
+  });
+
+  it("prefers mergeDetails.filesChanged over sessionFiles for done column", () => {
+    const task = makeTask({
+      column: "done",
+      worktree: "/repo/.worktrees/fn-099",
+      mergeDetails: { filesChanged: 5, mergedAt: "2026-01-01T00:00:00Z", targetBranch: "main" },
+    });
+    mockUseSessionFiles.mockReturnValue({ files: ["a.ts", "b.ts"], loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Should show the mergeDetails count, not the sessionFiles count
+    expect(screen.getByText("5 files changed")).toBeInTheDocument();
+    expect(screen.queryByText("2 files changed")).not.toBeInTheDocument();
+  });
+
+  it("shows loading state for done column with worktree and no mergeDetails", () => {
+    const task = makeTask({
+      column: "done",
+      worktree: "/repo/.worktrees/fn-099",
+    });
+    mockUseSessionFiles.mockReturnValue({ files: [], loading: true });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // No loading indicator is shown because sessionFiles.length is 0
+    // The button only appears when files.length > 0
+    expect(screen.queryByText(/files changed/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Checking files…")).not.toBeInTheDocument();
   });
 });

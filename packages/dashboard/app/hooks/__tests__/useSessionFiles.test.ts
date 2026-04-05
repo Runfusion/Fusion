@@ -50,4 +50,24 @@ describe("useSessionFiles", () => {
 
     expect(result.current.files).toEqual([]);
   });
+
+  it("fetches session files for done column tasks with a worktree", async () => {
+    mockFetchSessionFiles.mockResolvedValueOnce(["src/x.ts", "src/y.ts", "src/z.ts"]);
+
+    const { result } = renderHook(() => useSessionFiles("FN-456", "/repo/.worktrees/kb-456", "done"));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.files).toEqual(["src/x.ts", "src/y.ts", "src/z.ts"]);
+    expect(mockFetchSessionFiles).toHaveBeenCalledWith("FN-456", undefined);
+  });
+
+  it("does not fetch for done column tasks without a worktree", async () => {
+    const { result } = renderHook(() => useSessionFiles("FN-456", undefined, "done"));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.files).toEqual([]);
+    expect(mockFetchSessionFiles).not.toHaveBeenCalled();
+  });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchSessionFiles } from "../api";
 
-const ACTIVE_COLUMNS = new Set(["in-progress", "in-review"]);
+const ACTIVE_COLUMNS = new Set(["in-progress", "in-review", "done"]);
 
 interface UseSessionFilesResult {
   files: string[];

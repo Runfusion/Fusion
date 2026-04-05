@@ -706,17 +706,38 @@ function TaskCardComponent({
           </span>
         </button>
       )}
-      {task.column === "done" && task.mergeDetails?.filesChanged != null && task.mergeDetails.filesChanged > 0 && (
-        <button
-          type="button"
-          className="card-session-files"
-          onClick={handleOpenFiles}
-          disabled={!onOpenDetailWithTab}
-        >
-          <Folder size={12} />
-          <span>{task.mergeDetails.filesChanged} files changed</span>
-        </button>
-      )}
+      {task.column === "done" && (() => {
+        const mergedCount = task.mergeDetails?.filesChanged;
+        if (mergedCount != null && mergedCount > 0) {
+          return (
+            <button
+              type="button"
+              className="card-session-files"
+              onClick={handleOpenFiles}
+              disabled={!onOpenDetailWithTab}
+            >
+              <Folder size={12} />
+              <span>{mergedCount} files changed</span>
+            </button>
+          );
+        }
+        if (task.worktree && sessionFiles.length > 0) {
+          return (
+            <button
+              type="button"
+              className="card-session-files"
+              onClick={handleOpenFiles}
+              disabled={!onOpenDetailWithTab}
+            >
+              <Folder size={12} />
+              <span>
+                {sessionFilesLoading ? "Checking files…" : `${sessionFiles.length} files changed`}
+              </span>
+            </button>
+          );
+        }
+        return null;
+      })()}
       {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy) && (
         <div className="card-meta">
           {task.dependencies && task.dependencies.length > 0 && (
