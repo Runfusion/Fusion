@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockListProjects = vi.fn();
 const mockRegisterProject = vi.fn();
+const mockUpdateProject = vi.fn().mockResolvedValue({});
 const mockUnregisterProject = vi.fn();
 const mockGetProject = vi.fn();
 const mockGetProjectByPath = vi.fn();
@@ -28,6 +29,7 @@ vi.mock("@fusion/core", () => ({
     close: mockClose.mockResolvedValue(undefined),
     listProjects: mockListProjects,
     registerProject: mockRegisterProject,
+    updateProject: mockUpdateProject,
     unregisterProject: mockUnregisterProject,
     getProject: mockGetProject,
     getProjectByPath: mockGetProjectByPath,

@@ -109,6 +109,9 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
       isolationMode: "in-process",
     });
 
+    // Activate the project (registration sets it to 'initializing')
+    await central.updateProject(project.id, { status: "active" });
+
     console.log(`  ✓ Registered in central database`);
     console.log(`\n✓ Project "${project.name}" initialized successfully!`);
     console.log(`\n  Next steps:`);

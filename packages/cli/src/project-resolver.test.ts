@@ -18,6 +18,7 @@ vi.mock("@fusion/core", async () => {
       getProject = vi.fn().mockResolvedValue(undefined);
       getProjectByPath = vi.fn().mockResolvedValue(undefined);
       registerProject = vi.fn();
+      updateProject = vi.fn().mockResolvedValue({});
       unregisterProject = vi.fn().mockResolvedValue(undefined);
       getProjectHealth = vi.fn().mockResolvedValue(undefined);
       isInitialized = vi.fn().mockReturnValue(true);

@@ -361,6 +361,9 @@ export async function runProjectAdd(
       isolationMode,
     });
 
+    // Activate the project (registration sets it to 'initializing')
+    await central.updateProject(project.id, { status: "active" });
+
     console.log();
     console.log(`  ✓ Registered project '${projectName}'`);
     console.log(`    Location: ${formatDisplayPath(project.path)}`);

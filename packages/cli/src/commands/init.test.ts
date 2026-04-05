@@ -12,6 +12,7 @@ const mockCentralInit = vi.fn();
 const mockCentralClose = vi.fn();
 const mockGetProjectByPath = vi.fn();
 const mockRegisterProject = vi.fn();
+const mockUpdateProject = vi.fn().mockResolvedValue({});
 
 vi.mock("@fusion/core", () => ({
   CentralCore: vi.fn().mockImplementation(() => ({
@@ -19,6 +20,7 @@ vi.mock("@fusion/core", () => ({
     close: mockCentralClose,
     getProjectByPath: mockGetProjectByPath,
     registerProject: mockRegisterProject,
+    updateProject: mockUpdateProject,
   })),
   resolveGlobalDir: vi.fn(),
 }));

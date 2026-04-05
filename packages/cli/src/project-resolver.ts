@@ -263,6 +263,9 @@ export async function resolveProject(options: ResolveOptions = {}): Promise<Reso
             isolationMode: "in-process",
           });
 
+          // Activate the project (registration sets it to 'initializing')
+          await central.updateProject(newProject.id, { status: "active" });
+
           console.log(`\n  ✓ Registered project "${newProject.name}"`);
           return createResolvedProject(newProject);
         } catch (err: any) {
@@ -605,6 +608,9 @@ export async function registerProjectInteractive(
     path: absPath,
     isolationMode: options.isolation ?? "in-process",
   });
+
+  // Activate the project (registration sets it to 'initializing')
+  await central.updateProject(project.id, { status: "active" });
 
   return createResolvedProject(project);
 }
