@@ -7504,26 +7504,46 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       // Done tasks: compute diff from merge base to isolate only this task's changes.
       // Using `git show SHA` on merge commits shows ALL files changed in the merge,
-      // including files from unrelated commits on main. Instead, find the merge base
-      // (where the feature branch diverged) and diff from that point.
+      // including files from unrelated commits on main. Instead, find the true
+      // divergence point (where the feature branch started) and diff from that point.
       if (task.column === "done" && task.mergeDetails?.commitSha) {
         const rootDir = scopedStore.getRootDir();
         const sha = task.mergeDetails.commitSha;
 
-        // Resolve the merge base: the common ancestor between this commit and its first parent.
-        // For a merge commit, SHA^1 is the first parent (main branch tip at merge time).
-        let mergeBase = sha;
-        try {
-          const parentSha = nodeChildProcess.execSync(
-            `git rev-parse ${sha}^`,
-            { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
-          ).trim();
-          mergeBase = nodeChildProcess.execSync(
-            `git merge-base ${sha} ${parentSha}`,
-            { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
-          ).trim();
-        } catch {
-          // Fallback: use the parent commit as base if merge-base fails
+        // Resolve the diff base using the same priority as resolveDiffBase():
+        // 1. task.baseCommitSha (exact starting commit of the worktree)
+        // 2. merge-base between the merge commit and the base branch
+        // 3. First parent of the merge commit as fallback
+        let mergeBase: string | undefined;
+        const baseBranch = task.baseBranch ?? "main";
+
+        // Priority 1: Use task.baseCommitSha if it's a valid ancestor of the merge commit
+        if (task.baseCommitSha) {
+          try {
+            nodeChildProcess.execSync(
+              `git merge-base --is-ancestor ${task.baseCommitSha} ${sha}`,
+              { cwd: rootDir, encoding: "utf-8", timeout: 5000, stdio: "pipe" },
+            );
+            mergeBase = task.baseCommitSha;
+          } catch {
+            // baseCommitSha is stale or not an ancestor — fall through
+          }
+        }
+
+        // Priority 2: Compute merge-base between merge commit and base branch
+        if (!mergeBase) {
+          try {
+            mergeBase = nodeChildProcess.execSync(
+              `git merge-base ${sha} origin/${baseBranch} 2>/dev/null || git merge-base ${sha} ${baseBranch}`,
+              { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
+            ).trim();
+          } catch {
+            // merge-base with branch failed — fall through
+          }
+        }
+
+        // Priority 3: Fall back to first parent of the merge commit
+        if (!mergeBase) {
           try {
             mergeBase = nodeChildProcess.execSync(
               `git rev-parse ${sha}^`,
@@ -7681,24 +7701,46 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
       // Done tasks: compute diff from merge base to isolate only this task's changes.
       // Using `git show SHA` on merge commits shows ALL files changed in the merge,
-      // including files from unrelated commits on main. Instead, find the merge base
-      // (where the feature branch diverged) and diff from that point.
+      // including files from unrelated commits on main. Instead, find the true
+      // divergence point (where the feature branch started) and diff from that point.
       if (task.column === "done" && task.mergeDetails?.commitSha) {
         const rootDir = scopedStore.getRootDir();
         const sha = task.mergeDetails.commitSha;
 
-        // Resolve the merge base: the common ancestor between this commit and its first parent.
-        let mergeBase = sha;
-        try {
-          const parentSha = nodeChildProcess.execSync(
-            `git rev-parse ${sha}^`,
-            { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
-          ).trim();
-          mergeBase = nodeChildProcess.execSync(
-            `git merge-base ${sha} ${parentSha}`,
-            { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
-          ).trim();
-        } catch {
+        // Resolve the diff base using the same priority as resolveDiffBase():
+        // 1. task.baseCommitSha (exact starting commit of the worktree)
+        // 2. merge-base between the merge commit and the base branch
+        // 3. First parent of the merge commit as fallback
+        let mergeBase: string | undefined;
+        const baseBranch = task.baseBranch ?? "main";
+
+        // Priority 1: Use task.baseCommitSha if it's a valid ancestor of the merge commit
+        if (task.baseCommitSha) {
+          try {
+            nodeChildProcess.execSync(
+              `git merge-base --is-ancestor ${task.baseCommitSha} ${sha}`,
+              { cwd: rootDir, encoding: "utf-8", timeout: 5000, stdio: "pipe" },
+            );
+            mergeBase = task.baseCommitSha;
+          } catch {
+            // baseCommitSha is stale or not an ancestor — fall through
+          }
+        }
+
+        // Priority 2: Compute merge-base between merge commit and base branch
+        if (!mergeBase) {
+          try {
+            mergeBase = nodeChildProcess.execSync(
+              `git merge-base ${sha} origin/${baseBranch} 2>/dev/null || git merge-base ${sha} ${baseBranch}`,
+              { cwd: rootDir, encoding: "utf-8", timeout: 5000 },
+            ).trim();
+          } catch {
+            // merge-base with branch failed — fall through
+          }
+        }
+
+        // Priority 3: Fall back to first parent of the merge commit
+        if (!mergeBase) {
           try {
             mergeBase = nodeChildProcess.execSync(
               `git rev-parse ${sha}^`,
