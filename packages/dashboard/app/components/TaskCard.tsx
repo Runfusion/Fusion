@@ -1,5 +1,5 @@
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo } from "@fusion/core";
 import { fetchTaskDetail, uploadAttachment } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
@@ -49,6 +49,8 @@ interface TaskCardProps {
   onOpenDetailWithTab?: (task: TaskDetail, initialTab: "changes") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
+  /** Called when user clicks the mission badge on a task card. */
+  onOpenMission?: (missionId: string) => void;
 }
 
 function areTaskBadgeInfosEqual(
@@ -93,6 +95,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onArchiveTask === next.onArchiveTask &&
     previous.onUnarchiveTask === next.onUnarchiveTask &&
     previous.onOpenDetailWithTab === next.onOpenDetailWithTab &&
+    previous.onOpenMission === next.onOpenMission &&
     previousTask.id === nextTask.id &&
     previousTask.title === nextTask.title &&
     previousTask.description === nextTask.description &&
@@ -114,6 +117,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.validatorModelProvider === nextTask.validatorModelProvider &&
     previousTask.validatorModelId === nextTask.validatorModelId &&
     previousTask.reviewLevel === nextTask.reviewLevel &&
+    previousTask.missionId === nextTask.missionId &&
     previousTask.mergeRetries === nextTask.mergeRetries &&
     JSON.stringify(previousTask.attachments ?? []) === JSON.stringify(nextTask.attachments ?? []) &&
     JSON.stringify(previousTask.comments ?? []) === JSON.stringify(nextTask.comments ?? []) &&
@@ -136,6 +140,7 @@ function TaskCardComponent({
   onUnarchiveTask,
   onOpenDetailWithTab,
   taskStuckTimeoutMs,
+  onOpenMission,
 }: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
@@ -516,6 +521,13 @@ function TaskCardComponent({
     setShowSteps((current) => !current);
   }, []);
 
+  const handleMissionClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (task.missionId && onOpenMission) {
+      onOpenMission(task.missionId);
+    }
+  }, [task.missionId, onOpenMission]);
+
   const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isStuck ? " stuck" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
   if (isEditing) {
@@ -599,6 +611,18 @@ function TaskCardComponent({
             prInfo={livePrInfo}
             issueInfo={liveIssueInfo}
           />
+        )}
+        {task.missionId && (
+          <span
+            className="card-mission-badge"
+            onClick={handleMissionClick}
+            title={`Mission: ${task.missionId}`}
+            role={onOpenMission ? "button" : undefined}
+            tabIndex={onOpenMission ? 0 : undefined}
+          >
+            <Target size={11} />
+            {task.missionId}
+          </span>
         )}
         <div className="card-header-actions">
           {canEdit && (

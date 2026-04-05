@@ -97,6 +97,7 @@ function AppInner() {
   const [planningResumeSessionId, setPlanningResumeSessionId] = useState<string | undefined>(undefined);
   const [subtaskResumeSessionId, setSubtaskResumeSessionId] = useState<string | undefined>(undefined);
   const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
+  const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
   const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId | undefined>(undefined);
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
@@ -532,6 +533,12 @@ function AppInner() {
   const handleOpenActivityLog = useCallback(() => setActivityLogOpen(true), []);
   const handleCloseActivityLog = useCallback(() => setActivityLogOpen(false), []);
 
+  // Mission link handler from TaskCard
+  const handleOpenMission = useCallback((missionId: string) => {
+    setMissionTargetId(missionId);
+    setMissionsOpen(true);
+  }, []);
+
   // Git Manager handlers
   const handleOpenGitManager = useCallback(() => setGitManagerOpen(true), []);
   const handleCloseGitManager = useCallback(() => setGitManagerOpen(false), []);
@@ -609,6 +616,7 @@ function AppInner() {
           onToggleFavorite={handleToggleFavorite}
           onToggleModelFavorite={handleToggleModelFavorite}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
+          onOpenMission={handleOpenMission}
         />
       );
     }
@@ -822,10 +830,11 @@ function AppInner() {
       />
       <MissionManager
         isOpen={missionsOpen}
-        onClose={() => { setMissionsOpen(false); setMissionResumeSessionId(undefined); }}
+        onClose={() => { setMissionsOpen(false); setMissionResumeSessionId(undefined); setMissionTargetId(undefined); }}
         addToast={addToast}
         projectId={currentProject?.id}
         resumeSessionId={missionResumeSessionId}
+        targetMissionId={missionTargetId}
         availableTasks={tasks.map((t) => ({ id: t.id, title: t.title }))}
         onSelectTask={(taskId) => {
           const task = tasks.find((t) => t.id === taskId);

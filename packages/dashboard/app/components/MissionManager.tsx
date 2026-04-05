@@ -70,6 +70,8 @@ interface MissionManagerProps {
   onSelectTask?: (taskId: string) => void;
   availableTasks?: Array<{ id: string; title?: string }>;
   resumeSessionId?: string;
+  /** Pre-select and load this mission when the modal opens */
+  targetMissionId?: string;
 }
 
 // Status badge colors — use CSS custom-property-compatible tokens
@@ -156,7 +158,7 @@ const EMPTY_FEATURE_FORM: FeatureFormData = {
   status: "defined",
 };
 
-export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId }: MissionManagerProps) {
+export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId }: MissionManagerProps) {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [selectedMission, setSelectedMission] = useState<MissionWithHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -240,6 +242,22 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
       setSelectedMission(null);
     }
   }, [isOpen, loadMissions]);
+
+  // Auto-load target mission when specified
+  const targetLoadedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isOpen && targetMissionId && targetLoadedRef.current !== targetMissionId && missions.length > 0) {
+      targetLoadedRef.current = targetMissionId;
+      loadMissionDetail(targetMissionId);
+    }
+  }, [isOpen, targetMissionId, missions, loadMissionDetail]);
+
+  // Reset target tracking when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      targetLoadedRef.current = null;
+    }
+  }, [isOpen]);
 
   // Mission handlers
   const handleCreateMission = useCallback(() => {

@@ -55,9 +55,11 @@ interface ColumnProps {
   isSearchActive?: boolean;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
+  /** Called when user clicks a mission badge on a task card */
+  onOpenMission?: (missionId: string) => void;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const countFlashing = useFlashOnIncrease(tasks.length);
@@ -228,6 +230,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   onUpdateTask={onUpdateTask}
                   onOpenDetailWithTab={onOpenDetailWithTab}
                   taskStuckTimeoutMs={taskStuckTimeoutMs}
+                  onOpenMission={onOpenMission}
                 />
               ))
             )
@@ -248,6 +251,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   onUnarchiveTask={onUnarchiveTask}
                   onOpenDetailWithTab={onOpenDetailWithTab}
                   taskStuckTimeoutMs={taskStuckTimeoutMs}
+                  onOpenMission={onOpenMission}
                 />
               ))}
               {shouldPaginate && hiddenTaskCount > 0 && (

@@ -43,6 +43,7 @@ vi.mock("lucide-react", () => ({
   Maximize2: ({ size }: { size?: number }) => <span data-testid="maximize-icon">⛶</span>,
   GitPullRequest: ({ size }: { size?: number }) => <span data-testid="git-pr-icon">🔀</span>,
   CircleDot: ({ size }: { size?: number }) => <span data-testid="circle-dot-icon">⭕</span>,
+  Target: ({ size }: { size?: number }) => <span data-testid="target-icon">🎯</span>,
 }));
 
 beforeEach(() => {
@@ -3224,5 +3225,79 @@ describe("TaskCard files-changed in done column", () => {
     );
 
     expect(screen.getByText("3 files changed")).toBeInTheDocument();
+  });
+});
+
+describe("TaskCard mission badge", () => {
+  const createTask = (overrides: Partial<Task> = {}): Task => ({
+    id: "FN-001",
+    description: "Test task",
+    column: "todo",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    columnMovedAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  } as Task);
+
+  it("renders mission badge when task has missionId", () => {
+    const task = createTask({ missionId: "MSN-001" });
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />);
+
+    const badge = screen.getByTitle("Mission: MSN-001");
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveClass("card-mission-badge");
+    expect(badge).toHaveTextContent("MSN-001");
+  });
+
+  it("does not render mission badge when task has no missionId", () => {
+    const task = createTask();
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />);
+
+    expect(screen.queryByTitle(/Mission:/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("target-icon")).not.toBeInTheDocument();
+  });
+
+  it("calls onOpenMission when mission badge is clicked", async () => {
+    const onOpenMission = vi.fn();
+    const task = createTask({ missionId: "MSN-042" });
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+        onOpenMission={onOpenMission}
+      />
+    );
+
+    const badge = screen.getByTitle("Mission: MSN-042");
+    await userEvent.click(badge);
+
+    expect(onOpenMission).toHaveBeenCalledOnce();
+    expect(onOpenMission).toHaveBeenCalledWith("MSN-042");
+  });
+
+  it("stops propagation when mission badge is clicked", async () => {
+    const onOpenDetail = vi.fn();
+    const onOpenMission = vi.fn();
+    const task = createTask({ missionId: "MSN-001" });
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={onOpenDetail}
+        addToast={vi.fn()}
+        onOpenMission={onOpenMission}
+      />
+    );
+
+    const badge = screen.getByTitle("Mission: MSN-001");
+    await userEvent.click(badge);
+
+    // onOpenDetail should NOT be called since click is stopped
+    expect(onOpenDetail).not.toHaveBeenCalled();
+    expect(onOpenMission).toHaveBeenCalledWith("MSN-001");
   });
 });

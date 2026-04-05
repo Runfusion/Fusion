@@ -1201,6 +1201,27 @@ body {
   box-shadow: var(--shadow-md);
 }
 
+/* Mission badge: clickable link to mission from task card */
+.card-mission-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.12);
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.card-mission-badge:hover {
+  color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.22);
+}
+
 .card-progress {
   display: flex;
   align-items: center;

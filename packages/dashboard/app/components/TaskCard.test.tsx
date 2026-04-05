@@ -13,6 +13,7 @@ vi.mock("lucide-react", () => ({
   Folder: () => null,
   GitPullRequest: () => null,
   CircleDot: () => null,
+  Target: () => null,
 }));
 
 // Mock the api module

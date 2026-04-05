@@ -19,6 +19,8 @@ interface WorktreeGroupProps {
   onOpenDetailWithTab?: (task: TaskDetail, initialTab: "changes") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
+  /** Called when user clicks a mission badge on a task card */
+  onOpenMission?: (missionId: string) => void;
 }
 
 function WorktreeGroupComponent({
@@ -32,6 +34,7 @@ function WorktreeGroupComponent({
   onUpdateTask,
   onOpenDetailWithTab,
   taskStuckTimeoutMs,
+  onOpenMission,
 }: WorktreeGroupProps) {
   return (
     <div className="worktree-group">
@@ -42,7 +45,7 @@ function WorktreeGroupComponent({
         <span className="worktree-label">{label}</span>
       </div>
       {activeTasks.map((task) => (
-        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onOpenDetailWithTab={onOpenDetailWithTab} taskStuckTimeoutMs={taskStuckTimeoutMs} />
+        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onOpenDetailWithTab={onOpenDetailWithTab} taskStuckTimeoutMs={taskStuckTimeoutMs} onOpenMission={onOpenMission} />
       ))}
       {queuedTasks.map((task) => (
         <TaskCard
@@ -56,6 +59,7 @@ function WorktreeGroupComponent({
           onUpdateTask={onUpdateTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
+          onOpenMission={onOpenMission}
         />
       ))}
     </div>
