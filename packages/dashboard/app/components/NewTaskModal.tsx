@@ -26,6 +26,19 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [presetMode, setPresetMode] = useState<"default" | "preset" | "custom">("default");
   const [hasDirtyState, setHasDirtyState] = useState(false);
   const [selectedWorkflowSteps, setSelectedWorkflowSteps] = useState<string[]>([]);
+  const [workflowStepsExplicitlySet, setWorkflowStepsExplicitlySet] = useState(false);
+
+  // Handler for workflow step changes that detects explicit user interaction
+  const handleWorkflowStepsChange = useCallback((steps: string[]) => {
+    setWorkflowStepsExplicitlySet(true);
+    setSelectedWorkflowSteps(steps);
+  }, []);
+
+  // Callback when defaultOn steps are auto-applied by TaskForm
+  const handleDefaultOnApplied = useCallback(() => {
+    // defaultOn auto-selection is not "explicit" user interaction
+    setWorkflowStepsExplicitlySet(false);
+  }, []);
 
   // Track dirty state
   useEffect(() => {
@@ -54,6 +67,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setSelectedPresetId("");
     setPresetMode("default");
     setSelectedWorkflowSteps([]);
+    setWorkflowStepsExplicitlySet(false);
     setHasDirtyState(false);
     onClose();
   }, [hasDirtyState, onClose, pendingImages]);
@@ -72,7 +86,9 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         description: trimmedDesc,
         column: "triage",
         dependencies: dependencies.length ? dependencies : undefined,
-        enabledWorkflowSteps: selectedWorkflowSteps.length > 0 ? selectedWorkflowSteps : undefined,
+        // When user explicitly cleared all workflow steps, send empty array to prevent backend re-applying defaults.
+        // When user hasn't interacted with workflow steps (or left auto-selected defaults), send undefined to let backend apply defaults.
+        enabledWorkflowSteps: workflowStepsExplicitlySet ? (selectedWorkflowSteps.length > 0 ? selectedWorkflowSteps : []) : undefined,
         modelPresetId: presetMode === "preset" ? selectedPresetId || undefined : undefined,
         modelProvider: executorModel && executorSlashIdx !== -1 ? executorModel.slice(0, executorSlashIdx) : undefined,
         modelId: executorModel && executorSlashIdx !== -1 ? executorModel.slice(executorSlashIdx + 1) : undefined,
@@ -105,6 +121,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       setSelectedPresetId("");
       setPresetMode("default");
       setSelectedWorkflowSteps([]);
+      setWorkflowStepsExplicitlySet(false);
 
       addToast(`Created ${task.id}`, "success");
       onClose();
@@ -113,7 +130,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     } finally {
       setIsSubmitting(false);
     }
-  }, [description, dependencies, pendingImages, executorModel, validatorModel, isSubmitting, onCreateTask, addToast, onClose, projectId, presetMode, selectedPresetId, selectedWorkflowSteps]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, isSubmitting, onCreateTask, addToast, onClose, projectId, presetMode, selectedPresetId, selectedWorkflowSteps, workflowStepsExplicitlySet]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -154,7 +171,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
             selectedPresetId={selectedPresetId}
             onSelectedPresetIdChange={setSelectedPresetId}
             selectedWorkflowSteps={selectedWorkflowSteps}
-            onWorkflowStepsChange={setSelectedWorkflowSteps}
+            onWorkflowStepsChange={handleWorkflowStepsChange}
+            onDefaultOnApplied={handleDefaultOnApplied}
             pendingImages={pendingImages}
             onImagesChange={setPendingImages}
             tasks={tasks}

@@ -390,6 +390,25 @@ Prompt-mode steps support **model overrides** — pin a specific AI model per qu
 
 Click **Add** on any template in the Workflow Step Manager to create a customizable step.
 
+### Default On for New Tasks
+
+Workflow steps can be marked as **"Default on for new tasks"** in the Workflow Step Manager. When enabled:
+
+- The step is automatically pre-selected in the task creation form
+- A gold "Default on" badge appears on the step card in the manager
+- Users can still deselect the step — this only controls the initial default state
+
+**Behavior during task creation:**
+
+| Scenario | What happens |
+|----------|-------------|
+| User creates task, doesn't modify workflow steps | Auto-selected defaults are applied; backend sends the selected steps |
+| User deselects all auto-selected steps | Empty array is sent to backend — no workflow steps run |
+| User adds additional steps | All selected steps (auto + manual) are included |
+| User re-opens task creation modal | Defaults are re-applied for the new session |
+
+Edit mode never auto-injects workflow steps — existing task selections are preserved.
+
 ### Using Workflow Steps
 
 1. When creating or editing a task, check the workflow steps you want

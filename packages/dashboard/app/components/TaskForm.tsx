@@ -39,6 +39,8 @@ export interface TaskFormProps {
   // Workflow steps
   selectedWorkflowSteps: string[];
   onWorkflowStepsChange: (steps: string[]) => void;
+  /** Callback fired when defaultOn steps have been preselected (create mode). Parent can use this to distinguish "no selection yet" from "user explicitly cleared". */
+  onDefaultOnApplied?: (stepIds: string[]) => void;
 
   // Attachments
   pendingImages: PendingImage[];
@@ -75,6 +77,7 @@ export function TaskForm({
   onSelectedPresetIdChange,
   selectedWorkflowSteps,
   onWorkflowStepsChange,
+  onDefaultOnApplied,
   pendingImages,
   onImagesChange,
   tasks,
@@ -140,6 +143,29 @@ export function TaskForm({
       onValidatorModelChange(selection.validatorValue);
     }
   }, [isActive, settings, availablePresets, mode]);
+
+  // Auto-select defaultOn workflow steps (create mode, once per activation)
+  const defaultOnAppliedRef = useRef(false);
+  useEffect(() => {
+    if (mode !== "create" || !isActive) return;
+    if (defaultOnAppliedRef.current) return;
+    if (workflowSteps.length === 0) return;
+
+    const defaultOnSteps = workflowSteps.filter((s) => s.defaultOn);
+    if (defaultOnSteps.length === 0) return;
+
+    defaultOnAppliedRef.current = true;
+    const stepIds = defaultOnSteps.map((s) => s.id);
+    onWorkflowStepsChange(stepIds);
+    onDefaultOnApplied?.(stepIds);
+  }, [mode, isActive, workflowSteps]);
+
+  // Reset defaultOn tracking when form deactivates
+  useEffect(() => {
+    if (!isActive) {
+      defaultOnAppliedRef.current = false;
+    }
+  }, [isActive]);
 
   // Auto-focus description (create) or title (edit) when active
   useEffect(() => {

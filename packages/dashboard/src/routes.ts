@@ -6001,7 +6001,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/workflow-steps", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const { name, description, mode, phase, prompt, scriptName, enabled, modelProvider, modelId } = req.body;
+      const { name, description, mode, phase, prompt, scriptName, enabled, defaultOn, modelProvider, modelId } = req.body;
 
       if (!name || typeof name !== "string" || !name.trim()) {
         res.status(400).json({ error: "name is required" });
@@ -6037,6 +6037,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         res.status(400).json({ error: "enabled must be a boolean" });
         return;
       }
+      if (defaultOn !== undefined && typeof defaultOn !== "boolean") {
+        res.status(400).json({ error: "defaultOn must be a boolean" });
+        return;
+      }
 
       // Validate script mode: scriptName must reference a named script in settings
       if (resolvedMode === "script") {
@@ -6070,6 +6074,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         prompt: prompt?.trim(),
         scriptName: scriptName?.trim(),
         enabled,
+        defaultOn: defaultOn === true,
         modelProvider: modelPair.provider,
         modelId: modelPair.modelId,
       });
@@ -6089,7 +6094,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.patch("/workflow-steps/:id", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const { name, description, mode, phase, prompt, scriptName, enabled, modelProvider, modelId } = req.body;
+      const { name, description, mode, phase, prompt, scriptName, enabled, defaultOn, modelProvider, modelId } = req.body;
 
       const updates: Record<string, unknown> = {};
       if (name !== undefined) {
@@ -6140,6 +6145,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           return;
         }
         updates.enabled = enabled;
+      }
+      if (defaultOn !== undefined) {
+        if (typeof defaultOn !== "boolean") {
+          res.status(400).json({ error: "defaultOn must be a boolean" });
+          return;
+        }
+        updates.defaultOn = defaultOn;
       }
 
       // Validate script-mode requirements against the resulting state (existing + updates)

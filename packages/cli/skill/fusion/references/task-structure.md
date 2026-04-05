@@ -126,6 +126,7 @@ What the task should accomplish.
       "name": "Documentation Review",
       "prompt": "Review the task changes...",
       "enabled": true,
+      "defaultOn": true,
       "modelProvider": "anthropic",
       "modelId": "claude-sonnet-4-5"
     }

@@ -12984,6 +12984,11 @@ html .column.drag-over * {
   color: #8b5cf6;
 }
 
+.wfm-badge-default-on {
+  background: rgba(234, 179, 8, 0.15);
+  color: #ca8a04;
+}
+
 .wfm-badge-category {
   font-size: 11px;
   padding: 2px 6px;

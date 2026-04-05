@@ -767,3 +767,136 @@ describe("TaskForm workflow step reordering (FN-836)", () => {
     });
   });
 });
+
+describe("TaskForm defaultOn auto-selection (FN-883)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("auto-selects defaultOn workflow steps in create mode", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
+      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", enabled: true, defaultOn: false, createdAt: "", updatedAt: "" },
+    ]);
+
+    const onWorkflowStepsChange = vi.fn();
+    const onDefaultOnApplied = vi.fn();
+    renderTaskForm({
+      mode: "create",
+      onWorkflowStepsChange,
+      onDefaultOnApplied,
+    });
+
+    await waitFor(() => {
+      expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001"]);
+    });
+    expect(onDefaultOnApplied).toHaveBeenCalledWith(["WS-001"]);
+  });
+
+  it("does not auto-select workflow steps in edit mode", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
+    ]);
+
+    const onWorkflowStepsChange = vi.fn();
+    renderTaskForm({
+      mode: "edit",
+      title: "Test",
+      onTitleChange: vi.fn(),
+      onWorkflowStepsChange,
+    });
+
+    // Wait for workflow steps to load
+    await waitFor(() => {
+      expect(fetchWorkflowSteps).toHaveBeenCalled();
+    });
+
+    // Should NOT have called onWorkflowStepsChange with defaults
+    expect(onWorkflowStepsChange).not.toHaveBeenCalled();
+  });
+
+  it("does not re-apply defaults after user changes workflow steps", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
+      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", enabled: true, defaultOn: false, createdAt: "", updatedAt: "" },
+    ]);
+
+    let currentSteps: string[] = [];
+    const onWorkflowStepsChange = vi.fn((steps: string[]) => {
+      currentSteps = steps;
+    });
+
+    const { rerender } = renderTaskForm({
+      mode: "create",
+      selectedWorkflowSteps: currentSteps,
+      onWorkflowStepsChange,
+    });
+
+    // Wait for auto-selection
+    await waitFor(() => {
+      expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001"]);
+    });
+
+    // Simulate parent state update by rerendering with new steps
+    rerender(
+      <TaskForm
+        mode="create"
+        description=""
+        onDescriptionChange={vi.fn()}
+        dependencies={[]}
+        onDependenciesChange={vi.fn()}
+        executorModel=""
+        onExecutorModelChange={vi.fn()}
+        validatorModel=""
+        onValidatorModelChange={vi.fn()}
+        presetMode="default"
+        onPresetModeChange={vi.fn()}
+        selectedPresetId=""
+        onSelectedPresetIdChange={vi.fn()}
+        selectedWorkflowSteps={currentSteps}
+        onWorkflowStepsChange={onWorkflowStepsChange}
+        pendingImages={[]}
+        onImagesChange={vi.fn()}
+        tasks={[]}
+        addToast={vi.fn()}
+        isActive={true}
+      />
+    );
+
+    // Clear the mock to track further calls
+    onWorkflowStepsChange.mockClear();
+
+    // Simulate user toggling WS-002 checkbox
+    const checkbox = screen.getByTestId("workflow-step-checkbox-WS-002").querySelector('input[type="checkbox"]') as HTMLInputElement;
+    fireEvent.click(checkbox);
+
+    // Should have been called with user action (adding WS-002 to existing WS-001)
+    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001", "WS-002"]);
+    // No additional auto-selection calls
+    expect(onWorkflowStepsChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not auto-select when no steps have defaultOn", async () => {
+    const { fetchWorkflowSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", enabled: true, createdAt: "", updatedAt: "" },
+      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", enabled: true, createdAt: "", updatedAt: "" },
+    ]);
+
+    const onWorkflowStepsChange = vi.fn();
+    renderTaskForm({
+      mode: "create",
+      onWorkflowStepsChange,
+    });
+
+    await waitFor(() => {
+      expect(fetchWorkflowSteps).toHaveBeenCalled();
+    });
+
+    // Should NOT have called onWorkflowStepsChange
+    expect(onWorkflowStepsChange).not.toHaveBeenCalled();
+  });
+});

@@ -49,6 +49,7 @@ interface StepFormData {
   prompt: string;
   scriptName: string;
   enabled: boolean;
+  defaultOn: boolean;
   modelProvider: string;
   modelId: string;
 }
@@ -63,6 +64,7 @@ const EMPTY_FORM: StepFormData = {
   prompt: "",
   scriptName: "",
   enabled: true,
+  defaultOn: false,
   modelProvider: "",
   modelId: "",
 };
@@ -194,6 +196,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
       prompt: step.prompt,
       scriptName: step.scriptName || "",
       enabled: step.enabled,
+      defaultOn: step.defaultOn || false,
       modelProvider: step.modelProvider || "",
       modelId: step.modelId || "",
     });
@@ -229,6 +232,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           prompt: form.mode === "prompt" ? (form.prompt.trim() || undefined) : undefined,
           scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
+          defaultOn: form.defaultOn || undefined,
           ...modelFields,
         };
         await createWorkflowStep(input, projectId);
@@ -242,6 +246,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           prompt: form.mode === "prompt" ? form.prompt : "",
           scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
+          defaultOn: form.defaultOn,
           ...modelFields,
         }, projectId);
         addToast("Workflow step updated", "success");
@@ -297,6 +302,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           mode: "prompt",
           prompt: form.prompt.trim() || undefined,
           enabled: form.enabled,
+          defaultOn: form.defaultOn || undefined,
           ...modelFields,
         };
         const created = await createWorkflowStep(input, projectId);
@@ -429,6 +435,11 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                                 <span className={`wfm-badge ${(step.phase || "pre-merge") === "post-merge" ? "wfm-badge-post-merge" : "wfm-badge-pre-merge"}`}>
                                   {(step.phase || "pre-merge") === "post-merge" ? "Post-merge" : "Pre-merge"}
                                 </span>
+                                {step.defaultOn && (
+                                  <span className="wfm-badge wfm-badge-default-on">
+                                    Default on
+                                  </span>
+                                )}
                               </div>
                               <div className="wfm-step-card-desc">
                                 {step.description}
@@ -742,6 +753,17 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                         data-testid="workflow-step-enabled"
                       />
                       Enabled (available for selection on new tasks)
+                    </label>
+
+                    {/* Default on toggle */}
+                    <label className="wfm-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={form.defaultOn}
+                        onChange={(e) => setForm((prev) => ({ ...prev, defaultOn: e.target.checked }))}
+                        data-testid="workflow-step-default-on"
+                      />
+                      Default on for new tasks
                     </label>
 
                     {/* Form actions */}

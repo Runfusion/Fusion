@@ -6313,6 +6313,7 @@ describe("POST /workflow-steps", () => {
       prompt: undefined,
       scriptName: undefined,
       enabled: undefined,
+      defaultOn: false,
     });
   });
 
@@ -6368,6 +6369,7 @@ describe("POST /workflow-steps", () => {
       prompt: undefined,
       scriptName: undefined,
       enabled: undefined,
+      defaultOn: false,
       modelProvider: "anthropic",
       modelId: "claude-sonnet-4-5",
     });
@@ -6415,6 +6417,7 @@ describe("POST /workflow-steps", () => {
       prompt: undefined,
       scriptName: undefined,
       enabled: undefined,
+      defaultOn: false,
       modelProvider: undefined,
       modelId: undefined,
     });
@@ -6443,6 +6446,7 @@ describe("POST /workflow-steps", () => {
       prompt: undefined,
       scriptName: "test",
       enabled: undefined,
+      defaultOn: false,
     });
   });
 
@@ -6503,6 +6507,7 @@ describe("POST /workflow-steps", () => {
       prompt: undefined,
       scriptName: undefined,
       enabled: undefined,
+      defaultOn: false,
     });
   });
 
@@ -6515,6 +6520,55 @@ describe("POST /workflow-steps", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("phase must be");
+  });
+
+  it("creates a workflow step with defaultOn true", async () => {
+    const created = { id: "WS-010", name: "Auto Step", description: "Auto-enabled", mode: "prompt", prompt: "", enabled: true, defaultOn: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Auto Step",
+      description: "Auto-enabled",
+      defaultOn: true,
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(store.createWorkflowStep).toHaveBeenCalledWith({
+      name: "Auto Step",
+      description: "Auto-enabled",
+      mode: "prompt",
+      phase: undefined,
+      prompt: undefined,
+      scriptName: undefined,
+      enabled: undefined,
+      defaultOn: true,
+    });
+  });
+
+  it("defaults defaultOn to false when not specified", async () => {
+    const created = { id: "WS-011", name: "Manual Step", description: "Manual only", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Manual Step",
+      description: "Manual only",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(store.createWorkflowStep).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultOn: false })
+    );
+  });
+
+  it("returns 400 when defaultOn is not a boolean", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+      name: "Bad Step",
+      description: "Bad defaultOn",
+      defaultOn: "yes",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("defaultOn");
   });
 });
 
@@ -6667,6 +6721,39 @@ describe("PATCH /workflow-steps/:id", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("phase must be");
+  });
+
+  it("updates defaultOn to true", async () => {
+    const updated = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, defaultOn: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated);
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-001", JSON.stringify({
+      defaultOn: true,
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.updateWorkflowStep).toHaveBeenCalledWith("WS-001", expect.objectContaining({ defaultOn: true }));
+  });
+
+  it("updates defaultOn to false", async () => {
+    const updated = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, defaultOn: false, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    (store.updateWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated);
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-001", JSON.stringify({
+      defaultOn: false,
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.updateWorkflowStep).toHaveBeenCalledWith("WS-001", expect.objectContaining({ defaultOn: false }));
+  });
+
+  it("returns 400 when defaultOn is not a boolean in PATCH", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/workflow-steps/WS-001", JSON.stringify({
+      defaultOn: "yes",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("defaultOn");
   });
 });
 

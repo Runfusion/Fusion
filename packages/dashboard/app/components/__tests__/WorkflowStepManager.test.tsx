@@ -191,6 +191,7 @@ describe("WorkflowStepManager", () => {
         prompt: undefined,
         scriptName: undefined,
         enabled: true,
+        defaultOn: undefined,
       }, undefined);
       expect(addToast).toHaveBeenCalledWith("Workflow step created", "success");
     });
@@ -454,6 +455,7 @@ describe("WorkflowStepManager", () => {
         prompt: undefined,
         scriptName: undefined,
         enabled: true,
+        defaultOn: undefined,
       }, undefined);
       expect(addToast).toHaveBeenCalledWith("Workflow step created", "success");
     });
@@ -489,6 +491,108 @@ describe("WorkflowStepManager", () => {
       }), undefined);
       expect(addToast).toHaveBeenCalledWith("Workflow step updated", "success");
     });
+  });
+
+  it("shows defaultOn checkbox in create form", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    const defaultOnCheckbox = screen.getByTestId("workflow-step-default-on") as HTMLInputElement;
+    expect(defaultOnCheckbox).toBeInTheDocument();
+    expect(defaultOnCheckbox.checked).toBe(false);
+  });
+
+  it("creates workflow step with defaultOn true", async () => {
+    vi.mocked(fetchWorkflowSteps)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-workflow-step")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+
+    const nameInput = screen.getByTestId("workflow-step-name");
+    const descInput = screen.getByTestId("workflow-step-description");
+    fireEvent.change(nameInput, { target: { value: "Auto Step" } });
+    fireEvent.change(descInput, { target: { value: "Auto-enabled" } });
+
+    // Check the defaultOn checkbox
+    const defaultOnCheckbox = screen.getByTestId("workflow-step-default-on");
+    fireEvent.click(defaultOnCheckbox);
+
+    fireEvent.click(screen.getByTestId("save-workflow-step"));
+
+    await waitFor(() => {
+      expect(createWorkflowStep).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Auto Step",
+          defaultOn: true,
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("prefills defaultOn when editing a step with defaultOn true", async () => {
+    const stepsWithDefaultOn: WorkflowStep[] = [
+      { ...mockSteps[0], defaultOn: true },
+    ];
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce(stepsWithDefaultOn);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Documentation Review")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("Edit Documentation Review"));
+
+    const defaultOnCheckbox = screen.getByTestId("workflow-step-default-on") as HTMLInputElement;
+    expect(defaultOnCheckbox.checked).toBe(true);
+  });
+
+  it("shows default-on badge for steps with defaultOn true", async () => {
+    const stepsWithDefaultOn: WorkflowStep[] = [
+      { ...mockSteps[0], defaultOn: true },
+      { ...mockSteps[1], defaultOn: false },
+    ];
+    vi.mocked(fetchWorkflowSteps).mockReset();
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce(stepsWithDefaultOn);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Documentation Review")).toBeInTheDocument();
+      expect(screen.getByText("QA Check")).toBeInTheDocument();
+    });
+
+    // Only the first step should have the "Default on" badge
+    const badges = screen.getAllByText("Default on");
+    expect(badges).toHaveLength(1);
+  });
+
+  it("does not show default-on badge when defaultOn is false or undefined", async () => {
+    vi.mocked(fetchWorkflowSteps).mockReset();
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce(mockSteps);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Documentation Review")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Default on")).not.toBeInTheDocument();
   });
 });
 

@@ -512,4 +512,100 @@ describe("NewTaskModal", () => {
       });
     });
   });
+
+  // DefaultOn workflow step handling (FN-883)
+  describe("defaultOn workflow step handling", () => {
+    it("sends undefined enabledWorkflowSteps when no defaultOn steps and user hasn't interacted", async () => {
+      const { fetchWorkflowSteps } = await import("../../api");
+      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", enabled: true, createdAt: "", updatedAt: "" },
+      ]);
+
+      const { props } = renderNewTaskModal();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
+      });
+
+      // Don't interact with workflow steps at all
+      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "No interaction task" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            enabledWorkflowSteps: undefined,
+          }),
+        );
+      });
+    });
+
+    it("sends empty array when user explicitly deselects all defaultOn steps", async () => {
+      const { fetchWorkflowSteps } = await import("../../api");
+      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
+      ]);
+
+      const { props } = renderNewTaskModal();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
+      });
+
+      // Wait for auto-selection to happen
+      await waitFor(() => {
+        const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
+        expect(checkbox.checked).toBe(true);
+      });
+
+      // User explicitly deselects the auto-selected step
+      const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
+      fireEvent.click(checkbox);
+
+      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Deselected task" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            enabledWorkflowSteps: [],
+          }),
+        );
+      });
+    });
+
+    it("sends defaultOn step IDs when user doesn't modify the auto-selected steps", async () => {
+      const { fetchWorkflowSteps } = await import("../../api");
+      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
+        { id: "WS-002", name: "Security", description: "Check security", prompt: "Check", enabled: true, defaultOn: false, createdAt: "", updatedAt: "" },
+      ]);
+
+      const { props } = renderNewTaskModal();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
+      });
+
+      // Wait for auto-selection to happen
+      await waitFor(() => {
+        const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
+        expect(checkbox.checked).toBe(true);
+      });
+
+      // Don't modify the selection — just submit.
+      // Since user hasn't explicitly changed steps, the explicitlySet flag is false,
+      // so the modal sends undefined (backend applies its own defaults)
+      fireEvent.change(screen.getByLabelText(/Description/i), { target: { value: "Auto-selected task" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.objectContaining({
+            enabledWorkflowSteps: undefined,
+          }),
+        );
+      });
+    });
+  });
 });
