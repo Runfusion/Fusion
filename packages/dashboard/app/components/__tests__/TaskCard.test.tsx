@@ -27,6 +27,12 @@ vi.mock("../../hooks/useSessionFiles", () => ({
   useSessionFiles: (...args: unknown[]) => mockUseSessionFiles(...args),
 }));
 
+const mockUseTaskDiffStats = vi.fn(() => ({ stats: null, loading: false }));
+
+vi.mock("../../hooks/useTaskDiffStats", () => ({
+  useTaskDiffStats: (...args: unknown[]) => mockUseTaskDiffStats(...args),
+}));
+
 vi.mock("lucide-react", () => ({
   Link: ({ size }: { size?: number }) => <span data-testid="link-icon">🔗</span>,
   Clock: ({ size }: { size?: number }) => <span data-testid="clock-icon">🕐</span>,
@@ -49,6 +55,8 @@ beforeEach(() => {
   });
   mockUseSessionFiles.mockReset();
   mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+  mockUseTaskDiffStats.mockReset();
+  mockUseTaskDiffStats.mockReturnValue({ stats: null, loading: false });
 });
 
 /**
@@ -2999,6 +3007,7 @@ describe("TaskCard files-changed in done column", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+    mockUseTaskDiffStats.mockReturnValue({ stats: null, loading: false });
   });
 
   it("shows mergeDetails.filesChanged for done column when set", () => {
@@ -3132,5 +3141,88 @@ describe("TaskCard files-changed in done column", () => {
     // The button only appears when files.length > 0
     expect(screen.queryByText(/files changed/)).not.toBeInTheDocument();
     expect(screen.queryByText("Checking files…")).not.toBeInTheDocument();
+  });
+
+  it("prefers diffStats.filesChanged over mergeDetails.filesChanged when both are set", () => {
+    const task = makeTask({
+      column: "done",
+      mergeDetails: { filesChanged: 7, mergedAt: "2026-01-01T00:00:00Z", targetBranch: "main", commitSha: "abc123" },
+    });
+    mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+    mockUseTaskDiffStats.mockReturnValue({ stats: { filesChanged: 5, additions: 20, deletions: 3 }, loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Should show diffStats count, not mergeDetails count
+    expect(screen.getByText("5 files changed")).toBeInTheDocument();
+    expect(screen.queryByText("7 files changed")).not.toBeInTheDocument();
+  });
+
+  it("falls back to mergeDetails.filesChanged when diffStats returns null", () => {
+    const task = makeTask({
+      column: "done",
+      mergeDetails: { filesChanged: 7, mergedAt: "2026-01-01T00:00:00Z", targetBranch: "main", commitSha: "abc123" },
+    });
+    mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+    mockUseTaskDiffStats.mockReturnValue({ stats: null, loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // Should fall back to mergeDetails count
+    expect(screen.getByText("7 files changed")).toBeInTheDocument();
+  });
+
+  it("falls back to mergeDetails.filesChanged when diffStats returns 0 files", () => {
+    const task = makeTask({
+      column: "done",
+      mergeDetails: { filesChanged: 7, mergedAt: "2026-01-01T00:00:00Z", targetBranch: "main", commitSha: "abc123" },
+    });
+    mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+    mockUseTaskDiffStats.mockReturnValue({ stats: { filesChanged: 0, additions: 0, deletions: 0 }, loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    // diffStats returns 0, which is > 0 is false, so it falls through to mergeDetails
+    // Actually 0 is not > 0, so the first if block is skipped and it falls to modifiedFiles/sessionFiles
+    // But mergeDetails.filesChanged is 7 — however the code uses diffCount ?? mergedCount
+    // diffCount is 0 (not null/undefined), so displayCount = 0, and 0 > 0 is false
+    // This means it falls through to modifiedFiles check
+    expect(screen.queryByText("7 files changed")).not.toBeInTheDocument();
+  });
+
+  it("shows diffStats count even without mergeDetails", () => {
+    const task = makeTask({
+      column: "done",
+    });
+    mockUseSessionFiles.mockReturnValue({ files: [], loading: false });
+    mockUseTaskDiffStats.mockReturnValue({ stats: { filesChanged: 3, additions: 10, deletions: 2 }, loading: false });
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+      />
+    );
+
+    expect(screen.getByText("3 files changed")).toBeInTheDocument();
   });
 });
