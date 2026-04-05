@@ -1585,7 +1585,7 @@ describe("TerminalModal — virtual keyboard overlap handling", () => {
   });
 
   it("removes --keyboard-overlap when keyboard closes", async () => {
-    const { listeners } = simulateMobileDevice(250);
+    const { listeners, mockVV } = simulateMobileDevice(250);
 
     const { rerender } = render(
       <TerminalModal isOpen={true} onClose={mockOnClose} />,
@@ -1596,9 +1596,9 @@ describe("TerminalModal — virtual keyboard overlap handling", () => {
       expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("250px");
     });
 
-    // Keyboard closes → overlap becomes 0
-    Object.defineProperty(window, "innerHeight", {
-      value: 300 + 0 + 0,
+    // Keyboard closes → visualViewport.height returns to full height (550 = innerHeight)
+    Object.defineProperty(mockVV, "height", {
+      value: 550,
       writable: true,
       configurable: true,
     });
@@ -1942,6 +1942,430 @@ describe("TerminalModal — close and reopen scrollback replay", () => {
     // xterm should be reinitialized
     await waitFor(() => {
       expect(mockTerminalInstance.open).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+// --- FN-872: Real mobile keyboard regression tests ---
+describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () => {
+  const mockOnClose = vi.fn();
+  const mockSendInput = vi.fn();
+  const mockResize = vi.fn();
+  const mockReconnect = vi.fn();
+
+  const createMockTerminalState = (overrides = {}) => ({
+    connectionStatus: "disconnected" as const,
+    sendInput: mockSendInput,
+    resize: mockResize,
+    onData: vi.fn(() => vi.fn()),
+    onExit: vi.fn(() => vi.fn()),
+    onConnect: vi.fn(() => vi.fn()),
+    onScrollback: vi.fn(() => vi.fn()),
+    reconnect: mockReconnect,
+    ...overrides,
+  });
+
+  const defaultTab = {
+    id: "tab-1",
+    sessionId: "test-session-123",
+    title: "bash",
+    isActive: true,
+    createdAt: Date.now(),
+  };
+
+  const defaultSessionState = {
+    tabs: [defaultTab],
+    activeTab: defaultTab,
+    isReady: true,
+    bootstrapError: null,
+    createTab: vi.fn(),
+    closeTab: vi.fn(),
+    setActiveTab: vi.fn(),
+    updateTabTitle: vi.fn(),
+    restartActiveTab: vi.fn(),
+    retryBootstrap: vi.fn(),
+  };
+
+  let savedVisualViewport: typeof window.visualViewport;
+  let savedInnerWidth: typeof window.innerWidth;
+  let savedInnerHeight: typeof window.innerHeight;
+  let savedOntouchstart: typeof window.ontouchstart;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseTerminal.mockReturnValue(createMockTerminalState());
+    mockUseTerminalSessions.mockReturnValue(defaultSessionState);
+
+    // Stash originals
+    savedVisualViewport = window.visualViewport;
+    savedInnerWidth = window.innerWidth;
+    savedInnerHeight = window.innerHeight;
+    savedOntouchstart = window.ontouchstart;
+  });
+
+  afterEach(() => {
+    // Restore originals
+    Object.defineProperty(window, "visualViewport", {
+      value: savedVisualViewport,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(window, "innerWidth", {
+      value: savedInnerWidth,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      value: savedInnerHeight,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(window, "ontouchstart", {
+      value: savedOntouchstart,
+      writable: true,
+      configurable: true,
+    });
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Helper: simulate a mobile device (Chrome Android style) where
+   * window.innerHeight stays constant but visualViewport shrinks.
+   */
+  function simulateChromeAndroid(overlapPx: number) {
+    (window as any).ontouchstart = null;
+    Object.defineProperty(window, "innerWidth", {
+      value: 375,
+      writable: true,
+      configurable: true,
+    });
+
+    const vvHeight = 667 - overlapPx; // initial height minus keyboard
+
+    const listeners: Record<string, Array<() => void>> = {
+      resize: [],
+      scroll: [],
+    };
+
+    const mockVV = {
+      width: 375,
+      height: vvHeight,
+      offsetTop: 0,
+      offsetLeft: 0,
+      addEventListener: vi.fn((event: string, cb: () => void) => {
+        if (listeners[event]) listeners[event].push(cb);
+      }),
+      removeEventListener: vi.fn(),
+    };
+
+    Object.defineProperty(window, "visualViewport", {
+      value: mockVV,
+      writable: true,
+      configurable: true,
+    });
+
+    // Chrome Android: innerHeight stays at full height
+    Object.defineProperty(window, "innerHeight", {
+      value: 667,
+      writable: true,
+      configurable: true,
+    });
+
+    return { listeners, mockVV };
+  }
+
+  /**
+   * Helper: simulate iOS Safari where window.innerHeight shrinks when
+   * the keyboard opens (both window.innerHeight and visualViewport.height
+   * shrink together).
+   */
+  function simulateIOSSafari(keyboardOpen: boolean, vvHeight?: number) {
+    (window as any).ontouchstart = null;
+    Object.defineProperty(window, "innerWidth", {
+      value: 375,
+      writable: true,
+      configurable: true,
+    });
+
+    const initialHeight = 667;
+    const effectiveVvHeight = vvHeight ?? (keyboardOpen ? 300 : initialHeight);
+
+    const listeners: Record<string, Array<() => void>> = {
+      resize: [],
+      scroll: [],
+    };
+
+    const mockVV = {
+      width: 375,
+      height: effectiveVvHeight,
+      offsetTop: 0,
+      offsetLeft: 0,
+      addEventListener: vi.fn((event: string, cb: () => void) => {
+        if (listeners[event]) listeners[event].push(cb);
+      }),
+      removeEventListener: vi.fn(),
+    };
+
+    Object.defineProperty(window, "visualViewport", {
+      value: mockVV,
+      writable: true,
+      configurable: true,
+    });
+
+    // iOS Safari: innerHeight matches visual viewport height
+    Object.defineProperty(window, "innerHeight", {
+      value: effectiveVvHeight,
+      writable: true,
+      configurable: true,
+    });
+
+    return { listeners, mockVV, initialHeight };
+  }
+
+  it("detects keyboard on iOS Safari where innerHeight shrinks with visualViewport", async () => {
+    // On iOS Safari, both window.innerHeight and visualViewport.height shrink.
+    // The primary formula (innerHeight - vv.offsetTop - vv.height) returns 0
+    // because innerHeight == vv.height. The fallback should detect the gap
+    // from the cached initial viewport height.
+    //
+    // To properly test this, we start with full viewport (no keyboard),
+    // then simulate the keyboard opening by shrinking both values.
+    const { listeners, mockVV } = simulateIOSSafari(false, 667);
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    // Initially no overlap
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("");
+    });
+
+    // Now simulate keyboard opening: both innerHeight and vv shrink
+    Object.defineProperty(window, "innerHeight", {
+      value: 300,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(mockVV, "height", {
+      value: 300,
+      writable: true,
+      configurable: true,
+    });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    // Should detect overlap via the initialHeight fallback
+    // initialHeight was captured as 667, so overlap = 667 - 0 - 300 = 367
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("367px");
+    });
+  });
+
+  it("does not detect keyboard on iOS Safari when viewport is full height", async () => {
+    const { listeners } = simulateIOSSafari(false, 667);
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("");
+    });
+  });
+
+  it("sets --vv-height CSS variable to visualViewport.height when keyboard is open", async () => {
+    const { listeners } = simulateChromeAndroid(250);
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      // --vv-height should be set to the visualViewport height (417px = 667 - 250)
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("417px");
+    });
+  });
+
+  it("updates --vv-height when visualViewport height changes", async () => {
+    const { listeners, mockVV } = simulateChromeAndroid(250);
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("417px");
+    });
+
+    // Keyboard partially closes: vv height increases from 417 to 567
+    Object.defineProperty(mockVV, "height", { value: 567, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("567px");
+    });
+  });
+
+  it("does not set --vv-height when no keyboard overlap", async () => {
+    const { listeners } = simulateChromeAndroid(0);
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      // No overlap → style should be undefined (no --vv-height set)
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("");
+    });
+  });
+
+  it("calls fitAddon.fit() and resize when viewport changes with keyboard open", async () => {
+    const { listeners } = simulateChromeAndroid(250);
+
+    // Mock fit and resize to be trackable
+    const mockFit = vi.fn();
+    const mockFitAddon = { fit: mockFit, dispose: vi.fn() };
+    vi.mocked(await import("@xterm/addon-fit")).FitAddon.mockImplementation(() => mockFitAddon as any);
+
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({ connectionStatus: "connected" })
+    );
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    // Wait for xterm to initialize
+    await waitFor(() => {
+      expect(mockTerminalInstance.open).toHaveBeenCalled();
+    });
+
+    // Clear previous resize calls from initial setup
+    mockResize.mockClear();
+
+    // Trigger a viewport resize event (keyboard height changes)
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    // fitAddon.fit() should have been called during viewport change
+    await waitFor(() => {
+      expect(mockFit).toHaveBeenCalled();
+    });
+
+    // resize should have been called with xterm dimensions
+    expect(mockResize).toHaveBeenCalledWith(80, 24);
+  });
+
+  it("clears --vv-height when keyboard closes", async () => {
+    const { listeners, mockVV } = simulateChromeAndroid(250);
+
+    const { rerender } = render(
+      <TerminalModal isOpen={true} onClose={mockOnClose} />,
+    );
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("417px");
+    });
+
+    // Keyboard closes: overlap becomes 0, vv height returns to full
+    Object.defineProperty(mockVV, "height", { value: 667, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      // Both variables should be cleared when overlap is 0
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("");
+    });
+  });
+
+  it("handles rapid keyboard open/close transitions without stale state", async () => {
+    const { listeners, mockVV } = simulateChromeAndroid(250);
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("250px");
+    });
+
+    // Rapid open → close → open sequence
+    // First: keyboard partially closes
+    Object.defineProperty(mockVV, "height", { value: 567, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    // Then: keyboard fully closes
+    Object.defineProperty(mockVV, "height", { value: 667, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    // Then: keyboard opens again with different height
+    Object.defineProperty(mockVV, "height", { value: 350, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      // Should reflect the latest state: overlap = 667 - 350 = 317
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("317px");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("350px");
+    });
+  });
+
+  it("clears viewportHeight when modal closes on mobile", async () => {
+    const { listeners } = simulateChromeAndroid(250);
+
+    const { rerender } = render(
+      <TerminalModal isOpen={true} onClose={mockOnClose} />,
+    );
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("417px");
+    });
+
+    // Close the modal
+    act(() => {
+      rerender(<TerminalModal isOpen={false} onClose={mockOnClose} />);
+    });
+
+    // Modal is no longer rendered
+    expect(screen.queryByTestId("terminal-modal")).toBeNull();
+  });
+
+  it("scroll event on visualViewport also triggers keyboard overlap update", async () => {
+    const { listeners, mockVV } = simulateChromeAndroid(250);
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("250px");
+    });
+
+    // Simulate scroll event changing viewport (e.g., keyboard changing position)
+    Object.defineProperty(mockVV, "height", { value: 500, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.scroll) cb();
+    });
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("167px");
     });
   });
 });

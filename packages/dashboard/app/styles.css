@@ -7691,12 +7691,13 @@ body {
     font-size: 12px;
   }
 
-  /* When a virtual keyboard is open, shrink the modal from the bottom so
-     the terminal entry area (status bar, command prompt) remains visible
-     above the keyboard. The JS component sets --keyboard-overlap to the
-     number of pixels the keyboard covers. */
+  /* When a virtual keyboard is open, constrain the modal to fit entirely
+     above the keyboard so the status bar / entry area stays visible.
+     --vv-height is the visualViewport.height in pixels (set by JS) and
+     works uniformly across Chrome Android and iOS Safari.
+     Falls back to 100dvh - overlap when --vv-height is not available. */
   .terminal-modal[style*="--keyboard-overlap"] {
-    max-height: calc(100dvh - var(--keyboard-overlap, 0px));
+    max-height: var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px)));
   }
 }
 

@@ -23,13 +23,38 @@ function isMobileDevice(): boolean {
  * Compute how many CSS pixels the virtual keyboard covers from the bottom
  * of the layout viewport. Returns 0 on desktop or when visualViewport is
  * unavailable.
+ *
+ * Strategy:
+ * - Primary: window.innerHeight - vv.offsetTop - vv.height
+ *   Works on Chrome Android where window.innerHeight stays at full height.
+ * - Fallback: initial viewport height - vv.height - vv.offsetTop
+ *   Works on iOS Safari where window.innerHeight shrinks with the keyboard.
  */
 function getKeyboardOverlap(): number {
   if (typeof window === "undefined" || !window.visualViewport) return 0;
   const vv = window.visualViewport;
-  // The keyboard pushes the visual viewport up so that its bottom edge
-  // no longer aligns with the layout viewport bottom.
-  return Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
+  const chromeOverlap = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
+  if (chromeOverlap > 0) return chromeOverlap;
+  // On iOS Safari, window.innerHeight shrinks to match visualViewport.
+  // Detect keyboard by checking if visual viewport is shorter than
+  // a reasonable threshold (more than 150px shorter than initial height).
+  const initialHeight = getInitialViewportHeight();
+  const gap = initialHeight - vv.offsetTop - vv.height;
+  return gap > 150 ? gap : 0;
+}
+
+/** Cached initial viewport height before any keyboard opened. */
+let _initialViewportHeight: number | null = null;
+
+/**
+ * Returns the viewport height at page load (before any keyboard opens).
+ * Cached after first read.
+ */
+function getInitialViewportHeight(): number {
+  if (_initialViewportHeight === null) {
+    _initialViewportHeight = window.innerHeight;
+  }
+  return _initialViewportHeight;
 }
 
 interface TerminalModalProps {
@@ -60,6 +85,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
   const [xtermInitError, setXtermInitError] = useState<string | null>(null);
   const [openGeneration, setOpenGeneration] = useState(0);
   const [keyboardOverlap, setKeyboardOverlap] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   
   const terminalRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -67,6 +93,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
   const fitAddonRef = useRef<ITerminalAddon | null>(null);
   const hasInitialCommandRun = useRef<string | false>(false);
   const xtermInitializedRef = useRef<string | false>(false);
+  const resizeRef = useRef<((cols: number, rows: number) => void) | null>(null);
 
   // Bump open generation whenever the modal opens so the initialCommand
   // effect re-evaluates after a close/reopen cycle (deps may be identical).
@@ -87,10 +114,29 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
     const update = () => {
       const overlap = getKeyboardOverlap();
       setKeyboardOverlap(overlap);
+      // Track the actual visual viewport height for modal sizing.
+      // This is more reliable than 100dvh on iOS Safari where
+      // the dynamic viewport height behavior varies by browser version.
+      setViewportHeight(vv.height);
       // Scroll the modal so the status bar (bottom edge) stays visible
       // when the virtual keyboard pushes the viewport up.
       if (overlap > 0 && modalRef.current?.scrollIntoView) {
         modalRef.current.scrollIntoView({ block: "end", behavior: "smooth" });
+      }
+      // Re-fit xterm when viewport changes affect available height.
+      // The keyboard opening/closing changes the modal's max-height via
+      // CSS --keyboard-overlap, so xterm needs to recalculate rows/cols.
+      if (fitAddonRef.current && xtermRef.current) {
+        try {
+          const fitAddon = fitAddonRef.current as InstanceType<typeof import("@xterm/addon-fit").FitAddon>;
+          fitAddon.fit();
+          const { cols, rows } = xtermRef.current;
+          if (resizeRef.current) {
+            resizeRef.current(cols, rows);
+          }
+        } catch {
+          // Ignore fit errors during viewport transitions
+        }
       }
     };
 
@@ -102,6 +148,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
       setKeyboardOverlap(0);
+      setViewportHeight(null);
     };
   }, [isOpen]);
 
@@ -122,6 +169,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
   // Get the WebSocket connection for the active session
   const { connectionStatus, sendInput, resize, onData, onConnect, onExit, onScrollback, reconnect } = 
     useTerminal(activeTab?.sessionId ?? null);
+
+  // Keep a ref to resize so the viewport-change effect can call it
+  // without needing resize as a dependency (avoids ordering issues).
+  resizeRef.current = resize;
 
   // Initialize xterm.js when session is ready
   // Depends on `isReady`, `activeTab`, and xtermReady to properly reinitialize on tab switch
@@ -489,7 +540,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
         data-testid="terminal-modal"
         style={
           keyboardOverlap > 0
-            ? { "--keyboard-overlap": `${keyboardOverlap}px` } as React.CSSProperties
+            ? {
+                "--keyboard-overlap": `${keyboardOverlap}px`,
+                // On mobile with keyboard open, constrain to visualViewport height
+                // so the modal (including status bar) fits entirely above the keyboard.
+                // This is more reliable than 100dvh which behaves differently
+                // across Chrome Android vs iOS Safari.
+                "--vv-height": viewportHeight ? `${viewportHeight}px` : undefined,
+              } as React.CSSProperties
             : undefined
         }
       >
