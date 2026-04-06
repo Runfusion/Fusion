@@ -216,6 +216,39 @@ describe("TaskChangesTab — commit-backed (done tasks)", () => {
     expect(screen.getByText("-0")).toBeTruthy();
   });
 
+  it("renders stat summary on a separate line from Files Changed title", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (2)")).toBeTruthy();
+    });
+
+    // The title and stats should be in a dedicated wrapper
+    const titleWrapper = container.querySelector(".task-changes-header-title");
+    expect(titleWrapper).toBeTruthy();
+
+    // The h4 should contain "Files Changed (N)" but NOT the stat summary
+    const h4 = titleWrapper?.querySelector("h4");
+    expect(h4).toBeTruthy();
+    expect(h4?.textContent).toContain("Files Changed (2)");
+    expect(h4?.querySelector(".changes-stat-summary")).toBeNull();
+
+    // The stat summary should be a sibling of h4, not a child
+    const statSummary = titleWrapper?.querySelector(".task-changes-stats");
+    expect(statSummary).toBeTruthy();
+    expect(statSummary?.querySelector(".diff-add")?.textContent).toBe("+3");
+    expect(statSummary?.querySelector(".diff-del")?.textContent).toBe("-0");
+  });
+
   it("toggling file expansion shows/hides diff content", async () => {
     mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
     const { container } = render(

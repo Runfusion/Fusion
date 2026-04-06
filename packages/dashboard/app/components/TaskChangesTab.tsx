@@ -196,14 +196,16 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
       )}
 
       <div className="changes-header">
-        <h4>
-          <FileCode size={16} />
-          Files Changed ({stats.filesChanged})
-          <span className="changes-stat-summary">
+        <div className="task-changes-header-title">
+          <h4>
+            <FileCode size={16} />
+            Files Changed ({stats.filesChanged})
+          </h4>
+          <span className="task-changes-stats changes-stat-summary">
             <span className="diff-add">+{stats.additions}</span>{" "}
             <span className="diff-del">-{stats.deletions}</span>
           </span>
-        </h4>
+        </div>
         <div className="changes-header-actions-wrapper">
           <div className="changes-header-actions">
             {files.length > 0 && (

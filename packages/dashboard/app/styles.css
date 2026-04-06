@@ -3715,6 +3715,21 @@ body {
   color: var(--status-color-deleted, #f85149);
 }
 
+/* Task-specific changes header: stacked title + stats layout */
+.task-changes-tab .task-changes-header-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-changes-tab .task-changes-header-title h4 {
+  margin: 0;
+}
+
+.task-changes-tab .task-changes-stats {
+  margin-left: calc(16px + var(--space-sm)); /* align with text after icon + gap */
+}
+
 .changes-file-path {
   flex: 1;
   min-width: 0;
