@@ -14,6 +14,7 @@ import { githubRateLimiter } from "./github-poll.js";
 import type { TaskStore, TaskAttachment } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
+import { __resetBatchImportRateLimiter } from "./routes.js";
 import { __resetPlanningState } from "./planning.js";
 import { __resetSubtaskBreakdownState } from "./subtask-breakdown.js";
 import * as terminalServiceModule from "./terminal-service.js";
@@ -23,6 +24,7 @@ import { get as performGet, request as performRequest } from "./test-request.js"
 const mockCentralListProjects = vi.fn().mockResolvedValue([]);
 const mockCentralInit = vi.fn().mockResolvedValue(undefined);
 const mockCentralClose = vi.fn().mockResolvedValue(undefined);
+const mockCentralReconcileProjectStatuses = vi.fn().mockResolvedValue(undefined);
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
   return {
@@ -32,6 +34,7 @@ vi.mock("@fusion/core", async () => {
       init: mockCentralInit,
       close: mockCentralClose,
       listProjects: mockCentralListProjects,
+      reconcileProjectStatuses: mockCentralReconcileProjectStatuses,
     })),
   };
 });
@@ -3325,6 +3328,8 @@ describe("POST /github/issues/batch-import", () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
+    __resetBatchImportRateLimiter();
+
     fetchSpy = vi.fn();
     globalThis.fetch = fetchSpy as any;
 

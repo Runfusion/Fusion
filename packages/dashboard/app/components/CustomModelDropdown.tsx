@@ -440,6 +440,7 @@ export function CustomModelDropdown({
       className="model-combobox-dropdown model-combobox-dropdown--portal"
       role="listbox"
       data-testid="model-combobox-portal"
+      onKeyDown={handleKeyDown}
       style={{
         top: `${dropdownPosition.top}px`,
         left: `${dropdownPosition.left}px`,

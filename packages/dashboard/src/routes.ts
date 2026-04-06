@@ -1213,6 +1213,23 @@ function discardGitChanges(files: string[], cwd?: string): string[] {
   return files;
 }
 
+// ── Module-level batch-import rate limiter state (resettable for testing) ──
+const batchImportWindowMs = 10_000; // 10 seconds
+const batchImportInstances: Map<string, number>[] = [];
+let batchImportCleanupInterval: ReturnType<typeof setInterval> | undefined;
+
+/** @internal Reset batch-import rate limiter state (for test isolation) */
+export function __resetBatchImportRateLimiter(): void {
+  for (const clients of batchImportInstances) {
+    clients.clear();
+  }
+  batchImportInstances.length = 0;
+  if (batchImportCleanupInterval) {
+    clearInterval(batchImportCleanupInterval);
+    batchImportCleanupInterval = undefined;
+  }
+}
+
 export function createApiRoutes(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
 
@@ -3433,16 +3450,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // Batch import rate limiter: max 1 request per 10 seconds per IP
   const batchImportRateLimiter = (() => {
     const clients = new Map<string, number>();
-    const windowMs = 10_000; // 10 seconds
+    batchImportInstances.push(clients);
 
-    setInterval(() => {
-      const now = Date.now();
-      for (const [ip, resetTime] of clients) {
-        if (now >= resetTime) {
-          clients.delete(ip);
+    if (!batchImportCleanupInterval) {
+      batchImportCleanupInterval = setInterval(() => {
+        const now = Date.now();
+        for (const instanceClients of batchImportInstances) {
+          for (const [ip, resetTime] of instanceClients) {
+            if (now >= resetTime) {
+              instanceClients.delete(ip);
+            }
+          }
         }
-      }
-    }, windowMs);
+      }, batchImportWindowMs);
+    }
 
     return (req: Request, res: Response, next: NextFunction): void => {
       const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
@@ -3456,7 +3477,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
 
-      clients.set(ip, now + windowMs);
+      clients.set(ip, now + batchImportWindowMs);
       next();
     };
   })();

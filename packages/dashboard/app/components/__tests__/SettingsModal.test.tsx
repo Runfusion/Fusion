@@ -657,7 +657,9 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-    expect(screen.getAllByText("No models available. Configure authentication first.").length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => {
+      expect(screen.getAllByText("No models available. Configure authentication first.").length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   // --- Planning & Validation model tests ---
@@ -727,7 +729,9 @@ describe("SettingsModal", () => {
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-    expect(screen.getAllByText("No models available. Configure authentication first.").length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => {
+      expect(screen.getAllByText("No models available. Configure authentication first.").length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   it("shows Authentication in sidebar", async () => {
