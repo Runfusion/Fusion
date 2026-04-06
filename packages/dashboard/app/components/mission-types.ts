@@ -59,6 +59,18 @@ export interface Milestone {
 
 export type MilestoneWithSlices = Milestone;
 
+/** Status summary for a mission card, computed from hierarchy */
+export interface MissionSummary {
+  totalMilestones: number;
+  completedMilestones: number;
+  totalFeatures: number;
+  completedFeatures: number;
+  progressPercent: number;
+}
+
+/** Mission with optional status summary (returned by list endpoint) */
+export type MissionWithSummary = Mission & { summary?: MissionSummary };
+
 export interface MissionWithHierarchy extends Mission {
   milestones: Milestone[];
 }

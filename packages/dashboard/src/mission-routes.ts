@@ -31,6 +31,7 @@ import type {
   FeatureStatus,
   InterviewState,
 } from "@fusion/core";
+import type { MissionSummary } from "@fusion/core";
 import {
   MISSION_STATUSES,
   MILESTONE_STATUSES,
@@ -184,7 +185,7 @@ export function createMissionRouter(store: TaskStore): Router {
 
   /**
    * GET /api/missions
-   * List all missions ordered by createdAt desc
+   * List all missions ordered by createdAt desc, with status summary
    */
   router.get(
     "/",
@@ -192,7 +193,12 @@ export function createMissionRouter(store: TaskStore): Router {
       const missions = missionStore.listMissions();
       // Sort by createdAt desc
       missions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      res.json(missions);
+      // Attach status summary to each mission
+      const missionsWithSummary = missions.map((mission) => ({
+        ...mission,
+        summary: missionStore.getMissionSummary(mission.id),
+      }));
+      res.json(missionsWithSummary);
     })
   );
 

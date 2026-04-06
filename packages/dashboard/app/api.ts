@@ -2313,6 +2313,18 @@ export interface Mission {
   updatedAt: string;
 }
 
+/** Status summary for a mission card, computed from hierarchy */
+export interface MissionSummary {
+  totalMilestones: number;
+  completedMilestones: number;
+  totalFeatures: number;
+  completedFeatures: number;
+  progressPercent: number;
+}
+
+/** Mission with optional status summary (returned by list endpoint) */
+export type MissionWithSummary = Mission & { summary?: MissionSummary };
+
 /** Milestone entity */
 export interface Milestone {
   id: string;
@@ -2368,9 +2380,9 @@ export interface MissionWithHierarchy extends Mission {
   milestones: MilestoneWithSlices[];
 }
 
-/** Fetch all missions */
-export function fetchMissions(projectId?: string): Promise<Mission[]> {
-  return api<Mission[]>(withProjectId("/missions", projectId));
+/** Fetch all missions with status summary */
+export function fetchMissions(projectId?: string): Promise<MissionWithSummary[]> {
+  return api<MissionWithSummary[]>(withProjectId("/missions", projectId));
 }
 
 /** Create a new mission */

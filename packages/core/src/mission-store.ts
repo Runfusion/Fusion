@@ -31,6 +31,22 @@ import type {
   InterviewState,
 } from "./mission-types.js";
 
+// ── Mission Summary Type ─────────────────────────────────────────────
+
+/** Status summary for a mission, computed from its hierarchy. */
+export interface MissionSummary {
+  /** Total number of milestones in the mission */
+  totalMilestones: number;
+  /** Number of milestones with status "complete" */
+  completedMilestones: number;
+  /** Total number of features across all slices */
+  totalFeatures: number;
+  /** Number of features with status "done" */
+  completedFeatures: number;
+  /** Computed progress percentage (0–100), based on features or milestones */
+  progressPercent: number;
+}
+
 // ── Event Types ─────────────────────────────────────────────────────
 
 export interface MissionStoreEvents {
@@ -245,6 +261,51 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   listMissions(): Mission[] {
     const rows = this.db.prepare("SELECT * FROM missions ORDER BY createdAt DESC").all();
     return (rows as any[]).map((row) => this.rowToMission(row));
+  }
+
+  /**
+   * Get a status summary for a mission, computing milestone and feature counts
+   * and progress percentage from the hierarchy.
+   *
+   * Progress is calculated as:
+   * - (completedFeatures / totalFeatures) * 100 if there are features
+   * - (completedMilestones / totalMilestones) * 100 if there are milestones but no features
+   * - 0 otherwise
+   *
+   * @param missionId - Mission ID
+   * @returns MissionSummary with counts and progress
+   */
+  getMissionSummary(missionId: string): MissionSummary {
+    const milestones = this.listMilestones(missionId);
+    const totalMilestones = milestones.length;
+    const completedMilestones = milestones.filter((m) => m.status === "complete").length;
+
+    let totalFeatures = 0;
+    let completedFeatures = 0;
+
+    for (const milestone of milestones) {
+      const slices = this.listSlices(milestone.id);
+      for (const slice of slices) {
+        const features = this.listFeatures(slice.id);
+        totalFeatures += features.length;
+        completedFeatures += features.filter((f) => f.status === "done").length;
+      }
+    }
+
+    let progressPercent = 0;
+    if (totalFeatures > 0) {
+      progressPercent = Math.round((completedFeatures / totalFeatures) * 100);
+    } else if (totalMilestones > 0) {
+      progressPercent = Math.round((completedMilestones / totalMilestones) * 100);
+    }
+
+    return {
+      totalMilestones,
+      completedMilestones,
+      totalFeatures,
+      completedFeatures,
+      progressPercent,
+    };
   }
 
   /**

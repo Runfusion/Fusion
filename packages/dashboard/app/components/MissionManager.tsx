@@ -27,6 +27,7 @@ import { MissionInterviewModal } from "./MissionInterviewModal";
 import type {
   Mission,
   MissionWithHierarchy,
+  MissionWithSummary,
   Milestone,
   Slice,
   MissionFeature,
@@ -159,7 +160,7 @@ const EMPTY_FEATURE_FORM: FeatureFormData = {
 };
 
 export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId }: MissionManagerProps) {
-  const [missions, setMissions] = useState<Mission[]>([]);
+  const [missions, setMissions] = useState<MissionWithSummary[]>([]);
   const [selectedMission, setSelectedMission] = useState<MissionWithHierarchy | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1367,10 +1368,12 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
               {/* Mission items */}
               {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
               {missions.map((mission: any) => {
-                const m = mission as { id: string; title: string; description?: string; status: string };
+                const m = mission as { id: string; title: string; description?: string; status: string; summary?: { totalMilestones: number; completedMilestones: number; totalFeatures: number; completedFeatures: number; progressPercent: number } };
                 const selId = selectedMission as { id: string } | null;
                 const isSelected = selId && selId.id === m.id;
                 const statusColors = missionStatusColors[m.status as MissionStatus] || { bg: "", text: "" };
+                const summary = m.summary;
+                const hasContent = summary && (summary.totalMilestones > 0 || summary.totalFeatures > 0);
                 return (
                 <div
                   key={m.id}
@@ -1393,6 +1396,22 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                     </div>
                     {m.description && (
                       <p className="mission-list__item-description">{m.description}</p>
+                    )}
+                    {hasContent && (
+                      <div className="mission-list__item-summary">
+                        <span className="mission-list__item-stat">
+                          {summary.completedMilestones}/{summary.totalMilestones} milestones
+                        </span>
+                        <span className="mission-list__item-stat">
+                          {summary.completedFeatures}/{summary.totalFeatures} features
+                        </span>
+                        <div className="mission-list__item-progress">
+                          <div
+                            className="mission-list__item-progress-bar"
+                            style={{ width: `${summary.progressPercent}%` }}
+                          />
+                        </div>
+                      </div>
                     )}
                   </div>
                   <div className="mission-list__item-actions" onClick={(e) => e.stopPropagation()}>

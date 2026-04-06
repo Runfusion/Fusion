@@ -110,7 +110,7 @@ export type {
   FeatureLinkedPayload,
 } from "./mission-types.js";
 export { MissionStore } from "./mission-store.js";
-export type { MissionStoreEvents } from "./mission-store.js";
+export type { MissionStoreEvents, MissionSummary } from "./mission-store.js";
 
 // ── Central Infrastructure (Multi-Project Support) ───────────────────────────
 

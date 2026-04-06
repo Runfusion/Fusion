@@ -21,6 +21,13 @@ const mockMissions = [
     status: "active",
     autoAdvance: true,
     milestones: [],
+    summary: {
+      totalMilestones: 2,
+      completedMilestones: 1,
+      totalFeatures: 5,
+      completedFeatures: 3,
+      progressPercent: 60,
+    },
     createdAt: "2026-01-02T00:00:00.000Z",
     updatedAt: "2026-01-02T00:00:00.000Z",
   },
@@ -165,6 +172,41 @@ describe("MissionManager", () => {
     await waitFor(() => {
       expect(screen.getByText("planning")).toBeDefined();
       expect(screen.getByText("active")).toBeDefined();
+    });
+  });
+
+  it("shows summary stats when mission has summary data", async () => {
+    globalThis.fetch = createFetchMock();
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      // M-002 has summary: { totalMilestones: 2, completedMilestones: 1, totalFeatures: 5, completedFeatures: 3 }
+      expect(screen.getByText("1/2 milestones")).toBeDefined();
+      expect(screen.getByText("3/5 features")).toBeDefined();
+    });
+  });
+
+  it("hides summary section for missions without summary data", async () => {
+    globalThis.fetch = createFetchMock();
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      // M-001 has no summary — no stats should appear for it
+      expect(screen.queryByText("0/0 milestones")).toBeNull();
+    });
+    // M-002 has summary so these should exist
+    expect(screen.getByText("1/2 milestones")).toBeDefined();
+  });
+
+  it("renders progress bar for missions with summary", async () => {
+    globalThis.fetch = createFetchMock();
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      // Progress bar element should exist for M-002 (has summary with progressPercent: 60)
+      const progressBar = document.querySelector(".mission-list__item-progress-bar") as HTMLElement;
+      expect(progressBar).toBeDefined();
+      expect(progressBar?.style.width).toBe("60%");
     });
   });
 

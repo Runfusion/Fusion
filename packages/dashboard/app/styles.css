@@ -18125,6 +18125,35 @@ html .column.drag-over * {
   flex-shrink: 0;
 }
 
+.mission-list__item-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: var(--space-xs);
+}
+
+.mission-list__item-stat {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.mission-list__item-progress {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+  min-width: 40px;
+}
+
+.mission-list__item-progress-bar {
+  height: 100%;
+  background: var(--accent-green, #22c55e);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
 /* ================================================================
    Mission Detail View
    ================================================================ */
