@@ -204,55 +204,59 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
             <span className="diff-del">-{stats.deletions}</span>
           </span>
         </h4>
-        <div className="changes-header-actions">
-          {files.length > 0 && (
-            <div className="changes-nav">
-              <button
-                className="btn btn-sm btn-icon"
-                onClick={() => canGoPrev && navigateToFile(currentFileIndex! - 1)}
-                disabled={!canGoPrev}
-                title="Previous file"
-                aria-label="Previous file"
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <span className="changes-nav-indicator" aria-live="polite">
-                {currentFileIndex !== null ? `${currentFileIndex + 1}/${files.length}` : `—/${files.length}`}
-              </span>
-              <button
-                className="btn btn-sm btn-icon"
-                onClick={() => canGoNext && navigateToFile(currentFileIndex! + 1)}
-                disabled={!canGoNext}
-                title="Next file"
-                aria-label="Next file"
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
-          )}
-          <button
-            className={`btn btn-sm ${wordWrap ? "btn-primary" : ""}`}
-            onClick={() => setWordWrap((prev) => !prev)}
-            title={wordWrap ? "Disable word wrap" : "Enable word wrap"}
-            aria-label="Toggle word wrap"
-          >
-            <WrapText size={14} />
-          </button>
-          <button
-            className="btn btn-sm"
-            onClick={loadDiff}
-            disabled={loading}
-          >
-            Refresh
-          </button>
-          <button
-            className="btn btn-sm btn-icon"
-            onClick={() => setExpandedViewOpen(true)}
-            title="Expand to full-screen diff view"
-            aria-label="Expand diff view"
-          >
-            <Maximize2 size={14} />
-          </button>
+        <div className="changes-header-actions-wrapper">
+          <div className="changes-header-actions">
+            {files.length > 0 && (
+              <div className="changes-nav">
+                <button
+                  className="btn btn-sm btn-icon"
+                  onClick={() => canGoPrev && navigateToFile(currentFileIndex! - 1)}
+                  disabled={!canGoPrev}
+                  title="Previous file"
+                  aria-label="Previous file"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="changes-nav-indicator" aria-live="polite">
+                  {currentFileIndex !== null ? `${currentFileIndex + 1}/${files.length}` : `—/${files.length}`}
+                </span>
+                <button
+                  className="btn btn-sm btn-icon"
+                  onClick={() => canGoNext && navigateToFile(currentFileIndex! + 1)}
+                  disabled={!canGoNext}
+                  title="Next file"
+                  aria-label="Next file"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            )}
+            <button
+              className={`btn btn-sm ${wordWrap ? "btn-primary" : ""}`}
+              onClick={() => setWordWrap((prev) => !prev)}
+              title={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              aria-label="Toggle word wrap"
+            >
+              <WrapText size={14} />
+            </button>
+          </div>
+          <div className="changes-header-actions-secondary">
+            <button
+              className="btn btn-sm"
+              onClick={loadDiff}
+              disabled={loading}
+            >
+              Refresh
+            </button>
+            <button
+              className="btn btn-sm btn-icon"
+              onClick={() => setExpandedViewOpen(true)}
+              title="Expand to full-screen diff view"
+              aria-label="Expand diff view"
+            >
+              <Maximize2 size={14} />
+            </button>
+          </div>
         </div>
       </div>
 
