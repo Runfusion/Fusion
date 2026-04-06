@@ -843,3 +843,25 @@ describe("TaskChangesTab — expand button", () => {
     expect(screen.queryByLabelText("Expand diff view")).toBeNull();
   });
 });
+
+describe("TaskChangesTab — compact spacing class", () => {
+  it("renders the file list with the compact modifier class", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    const fileList = container.querySelector(".changes-file-list.task-changes-file-list--compact");
+    expect(fileList).toBeTruthy();
+  });
+});

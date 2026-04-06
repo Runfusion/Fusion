@@ -16978,6 +16978,21 @@ html .column.drag-over * {
   padding: 0;
 }
 
+/* ── TaskChangesTab compact file-row spacing ──────────────────────────────── */
+
+.task-changes-file-list--compact {
+  gap: 4px;
+}
+
+.task-changes-file-list--compact .changes-file-header {
+  padding: 6px 10px;
+  gap: 6px;
+}
+
+.task-changes-file-list--compact .changes-file-stat {
+  margin-left: 4px;
+}
+
 /* Syntax highlighting for diff */
 .gm-diff-patch .diff-add,
 .changes-diff-patch .diff-add,

@@ -262,7 +262,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
         </div>
       </div>
 
-      <div className="changes-file-list">
+      <div className="changes-file-list task-changes-file-list--compact">
         {files.map((file) => {
           const isExpanded = expandedFiles.has(file.path);
 

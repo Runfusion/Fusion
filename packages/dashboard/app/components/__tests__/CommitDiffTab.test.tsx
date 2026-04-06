@@ -164,3 +164,18 @@ describe("CommitDiffTab in TaskDetailModal", () => {
     expect(screen.getByText("No commit SHA available.")).toBeTruthy();
   });
 });
+
+describe("CommitDiffTab — compact spacing isolation", () => {
+  it("does NOT render the TaskChangesTab compact modifier class", async () => {
+    mockFetchCommitDiff.mockResolvedValue({ stat: "", patch: SAMPLE_PATCH });
+    const { container } = render(<CommitDiffTab commitSha="abc123" mergeDetails={MERGE_DETAILS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // CommitDiffTab should not have the compact modifier — proves scoping isolation
+    const compactList = container.querySelector(".task-changes-file-list--compact");
+    expect(compactList).toBeNull();
+  });
+});
