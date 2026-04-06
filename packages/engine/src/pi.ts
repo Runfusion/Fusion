@@ -154,6 +154,17 @@ function resolveConfiguredModel(
     return model;
   }
 
+  // Fall back to constructing a model on-the-fly if the provider is known.
+  // This mirrors the pi CLI's buildFallbackModel behaviour, which accepts any
+  // model ID for a configured provider (e.g. any OpenRouter model string) even
+  // when it isn't in the built-in or custom model list.
+  const providerModels = modelRegistry.getAll().filter((m) => m.provider === provider);
+  if (providerModels.length > 0) {
+    const baseModel = providerModels[0]!;
+    console.log(`[pi] ${kind} model ${provider}/${modelId} not in registry; using provider base model as template`);
+    return { ...baseModel, id: modelId, name: modelId };
+  }
+
   throw new Error(
     `Configured ${kind} model ${provider}/${modelId} was not found in the pi model registry. ` +
     "Open Settings and choose a model from /api/models, or update your pi model configuration.",

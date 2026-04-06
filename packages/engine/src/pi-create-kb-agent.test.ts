@@ -10,6 +10,7 @@ const discoverAndLoadExtensionsMock = vi.fn().mockResolvedValue({
 });
 const packageManagerResolveMock = vi.fn().mockResolvedValue({ extensions: [] });
 const findMock = vi.fn();
+const getAllMock = vi.fn(() => [] as any[]);
 const registerProviderMock = vi.fn();
 const refreshMock = vi.fn();
 const settingsManagerCreateMock = vi.fn(() => ({ kind: "settings-manager-create" }));
@@ -42,6 +43,9 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   ModelRegistry: class {
     find(provider: string, modelId: string) {
       return findMock(provider, modelId);
+    }
+    getAll() {
+      return getAllMock();
     }
     registerProvider(name: string, config: unknown) {
       return registerProviderMock(name, config);
