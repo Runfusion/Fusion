@@ -2390,8 +2390,8 @@ describe("TaskExecutor pause behavior", () => {
   it("skips paused tasks during resumeOrphaned", async () => {
     const store = createMockStore();
     store.listTasks.mockResolvedValue([
-      { id: "FN-001", column: "in-progress", paused: true, title: "Paused task" },
-      { id: "FN-002", column: "in-progress", paused: false, title: "Active task" },
+      { id: "FN-001", column: "in-progress", paused: true, title: "Paused task", steps: [], description: "", dependencies: [] },
+      { id: "FN-002", column: "in-progress", paused: false, title: "Active task", steps: [], description: "", dependencies: [] },
     ]);
 
     mockedCreateHaiAgent.mockResolvedValue({
