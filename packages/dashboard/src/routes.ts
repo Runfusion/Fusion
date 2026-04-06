@@ -7069,6 +7069,33 @@ Output ONLY the prompt text (no markdown, no explanations).`;
     }
   });
 
+  /**
+   * GET /api/agents/:id/children
+   * Fetch agents that report to a given agent (parent-child hierarchy).
+   * Response 200: Agent[] — Array of agents where reportsTo equals :id
+   * Response 404: { error: "Agent not found" } — When parent agent doesn't exist
+   */
+  router.get("/agents/:id/children", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      // Validate the parent agent exists
+      const parent = await agentStore.getAgent(req.params.id);
+      if (!parent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+
+      const children = await agentStore.getAgentsByReportsTo(req.params.id);
+      res.json(children);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Agent Generation Routes ──────────────────────────────────────────────
 
   /**

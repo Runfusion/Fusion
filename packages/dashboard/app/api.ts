@@ -1834,6 +1834,15 @@ export function fetchAgentStats(projectId?: string): Promise<AgentStats> {
   return api<AgentStats>(withProjectId("/agents/stats", projectId));
 }
 
+/** Fetch child agents that report to a given parent agent */
+export function fetchAgentChildren(agentId: string, projectId?: string): Promise<Agent[]> {
+  return api<Agent[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/children`, projectId)).catch((err: Error) => {
+    // Return empty array for 404 (agent may have been deleted)
+    if (err.message.includes("not found")) return [];
+    throw err;
+  });
+}
+
 // ── Agent Generation API ────────────────────────────────────────────────────
 
 /** Generated agent specification returned by the AI */

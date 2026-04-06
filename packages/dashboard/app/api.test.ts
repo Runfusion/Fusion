@@ -970,6 +970,62 @@ describe("startAgentRun", () => {
   });
 });
 
+describe("fetchAgentChildren", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("fetches children for an agent", async () => {
+    const mockChildren = [
+      { id: "child-1", name: "Child Agent 1", state: "active", reportsTo: "agent-001" },
+      { id: "child-2", name: "Child Agent 2", state: "idle", reportsTo: "agent-001" },
+    ];
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockChildren));
+
+    const { fetchAgentChildren } = await import("./api");
+    const result = await fetchAgentChildren("agent-001");
+
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe("child-1");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/agents/agent-001/children", {
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  it("passes projectId as query param", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+    const { fetchAgentChildren } = await import("./api");
+    await fetchAgentChildren("agent-001", "proj_123");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/agents/agent-001/children?projectId=proj_123", {
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  it("returns empty array for 404 (agent not found)", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Agent not found" }, 404),
+    );
+
+    const { fetchAgentChildren } = await import("./api");
+    const result = await fetchAgentChildren("agent-999");
+
+    expect(result).toEqual([]);
+  });
+
+  it("throws on non-404 errors", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Internal server error" }, 500),
+    );
+
+    const { fetchAgentChildren } = await import("./api");
+    await expect(fetchAgentChildren("agent-001")).rejects.toThrow("Internal server error");
+  });
+});
+
 describe("Git Management API", () => {
   const originalFetch = globalThis.fetch;
 

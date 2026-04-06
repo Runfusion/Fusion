@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { 
   Bot, Heart, Activity, Pause, Play, Square, Trash2, RefreshCw, 
   Settings, FileText, ActivitySquare, X, Copy, 
-  ExternalLink, CheckCircle, XCircle, Loader2
+  ExternalLink, CheckCircle, XCircle, Loader2, GitBranch
 } from "lucide-react";
 import type { AgentDetail, AgentState, AgentHeartbeatRun } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentChildren } from "../api";
+import type { Agent } from "../api";
 import type { AgentLogEntry } from "@fusion/core";
 
 /**
@@ -44,14 +45,16 @@ interface AgentDetailViewProps {
   projectId?: string;
   onClose: () => void;
   addToast: (message: string, type?: "success" | "error") => void;
+  onChildClick?: (childId: string) => void;
 }
 
-type TabId = "dashboard" | "logs" | "config" | "runs";
+type TabId = "dashboard" | "logs" | "config" | "runs" | "children";
 
 const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: "dashboard", label: "Dashboard", icon: ActivitySquare },
   { id: "logs", label: "Logs", icon: FileText },
   { id: "runs", label: "Runs", icon: Activity },
+  { id: "children", label: "Children", icon: GitBranch },
   { id: "config", label: "Settings", icon: Settings },
 ];
 
@@ -71,7 +74,7 @@ const RUN_STATUS_ICONS: Record<string, { icon: typeof CheckCircle; color: string
   terminated: { icon: Square, color: "var(--text-muted, #8b949e)" },
 };
 
-export function AgentDetailView({ agentId, projectId, onClose, addToast }: AgentDetailViewProps) {
+export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick }: AgentDetailViewProps) {
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [logs, setLogs] = useState<AgentLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -383,6 +386,14 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast }: Agent
               projectId={projectId}
               addToast={addToast}
               onSaved={loadAgent}
+            />
+          )}
+
+          {activeTab === "children" && (
+            <ChildrenTab
+              agentId={agent.id}
+              projectId={projectId}
+              onChildClick={onChildClick}
             />
           )}
         </div>
@@ -1034,6 +1045,90 @@ function ConfigTab({
             </span>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Children Tab ────────────────────────────────────────────────────────────
+
+function ChildrenTab({
+  agentId,
+  projectId,
+  onChildClick,
+}: {
+  agentId: string;
+  projectId?: string;
+  onChildClick?: (childId: string) => void;
+}) {
+  const [children, setChildren] = useState<Agent[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    setIsLoading(true);
+    fetchAgentChildren(agentId, projectId)
+      .then(setChildren)
+      .finally(() => setIsLoading(false));
+  }, [agentId, projectId]);
+
+  if (isLoading) {
+    return (
+      <div className="detail-section">
+        <div className="detail-section-header">
+          <h3>Child Agents</h3>
+        </div>
+        <div className="detail-section-body" style={{ display: "flex", alignItems: "center", gap: 8, padding: 16 }}>
+          <Loader2 size={16} className="spin" />
+          <span className="text-secondary">Loading children...</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="detail-section">
+      <div className="detail-section-header">
+        <h3>Child Agents</h3>
+        <span className="text-secondary">({children.length})</span>
+      </div>
+      <div className="detail-section-body">
+        {children.length === 0 ? (
+          <div className="agent-empty" style={{ padding: 24 }}>
+            <GitBranch size={32} opacity={0.3} />
+            <p>No child agents</p>
+            <p className="text-secondary">This agent has no spawned children</p>
+          </div>
+        ) : (
+          <div className="agent-tree__children">
+            {children.map((child) => {
+              const stateStyle = STATE_COLORS[child.state as AgentState];
+              return (
+                <div
+                  key={child.id}
+                  className={`agent-tree__node agent-is-child`}
+                  onClick={() => onChildClick?.(child.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === "Enter" && onChildClick?.(child.id)}
+                  style={{ cursor: onChildClick ? "pointer" : "default" }}
+                >
+                  <span className="agent-tree__icon">{child.icon ?? "🤖"}</span>
+                  <span className="agent-tree__name">{child.name}</span>
+                  <span
+                    className="agent-tree__badge"
+                    style={{
+                      background: stateStyle?.bg ?? "var(--state-idle-bg)",
+                      color: stateStyle?.text ?? "var(--state-idle-text)",
+                      border: `1px solid ${stateStyle?.border ?? "var(--state-idle-border)"}`,
+                    }}
+                  >
+                    {child.state}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

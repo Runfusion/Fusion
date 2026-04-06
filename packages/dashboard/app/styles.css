@@ -19701,6 +19701,120 @@ html .column.drag-over * {
   border-radius: var(--radius-sm);
 }
 
+/* ── Agent Tree View ────────────────────────────────────────────────────── */
+
+.agent-tree__view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.agent-tree__node {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.agent-tree__node:hover {
+  background: var(--card-hover);
+}
+
+.agent-tree__indent--0 { padding-left: 0; }
+.agent-tree__indent--1 { padding-left: 24px; }
+.agent-tree__indent--2 { padding-left: 48px; }
+.agent-tree__indent--3 { padding-left: 72px; }
+.agent-tree__indent--4 { padding-left: 96px; }
+
+.agent-tree__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  transition: background-color 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.agent-tree__toggle:hover {
+  background: var(--card-hover);
+  color: var(--text-primary);
+}
+
+.agent-tree__toggle--leaf {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.agent-tree__toggle--leaf:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.agent-tree__content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-tree__icon {
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.agent-tree__name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-tree__badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.agent-tree__health {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.agent-tree__count {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.agent-is-child {
+  background: rgba(124, 92, 191, 0.05);
+  border-left: 2px solid var(--accent);
+}
+
+.agent-tree__children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .agent-board {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));

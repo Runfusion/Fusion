@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { JSX } from "react";
-import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, Filter } from "lucide-react";
+import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, ChevronDown, GitBranch, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
 import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun } from "../api";
 import { AgentDetailView } from "./AgentDetailView";
 import { ActiveAgentsPanel } from "./ActiveAgentsPanel";
 import { AgentMetricsBar } from "./AgentMetricsBar";
 import { useAgents } from "../hooks/useAgents";
+import { useAgentHierarchy } from "../hooks/useAgentHierarchy";
+import type { AgentNode } from "../hooks/useAgentHierarchy";
 import { NewAgentDialog } from "./NewAgentDialog";
 
 export interface AgentsViewProps {
@@ -33,6 +35,94 @@ const STATE_COLORS: Record<AgentState, { bg: string; text: string; border: strin
   terminated: { bg: "var(--state-error-bg)", text: "var(--state-error-text)", border: "var(--state-error-border)" },
 };
 
+/** Recursive tree node component for agent hierarchy */
+function AgentTreeNode({
+  node,
+  onSelect,
+  onToggle,
+  isExpanded,
+  getChildCount,
+  getHealthStatus,
+  getRoleIcon,
+}: {
+  node: AgentNode;
+  onSelect: (id: string) => void;
+  onToggle: (id: string) => void;
+  isExpanded: (id: string) => boolean;
+  getChildCount: (id: string) => number;
+  getHealthStatus: (agent: Agent) => { label: string; icon: JSX.Element; color: string };
+  getRoleIcon: (role: AgentCapability) => string;
+}) {
+  const { agent, children, depth } = node;
+  const childCount = getChildCount(agent.id);
+  const expanded = isExpanded(agent.id);
+  const health = getHealthStatus(agent);
+  const stateStyle = STATE_COLORS[agent.state];
+
+  return (
+    <>
+      <div
+        className={`agent-tree__node${agent.reportsTo ? " agent-is-child" : ""} agent-tree__indent--${Math.min(depth, 4)}`}
+      >
+        <button
+          className={`agent-tree__toggle${childCount === 0 ? " agent-tree__toggle--leaf" : ""}`}
+          onClick={() => childCount > 0 && onToggle(agent.id)}
+          title={childCount > 0 ? (expanded ? "Collapse" : "Expand") : "No children"}
+          aria-label={childCount > 0 ? (expanded ? "Collapse" : "Expand") : "No children"}
+        >
+          {childCount > 0 ? (
+            expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />
+          ) : (
+            <Bot size={14} />
+          )}
+        </button>
+        <div
+          className="agent-tree__content"
+          onClick={() => onSelect(agent.id)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => e.key === "Enter" && onSelect(agent.id)}
+        >
+          <span className="agent-tree__icon">{getRoleIcon(agent.role)}</span>
+          <span className="agent-tree__name">{agent.name}</span>
+          <span
+            className="agent-tree__badge"
+            style={{
+              background: stateStyle.bg,
+              color: stateStyle.text,
+              border: `1px solid ${stateStyle.border}`,
+            }}
+          >
+            {agent.state}
+          </span>
+          <span className="agent-tree__health" style={{ color: health.color }} title={health.label}>
+            {health.icon}
+          </span>
+          {childCount > 0 && (
+            <span className="agent-tree__count text-secondary">({childCount})</span>
+          )}
+        </div>
+      </div>
+      {expanded && children.length > 0 && (
+        <div className="agent-tree__children">
+          {children.map((child) => (
+            <AgentTreeNode
+              key={child.agent.id}
+              node={child}
+              onSelect={onSelect}
+              onToggle={onToggle}
+              isExpanded={isExpanded}
+              getChildCount={getChildCount}
+              getHealthStatus={getHealthStatus}
+              getRoleIcon={getRoleIcon}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const { activeAgents, stats } = useAgents(projectId);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -40,10 +130,10 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [agentView, setAgentView] = useState<"board" | "list">(() => {
+  const [agentView, setAgentView] = useState<"board" | "list" | "tree">(() => {
     if (typeof window === "undefined") return "list";
     const saved = localStorage.getItem("kb-agent-view");
-    return (saved === "board" || saved === "list") ? saved : "list";
+    return (saved === "board" || saved === "list" || saved === "tree") ? saved : "list";
   });
 
   // Persist view preference to localStorage
@@ -53,6 +143,8 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
 
   const [editingRoleForAgent, setEditingRoleForAgent] = useState<string | null>(null);
   const roleSelectRef = useRef<HTMLSelectElement>(null);
+
+  const hierarchy = useAgentHierarchy(agents);
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true);
@@ -183,6 +275,15 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
             >
               <List size={16} />
             </button>
+            <button
+              className={`view-toggle-btn${agentView === "tree" ? " active" : ""}`}
+              onClick={() => setAgentView("tree")}
+              title="Tree view"
+              aria-label="Tree view"
+              aria-pressed={agentView === "tree"}
+            >
+              <GitBranch size={16} />
+            </button>
           </div>
           <button
             className="btn-icon"
@@ -239,6 +340,30 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
         <ActiveAgentsPanel agents={activeAgents} />
 
         {/* Agent List */}
+        {agentView === "tree" ? (
+          <div className="agent-tree__view">
+            {agents.length === 0 ? (
+              <div className="agent-empty">
+                <Bot size={48} opacity={0.3} />
+                <p>No agents found</p>
+                <p className="text-secondary">Create an agent to get started</p>
+              </div>
+            ) : (
+              hierarchy.rootNodes.map((node) => (
+                <AgentTreeNode
+                  key={node.agent.id}
+                  node={node}
+                  onSelect={setSelectedAgentId}
+                  onToggle={hierarchy.toggleExpand}
+                  isExpanded={hierarchy.isExpanded}
+                  getChildCount={(id) => hierarchy.getChildren(id).length}
+                  getHealthStatus={getHealthStatus}
+                  getRoleIcon={getRoleIcon}
+                />
+              ))
+            )}
+          </div>
+        ) : (
         <div className={agentView === "board" ? "agent-board" : "agent-list"}>
           {agents.length === 0 ? (
             <div className="agent-empty">
@@ -583,6 +708,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
             })
           )}
         </div>
+        )}
       </div>
 
       {/* Agent Detail Modal */}
@@ -592,6 +718,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
           projectId={projectId}
           onClose={() => setSelectedAgentId(null)}
           addToast={addToast}
+          onChildClick={(childId) => setSelectedAgentId(childId)}
         />
       )}
 
