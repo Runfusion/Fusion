@@ -980,7 +980,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // preserved here — the recovery-policy module manages those fields. They are
       // only cleared on terminal transitions (in-review, done, archived).
       if (
-        (fromColumn === "in-progress" || fromColumn === "done")
+        (fromColumn === "in-progress" || fromColumn === "done" || fromColumn === "in-review")
         && (toColumn === "todo" || toColumn === "triage")
       ) {
         task.status = undefined;

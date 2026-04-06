@@ -2775,6 +2775,33 @@ Task with acceptance criteria
       expect(reopened.blockedBy).toBeUndefined();
       expect(reopened.workflowStepResults).toBeUndefined();
     });
+
+    it("allows retrying in-review tasks back to todo and clears transient fields", async () => {
+      const task = await store.createTask({ description: "test retry in-review task to todo" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, {
+        status: "completed",
+        error: "stale error",
+        worktree: "stale-worktree",
+        blockedBy: "FN-456",
+        workflowStepResults: [{
+          workflowStepId: "wf-1",
+          workflowStepName: "Workflow step 1",
+          status: "passed",
+          startedAt: new Date().toISOString(),
+        }],
+      });
+
+      const retried = await store.moveTask(task.id, "todo");
+      expect(retried.column).toBe("todo");
+      expect(retried.status).toBeUndefined();
+      expect(retried.error).toBeUndefined();
+      expect(retried.worktree).toBeUndefined();
+      expect(retried.blockedBy).toBeUndefined();
+      expect(retried.workflowStepResults).toBeUndefined();
+    });
   });
 
   describe("columnMovedAt", () => {

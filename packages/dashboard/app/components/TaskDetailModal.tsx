@@ -1267,6 +1267,9 @@ export function TaskDetailModal({
           <div className="modal-actions-spacer" />
           {task.column === "in-review" ? (
             <>
+              <button className="btn btn-sm" onClick={() => handleMove("todo")}>
+                Retry
+              </button>
               <button className="btn btn-sm" onClick={() => handleMove("in-progress")}>
                 Back to In Progress
               </button>
