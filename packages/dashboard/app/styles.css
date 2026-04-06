@@ -16867,13 +16867,13 @@ html .column.drag-over * {
 }
 
 .changes-file-list {
-  border: 1px solid var(--border, #30363d);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .changes-file-item {
-  border-bottom: 1px solid var(--border, #30363d);
+  border-bottom: 1px solid var(--border);
 }
 
 .changes-file-item:last-child {
@@ -16881,7 +16881,7 @@ html .column.drag-over * {
 }
 
 .changes-file-item.expanded {
-  background: var(--bg-secondary, #161b22);
+  background: var(--surface);
 }
 
 .changes-file-header {
@@ -16894,19 +16894,19 @@ html .column.drag-over * {
   width: 100%;
   text-align: left;
   cursor: pointer;
-  color: var(--text-primary, #c9d1d9);
+  color: var(--text);
   font-size: 13px;
   transition: background 0.15s;
 }
 
 .changes-file-header:hover {
-  background: var(--bg-hover, #1f242c);
+  background: var(--card-hover);
 }
 
 .changes-file-toggle {
   display: flex;
   align-items: center;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
@@ -16931,15 +16931,15 @@ html .column.drag-over * {
 }
 
 .changes-file-stat {
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-muted);
   font-size: 11px;
   flex-shrink: 0;
   margin-left: 8px;
 }
 
 .changes-file-content {
-  border-top: 1px solid var(--border, #30363d);
-  background: var(--bg-primary, #0d1117);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
 }
 
 .changes-diff-patch {
@@ -16950,7 +16950,7 @@ html .column.drag-over * {
   overflow-x: auto;
   white-space: pre;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  color: var(--text-primary, #c9d1d9);
+  color: var(--text);
 }
 
 .changes-diff-patch code {
