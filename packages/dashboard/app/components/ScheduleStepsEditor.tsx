@@ -11,7 +11,14 @@ interface ScheduleStepsEditorProps {
 }
 
 function generateStepId(): string {
-  return crypto.randomUUID();
+  // crypto.randomUUID() may be unavailable in non-secure contexts (HTTP),
+  // older browsers, or some test environments. Fall back to a
+  // cryptographically-acceptable alternative when needed.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // Deterministic fallback: timestamp + random hex
+  return `step-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 function createEmptyStep(type: AutomationStepType): AutomationStep {

@@ -595,7 +595,7 @@ Automate recurring workflows with multi-step scheduled tasks:
 | `weekly` | `0 0 * * 0` | Weekly on Sunday |
 | `custom` | — | Define your own cron |
 
-Each schedule contains multiple steps executed sequentially. Steps can be commands (with timeout and `continueOnFailure` options) or AI prompts. Access via the **Scheduled Tasks** button in the dashboard header.
+Each schedule contains multiple steps executed sequentially. Steps can be commands (with timeout and `continueOnFailure` options) or AI prompts. Step creation works in all browser environments, including non-secure contexts (HTTP) where `crypto.randomUUID()` is unavailable, via deterministic fallback ID generation. Access via the **Scheduled Tasks** button in the dashboard header.
 
 ## Development
 

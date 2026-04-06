@@ -256,4 +256,51 @@ describe("ScheduleStepsEditor", () => {
       expect(screen.getByText("Steps (2)")).toBeDefined();
     });
   });
+
+  describe("ID generation fallback", () => {
+    it("adds steps when crypto.randomUUID is unavailable", () => {
+      // Remove crypto.randomUUID to simulate non-secure context
+      vi.stubGlobal("crypto", {});
+      render(<ScheduleStepsEditor steps={[]} onChange={onChange} />);
+      fireEvent.click(screen.getByText("Add Command Step"));
+      expect(onChange).toHaveBeenCalledTimes(1);
+      const newSteps = onChange.mock.calls[0][0] as AutomationStep[];
+      expect(newSteps).toHaveLength(1);
+      expect(newSteps[0].type).toBe("command");
+      expect(newSteps[0].id).toBeTruthy();
+    });
+
+    it("adds AI prompt steps when crypto.randomUUID is unavailable", () => {
+      vi.stubGlobal("crypto", {});
+      render(<ScheduleStepsEditor steps={[]} onChange={onChange} />);
+      fireEvent.click(screen.getByText("Add AI Prompt Step"));
+      expect(onChange).toHaveBeenCalledTimes(1);
+      const newSteps = onChange.mock.calls[0][0] as AutomationStep[];
+      expect(newSteps).toHaveLength(1);
+      expect(newSteps[0].type).toBe("ai-prompt");
+      expect(newSteps[0].id).toBeTruthy();
+    });
+
+    it("adds steps when crypto is entirely undefined", () => {
+      vi.stubGlobal("crypto", undefined);
+      render(<ScheduleStepsEditor steps={[]} onChange={onChange} />);
+      fireEvent.click(screen.getByText("Add Command Step"));
+      expect(onChange).toHaveBeenCalledTimes(1);
+      const newSteps = onChange.mock.calls[0][0] as AutomationStep[];
+      expect(newSteps).toHaveLength(1);
+      expect(newSteps[0].id).toMatch(/^step-/);
+    });
+
+    it("enters edit mode for new step using fallback IDs", () => {
+      vi.stubGlobal("crypto", {});
+      function StatefulEditor() {
+        const [steps, setSteps] = useState<AutomationStep[]>([]);
+        return <ScheduleStepsEditor steps={steps} onChange={setSteps} />;
+      }
+      render(<StatefulEditor />);
+      fireEvent.click(screen.getByText("Add Command Step"));
+      // Editor should open immediately for the new step
+      expect(screen.getByText("Save Step")).toBeDefined();
+    });
+  });
 });
