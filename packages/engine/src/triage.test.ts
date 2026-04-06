@@ -263,6 +263,16 @@ describe("buildSpecificationPrompt", () => {
 });
 
 describe("TRIAGE_SYSTEM_PROMPT", () => {
+  it("requires specs to keep tests, build, and typecheck green even outside initial file scope", () => {
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("If keeping tests/build/typecheck green requires edits outside the initial File Scope");
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("Run project typecheck if available");
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("Typecheck passing (if available)");
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("Specs must instruct executors to fix quality-gate failures directly");
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("Refuse necessary fixes just because they touch files outside the initial File Scope");
+  });
+});
+
+describe("TRIAGE_SYSTEM_PROMPT", () => {
   it("includes proactive M/L subtask breakdown guidance", () => {
     expect(TRIAGE_SYSTEM_PROMPT).toContain(
       "## Proactive Subtask Breakdown for M/L Tasks",

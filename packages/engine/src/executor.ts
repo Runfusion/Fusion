@@ -158,10 +158,11 @@ model, read-only access) to independently assess your work.
 - Do NOT commit broken or half-implemented code
 
 ## Guardrails
-- Stay within the file scope defined in PROMPT.md
+- Treat the File Scope in PROMPT.md as the expected starting scope, not a hard boundary when quality gates fail
 - Read "Context to Read First" files before starting
 - Follow the "Do NOT" section strictly
-- If you find work outside the task's scope, use \`task_create\`
+- If tests, build, or typecheck fail and the fix requires touching code outside the declared File Scope, fix those failures directly and keep the repo green
+- Use \`task_create\` for genuinely separate follow-up work, not for mandatory fixes required to make this task land cleanly
 - Update documentation listed in "Must Update" and check "Check If Affected"
 - NEVER delete, remove, or gut modules, interfaces, settings, exports, or test files outside your File Scope
 - NEVER remove features as "cleanup" — if something seems unused, create a task for investigation instead
@@ -197,7 +198,7 @@ spawn_agent({
 - Max 20 total spawned agents system-wide (configurable via settings)
 
 ## Completion
-After all steps are done, tests pass, and docs are updated:
+After all steps are done, tests pass, typecheck passes, and docs are updated:
 \`\`\`bash
 Call \`task_done()\` to signal completion.
 \`\`\`
@@ -205,7 +206,12 @@ Call \`task_done()\` to signal completion.
 If a project build command is listed in the prompt, it is a hard completion gate:
 - Run the exact build command in the current worktree before \`task_done()\`
 - Do not claim the build passes unless you actually ran it and got exit code 0
-- If the build fails, do NOT call \`task_done()\`; keep working until it passes`;
+- If the build fails, do NOT call \`task_done()\`; keep working until it passes
+
+Tests and typecheck are also hard quality gates:
+- Keep fixing failures until the configured/full test suite passes
+- If the repository exposes a typecheck command, run it and keep fixing failures until it passes
+- Do not stop at "out of scope" if additional fixes are required to restore green tests, build, or typecheck`;
 
 export interface TaskExecutorOptions {
   semaphore?: AgentSemaphore;
@@ -2815,12 +2821,14 @@ ${hasProgress
     : "Start with Step 0 (Preflight). Work through each step in order."}
 Use \`task_update\` to report progress on every step transition.
 Use \`task_log\` for important actions and decisions.
-Use \`task_create\` if you find out-of-scope work that needs doing.
+Use \`task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
 Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"\`
 When all steps are complete: call \`task_done()\`
 
 If a build command is configured, run that exact command in this worktree before calling \`task_done()\`.
-Treat a non-zero exit code as a blocking failure. Do not claim success without a real passing run.`;
+Treat a non-zero exit code as a blocking failure. Do not claim success without a real passing run.
+Run the configured/full test suite and fix failures even when that requires edits outside the original File Scope.
+If the repo has a typecheck command, run it before \`task_done()\` and fix any failures it reports.`;
 }
 
 /**

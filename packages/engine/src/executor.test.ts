@@ -1945,6 +1945,18 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("- **Build:** `pnpm build`");
   });
 
+  it("tells executors to fix quality-gate failures even outside initial file scope", () => {
+    const task = createMockTaskDetail();
+    const result = buildExecutionPrompt(task, "/home/user/project", {
+      testCommand: "pnpm test",
+      buildCommand: "pnpm build",
+    } as any);
+
+    expect(result).toContain("fix failures even when that requires edits outside the original File Scope");
+    expect(result).toContain("If the repo has a typecheck command, run it before `task_done()`");
+    expect(result).toContain("not for fixes required to get tests, build, or typecheck back to green");
+  });
+
   it("omits Project Commands section when neither command is set", () => {
     const task = createMockTaskDetail();
     const result = buildExecutionPrompt(task, "/home/user/project", {} as any);

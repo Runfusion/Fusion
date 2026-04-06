@@ -91,8 +91,10 @@ Follow this structure exactly:
 ### Step {N-1}: Testing & Verification
 
 > ZERO test failures allowed. Full test suite as quality gate.
+> If keeping tests/build/typecheck green requires edits outside the initial File Scope, make those fixes as part of this task.
 
 - [ ] Run full test suite
+- [ ] Run project typecheck if available
 - [ ] Fix all failures
 - [ ] Build passes
 
@@ -113,6 +115,7 @@ Follow this structure exactly:
 
 - [ ] All steps complete
 - [ ] All tests passing
+- [ ] Typecheck passing (if available)
 - [ ] Documentation updated
 
 ## Git Commit Convention
@@ -127,7 +130,7 @@ Commits at step boundaries. All commits include the task ID:
 
 - Expand task scope
 - Skip tests
-- Modify files outside the File Scope without good reason
+- Refuse necessary fixes just because they touch files outside the initial File Scope
 - Commit without the task ID prefix
 - Remove, delete, or gut modules, settings, interfaces, exports, or test files outside the File Scope
 - Remove features as "cleanup" — if something seems unused, create a task via \`task_create\`
@@ -147,6 +150,8 @@ tests. Manual verification is NOT a test.
 
 - Each implementation step should include writing tests for the code being changed
 - The final Testing step runs the FULL test suite
+- The final Testing step also runs project typecheck when the repo exposes one
+- Specs must instruct executors to fix quality-gate failures directly, even when the required edits extend beyond the original File Scope
 - If the project has no test framework, the Testing step must include setting one up
   as part of this task (not just skipping tests)
 
