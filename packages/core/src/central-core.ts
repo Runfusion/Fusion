@@ -351,6 +351,55 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     return updated;
   }
 
+  /**
+   * Reconcile stale project statuses.
+   *
+   * Projects stuck in `status: "initializing"` are considered stale because
+   * all current registration paths (`autoRegisterProject`, CLI commands, and
+   * the dashboard POST endpoint) immediately promote to `"active"` after
+   * registration. Any project still in `"initializing"` was created before
+   * those fixes and should be promoted to `"active"`.
+   *
+   * Updates both the `projects` and `projectHealth` tables atomically.
+   * Non-initializing projects are not affected.
+   *
+   * @returns Array of reconciled projects with their previous status
+   */
+  async reconcileProjectStatuses(): Promise<Array<{ projectId: string; previousStatus: string }>> {
+    this.ensureInitialized();
+
+    const staleProjects = this.db!.prepare(
+      "SELECT id, status FROM projects WHERE status = ?"
+    ).all("initializing") as Array<{ id: string; status: string }>;
+
+    if (staleProjects.length === 0) return [];
+
+    const now = new Date().toISOString();
+    const reconciled: Array<{ projectId: string; previousStatus: string }> = [];
+
+    this.db!.transaction(() => {
+      for (const project of staleProjects) {
+        // Update projects table
+        this.db!.prepare(
+          `UPDATE projects SET status = ?, updatedAt = ? WHERE id = ?`
+        ).run("active", now, project.id);
+
+        // Update projectHealth table (if row exists)
+        this.db!.prepare(
+          `UPDATE projectHealth SET status = ?, updatedAt = ? WHERE projectId = ?`
+        ).run("active", now, project.id);
+
+        reconciled.push({ projectId: project.id, previousStatus: project.status });
+      }
+    });
+
+    if (reconciled.length > 0) {
+      this.db!.bumpLastModified();
+    }
+
+    return reconciled;
+  }
+
   // ── Project Health API ──────────────────────────────────────────────────
 
   /**

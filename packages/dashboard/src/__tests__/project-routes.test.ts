@@ -53,6 +53,7 @@ const mockGetGlobalConcurrencyState = vi.fn().mockResolvedValue({
 });
 const mockInit = vi.fn().mockResolvedValue(undefined);
 const mockClose = vi.fn().mockResolvedValue(undefined);
+const mockReconcileProjectStatuses = vi.fn().mockResolvedValue([]);
 
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
@@ -69,6 +70,7 @@ vi.mock("@fusion/core", async () => {
       getProjectHealth: mockGetProjectHealth,
       getRecentActivity: mockGetRecentActivity,
       getGlobalConcurrencyState: mockGetGlobalConcurrencyState,
+      reconcileProjectStatuses: mockReconcileProjectStatuses,
     })),
   };
 });
@@ -528,5 +530,64 @@ describe("POST /api/projects route handler", () => {
     });
     expect(mockUpdateProject).toHaveBeenCalledWith("proj_test123", { status: "active" });
     expect((res.body as any).status).toBe("active");
+  });
+});
+
+describe("GET /api/projects route handler", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("calls reconcileProjectStatuses before listing projects", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+
+    mockReconcileProjectStatuses.mockResolvedValue([]);
+    mockListProjects.mockResolvedValue([
+      {
+        id: "proj_abc",
+        name: "Healed Project",
+        path: "/test/path",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const res = await request(app, "GET", "/api/projects");
+
+    expect(res.status).toBe(200);
+    expect(mockReconcileProjectStatuses).toHaveBeenCalledBefore(mockListProjects);
+    expect(mockListProjects).toHaveBeenCalled();
+    expect((res.body as any[])).toHaveLength(1);
+    expect((res.body as any[])[0].status).toBe("active");
+  });
+
+  it("returns healed status after reconciliation promotes stale projects", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+
+    // Simulate reconciliation promoting one stale project
+    mockReconcileProjectStatuses.mockResolvedValue([
+      { projectId: "proj_stale", previousStatus: "initializing" },
+    ]);
+    mockListProjects.mockResolvedValue([
+      {
+        id: "proj_stale",
+        name: "Formerly Stale",
+        path: "/test/stale",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const res = await request(app, "GET", "/api/projects");
+
+    expect(res.status).toBe(200);
+    expect(mockReconcileProjectStatuses).toHaveBeenCalledTimes(1);
+    expect((res.body as any[])[0].status).toBe("active");
   });
 });

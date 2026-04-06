@@ -7256,7 +7256,11 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       const { CentralCore } = await import("@fusion/core");
       const central = new CentralCore();
       await central.init();
-      
+
+      // Reconcile stale "initializing" projects before listing so the
+      // dashboard never shows permanent loading spinners for legacy records.
+      await central.reconcileProjectStatuses();
+
       const projects = prioritizeProjectsForCurrentDirectory(await central.listProjects());
       await central.close();
       

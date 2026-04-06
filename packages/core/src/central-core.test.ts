@@ -390,6 +390,150 @@ describe("CentralCore", () => {
     });
   });
 
+  describe("project status reconciliation", () => {
+    beforeEach(async () => {
+      await central.init();
+    });
+
+    it("should promote stale initializing projects to active", async () => {
+      const projectPath = join(tempDir, "stale-project");
+      mkdirSync(projectPath);
+      projectPaths.push(projectPath);
+
+      // Register a project (starts as "initializing")
+      const project = await central.registerProject({
+        name: "Stale Project",
+        path: projectPath,
+      });
+      expect(project.status).toBe("initializing");
+
+      // Reconcile — should promote to active
+      const reconciled = await central.reconcileProjectStatuses();
+      expect(reconciled).toHaveLength(1);
+      expect(reconciled[0].projectId).toBe(project.id);
+      expect(reconciled[0].previousStatus).toBe("initializing");
+
+      // Verify project is now active
+      const updated = await central.getProject(project.id);
+      expect(updated?.status).toBe("active");
+    });
+
+    it("should update both projects and projectHealth tables", async () => {
+      const projectPath = join(tempDir, "health-stale");
+      mkdirSync(projectPath);
+      projectPaths.push(projectPath);
+
+      const project = await central.registerProject({
+        name: "Health Stale",
+        path: projectPath,
+      });
+
+      // Health row should be "initializing" initially
+      const healthBefore = await central.getProjectHealth(project.id);
+      expect(healthBefore?.status).toBe("initializing");
+
+      // Reconcile
+      await central.reconcileProjectStatuses();
+
+      // Both project and health should be "active"
+      const updatedProject = await central.getProject(project.id);
+      expect(updatedProject?.status).toBe("active");
+
+      const updatedHealth = await central.getProjectHealth(project.id);
+      expect(updatedHealth?.status).toBe("active");
+    });
+
+    it("should not affect active projects", async () => {
+      const projectPath = join(tempDir, "active-project");
+      mkdirSync(projectPath);
+      projectPaths.push(projectPath);
+
+      const project = await central.registerProject({
+        name: "Active Project",
+        path: projectPath,
+      });
+      await central.updateProject(project.id, { status: "active" });
+
+      const reconciled = await central.reconcileProjectStatuses();
+      expect(reconciled).toHaveLength(0);
+
+      const unchanged = await central.getProject(project.id);
+      expect(unchanged?.status).toBe("active");
+    });
+
+    it("should not affect paused or errored projects", async () => {
+      const pausedPath = join(tempDir, "paused-project");
+      mkdirSync(pausedPath);
+      projectPaths.push(pausedPath);
+
+      const erroredPath = join(tempDir, "errored-project");
+      mkdirSync(erroredPath);
+      projectPaths.push(erroredPath);
+
+      const paused = await central.registerProject({
+        name: "Paused Project",
+        path: pausedPath,
+      });
+      await central.updateProject(paused.id, { status: "paused" });
+
+      const errored = await central.registerProject({
+        name: "Errored Project",
+        path: erroredPath,
+      });
+      await central.updateProject(errored.id, { status: "errored" });
+
+      const reconciled = await central.reconcileProjectStatuses();
+      expect(reconciled).toHaveLength(0);
+
+      expect((await central.getProject(paused.id))?.status).toBe("paused");
+      expect((await central.getProject(errored.id))?.status).toBe("errored");
+    });
+
+    it("should be idempotent — calling twice is a no-op after promotion", async () => {
+      const projectPath = join(tempDir, "idempotent-project");
+      mkdirSync(projectPath);
+      projectPaths.push(projectPath);
+
+      await central.registerProject({
+        name: "Idempotent Project",
+        path: projectPath,
+      });
+
+      // First call promotes
+      const first = await central.reconcileProjectStatuses();
+      expect(first).toHaveLength(1);
+
+      // Second call is a no-op
+      const second = await central.reconcileProjectStatuses();
+      expect(second).toHaveLength(0);
+    });
+
+    it("should reconcile multiple stale projects at once", async () => {
+      const paths: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const p = join(tempDir, `multi-stale-${i}`);
+        mkdirSync(p);
+        projectPaths.push(p);
+        paths.push(p);
+      }
+
+      await central.registerProject({ name: "Stale A", path: paths[0] });
+      await central.registerProject({ name: "Stale B", path: paths[1] });
+      await central.registerProject({ name: "Stale C", path: paths[2] });
+
+      const reconciled = await central.reconcileProjectStatuses();
+      expect(reconciled).toHaveLength(3);
+
+      const projects = await central.listProjects();
+      expect(projects.every((p) => p.status === "active")).toBe(true);
+    });
+
+    it("should return empty array when no projects exist", async () => {
+      const reconciled = await central.reconcileProjectStatuses();
+      expect(reconciled).toEqual([]);
+    });
+  });
+
   describe("project health", () => {
     beforeEach(async () => {
       await central.init();
