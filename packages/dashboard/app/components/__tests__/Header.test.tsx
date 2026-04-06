@@ -62,6 +62,21 @@ describe("Header", () => {
     expect(logo.compareDocumentPosition(h1) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("renders logo and wordmark inside a .header-brand container", () => {
+    const { container } = render(<Header />);
+    const brand = container.querySelector(".header-brand");
+    expect(brand).not.toBeNull();
+    // Brand container should contain the logo SVG
+    const logo = brand!.querySelector("[aria-label='Fusion logo']");
+    expect(logo).not.toBeNull();
+    // Brand container should contain the heading
+    const h1 = brand!.querySelector("h1.logo");
+    expect(h1).not.toBeNull();
+    expect(h1!.textContent).toBe("Fusion");
+    // Logo should appear before the heading within the brand container
+    expect(logo!.compareDocumentPosition(h1!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("renders the settings button", () => {
     const onOpen = vi.fn();
     render(<Header onOpenSettings={onOpen} />);

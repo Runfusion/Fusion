@@ -361,6 +361,8 @@ The Fusion logo and all task-creation action buttons (including the "+ New Task"
 
 All color themes automatically provide values for these tokens. Adding a new color theme requires only setting `--todo` (and optionally `--logo-accent` if the logo should differ from the todo column color).
 
+**Header brand lockup:** The logo SVG and "Fusion" wordmark are wrapped in a dedicated `.header-brand` flex container with `gap: var(--space-xs)` (4 px). This isolates logo-to-wordmark spacing from the wider `.header-left` gap (`var(--space-sm)`, 8 px) so the brand mark can be tuned independently of the spacing between the brand group and adjacent header controls (project selector, back button, etc.).
+
 ## Performance Characteristics
 
 The dashboard includes several runtime safeguards to stay responsive during long sessions and on larger boards:

@@ -163,6 +163,11 @@ body {
   align-items: center;
   gap: var(--space-sm);
 }
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
 .header-logo {
   width: 24px;
   height: 24px;
