@@ -100,15 +100,15 @@ function getTemplateIcon(iconName: string | undefined) {
   }
 }
 
-/** Get category badge colors */
-function getCategoryColors(category: string): { bg: string; text: string } {
+/** Get category badge class name */
+function getCategoryClassName(category: string): string {
   switch (category.toLowerCase()) {
     case "quality":
-      return { bg: "rgba(59, 130, 246, 0.15)", text: "#3b82f6" };
+      return "wfm-badge-category wfm-badge-category-quality";
     case "security":
-      return { bg: "rgba(239, 68, 68, 0.15)", text: "#ef4444" };
+      return "wfm-badge-category wfm-badge-category-security";
     default:
-      return { bg: "var(--bg-tertiary)", text: "var(--text-secondary)" };
+      return "wfm-badge-category";
   }
 }
 
@@ -457,11 +457,10 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                               {deleteConfirmId === step.id ? (
                                 <div className="wfm-delete-confirm">
                                   <button
-                                    className="btn-icon"
+                                    className="btn-icon wfm-delete-confirm-btn"
                                     onClick={() => handleDelete(step.id)}
                                     title="Confirm delete"
                                     aria-label={`Confirm delete ${step.name}`}
-                                    style={{ color: "var(--status-error, #ef4444)" }}
                                   >
                                     <Check size={14} />
                                   </button>
@@ -509,7 +508,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                     <div className="wfm-template-list">
                       {templates.map((template) => {
                         const IconComponent = getTemplateIcon(template.icon);
-                        const categoryColors = getCategoryColors(template.category);
+                        const categoryClassName = getCategoryClassName(template.category);
                         const isAdding = addingTemplateId === template.id;
 
                         return (
@@ -531,8 +530,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                                     {template.name}
                                   </span>
                                   <span
-                                    className="wfm-badge-category"
-                                    style={{ background: categoryColors.bg, color: categoryColors.text }}
+                                    className={categoryClassName}
                                   >
                                     {template.category}
                                   </span>
