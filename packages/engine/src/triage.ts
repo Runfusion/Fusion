@@ -399,6 +399,8 @@ export class TriageProcessor {
       const now = Date.now();
       const triageTasks = tasks.filter(
         (t) => t.column === "triage" && !this.processing.has(t.id) && !t.paused
+          // Skip tasks awaiting manual plan approval — they should not be auto-discovered
+          && t.status !== "awaiting-approval"
           // Skip tasks with a recovery backoff that hasn't elapsed yet
           && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
       );
@@ -465,6 +467,10 @@ export class TriageProcessor {
         const specReviewVerdictRef: { current: ReviewVerdict | null } = {
           current: null,
         };
+        // Track the user-comment fingerprint at the time of APPROVE for stale-approval detection
+        const approvedCommentFingerprintRef: { current: string } = {
+          current: "",
+        };
         // Track subtasks created during triage when breakIntoSubtasks was requested.
         const createdSubtasksRef: { current: string[] } = { current: [] };
 
@@ -480,6 +486,7 @@ export class TriageProcessor {
             sessionRef,
             checkpointRef,
             specReviewVerdictRef,
+            approvedCommentFingerprintRef,
             settings,
           ),
         ];
@@ -610,6 +617,25 @@ export class TriageProcessor {
           // Check if the agent flagged a duplicate
           const { readFile } = await import("node:fs/promises");
           const { join } = await import("node:path");
+
+          // Stale-approval detection: re-read the task to check if new user
+          // comments arrived after the spec was approved.  If the comment
+          // fingerprint changed, the approval is stale and the task needs
+          // re-specification.
+          const latestTask = await this.store.getTask(task.id);
+          const currentFingerprint = computeUserCommentFingerprint(latestTask.comments);
+          if (currentFingerprint !== approvedCommentFingerprintRef.current) {
+            triageLog.log(
+              `${task.id} stale approval detected — user comments changed after approval, triggering re-specification`,
+            );
+            await this.store.logEntry(
+              task.id,
+              "Spec approval invalidated — new user comments arrived after approval. Task needs re-specification.",
+            );
+            await this.store.updateTask(task.id, { status: "needs-respecify" });
+            return;
+          }
+
           const written = await readFile(
             join(this.rootDir, promptPath),
             "utf-8",
@@ -949,6 +975,7 @@ export class TriageProcessor {
     sessionRef: { current: AgentSession | null },
     checkpointRef: { current: string | null },
     specReviewVerdictRef: { current: ReviewVerdict | null },
+    approvedCommentFingerprintRef: { current: string },
     settings: {
       defaultProvider?: string;
       defaultModelId?: string;
@@ -1005,6 +1032,12 @@ export class TriageProcessor {
           // model changes made after the session started.
           const currentSettings = await store.getSettings();
 
+          // Re-read task detail to get latest user comments for the reviewer
+          const currentDetail = await store.getTask(taskId);
+          const currentUserComments = (currentDetail.comments || []).filter(
+            (c: any) => c.author === "user",
+          );
+
           const result = await reviewStep(
             rootDir,
             taskId,
@@ -1022,6 +1055,7 @@ export class TriageProcessor {
               defaultThinkingLevel: currentSettings.defaultThinkingLevel,
               store,
               taskId,
+              userComments: currentUserComments.length > 0 ? currentUserComments : undefined,
             },
           );
 
@@ -1038,6 +1072,8 @@ export class TriageProcessor {
           let text: string;
           switch (result.verdict) {
             case "APPROVE":
+              // Capture the user-comment fingerprint at approval time for stale-approval detection
+              approvedCommentFingerprintRef.current = computeUserCommentFingerprint(currentUserComments);
               text = "APPROVE";
               break;
             case "REVISE":
@@ -1189,6 +1225,22 @@ export async function readAttachmentContents(
   return { attachmentContents, imageContents };
 }
 
+/**
+ * Compute a deterministic fingerprint from user comments on a task.
+ * Returns a sorted, semicolon-joined string of comment IDs (user-authored only).
+ * Used to detect whether user comments changed after spec approval.
+ */
+export function computeUserCommentFingerprint(
+  comments?: import("@fusion/core").TaskComment[],
+): string {
+  if (!comments || comments.length === 0) return "";
+  const userIds = comments
+    .filter((c) => c.author === "user")
+    .map((c) => c.id)
+    .sort();
+  return userIds.join(";");
+}
+
 export function buildSpecificationPrompt(
   task: TaskDetail,
   promptPath: string,
@@ -1237,6 +1289,31 @@ export function buildSpecificationPrompt(
       }
     }
     attachmentsSection = "\n\n" + parts.join("\n");
+  }
+
+  // Include user comments as context for the triage agent
+  let userCommentsSection = "";
+  const userComments = (task.comments || []).filter(
+    (c) => c.author === "user",
+  );
+  if (userComments.length > 0) {
+    const parts = [
+      "## User Comments",
+      "",
+      "The following user comments have been posted on this task. **Address every comment** in the specification — each comment represents explicit user feedback or requirements that must be reflected in the PROMPT.md.",
+      "",
+    ];
+    for (const comment of userComments) {
+      const date = comment.updatedAt || comment.createdAt;
+      parts.push(
+        `- **[${date}]** ${comment.text}`,
+      );
+    }
+    parts.push(
+      "",
+      "Ensure the specification addresses all of the above comments. Missing comment coverage is a spec quality failure.",
+    );
+    userCommentsSection = "\n\n" + parts.join("\n");
   }
 
   let revisionSection = "";
@@ -1319,5 +1396,5 @@ ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join("
 ## Instructions
 ${isRevision ? "1. Review the existing specification and user feedback carefully\n2. Revise the PROMPT.md to address the feedback while maintaining the structure\n3. Ensure the specification is detailed enough for an AI agent to execute" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n4. Name actual files, functions, and patterns from the codebase — be specific"}
 
-Use the write tool to write the specification file.${commandsSection}${memorySection}${attachmentsSection}`;
+Use the write tool to write the specification file.${commandsSection}${memorySection}${attachmentsSection}${userCommentsSection}`;
 }

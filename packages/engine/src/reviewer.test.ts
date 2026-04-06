@@ -360,4 +360,130 @@ describe("REVIEWER_SYSTEM_PROMPT", () => {
       "3+ different packages but wasn't split",
     );
   });
+
+  it("includes user comment coverage criterion in spec review format", () => {
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("User comment coverage");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("missing coverage is a blocking REVISE");
+  });
+});
+
+describe("reviewStep — user comments in spec review", () => {
+  let mockedCreateHaiAgent: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockedCreateHaiAgent = vi.fn().mockResolvedValue({
+      session: {
+        prompt: vi.fn(),
+        subscribe: vi.fn().mockImplementation((cb: any) => {
+          cb({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+          });
+        }),
+        dispose: vi.fn(),
+        sessionManager: { getLeafId: vi.fn() },
+      },
+    } as any);
+    vi.mocked(createKbAgent).mockImplementation(mockedCreateHaiAgent);
+  });
+
+  it("includes user comments in spec review request", async () => {
+    let capturedPrompt = "";
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          capturedPrompt = prompt;
+        }),
+        subscribe: vi.fn().mockImplementation((cb: any) => {
+          cb({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const userComments = [
+      {
+        id: "c1",
+        text: "Make sure to handle the edge case",
+        author: "user",
+        createdAt: "2026-01-02T10:00:00.000Z",
+      },
+    ];
+
+    await reviewStep(
+      "/tmp/worktree", "FN-050", 0, "Specification", "spec",
+      "# Task: FN-050\n\n## Mission\nDo something",
+      undefined,
+      { userComments },
+    );
+
+    expect(capturedPrompt).toContain("User Comment Coverage (MANDATORY)");
+    expect(capturedPrompt).toContain("Make sure to handle the edge case");
+    expect(capturedPrompt).toContain("issue a REVISE verdict");
+  });
+
+  it("does not include user comments section when no comments provided", async () => {
+    let capturedPrompt = "";
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          capturedPrompt = prompt;
+        }),
+        subscribe: vi.fn().mockImplementation((cb: any) => {
+          cb({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    await reviewStep(
+      "/tmp/worktree", "FN-050", 0, "Specification", "spec",
+      "# Task: FN-050\n\n## Mission\nDo something",
+    );
+
+    expect(capturedPrompt).not.toContain("User Comment Coverage");
+  });
+
+  it("does not include user comments for non-spec review types", async () => {
+    let capturedPrompt = "";
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          capturedPrompt = prompt;
+        }),
+        subscribe: vi.fn().mockImplementation((cb: any) => {
+          cb({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const userComments = [
+      {
+        id: "c1",
+        text: "Some user feedback",
+        author: "user",
+        createdAt: "2026-01-02T10:00:00.000Z",
+      },
+    ];
+
+    await reviewStep(
+      "/tmp/worktree", "FN-050", 1, "Implementation", "code",
+      "# Task: FN-050\n\n## Mission\nDo something",
+      "abc123",
+      { userComments },
+    );
+
+    // Code reviews should not have user comment coverage checks
+    expect(capturedPrompt).not.toContain("User Comment Coverage");
+  });
 });

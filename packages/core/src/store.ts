@@ -2388,6 +2388,30 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
     }
 
+    // Phase 3: Invalidate stale spec approval when a user comments on
+    // a triage task that is awaiting manual approval. The new comment
+    // means the spec is now stale and must be re-specified/re-reviewed.
+    // Note: The `task` returned above reflects the state BEFORE this
+    // transition. Callers that need the post-transition status should
+    // re-read the task (e.g., via getTask).
+    if (
+      task.column === "triage"
+      && task.status === "awaiting-approval"
+      && author === "user"
+    ) {
+      try {
+        await this.updateTask(id, {
+          status: "needs-respecify",
+        });
+        await this.logEntry(
+          id,
+          `User comment invalidated spec approval — task needs re-specification`,
+        );
+      } catch {
+        // Best-effort: don't fail the comment if the status update fails
+      }
+    }
+
     return task;
   }
 

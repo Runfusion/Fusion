@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
 import {
   TriageProcessor,
   TRIAGE_SYSTEM_PROMPT,
   buildSpecificationPrompt,
   readAttachmentContents,
+  computeUserCommentFingerprint,
 } from "./triage.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -260,6 +261,105 @@ describe("buildSpecificationPrompt", () => {
       expect(prompt).toContain("Specify this task");
     });
   });
+
+  describe("user comments", () => {
+    it("includes user comments section when user comments exist", () => {
+      const taskWithComments: TaskDetail = {
+        ...baseTask,
+        comments: [
+          {
+            id: "c1",
+            text: "Please add error handling for edge cases",
+            author: "user",
+            createdAt: "2026-01-02T10:00:00.000Z",
+            updatedAt: "2026-01-02T10:00:00.000Z",
+          },
+          {
+            id: "c2",
+            text: "Make sure to update the README too",
+            author: "user",
+            createdAt: "2026-01-02T11:00:00.000Z",
+          },
+        ],
+      };
+
+      const prompt = buildSpecificationPrompt(
+        taskWithComments,
+        ".fusion/tasks/KB-001/PROMPT.md",
+      );
+
+      expect(prompt).toContain("## User Comments");
+      expect(prompt).toContain("Please add error handling for edge cases");
+      expect(prompt).toContain("Make sure to update the README too");
+      expect(prompt).toContain("Address every comment");
+      expect(prompt).toContain("Missing comment coverage is a spec quality failure");
+    });
+
+    it("excludes agent/system comments from user comments section", () => {
+      const taskWithMixedComments: TaskDetail = {
+        ...baseTask,
+        comments: [
+          {
+            id: "c1",
+            text: "User feedback here",
+            author: "user",
+            createdAt: "2026-01-02T10:00:00.000Z",
+          },
+          {
+            id: "c2",
+            text: "Agent system note",
+            author: "agent",
+            createdAt: "2026-01-02T11:00:00.000Z",
+          },
+          {
+            id: "c3",
+            text: "System auto-message",
+            author: "system",
+            createdAt: "2026-01-02T12:00:00.000Z",
+          },
+        ],
+      };
+
+      const prompt = buildSpecificationPrompt(
+        taskWithMixedComments,
+        ".fusion/tasks/KB-001/PROMPT.md",
+      );
+
+      expect(prompt).toContain("User feedback here");
+      expect(prompt).not.toContain("Agent system note");
+      expect(prompt).not.toContain("System auto-message");
+    });
+
+    it("does not include user comments section when no comments exist", () => {
+      const prompt = buildSpecificationPrompt(
+        baseTask,
+        ".fusion/tasks/KB-001/PROMPT.md",
+      );
+
+      expect(prompt).not.toContain("## User Comments");
+    });
+
+    it("does not include user comments section when only agent comments exist", () => {
+      const taskWithOnlyAgentComments: TaskDetail = {
+        ...baseTask,
+        comments: [
+          {
+            id: "c1",
+            text: "Agent note",
+            author: "agent",
+            createdAt: "2026-01-02T10:00:00.000Z",
+          },
+        ],
+      };
+
+      const prompt = buildSpecificationPrompt(
+        taskWithOnlyAgentComments,
+        ".fusion/tasks/KB-001/PROMPT.md",
+      );
+
+      expect(prompt).not.toContain("## User Comments");
+    });
+  });
 });
 
 describe("TRIAGE_SYSTEM_PROMPT", () => {
@@ -483,6 +583,11 @@ describe("TriageProcessor", () => {
 
     store = createMockStore({
       getSettings: vi.fn().mockResolvedValue(freshSettings),
+      getTask: vi.fn().mockResolvedValue({
+        ...mockTaskDetail,
+        id: taskId,
+        comments: [],
+      }),
     });
     processor = new TriageProcessor(store, testRootDir);
 
@@ -522,6 +627,7 @@ describe("TriageProcessor", () => {
         defaultModelId: "gpt-5.4",
         validatorModelProvider: "zai",
         validatorModelId: "glm-5.1",
+        userComments: undefined,
       }),
     );
 
@@ -1000,5 +1106,231 @@ describe("taskCreate tool model inheritance", () => {
         "triage",
       );
     });
+  });
+});
+
+describe("computeUserCommentFingerprint", () => {
+  it("returns empty string for undefined comments", () => {
+    expect(computeUserCommentFingerprint(undefined)).toBe("");
+  });
+
+  it("returns empty string for empty comments array", () => {
+    expect(computeUserCommentFingerprint([])).toBe("");
+  });
+
+  it("returns empty string when only agent comments exist", () => {
+    const comments = [
+      { id: "c1", text: "agent note", author: "agent", createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
+    expect(computeUserCommentFingerprint(comments as any)).toBe("");
+  });
+
+  it("returns sorted semicolon-joined IDs for user comments", () => {
+    const comments = [
+      { id: "c3", text: "user 3", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+      { id: "c1", text: "user 1", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+      { id: "c2", text: "agent", author: "agent", createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
+    // Should be sorted: c1;c3 (c2 is agent, excluded)
+    expect(computeUserCommentFingerprint(comments as any)).toBe("c1;c3");
+  });
+
+  it("detects changed fingerprint when new user comment is added", () => {
+    const before = [
+      { id: "c1", text: "user 1", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
+    const after = [
+      { id: "c1", text: "user 1", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+      { id: "c2", text: "user 2", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
+    expect(computeUserCommentFingerprint(before as any)).not.toBe(
+      computeUserCommentFingerprint(after as any),
+    );
+  });
+});
+
+describe("awaiting-approval poll exclusion", () => {
+  it("excludes awaiting-approval tasks from poll discovery", async () => {
+    const awaitingTask: Task = {
+      id: "FN-AW1",
+      description: "Awaiting approval task",
+      column: "triage",
+      status: "awaiting-approval",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const normalTask: Task = {
+      id: "FN-NT1",
+      description: "Normal triage task",
+      column: "triage",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const specifySpy = vi.fn();
+    const store = createMockStore({
+      listTasks: vi.fn().mockResolvedValue([awaitingTask, normalTask]),
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 60000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+      }),
+    });
+
+    const processor = new TriageProcessor(store, "/tmp");
+    // Mark as running so poll() proceeds
+    (processor as any).running = true;
+    // Override specifyTask to spy on which tasks get dispatched
+    (processor as any).specifyTask = specifySpy;
+
+    // Trigger poll via private method
+    await (processor as any).poll();
+
+    // Only the normal task should have been dispatched
+    expect(specifySpy).toHaveBeenCalledTimes(1);
+    expect(specifySpy).toHaveBeenCalledWith(normalTask);
+  });
+});
+
+describe("stale approval detection", () => {
+  it("computeUserCommentFingerprint detects added user comment", () => {
+    const before = [
+      { id: "c1", text: "First", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
+    const after = [
+      { id: "c1", text: "First", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+      { id: "c2", text: "Second", author: "user", createdAt: "2026-01-02T00:00:00.000Z" },
+    ];
+
+    const fpBefore = computeUserCommentFingerprint(before as any);
+    const fpAfter = computeUserCommentFingerprint(after as any);
+
+    expect(fpBefore).toBe("c1");
+    expect(fpAfter).toBe("c1;c2");
+    expect(fpBefore).not.toBe(fpAfter);
+  });
+
+  it("computeUserCommentFingerprint is stable when comments unchanged", () => {
+    const comments = [
+      { id: "c1", text: "Same", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
+
+    const fp1 = computeUserCommentFingerprint(comments as any);
+    const fp2 = computeUserCommentFingerprint(comments as any);
+
+    expect(fp1).toBe(fp2);
+  });
+
+  it("captures fingerprint on review_spec APPROVE", async () => {
+    const rootDir = join(__dirname, "__test_stale_approval_capture__");
+    const taskId = "FN-CAP";
+    const taskDir = join(rootDir, ".fusion", "tasks", taskId);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, "PROMPT.md"), "# Spec\n\nCurrent prompt");
+
+    const comments = [
+      { id: "c1", text: "Feedback", author: "user", createdAt: "2026-01-01T00:00:00.000Z" },
+    ];
+
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+      } as Settings),
+      getTask: vi.fn().mockResolvedValue({
+        ...mockTaskDetail,
+        id: taskId,
+        comments,
+      }),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+
+    mockReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "Looks good.",
+      summary: "approved",
+    });
+
+    const approvedCommentFingerprintRef = { current: "" };
+    const tool = (processor as any).createReviewSpecTool(
+      taskId,
+      `.fusion/tasks/${taskId}/PROMPT.md`,
+      { current: null },
+      { current: null },
+      { current: null },
+      approvedCommentFingerprintRef,
+      {},
+    );
+
+    // Execute review_spec — should capture fingerprint at APPROVE time
+    await tool.execute({});
+
+    // Verify fingerprint was captured from the user comments at approval time
+    expect(approvedCommentFingerprintRef.current).toBe("c1");
+
+    await rm(rootDir, { recursive: true, force: true });
+  });
+
+  it("fingerprint is empty string when review_spec returns REVISE (no capture)", async () => {
+    const rootDir = join(__dirname, "__test_stale_approval_revise__");
+    const taskId = "FN-REV";
+    const taskDir = join(rootDir, ".fusion", "tasks", taskId);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, "PROMPT.md"), "# Spec\n\nCurrent prompt");
+
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+      } as Settings),
+      getTask: vi.fn().mockResolvedValue({
+        ...mockTaskDetail,
+        id: taskId,
+        comments: [],
+      }),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+
+    mockReviewStep.mockResolvedValue({
+      verdict: "REVISE",
+      review: "Fix the spec.",
+      summary: "needs work",
+    });
+
+    const approvedCommentFingerprintRef = { current: "" };
+    const tool = (processor as any).createReviewSpecTool(
+      taskId,
+      `.fusion/tasks/${taskId}/PROMPT.md`,
+      { current: null },
+      { current: null },
+      { current: null },
+      approvedCommentFingerprintRef,
+      {},
+    );
+
+    await tool.execute({});
+
+    // Fingerprint should NOT be captured on REVISE
+    expect(approvedCommentFingerprintRef.current).toBe("");
+
+    await rm(rootDir, { recursive: true, force: true });
   });
 });
