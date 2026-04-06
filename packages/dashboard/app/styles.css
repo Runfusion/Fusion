@@ -198,6 +198,14 @@
   --icon-milestone: var(--triage);
   --icon-slice: var(--in-review);
   --icon-feature: #3b82f6;
+
+  /* === Accent Color === */
+  --accent: #7c5cbf;
+
+  /* === Log Entry Background Tokens === */
+  --log-tool-bg: color-mix(in srgb, var(--accent) 8%, transparent);
+  --log-success-bg: color-mix(in srgb, var(--color-success) 6%, transparent);
+  --log-error-bg: color-mix(in srgb, var(--color-error) 6%, transparent);
 }
 
 html,
@@ -808,12 +816,12 @@ body {
 }
 
 .btn-warning {
-  background: #d29922;
-  border-color: #e3b341;
+  background: var(--triage);
+  border-color: color-mix(in srgb, var(--triage) 80%, white);
   color: #fff;
 }
 .btn-warning:hover {
-  background: #e3b341;
+  background: color-mix(in srgb, var(--triage) 80%, white);
   box-shadow: var(--glow-warning);
 }
 
@@ -841,8 +849,8 @@ body {
 }
 
 .btn--primary:hover {
-  background: #4c9aff;
-  border-color: #4c9aff;
+  background: color-mix(in srgb, var(--todo) 80%, white);
+  border-color: color-mix(in srgb, var(--todo) 80%, white);
 }
 
 .btn--danger {
@@ -1179,19 +1187,19 @@ body {
 
 /* Size S: subtle green tint (low effort) */
 .card-size-badge.size-s {
-  background: rgba(63, 185, 80, 0.15);
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
   color: var(--color-success);
 }
 
 /* Size M: neutral tint (medium effort) */
 .card-size-badge.size-m {
-  background: rgba(139, 148, 158, 0.15);
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
   color: var(--text-muted);
 }
 
 /* Size L: subtle amber tint (higher effort) */
 .card-size-badge.size-l {
-  background: rgba(210, 153, 34, 0.15);
+  background: color-mix(in srgb, var(--triage) 15%, transparent);
   color: var(--triage);
 }
 
@@ -8606,6 +8614,14 @@ html .column.drag-over * {
   /* Logo accent for light mode */
   --logo-accent: var(--todo);
 
+  /* Accent color for light mode */
+  --accent: #6a4fa0;
+
+  /* Log entry backgrounds (lower intensity for light backgrounds) */
+  --log-tool-bg: color-mix(in srgb, var(--accent) 6%, transparent);
+  --log-success-bg: color-mix(in srgb, var(--color-success) 5%, transparent);
+  --log-error-bg: color-mix(in srgb, var(--color-error) 5%, transparent);
+
   --shadow: var(--shadow-lg);
 }
 
@@ -8671,12 +8687,12 @@ html .column.drag-over * {
 }
 
 [data-theme="light"] .btn-warning {
-  background: #9a6700;
-  border-color: #7d5400;
+  background: var(--triage);
+  border-color: color-mix(in srgb, var(--triage) 70%, black);
 }
 
 [data-theme="light"] .btn-warning:hover {
-  background: #7d5400;
+  background: color-mix(in srgb, var(--triage) 70%, black);
   box-shadow: var(--glow-warning);
 }
 
@@ -20599,8 +20615,8 @@ html .column.drag-over * {
 }
 
 .run-card--active {
-  border-color: #06b6d4;
-  background: rgba(6, 182, 212, 0.05);
+  border-color: var(--in-progress);
+  background: color-mix(in srgb, var(--in-progress) 5%, transparent);
 }
 
 .run-header {
@@ -20615,13 +20631,13 @@ html .column.drag-over * {
   align-items: center;
   gap: 6px;
   font-weight: 600;
-  color: #06b6d4;
+  color: var(--in-progress);
 }
 
 .live-dot {
   width: 8px;
   height: 8px;
-  background: #06b6d4;
+  background: var(--in-progress);
   border-radius: 50%;
   animation: pulse 1.5s infinite;
 }
@@ -20641,7 +20657,7 @@ html .column.drag-over * {
 }
 
 .run-status.active {
-  color: #06b6d4;
+  color: var(--in-progress);
 }
 
 .run-status.completed {

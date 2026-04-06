@@ -789,7 +789,7 @@ describe("AgentListModal", () => {
   });
 
   describe("CSS variables for agent states", () => {
-    it("has CSS variables defined for agent state badges", async () => {
+    it("uses CSS variables for agent state badges via global styles.css", async () => {
       render(
         <AgentListModal
           isOpen={true}
@@ -802,13 +802,12 @@ describe("AgentListModal", () => {
         expect(screen.getByText("Agents")).toBeTruthy();
       });
 
-      // Check that style tag is present with CSS variables
+      // Agent state variables are defined globally in styles.css (:root),
+      // not duplicated in the inline style tag. The inline style only
+      // defines the scoped --text-secondary alias.
       const styleTag = document.querySelector("style");
       expect(styleTag).toBeTruthy();
-      expect(styleTag?.textContent).toContain("--state-idle-bg");
-      expect(styleTag?.textContent).toContain("--state-active-bg");
-      expect(styleTag?.textContent).toContain("--state-paused-bg");
-      expect(styleTag?.textContent).toContain("--state-error-bg");
+      expect(styleTag?.textContent).toContain("--text-secondary");
     });
   });
 

@@ -251,11 +251,11 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
               key={i}
               className="agent-log-tool"
               style={{
-                color: "var(--accent, #7c5cbf)",
+                color: "var(--accent)",
                 margin: "4px 0",
                 padding: "2px 6px",
-                borderLeft: "3px solid var(--accent, #7c5cbf)",
-                background: "rgba(124, 92, 191, 0.08)",
+                borderLeft: "3px solid var(--accent)",
+                background: "var(--log-tool-bg)",
               }}
             >
               {agentBadge}{timestampSpan}⚡ {entry.text}
@@ -304,11 +304,11 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
               key={i}
               className="agent-log-tool-result"
               style={{
-                color: "var(--success, #4caf50)",
+                color: "var(--color-success)",
                 margin: "2px 0",
                 padding: "2px 6px",
-                borderLeft: "3px solid var(--success, #4caf50)",
-                background: "rgba(76, 175, 80, 0.06)",
+                borderLeft: "3px solid var(--color-success)",
+                background: "var(--log-success-bg)",
                 fontSize: "12px",
               }}
             >
@@ -334,11 +334,11 @@ export function AgentLogViewer({ entries, loading, executorModel, validatorModel
               key={i}
               className="agent-log-tool-error"
               style={{
-                color: "var(--error, #e53935)",
+                color: "var(--color-error)",
                 margin: "2px 0",
                 padding: "2px 6px",
-                borderLeft: "3px solid var(--error, #e53935)",
-                background: "rgba(229, 57, 53, 0.06)",
+                borderLeft: "3px solid var(--color-error)",
+                background: "var(--log-error-bg)",
                 fontSize: "12px",
               }}
             >

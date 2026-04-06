@@ -593,20 +593,8 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
 
       <style>{`
         :host, .modal--wide {
-          /* Agent state CSS variables - define fallback values */
-          --state-idle-bg: rgba(139, 148, 158, 0.15);
-          --state-idle-text: #8b949e;
-          --state-idle-border: #8b949e;
-          --state-active-bg: rgba(46, 160, 67, 0.15);
-          --state-active-text: #3fb950;
-          --state-active-border: #3fb950;
-          --state-paused-bg: rgba(227, 179, 65, 0.15);
-          --state-paused-text: #e3b541;
-          --state-paused-border: #e3b541;
-          --state-error-bg: rgba(248, 81, 73, 0.15);
-          --state-error-text: #f85149;
-          --state-error-border: #f85149;
-          --text-secondary: var(--text-muted, #8b949e);
+          /* Scoped alias — maps to the global --text-muted defined in styles.css */
+          --text-secondary: var(--text-muted);
         }
 
         /* === Modal shell === */
@@ -885,7 +873,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
         }
 
         .agent-icon--clickable:focus {
-          outline: 2px solid var(--accent, #58a6ff);
+          outline: 2px solid var(--accent);
           outline-offset: 2px;
           border-radius: var(--radius-sm);
         }

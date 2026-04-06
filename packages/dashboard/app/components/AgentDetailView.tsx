@@ -617,19 +617,19 @@ function LogEntry({ entry, showTimestamp }: { entry: AgentLogEntry; showTimestam
         return {
           color: "var(--accent)",
           borderLeft: "3px solid var(--accent)",
-          background: "rgba(124, 92, 191, 0.08)",
+          background: "var(--log-tool-bg)",
         };
       case "tool_result":
         return {
-          color: "var(--color-success, #3fb950)",
-          borderLeft: "3px solid var(--color-success, #3fb950)",
-          background: "rgba(76, 175, 80, 0.06)",
+          color: "var(--color-success)",
+          borderLeft: "3px solid var(--color-success)",
+          background: "var(--log-success-bg)",
         };
       case "tool_error":
         return {
-          color: "var(--color-error, #f85149)",
-          borderLeft: "3px solid var(--color-error, #f85149)",
-          background: "rgba(229, 57, 53, 0.06)",
+          color: "var(--color-error)",
+          borderLeft: "3px solid var(--color-error)",
+          background: "var(--log-error-bg)",
         };
       case "thinking":
         return {
