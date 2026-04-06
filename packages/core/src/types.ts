@@ -1119,7 +1119,7 @@ export const VALID_TRANSITIONS: Record<Column, Column[]> = {
   triage: ["todo"],
   todo: ["in-progress", "triage"],
   "in-progress": ["in-review", "todo", "triage"],
-  "in-review": ["done", "in-progress"],
+  "in-review": ["done", "in-progress", "todo"],
   done: ["todo", "triage", "archived"],
   archived: ["done"],
 };
