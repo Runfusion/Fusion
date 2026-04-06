@@ -320,6 +320,7 @@ export class TaskExecutor {
         if (!this.executing.has(task.id)) {
           executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
           try {
+            await this.clearResumeFailureState(task);
             await this.store.logEntry(task.id, "Resuming execution after unpause");
           } catch { /* non-critical */ }
           this.execute(task).catch((err) =>
@@ -395,6 +396,12 @@ export class TaskExecutor {
     return task.steps.every((s) => s.status === "done" || s.status === "skipped");
   }
 
+  private async clearResumeFailureState(task: Task): Promise<void> {
+    if (task.status === "failed" || task.error) {
+      await this.store.updateTask(task.id, { status: null, error: null });
+    }
+  }
+
   /**
    * Fast-path a completed task directly to in-review without spawning a new agent.
    * Captures modified files, runs workflow steps, and transitions the task.
@@ -461,6 +468,7 @@ export class TaskExecutor {
 
       executorLog.log(`Resuming ${task.id}: ${task.title || task.description.slice(0, 60)}`);
       try {
+        await this.clearResumeFailureState(task);
         await this.store.logEntry(task.id, "Resumed after engine restart");
       } catch (err) {
         executorLog.error(`Failed to write resume log for ${task.id}:`, err);

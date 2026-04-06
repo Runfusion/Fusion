@@ -2446,6 +2446,70 @@ describe("TaskExecutor pause behavior", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resuming execution after unpause");
   });
 
+  it("clears stale failed state before resuming unpaused in-progress task", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    store._trigger("task:updated", {
+      id: "FN-001",
+      paused: undefined,
+      column: "in-progress",
+      status: "failed",
+      error: "Request was aborted.",
+      description: "Test task",
+      title: "Resumed task",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resuming execution after unpause");
+  });
+
+  it("clears stale failed state before resuming orphaned in-progress task", async () => {
+    const store = createMockStore();
+    store.listTasks.mockResolvedValue([
+      {
+        id: "FN-001",
+        column: "in-progress",
+        paused: false,
+        status: "failed",
+        error: "Request was aborted.",
+        title: "Active task",
+        steps: [],
+        description: "",
+        dependencies: [],
+      },
+    ]);
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.resumeOrphaned();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resumed after engine restart");
+  });
+
   it("does not duplicate execution when unpausing already-executing task", async () => {
     const store = createMockStore();
     const disposeFn = vi.fn();
