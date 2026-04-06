@@ -7857,6 +7857,22 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         return;
       }
 
+      // Done tasks without a commit SHA: return safe, deterministic response.
+      // Do NOT fall through to the worktree-based diff logic, which would use
+      // the repo root as cwd and return an inflated repository-wide diff.
+      if (task.column === "done") {
+        const md = task.mergeDetails;
+        res.json({
+          files: [],
+          stats: {
+            filesChanged: md?.filesChanged ?? 0,
+            additions: md?.insertions ?? 0,
+            deletions: md?.deletions ?? 0,
+          },
+        });
+        return;
+      }
+
       const worktree = typeof req.query.worktree === "string" ? req.query.worktree : undefined;
       const cwd = worktree || task.worktree || scopedStore.getRootDir();
 
@@ -8021,6 +8037,14 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         } catch {
           res.json([]);
         }
+        return;
+      }
+
+      // Done tasks without a commit SHA: return safe, empty response.
+      // Do NOT fall through to worktree-based logic that could scan the
+      // entire repository when the worktree has been cleaned up.
+      if (task.column === "done") {
+        res.json([]);
         return;
       }
 

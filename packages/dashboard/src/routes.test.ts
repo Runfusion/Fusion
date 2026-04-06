@@ -4042,6 +4042,204 @@ describe("POST /tasks/:id/reject-plan", () => {
   });
 });
 
+// --- Task diff route tests ---
+
+describe("GET /tasks/:id/diff", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns 404 when task not found", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const res = await GET(buildApp(), "/api/tasks/FN-999/diff");
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("Task not found");
+  });
+
+  describe("done tasks without commit SHA", () => {
+    it("returns safe empty file list with merge summary stats", async () => {
+      const doneTask = {
+        ...FAKE_TASK_DETAIL,
+        id: "FN-001",
+        column: "done",
+        mergeDetails: {
+          filesChanged: 3,
+          insertions: 10,
+          deletions: 2,
+        },
+      };
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+
+      const res = await GET(buildApp(), "/api/tasks/FN-001/diff");
+
+      expect(res.status).toBe(200);
+      expect(res.body.files).toEqual([]);
+      expect(res.body.stats).toEqual({
+        filesChanged: 3,
+        additions: 10,
+        deletions: 2,
+      });
+    });
+
+    it("returns zeros when mergeDetails has no summary numbers", async () => {
+      const doneTask = {
+        ...FAKE_TASK_DETAIL,
+        id: "FN-001",
+        column: "done",
+        mergeDetails: {},
+      };
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+
+      const res = await GET(buildApp(), "/api/tasks/FN-001/diff");
+
+      expect(res.status).toBe(200);
+      expect(res.body.files).toEqual([]);
+      expect(res.body.stats).toEqual({
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
+      });
+    });
+
+    it("returns zeros when mergeDetails is undefined", async () => {
+      const doneTask = {
+        ...FAKE_TASK_DETAIL,
+        id: "FN-001",
+        column: "done",
+        mergeDetails: undefined,
+      };
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+
+      const res = await GET(buildApp(), "/api/tasks/FN-001/diff");
+
+      expect(res.status).toBe(200);
+      expect(res.body.files).toEqual([]);
+      expect(res.body.stats).toEqual({
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
+      });
+    });
+
+    it("response is schema-compatible with TaskDiff type", async () => {
+      const doneTask = {
+        ...FAKE_TASK_DETAIL,
+        id: "FN-001",
+        column: "done",
+        mergeDetails: { filesChanged: 5, insertions: 20, deletions: 3 },
+      };
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+
+      const res = await GET(buildApp(), "/api/tasks/FN-001/diff");
+
+      // Must have both `files` array and `stats` object
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.files)).toBe(true);
+      expect(res.body.stats).toHaveProperty("filesChanged");
+      expect(res.body.stats).toHaveProperty("additions");
+      expect(res.body.stats).toHaveProperty("deletions");
+    });
+  });
+
+  describe("done tasks with commit SHA", () => {
+    it("attempts git diff when commitSha is present", async () => {
+      // Use a real git repo to test the commit-backed path
+      const testDir = mkdtempSync(join(tmpdir(), "kb-diff-test-"));
+      try {
+        execFileSync("git", ["init", testDir]);
+        execFileSync("git", ["-C", testDir, "config", "user.email", "test@test.com"]);
+        execFileSync("git", ["-C", testDir, "config", "user.name", "Test"]);
+        writeFileSync(join(testDir, "a.txt"), "initial\n");
+        execFileSync("git", ["-C", testDir, "add", "a.txt"]);
+        execFileSync("git", ["-C", testDir, "commit", "-m", "init"]);
+
+        const headSha = execFileSync("git", ["-C", testDir, "rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
+
+        const localStore = createMockStore({
+          getRootDir: vi.fn().mockReturnValue(testDir),
+        });
+        const doneTask = {
+          ...FAKE_TASK_DETAIL,
+          id: "FN-001",
+          column: "done",
+          mergeDetails: { commitSha: headSha },
+        };
+        (localStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(localStore));
+
+        const res = await GET(app, "/api/tasks/FN-001/diff");
+        expect(res.status).toBe(200);
+        // The diff should be schema-compatible even if it returns empty
+        expect(Array.isArray(res.body.files)).toBe(true);
+        expect(res.body.stats).toHaveProperty("filesChanged");
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
+describe("GET /tasks/:id/file-diffs", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  describe("done tasks without commit SHA", () => {
+    it("returns empty array instead of scanning repository", async () => {
+      const doneTask = {
+        ...FAKE_TASK_DETAIL,
+        id: "FN-001",
+        column: "done",
+        mergeDetails: { filesChanged: 3 },
+      };
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+
+      const res = await GET(buildApp(), "/api/tasks/FN-001/file-diffs");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("returns empty array when mergeDetails is undefined", async () => {
+      const doneTask = {
+        ...FAKE_TASK_DETAIL,
+        id: "FN-001",
+        column: "done",
+        mergeDetails: undefined,
+      };
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+
+      const res = await GET(buildApp(), "/api/tasks/FN-001/file-diffs");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+  });
+});
+
 // --- Git Management route tests ---
 // These are integration tests that run against the actual git repository
 

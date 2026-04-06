@@ -387,9 +387,7 @@ describe("TaskChangesTab — regression: non-done tasks still use worktree path"
     expect(mockFetchTaskDiff).not.toHaveBeenCalled();
   });
 
-  it("done task without commitSha calls fetchTaskDiff (server handles it)", async () => {
-    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
-
+  it("done task without commitSha does NOT call fetchTaskDiff — shows summary fallback", async () => {
     render(
       <TaskChangesTab
         taskId="FN-001"
@@ -400,8 +398,60 @@ describe("TaskChangesTab — regression: non-done tasks still use worktree path"
     );
 
     await waitFor(() => {
-      expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
+      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
     });
+    expect(screen.getByText("No merge commit was recorded for this task.")).toBeTruthy();
+    // Must NOT have called fetchTaskDiff — that would trigger repo-wide fallback
+    expect(mockFetchTaskDiff).not.toHaveBeenCalled();
+  });
+
+  it("done task without commitSha shows merge summary when available", async () => {
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{ filesChanged: 3, insertions: 10, deletions: 2 }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
+    });
+    expect(screen.getByText("Merge summary: 3 files changed, +10 additions, -2 deletions.")).toBeTruthy();
+    expect(mockFetchTaskDiff).not.toHaveBeenCalled();
+  });
+
+  it("done task without commitSha shows singular 'file' when filesChanged is 1", async () => {
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{ filesChanged: 1, insertions: 5, deletions: 0 }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
+    });
+    expect(screen.getByText("Merge summary: 1 file changed, +5 additions, -0 deletions.")).toBeTruthy();
+  });
+
+  it("done task without commitSha and no mergeDetails shows fallback without summary", async () => {
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
+    });
+    expect(screen.getByText("No merge commit was recorded for this task.")).toBeTruthy();
+    expect(mockFetchTaskDiff).not.toHaveBeenCalled();
   });
 });
 

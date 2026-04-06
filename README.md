@@ -143,7 +143,7 @@ When a task reaches **In Review**, Fusion handles merge with rich metadata:
 - Merge commit SHA, files changed, insertions/deletions, timestamps
 - Smart conflict resolution: lock files ("ours"), generated files ("theirs"), whitespace conflicts
 - 3-attempt retry logic with escalating strategies (AI resolve → auto-resolve patterns → `git merge -X theirs`)
-- **Changes tab** — View file-level diffs from the merge commit, even after worktree cleanup
+- **Changes tab** — View file-level diffs from the merge commit, even after worktree cleanup. Done tasks without a recorded commit SHA show a safe summary fallback instead of inflated repository-wide diffs.
 
 ## Multi-Project Support
 

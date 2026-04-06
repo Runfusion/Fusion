@@ -43,6 +43,12 @@ interface NormalizedFile {
  * For done tasks with a recorded merge commit (mergeDetails.commitSha) it loads
  * the diff from git history instead, so changes remain visible even after the
  * worktree is cleaned up.
+ *
+ * For done tasks WITHOUT a recorded commit SHA, the tab shows a safe summary
+ * fallback using the merge details numbers (filesChanged/insertions/deletions)
+ * rather than fetching a detailed diff that could include unrelated repository
+ * changes. This prevents inflated file counts that don't match the card-level
+ * display.
  */
 export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetails }: TaskChangesTabProps) {
   const [files, setFiles] = useState<NormalizedFile[]>([]);
@@ -54,7 +60,12 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
   const [wordWrap, setWordWrap] = useState(true);
   const [expandedViewOpen, setExpandedViewOpen] = useState(false);
 
-  const canLoad = column === "in-progress" || column === "in-review" || column === "done";
+  const isDone = column === "done";
+  const isDoneWithCommit = isDone && Boolean(mergeDetails?.commitSha);
+
+  // Done tasks without commit SHA must not fetch detailed diffs — the server
+  // would fall back to a repository-wide scan that inflates the file list.
+  const canLoad = (column === "in-progress" || column === "in-review") || isDoneWithCommit;
 
   const loadDiff = useCallback(async () => {
     if (!canLoad) {
@@ -140,8 +151,6 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
     );
   }
 
-  const isDone = column === "done";
-
   // Non-done task without a worktree → show worktree empty state
   if (!isDone && !worktree) {
     return (
@@ -151,6 +160,30 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
           <p>No worktree available for this task.</p>
           <span className="task-changes-state-hint">
             Changes will be shown once the task is in progress.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // Done task without commit SHA → show safe summary fallback.
+  // We must NOT fetch detailed diffs here because the server would fall back
+  // to a repository-wide scan, producing an inflated/unrelated file list.
+  if (isDone && !isDoneWithCommit) {
+    const summaryFiles = mergeDetails?.filesChanged;
+    const summaryAdditions = mergeDetails?.insertions;
+    const summaryDeletions = mergeDetails?.deletions;
+    const hasSummary = summaryFiles != null || summaryAdditions != null || summaryDeletions != null;
+
+    return (
+      <div className="detail-section">
+        <div className="task-changes-state task-changes-state--empty">
+          <FileCode size={24} />
+          <p>Detailed file changes unavailable.</p>
+          <span className="task-changes-state-hint">
+            {hasSummary
+              ? `Merge summary: ${summaryFiles ?? 0} file${(summaryFiles ?? 0) === 1 ? "" : "s"} changed, +${summaryAdditions ?? 0} additions, -${summaryDeletions ?? 0} deletions.`
+              : "No merge commit was recorded for this task."}
           </span>
         </div>
       </div>
