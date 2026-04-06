@@ -746,6 +746,9 @@ body {
 .btn-sm {
   padding: 4px 10px;
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* === Button Modifiers (BEM style) === */
