@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { WorkflowResultsTab } from "./WorkflowResultsTab";
 import type { WorkflowStepResult } from "@fusion/core";
 
@@ -76,30 +76,73 @@ describe("WorkflowResultsTab", () => {
     expect(pendingBadge).toHaveStyle({ backgroundColor: "var(--todo, #58a6ff)" });
   });
 
-  it("shows output content for each result", () => {
+  it("shows output content when toggle is clicked to expand", () => {
     render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
 
+    // Output should be hidden by default (collapsed)
+    expect(screen.queryByTestId("workflow-result-output-WS-001")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("workflow-result-output-WS-002")).not.toBeInTheDocument();
+
+    // Click "Show output" for WS-001
+    fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+
+    // Now output should be visible
     expect(screen.getByTestId("workflow-result-output-WS-001")).toHaveTextContent(
       "All tests passed successfully."
     );
-    expect(screen.getByTestId("workflow-result-output-WS-002")).toHaveTextContent(
-      "Found 2 security issues in auth.ts"
-    );
+
+    // WS-002 should still be collapsed
+    expect(screen.queryByTestId("workflow-result-output-WS-002")).not.toBeInTheDocument();
+  });
+
+  it("hides output when toggle is clicked again", () => {
+    render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+    // Expand WS-001
+    fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+    expect(screen.getByTestId("workflow-result-output-WS-001")).toBeInTheDocument();
+
+    // Toggle text should say "Hide output"
+    expect(screen.getByTestId("workflow-result-toggle-WS-001")).toHaveTextContent("Hide output");
+
+    // Collapse WS-001
+    fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+
+    // Output should be hidden again
+    expect(screen.queryByTestId("workflow-result-output-WS-001")).not.toBeInTheDocument();
+
+    // Toggle text should say "Show output"
+    expect(screen.getByTestId("workflow-result-toggle-WS-001")).toHaveTextContent("Show output");
   });
 
   it("handles results without output gracefully", () => {
     render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
 
-    // WS-003 and WS-004 have no output, so output elements should not be rendered
+    // WS-003 and WS-004 have no output, so output section elements should not be rendered
+    expect(screen.queryByTestId("workflow-result-toggle-WS-003")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("workflow-result-toggle-WS-004")).not.toBeInTheDocument();
     expect(screen.queryByTestId("workflow-result-output-WS-003")).not.toBeInTheDocument();
     expect(screen.queryByTestId("workflow-result-output-WS-004")).not.toBeInTheDocument();
   });
 
-  it("shows empty state when no results", () => {
+  it("shows empty state when no workflow steps are configured", () => {
     render(<WorkflowResultsTab taskId="FN-001" results={[]} />);
 
     expect(screen.getByTestId("workflow-results-empty")).toBeInTheDocument();
-    expect(screen.getByText("No workflow steps have run yet.")).toBeInTheDocument();
+    expect(screen.getByText("No workflow steps configured for this task.")).toBeInTheDocument();
+  });
+
+  it("shows 'configured but not run' empty state when enabledWorkflowSteps is non-empty", () => {
+    render(
+      <WorkflowResultsTab
+        taskId="FN-001"
+        results={[]}
+        enabledWorkflowSteps={["WS-001", "WS-002"]}
+      />,
+    );
+
+    expect(screen.getByTestId("workflow-results-empty")).toBeInTheDocument();
+    expect(screen.getByText("Workflow steps configured but haven't run yet.")).toBeInTheDocument();
   });
 
   it("shows loading state when loading prop is true", () => {
@@ -166,5 +209,119 @@ describe("WorkflowResultsTab", () => {
     render(<WorkflowResultsTab taskId="FN-001" results={resultsWithoutPhase} />);
 
     expect(screen.getByTestId("workflow-result-phase-WS-005")).toHaveTextContent("Pre-merge");
+  });
+
+  describe("summary bar", () => {
+    it("renders summary bar with correct counts", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      const summary = screen.getByTestId("workflow-results-summary");
+      expect(summary).toBeInTheDocument();
+      expect(summary).toHaveTextContent("4 steps");
+      expect(summary).toHaveTextContent("1 passed");
+      expect(summary).toHaveTextContent("1 failed");
+      expect(summary).toHaveTextContent("1 skipped");
+      expect(summary).toHaveTextContent("1 running");
+    });
+
+    it("shows plural 'step' for single result", () => {
+      const singleResult: WorkflowStepResult[] = [
+        {
+          workflowStepId: "WS-001",
+          workflowStepName: "QA Check",
+          status: "passed",
+          output: "Done",
+        },
+      ];
+
+      render(<WorkflowResultsTab taskId="FN-001" results={singleResult} />);
+
+      const summary = screen.getByTestId("workflow-results-summary");
+      expect(summary).toHaveTextContent("1 step");
+      expect(summary).toHaveTextContent("1 passed");
+      // Should not include "0 failed" etc. for zero-count categories
+      expect(summary).not.toHaveTextContent("0 failed");
+    });
+
+    it("omits zero-count categories from summary", () => {
+      const allPassed: WorkflowStepResult[] = [
+        { workflowStepId: "WS-001", workflowStepName: "Check 1", status: "passed" },
+        { workflowStepId: "WS-002", workflowStepName: "Check 2", status: "passed" },
+      ];
+
+      render(<WorkflowResultsTab taskId="FN-001" results={allPassed} />);
+
+      const summary = screen.getByTestId("workflow-results-summary");
+      expect(summary).toHaveTextContent("2 steps");
+      expect(summary).toHaveTextContent("2 passed");
+      expect(summary).not.toHaveTextContent("failed");
+      expect(summary).not.toHaveTextContent("skipped");
+      expect(summary).not.toHaveTextContent("running");
+    });
+  });
+
+  describe("collapsible output", () => {
+    it("output sections default to collapsed", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Outputs should not be rendered in DOM by default
+      expect(screen.queryByTestId("workflow-result-output-WS-001")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("workflow-result-output-WS-002")).not.toBeInTheDocument();
+
+      // Toggles should say "Show output"
+      expect(screen.getByTestId("workflow-result-toggle-WS-001")).toHaveTextContent("Show output");
+      expect(screen.getByTestId("workflow-result-toggle-WS-002")).toHaveTextContent("Show output");
+    });
+
+    it("shows preview hint when output is collapsed", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Preview should show for results with output
+      expect(screen.getByTestId("workflow-result-preview-WS-001")).toBeInTheDocument();
+      expect(screen.getByTestId("workflow-result-preview-WS-002")).toBeInTheDocument();
+    });
+
+    it("shows line count in preview for multi-line output", () => {
+      const multiLineResult: WorkflowStepResult[] = [
+        {
+          workflowStepId: "WS-010",
+          workflowStepName: "Multi Line Check",
+          status: "passed",
+          output: "Line 1\nLine 2\nLine 3\nLine 4\nLine 5",
+        },
+      ];
+
+      render(<WorkflowResultsTab taskId="FN-001" results={multiLineResult} />);
+
+      expect(screen.getByTestId("workflow-result-preview-WS-010")).toHaveTextContent("5 lines");
+    });
+
+    it("shows output text as preview for single-line output", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // WS-001 output is "All tests passed successfully." — single line
+      expect(screen.getByTestId("workflow-result-preview-WS-001")).toHaveTextContent(
+        "All tests passed successfully."
+      );
+    });
+
+    it("expands and collapses independently per step", () => {
+      render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
+
+      // Expand WS-001
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      expect(screen.getByTestId("workflow-result-output-WS-001")).toBeInTheDocument();
+      expect(screen.queryByTestId("workflow-result-output-WS-002")).not.toBeInTheDocument();
+
+      // Expand WS-002 as well
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-002"));
+      expect(screen.getByTestId("workflow-result-output-WS-001")).toBeInTheDocument();
+      expect(screen.getByTestId("workflow-result-output-WS-002")).toBeInTheDocument();
+
+      // Collapse WS-001
+      fireEvent.click(screen.getByTestId("workflow-result-toggle-WS-001"));
+      expect(screen.queryByTestId("workflow-result-output-WS-001")).not.toBeInTheDocument();
+      expect(screen.getByTestId("workflow-result-output-WS-002")).toBeInTheDocument();
+    });
   });
 });

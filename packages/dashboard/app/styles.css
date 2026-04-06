@@ -19196,6 +19196,45 @@ html .column.drag-over * {
   overflow-y: auto;
 }
 
+.workflow-results-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs, 4px);
+  padding: var(--space-sm, 8px) var(--space-md, 16px);
+  font-size: 13px;
+  color: var(--text-muted, #8b949e);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  background: var(--surface-elevated, #161b22);
+}
+
+.workflow-result-output-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  margin-bottom: var(--space-xs, 4px);
+}
+
+.workflow-result-toggle {
+  background: none;
+  border: none;
+  color: var(--todo, #58a6ff);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  font-family: inherit;
+}
+
+.workflow-result-toggle:hover {
+  text-decoration: underline;
+}
+
+.workflow-result-output-preview {
+  font-size: 11px;
+  color: var(--text-dim, #484f58);
+  font-style: italic;
+}
+
 /* ===== Model Onboarding Modal ===== */
 
 .model-onboarding-modal {

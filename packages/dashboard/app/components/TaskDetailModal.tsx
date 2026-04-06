@@ -272,9 +272,8 @@ export function TaskDetailModal({
   }, [projectId]);
 
   // Load workflow results when workflow tab is active
-  const hasWorkflowSteps = (task.enabledWorkflowSteps?.length ?? 0) > 0 || (task.workflowStepResults?.length ?? 0) > 0;
   useEffect(() => {
-    if (activeTab !== "workflow" || !hasWorkflowSteps) return;
+    if (activeTab !== "workflow") return;
     let cancelled = false;
     setWorkflowResultsLoading(true);
     fetchWorkflowResults(task.id, projectId)
@@ -290,7 +289,7 @@ export function TaskDetailModal({
         if (!cancelled) setWorkflowResultsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [activeTab, task.id, projectId, hasWorkflowSteps, addToast]);
+  }, [activeTab, task.id, projectId, addToast]);
 
   // Reset dependency search when dropdown closes
   useEffect(() => {
@@ -862,18 +861,21 @@ export function TaskDetailModal({
             >
               Model
             </button>
-            {hasWorkflowSteps && (
-              <button
-                className={`detail-tab${activeTab === "workflow" ? " detail-tab-active" : ""}`}
-                onClick={() => setActiveTab("workflow")}
-              >
-                Workflow
-              </button>
-            )}
+            <button
+              className={`detail-tab${activeTab === "workflow" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("workflow")}
+            >
+              Workflow
+            </button>
           </div>
           {activeTab === "workflow" ? (
             <div className="detail-section">
-              <WorkflowResultsTab taskId={task.id} results={workflowResults} loading={workflowResultsLoading} />
+              <WorkflowResultsTab
+                taskId={task.id}
+                results={workflowResults}
+                loading={workflowResultsLoading}
+                enabledWorkflowSteps={task.enabledWorkflowSteps}
+              />
             </div>
           ) : activeTab === "model" ? (
             <div className="detail-section">

@@ -1,9 +1,11 @@
+import { useState } from "react";
 import type { WorkflowStepResult } from "@fusion/core";
 
 interface WorkflowResultsTabProps {
   taskId: string;
   results: WorkflowStepResult[];
   loading?: boolean;
+  enabledWorkflowSteps?: string[];
 }
 
 function getStatusColor(status: WorkflowStepResult["status"]): string {
@@ -55,7 +57,19 @@ function formatTimestamp(iso?: string): string | null {
   return date.toLocaleString();
 }
 
-export function WorkflowResultsTab({ taskId, results, loading }: WorkflowResultsTabProps) {
+function getOutputPreview(output: string): string {
+  const lines = output.split("\n");
+  if (lines.length <= 1) return output;
+  return `${lines.length} lines`;
+}
+
+export function WorkflowResultsTab({ taskId, results, loading, enabledWorkflowSteps }: WorkflowResultsTabProps) {
+  const [expandedOutputs, setExpandedOutputs] = useState<Record<string, boolean>>({});
+
+  const toggleOutput = (stepId: string) => {
+    setExpandedOutputs((prev) => ({ ...prev, [stepId]: !prev[stepId] }));
+  };
+
   if (loading) {
     return (
       <div className="workflow-results-loading" data-testid="workflow-results-loading">
@@ -66,9 +80,14 @@ export function WorkflowResultsTab({ taskId, results, loading }: WorkflowResults
   }
 
   if (results.length === 0) {
+    const hasConfiguredSteps = (enabledWorkflowSteps?.length ?? 0) > 0;
     return (
       <div className="workflow-results-empty" data-testid="workflow-results-empty">
-        <p>No workflow steps have run yet.</p>
+        <p>
+          {hasConfiguredSteps
+            ? "Workflow steps configured but haven't run yet."
+            : "No workflow steps configured for this task."}
+        </p>
         <p className="workflow-results-empty-hint">
           Pre-merge steps run after implementation, before merge. Post-merge steps run after merge succeeds.
         </p>
@@ -76,10 +95,26 @@ export function WorkflowResultsTab({ taskId, results, loading }: WorkflowResults
     );
   }
 
+  // Compute summary counts
+  const passed = results.filter((r) => r.status === "passed").length;
+  const failed = results.filter((r) => r.status === "failed").length;
+  const skipped = results.filter((r) => r.status === "skipped").length;
+  const pending = results.filter((r) => r.status === "pending").length;
+
+  const summaryParts: string[] = [`${results.length} step${results.length !== 1 ? "s" : ""}`];
+  if (passed > 0) summaryParts.push(`${passed} passed`);
+  if (failed > 0) summaryParts.push(`${failed} failed`);
+  if (skipped > 0) summaryParts.push(`${skipped} skipped`);
+  if (pending > 0) summaryParts.push(`${pending} running`);
+
   return (
     <div className="workflow-results-list" data-testid="workflow-results-list">
+      <div className="workflow-results-summary-bar" data-testid="workflow-results-summary">
+        {summaryParts.join(" · ")}
+      </div>
       {results.map((result, index) => {
         const phase = result.phase || "pre-merge";
+        const isExpanded = expandedOutputs[result.workflowStepId] ?? false;
         return (
           <div
             key={`${result.workflowStepId}-${index}`}
@@ -135,13 +170,29 @@ export function WorkflowResultsTab({ taskId, results, loading }: WorkflowResults
 
             {result.output && (
               <div className="workflow-result-output-section">
-                <div className="workflow-result-output-label">Output:</div>
-                <pre
-                  className="workflow-result-output"
-                  data-testid={`workflow-result-output-${result.workflowStepId}`}
-                >
-                  {result.output}
-                </pre>
+                <div className="workflow-result-output-header">
+                  <span className="workflow-result-output-label">Output:</span>
+                  <button
+                    className="workflow-result-toggle"
+                    onClick={() => toggleOutput(result.workflowStepId)}
+                    data-testid={`workflow-result-toggle-${result.workflowStepId}`}
+                  >
+                    {isExpanded ? "Hide output" : "Show output"}
+                  </button>
+                  {!isExpanded && (
+                    <span className="workflow-result-output-preview" data-testid={`workflow-result-preview-${result.workflowStepId}`}>
+                      {getOutputPreview(result.output)}
+                    </span>
+                  )}
+                </div>
+                {isExpanded && (
+                  <pre
+                    className="workflow-result-output"
+                    data-testid={`workflow-result-output-${result.workflowStepId}`}
+                  >
+                    {result.output}
+                  </pre>
+                )}
               </div>
             )}
           </div>

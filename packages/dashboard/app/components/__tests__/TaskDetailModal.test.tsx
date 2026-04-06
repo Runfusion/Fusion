@@ -917,22 +917,23 @@ describe("TaskDetailModal", () => {
       );
 
       // For an in-progress task (no workflow steps, no merge commit),
-      // the top-level tabs are: Definition, Logs, Changes, Comments, Model
-      const tabTexts = ["Definition", "Logs", "Changes", "Comments", "Model"];
+      // the top-level tabs are: Definition, Logs, Changes, Comments, Model, Workflow
+      const tabTexts = ["Definition", "Logs", "Changes", "Comments", "Model", "Workflow"];
       const tabs = screen.getAllByRole("button").filter((b) =>
         tabTexts.includes(b.textContent || "")
       );
-      expect(tabs.length).toBe(5);
+      expect(tabs.length).toBe(6);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Comments");
       expect(tabs[4].textContent).toBe("Model");
+      expect(tabs[5].textContent).toBe("Workflow");
 
       // Activity and Agent Log are NOT top-level tabs (they are subviews inside Logs)
-      expect(container.querySelectorAll(".detail-tab").length).toBe(5);
-      // Workflow tab should NOT appear when no workflow steps are configured
-      expect(screen.queryByText("Workflow")).toBeNull();
+      expect(container.querySelectorAll(".detail-tab").length).toBe(6);
+      // Workflow tab should always appear even when no workflow steps are configured
+      expect(screen.getByText("Workflow")).toBeInTheDocument();
       // Commits tab should NOT appear for non-done tasks
       expect(screen.queryByText("Commits")).toBeNull();
     });
@@ -1776,7 +1777,7 @@ describe("TaskDetailModal", () => {
       );
 
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(5); // Definition, Logs, Changes, Comments, Model
+      expect(tabs.length).toBe(6); // Definition, Logs, Changes, Comments, Model, Workflow
       // Tabs should use class-based styling, not inline styles
       expect(tabs[0].classList.contains("detail-tab")).toBe(true);
       expect(tabs[0].classList.contains("detail-tab-active")).toBe(true); // Definition is default active
@@ -1784,6 +1785,7 @@ describe("TaskDetailModal", () => {
       expect(tabs[2].classList.contains("detail-tab-active")).toBe(false);
       expect(tabs[3].classList.contains("detail-tab-active")).toBe(false);
       expect(tabs[4].classList.contains("detail-tab-active")).toBe(false);
+      expect(tabs[5].classList.contains("detail-tab-active")).toBe(false);
       // Verify no inline padding/fontSize (responsive CSS controls this)
       expect((tabs[0] as HTMLElement).style.padding).toBe("");
       expect((tabs[0] as HTMLElement).style.fontSize).toBe("");
@@ -2274,17 +2276,17 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // In-progress tasks without workflow steps show exactly 5 tabs:
-      // Definition, Logs, Changes, Comments, Model
+      // In-progress tasks show exactly 6 tabs:
+      // Definition, Logs, Changes, Comments, Model, Workflow
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(5);
+      expect(tabs.length).toBe(6);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Comments");
       expect(tabs[4].textContent).toBe("Model");
-      // Conditional tabs should NOT be present
-      expect(screen.queryByText("Workflow")).toBeNull();
+      expect(tabs[5].textContent).toBe("Workflow");
+      // Commits tab should NOT be present for non-done tasks
       expect(screen.queryByText("Commits")).toBeNull();
     });
 
@@ -2328,15 +2330,16 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with commit SHA: Definition, Logs, Changes, Commits, Comments, Model
+      // Done task with commit SHA: Definition, Logs, Changes, Commits, Comments, Model, Workflow
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(6);
+      expect(tabs.length).toBe(7);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
       expect(tabs[3].textContent).toBe("Commits");
       expect(tabs[4].textContent).toBe("Comments");
       expect(tabs[5].textContent).toBe("Model");
+      expect(tabs[6].textContent).toBe("Workflow");
     });
 
     it("shows all conditional tabs for done task with workflow steps and commit SHA", () => {
@@ -2383,9 +2386,9 @@ describe("TaskDetailModal", () => {
       );
 
       const triageTabs = triageContainer.querySelectorAll(".detail-tab");
-      expect(triageTabs.length).toBe(4); // Definition, Logs, Comments, Model
+      expect(triageTabs.length).toBe(5); // Definition, Logs, Comments, Model, Workflow
       expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Logs", "Comments", "Model",
+        "Definition", "Logs", "Comments", "Model", "Workflow",
       ]);
 
       const { container: todoContainer } = render(
@@ -2401,9 +2404,9 @@ describe("TaskDetailModal", () => {
       );
 
       const todoTabs = todoContainer.querySelectorAll(".detail-tab");
-      expect(todoTabs.length).toBe(4); // Definition, Logs, Comments, Model
+      expect(todoTabs.length).toBe(5); // Definition, Logs, Comments, Model, Workflow
       expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Logs", "Comments", "Model",
+        "Definition", "Logs", "Comments", "Model", "Workflow",
       ]);
     });
 
@@ -3928,7 +3931,7 @@ describe("TaskDetailModal", () => {
   });
 
   describe("Workflow tab", () => {
-    it("does NOT show Workflow tab when enabledWorkflowSteps is empty", () => {
+    it("shows Workflow tab even when enabledWorkflowSteps is empty", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ enabledWorkflowSteps: [] })}
@@ -3941,10 +3944,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.queryByText("Workflow")).toBeNull();
+      expect(screen.getByText("Workflow")).toBeInTheDocument();
     });
 
-    it("does NOT show Workflow tab when enabledWorkflowSteps is undefined", () => {
+    it("shows Workflow tab even when enabledWorkflowSteps is undefined", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ enabledWorkflowSteps: undefined, workflowStepResults: undefined })}
@@ -3957,7 +3960,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.queryByText("Workflow")).toBeNull();
+      expect(screen.getByText("Workflow")).toBeInTheDocument();
     });
 
     it("shows Workflow tab when enabledWorkflowSteps is non-empty", () => {
@@ -4108,7 +4111,7 @@ describe("TaskDetailModal", () => {
 
       await waitFor(() => {
         expect(screen.getByTestId("workflow-results-empty")).toBeTruthy();
-        expect(screen.getByText("No workflow steps have run yet.")).toBeTruthy();
+        expect(screen.getByText("Workflow steps configured but haven't run yet.")).toBeTruthy();
       });
     });
 
