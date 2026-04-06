@@ -1815,6 +1815,14 @@ export function fetchAgentRunDetail(agentId: string, runId: string, projectId?: 
   return api<AgentHeartbeatRun>(withProjectId(`/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`, projectId));
 }
 
+/** Manually start a heartbeat run for an agent */
+export function startAgentRun(agentId: string, projectId?: string): Promise<AgentHeartbeatRun> {
+  return api<AgentHeartbeatRun>(withProjectId(`/agents/${encodeURIComponent(agentId)}/runs`, projectId), {
+    method: "POST",
+    body: JSON.stringify({ source: "manual", triggerDetail: "Agent activated via dashboard" }),
+  });
+}
+
 /** Fetch aggregate agent stats */
 export function fetchAgentStats(projectId?: string): Promise<AgentStats> {
   return api<AgentStats>(withProjectId("/agents/stats", projectId));

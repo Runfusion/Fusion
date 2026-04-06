@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { JSX } from "react";
 import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
-import { fetchAgents, updateAgent, updateAgentState, deleteAgent } from "../api";
+import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun } from "../api";
 import { AgentDetailView } from "./AgentDetailView";
 import { ActiveAgentsPanel } from "./ActiveAgentsPanel";
 import { AgentMetricsBar } from "./AgentMetricsBar";
@@ -75,6 +75,16 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     try {
       await updateAgentState(agentId, newState, projectId);
       addToast(`Agent state updated to ${newState}`, "success");
+
+      // When activating an agent, also start a heartbeat run so it shows activity
+      if (newState === "active") {
+        try {
+          await startAgentRun(agentId, projectId);
+        } catch (runErr: any) {
+          addToast(`Agent activated, but failed to start run: ${runErr.message}`, "error");
+        }
+      }
+
       void loadAgents();
     } catch (err: any) {
       addToast(`Failed to update state: ${err.message}`, "error");

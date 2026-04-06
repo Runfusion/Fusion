@@ -906,6 +906,7 @@ describe("refineTask", () => {
 // --- Git Management API tests ---
 
 import {
+  startAgentRun,
   fetchGitStatus,
   fetchGitCommits,
   fetchCommitDiff,
@@ -920,6 +921,54 @@ import {
   pullBranch,
   pushBranch,
 } from "./api";
+
+describe("startAgentRun", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("sends POST to start a run for an agent", async () => {
+    const mockRun = {
+      id: "run-001",
+      agentId: "agent-001",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      endedAt: null,
+      status: "active",
+    };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockRun, 201));
+
+    const result = await startAgentRun("agent-001");
+
+    expect(result.id).toBe("run-001");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/agents/agent-001/runs", {
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      body: JSON.stringify({ source: "manual", triggerDetail: "Agent activated via dashboard" }),
+    });
+  });
+
+  it("passes projectId as query param", async () => {
+    const mockRun = { id: "run-001", agentId: "agent-001", startedAt: "", endedAt: null, status: "active" };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockRun, 201));
+
+    await startAgentRun("agent-001", "proj_123");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/agents/agent-001/runs?projectId=proj_123",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("throws on 404 when agent not found", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Agent agent-999 not found" }, 404),
+    );
+
+    await expect(startAgentRun("agent-999")).rejects.toThrow("not found");
+  });
+});
 
 describe("Git Management API", () => {
   const originalFetch = globalThis.fetch;

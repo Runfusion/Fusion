@@ -12,6 +12,7 @@ vi.mock("../../api", () => ({
   updateAgent: vi.fn(),
   updateAgentState: vi.fn(),
   deleteAgent: vi.fn(),
+  startAgentRun: vi.fn(),
   fetchModels: vi.fn().mockResolvedValue({ models: [] }),
 }));
 
@@ -19,6 +20,7 @@ const mockFetchAgents = vi.mocked(apiModule.fetchAgents);
 const mockCreateAgent = vi.mocked(apiModule.createAgent);
 const mockUpdateAgentState = vi.mocked(apiModule.updateAgentState);
 const mockDeleteAgent = vi.mocked(apiModule.deleteAgent);
+const mockStartAgentRun = vi.mocked(apiModule.startAgentRun);
 const mockFetchAgentStats = vi.mocked((apiModule as any).fetchAgentStats);
 
 describe("AgentsView", () => {
@@ -73,6 +75,13 @@ describe("AgentsView", () => {
     mockCreateAgent.mockResolvedValue(mockAgents[0]);
     mockUpdateAgentState.mockResolvedValue({ ...mockAgents[0], state: "active" });
     mockDeleteAgent.mockResolvedValue(undefined);
+    mockStartAgentRun.mockResolvedValue({
+      id: "run-001",
+      agentId: "agent-001",
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      status: "active",
+    });
   });
 
   describe("rendering", () => {
@@ -375,6 +384,7 @@ describe("AgentsView", () => {
 
       await waitFor(() => {
         expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "active", undefined);
+        expect(mockStartAgentRun).toHaveBeenCalledWith("agent-001", undefined);
       });
 
       expect(mockAddToast).toHaveBeenCalledWith(
@@ -421,6 +431,7 @@ describe("AgentsView", () => {
 
       await waitFor(() => {
         expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-003", "active", undefined);
+        expect(mockStartAgentRun).toHaveBeenCalledWith("agent-003", undefined);
       });
     });
 
@@ -441,6 +452,55 @@ describe("AgentsView", () => {
           "error"
         );
       });
+    });
+
+    it("shows error toast when startAgentRun fails but still updates state", async () => {
+      mockStartAgentRun.mockRejectedValue(new Error("Run failed"));
+
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByTitle("Activate")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByTitle("Activate"));
+
+      await waitFor(() => {
+        expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "active", undefined);
+        expect(mockStartAgentRun).toHaveBeenCalledWith("agent-001", undefined);
+        expect(mockAddToast).toHaveBeenCalledWith(
+          expect.stringContaining("failed to start run"),
+          "error"
+        );
+      });
+    });
+
+    it("does not start run when pausing agent", async () => {
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        const agentCards = document.querySelectorAll(".agent-card");
+        expect(agentCards.length).toBeGreaterThan(0);
+      });
+
+      // Find the active agent card
+      const agentCards = document.querySelectorAll(".agent-card");
+      let activeCard: Element | null = null;
+      agentCards.forEach(card => {
+        if (card.textContent?.includes("agent-002")) {
+          activeCard = card;
+        }
+      });
+
+      const pauseButton = activeCard?.querySelector('[title="Pause"]') as HTMLElement;
+      fireEvent.click(pauseButton);
+
+      await waitFor(() => {
+        expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-002", "paused", undefined);
+      });
+
+      // startAgentRun should NOT be called when pausing
+      expect(mockStartAgentRun).not.toHaveBeenCalled();
     });
   });
 
