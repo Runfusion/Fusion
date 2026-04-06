@@ -13,6 +13,7 @@ import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
 import { executorLog, reviewerLog } from "./logger.js";
+import { TokenCapDetector } from "./token-cap-detector.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
 import { isTransientError, isSilentTransientError } from "./transient-error-detector.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
@@ -256,6 +257,8 @@ export class TaskExecutor {
   private childSessions = new Map<string, AgentSession>();
   /** Total count of currently spawned agents (across all parents). */
   private totalSpawnedCount = 0;
+  /** Token cap detector for proactive context compaction. */
+  private tokenCapDetector = new TokenCapDetector();
 
   /** Returns the set of task IDs currently being executed. */
   getExecutingTaskIds(): Set<string> {
@@ -844,6 +847,31 @@ export class TaskExecutor {
           // session.prompt() resolves normally even when retries are exhausted —
           // the error is stored on session.state.error instead of being thrown.
           checkSessionError(session);
+
+          // Check if proactive context compaction is needed based on token cap setting.
+          // This runs after the main prompt completes to avoid interrupting active work.
+          try {
+            const capResult = await this.tokenCapDetector.checkAndCompact(
+              session,
+              task.id,
+              settings.tokenCap,
+              async (s) => {
+                const compactResult = await compactSessionContext(s);
+                if (compactResult) {
+                  await this.store.logEntry(
+                    task.id,
+                    `Context compacted at ${compactResult.tokensBefore} tokens (token cap: ${settings.tokenCap})`,
+                  );
+                }
+                return compactResult;
+              },
+            );
+            if (capResult.triggered) {
+              executorLog.log(`${task.id} token cap check: ${capResult.message}`);
+            }
+          } catch (err) {
+            executorLog.log(`${task.id} token cap check failed (non-fatal): ${err}`);
+          }
 
           // If loop recovery is pending (compact-and-resume was triggered by
           // handleLoopDetected), consume the pending state and resume with a

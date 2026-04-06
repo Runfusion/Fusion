@@ -695,6 +695,21 @@ export function SettingsModal({
               );
             })()}
 
+            <div className="form-group">
+              <label htmlFor="tokenCap">Token Cap</label>
+              <input
+                id="tokenCap"
+                type="number"
+                placeholder="100000"
+                value={(form as any).tokenCap ?? ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setForm((f) => ({ ...f, tokenCap: val ? parseInt(val, 10) : undefined } as any));
+                }}
+              />
+              <small>Automatically compact context when approaching this token count. Leave empty to use default behavior (compact only on overflow errors).</small>
+            </div>
+
             {/* --- Planning & Validation --- */}
             <h4 className="settings-section-heading" style={{ marginTop: "1.5rem" }}>Planning &amp; Validation</h4>
             {modelsLoading ? (

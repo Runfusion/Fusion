@@ -924,6 +924,11 @@ export interface ProjectSettings {
    *  in their prompts and will not read or write to .fusion/memory.md.
    *  Default: true (enabled for backward compatibility). */
   memoryEnabled?: boolean;
+  /** Maximum token count before auto-compact triggers. When undefined, compact
+   *  only on overflow errors. When set, the engine monitors token usage after
+   *  each prompt and proactively compacts context when the token count reaches
+   *  this threshold. */
+  tokenCap?: number;
 }
 
 /**
@@ -1013,6 +1018,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   insightExtractionSchedule: "0 2 * * *",
   insightExtractionMinIntervalMs: 86_400_000,
   memoryEnabled: true,
+  tokenCap: undefined,
 };
 
 /**
@@ -1087,6 +1093,7 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "titleSummarizerModelId",
   "titleSummarizerFallbackProvider",
   "titleSummarizerFallbackModelId",
+  "tokenCap",
   "insightExtractionEnabled",
   "insightExtractionSchedule",
   "insightExtractionMinIntervalMs",
