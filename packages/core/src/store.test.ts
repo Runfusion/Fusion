@@ -2134,6 +2134,47 @@ Task with acceptance criteria
       const refinement = allTasksAfter.find((t) => t.id !== task.id && t.title?.includes("Refinement"));
       expect(refinement).toBeDefined();
     });
+
+    it("transitions awaiting-approval to needs-respecify when user comments on triage task", async () => {
+      const task = await store.createTask({ description: "Task in triage" });
+      // Keep in triage but set awaiting-approval status
+      await store.updateTask(task.id, { status: "awaiting-approval" });
+
+      const result = await store.addComment(task.id, "I want to change the approach", "user");
+
+      // Re-read the task to get the Phase 3 status update
+      const updated = await store.getTask(task.id);
+
+      // Task should remain in triage but status should change to needs-respecify
+      expect(updated.column).toBe("triage");
+      expect(updated.status).toBe("needs-respecify");
+      // Comment should still be added
+      expect(updated.comments).toHaveLength(1);
+      expect(updated.comments![0].text).toBe("I want to change the approach");
+    });
+
+    it("does NOT transition to needs-respecify when agent comments on awaiting-approval task", async () => {
+      const task = await store.createTask({ description: "Task in triage" });
+      await store.updateTask(task.id, { status: "awaiting-approval" });
+
+      const updated = await store.addComment(task.id, "Agent system note", "agent");
+
+      // Status should remain awaiting-approval for agent comments
+      expect(updated.status).toBe("awaiting-approval");
+      // Comment should still be added
+      expect(updated.comments).toHaveLength(1);
+    });
+
+    it("does NOT transition to needs-respecify when user comments on non-awaiting-approval triage task", async () => {
+      const task = await store.createTask({ description: "Task in triage" });
+      // Task is in triage with no status (not awaiting-approval)
+      expect(task.status).toBeUndefined();
+
+      const updated = await store.addComment(task.id, "User feedback", "user");
+
+      // Status should remain undefined
+      expect(updated.status).toBeUndefined();
+    });
   });
 
   describe("task comments and merge details types", () => {

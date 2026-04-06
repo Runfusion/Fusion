@@ -550,6 +550,14 @@ Get notified when tasks complete, merge, or fail. Includes dashboard deep links 
 ```
 AI-generated specifications require manual approval before moving to Todo. Tasks show "Awaiting Approval" status with amber highlighting.
 
+**Comment-Aware Triage & Spec Review:**
+
+User comments on triage tasks are automatically consumed during specification generation and spec review:
+
+- **During triage**: The AI triage agent sees all user comments as explicit feedback context, ensuring the specification addresses every user concern.
+- **During spec review**: The reviewer explicitly verifies that every user comment is addressed in the PROMPT.md. Missing comment coverage results in a `REVISE` verdict.
+- **Stale approval invalidation**: If a new user comment arrives after the spec was approved, the approval is automatically invalidated. The task returns to triage with `needs-respecify` status, triggering re-specification and re-review before the task can advance to execution. This prevents stale specs from reaching the execution phase when users provide late feedback.
+
 **Auto-Backup:**
 ```json
 {

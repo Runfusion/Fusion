@@ -8,7 +8,7 @@
  * - Verdict + feedback is returned to the worker
  */
 
-import type { TaskStore } from "@fusion/core";
+import type { TaskStore, TaskComment } from "@fusion/core";
 import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
 import { AgentLogger } from "./agent-logger.js";
 import { reviewerLog } from "./logger.js";
@@ -113,6 +113,7 @@ access to the codebase and can run commands to inspect code.
 - **Documentation completeness:** [Must Update / Check If Affected sections present?]
 - **Sizing & review level:** [Size and review level appropriate for the work?]
 - **Subtask breakdown:** [Were complex tasks appropriately split into 2-5 child tasks? A task with 8+ implementation steps, affecting 3+ packages, should have been divided]
+- **User comment coverage:** [Were all user comments addressed? Every user comment must be reflected in the spec — missing coverage is a blocking REVISE]
 
 ### Suggestions
 - [Optional improvements, not blocking]
@@ -185,6 +186,8 @@ export interface ReviewOptions {
   store?: TaskStore;
   /** Task ID for agent log persistence. Required alongside `store`. */
   taskId?: string;
+  /** User comments on the task (author === "user"). For spec reviews, the reviewer explicitly checks that every comment is addressed. */
+  userComments?: TaskComment[];
 }
 
 /**
@@ -202,7 +205,7 @@ export async function reviewStep(
 ): Promise<ReviewResult> {
   // Build the review request
   const request = buildReviewRequest(
-    taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline,
+    taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments,
   );
 
   // Create AgentLogger for reviewer if store is available
@@ -289,6 +292,7 @@ function buildReviewRequest(
   promptContent: string,
   _cwd: string,
   baseline?: string,
+  userComments?: TaskComment[],
 ): string {
   const parts = [
     `Review request for task ${taskId}, Step ${stepNumber}: ${stepName}`,
@@ -313,6 +317,25 @@ function buildReviewRequest(
       "Check that steps have concrete, verifiable outcomes — not vague instructions.",
       "Ensure testing requirements demand real automated tests with assertions.",
     );
+
+    // Add user comment coverage check for spec reviews
+    if (userComments && userComments.length > 0) {
+      parts.push(
+        "",
+        "## User Comment Coverage (MANDATORY)",
+        "",
+        "The following user comments were posted on this task. You MUST verify that the spec addresses **every** comment. If any user comment is not reflected or addressed in the PROMPT.md, issue a REVISE verdict.",
+        "",
+      );
+      for (const comment of userComments) {
+        const date = comment.updatedAt || comment.createdAt;
+        parts.push(`- **[${date}]** ${comment.text}`);
+      }
+      parts.push(
+        "",
+        "Check each comment above against the spec content. Missing coverage for any user comment is a blocking issue.",
+      );
+    }
   } else if (reviewType === "plan") {
     parts.push(
       "## What to review",
