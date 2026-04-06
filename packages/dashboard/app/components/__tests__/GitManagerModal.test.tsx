@@ -1646,8 +1646,8 @@ describe("GitManagerModal", () => {
       expect(screen.getByText(/file\.ts \| 1/)).toBeInTheDocument();
     });
 
-    // Click again to collapse
-    await user.click(screen.getByText("Toggle commit"));
+    // Click again to collapse (use first match — the compact header is the clickable element)
+    await user.click(screen.getAllByText("Toggle commit")[0]);
 
     // Diff content should be gone
     await waitFor(() => {
@@ -1754,8 +1754,8 @@ describe("GitManagerModal", () => {
       expect(screen.getByText(/file\.ts \| 2/)).toBeInTheDocument();
     });
 
-    // Click again to collapse
-    await user.click(screen.getByText("Remote toggle commit"));
+    // Click again to collapse (use first match — the compact header is the clickable element)
+    await user.click(screen.getAllByText("Remote toggle commit")[0]);
 
     // Diff content should be gone
     await waitFor(() => {

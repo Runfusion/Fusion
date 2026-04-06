@@ -1821,6 +1821,9 @@ function RemotesPanel({
                           </div>
                         ) : aheadCommitDiff ? (
                           <>
+                            {commit.message && (
+                              <div className="gm-commit-message-full">{commit.message}</div>
+                            )}
                             {aheadCommitDiff.stat && <pre className="gm-diff-stat">{aheadCommitDiff.stat}</pre>}
                             <pre className="gm-diff-patch">{aheadCommitDiff.patch}</pre>
                           </>
@@ -2096,6 +2099,9 @@ function RemotesPanel({
                         </div>
                       ) : remoteCommitDiff ? (
                         <>
+                          {commit.message && (
+                            <div className="gm-commit-message-full">{commit.message}</div>
+                          )}
                           {remoteCommitDiff.stat && <pre className="gm-diff-stat">{remoteCommitDiff.stat}</pre>}
                           <pre className="gm-diff-patch">{remoteCommitDiff.patch}</pre>
                         </>

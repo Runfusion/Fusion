@@ -16515,6 +16515,17 @@ html .column.drag-over * {
   margin: var(--space-xs) var(--space-sm) var(--space-sm) var(--space-sm);
 }
 
+.gm-commit-message-full {
+  padding: var(--space-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .gm-ahead-commits-list {
   max-height: 280px;
   overflow-y: auto;
