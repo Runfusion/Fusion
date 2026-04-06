@@ -61,12 +61,26 @@ export function slugify(str: string): string {
  * @returns A unique worktree directory name (not a full path)
  */
 export function generateWorktreeName(rootDir: string): string {
+  return generateReservedWorktreeName(rootDir);
+}
+
+/**
+ * Generate a unique worktree directory name while also avoiding names that
+ * have been reserved in-memory but may not exist on disk yet.
+ */
+export function generateReservedWorktreeName(
+  rootDir: string,
+  reservedNames: Set<string> = new Set(),
+): string {
   const adjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
   const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
   const baseName = `${adjective}-${noun}`;
 
   const worktreesDir = join(rootDir, ".worktrees");
   const existing = getExistingWorktreeNames(worktreesDir);
+  for (const reserved of reservedNames) {
+    existing.add(reserved);
+  }
 
   if (!existing.has(baseName)) {
     return baseName;

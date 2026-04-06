@@ -538,6 +538,78 @@ describe("Scheduler", () => {
     });
   });
 
+  describe("worktree reservation", () => {
+    it("assigns a planned worktree path before moving a task to in-progress", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const task = createMockTask({ id: "FN-010", column: "todo" });
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([task]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4, worktreeNaming: "task-id" }),
+        updateTask,
+        moveTask,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(updateTask).toHaveBeenCalledWith("FN-010", {
+        status: null,
+        blockedBy: null,
+        baseBranch: undefined,
+        worktree: "/test/project/.worktrees/fn-010",
+      });
+      expect(moveTask).toHaveBeenCalledWith("FN-010", "in-progress");
+      expect(updateTask.mock.invocationCallOrder[0]).toBeLessThan(moveTask.mock.invocationCallOrder[0]);
+    });
+
+    it("reserves unique random worktree names within the same scheduling pass", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const randomSpy = vi.spyOn(Math, "random")
+        .mockReturnValueOnce(0)
+        .mockReturnValueOnce(0)
+        .mockReturnValueOnce(0)
+        .mockReturnValueOnce(0);
+
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([
+          createMockTask({ id: "FN-011", column: "todo" }),
+          createMockTask({ id: "FN-012", column: "todo" }),
+        ]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 4, maxWorktrees: 4, worktreeNaming: "random" }),
+        updateTask,
+        moveTask,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(updateTask).toHaveBeenNthCalledWith(1, "FN-011", {
+        status: null,
+        blockedBy: null,
+        baseBranch: undefined,
+        worktree: "/test/project/.worktrees/amber-aspen",
+      });
+      expect(updateTask).toHaveBeenNthCalledWith(2, "FN-012", {
+        status: null,
+        blockedBy: null,
+        baseBranch: undefined,
+        worktree: "/test/project/.worktrees/amber-aspen-2",
+      });
+
+      randomSpy.mockRestore();
+    });
+  });
+
   describe("semaphore integration", () => {
     it("respects semaphore available count", async () => {
       const semaphore = {

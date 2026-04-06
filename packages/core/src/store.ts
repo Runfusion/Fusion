@@ -1016,7 +1016,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string; branch?: string; baseCommitSha?: string; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; stuckKillCount?: number | null; recoveryRetryCount?: number | null; nextRecoveryAt?: string | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string | null; status?: string | null; dependencies?: string[]; blockedBy?: string | null; paused?: boolean; baseBranch?: string | null; branch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; mergeRetries?: number; stuckKillCount?: number | null; recoveryRetryCount?: number | null; nextRecoveryAt?: string | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Validate that task doesn't depend on itself
@@ -1034,7 +1034,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
       if (updates.title !== undefined) task.title = updates.title;
       if (updates.description !== undefined) task.description = updates.description;
-      if (updates.worktree !== undefined) task.worktree = updates.worktree;
+      if (updates.worktree === null) {
+        task.worktree = undefined;
+      } else if (updates.worktree !== undefined) {
+        task.worktree = updates.worktree;
+      }
       // Detect new dependencies being added to a todo task → auto-move to triage
       let movedToTriage = false;
       if (updates.dependencies !== undefined) {
@@ -1064,9 +1068,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.blockedBy = updates.blockedBy;
       }
       if (updates.paused !== undefined) task.paused = updates.paused || undefined;
-      if (updates.baseBranch !== undefined) task.baseBranch = updates.baseBranch;
-      if (updates.branch !== undefined) task.branch = updates.branch;
-      if (updates.baseCommitSha !== undefined) task.baseCommitSha = updates.baseCommitSha;
+      if (updates.baseBranch === null) {
+        task.baseBranch = undefined;
+      } else if (updates.baseBranch !== undefined) {
+        task.baseBranch = updates.baseBranch;
+      }
+      if (updates.branch === null) {
+        task.branch = undefined;
+      } else if (updates.branch !== undefined) {
+        task.branch = updates.branch;
+      }
+      if (updates.baseCommitSha === null) {
+        task.baseCommitSha = undefined;
+      } else if (updates.baseCommitSha !== undefined) {
+        task.baseCommitSha = updates.baseCommitSha;
+      }
       if (updates.size !== undefined) task.size = updates.size;
       if (updates.reviewLevel !== undefined) task.reviewLevel = updates.reviewLevel;
       if (updates.mergeRetries !== undefined) task.mergeRetries = updates.mergeRetries;

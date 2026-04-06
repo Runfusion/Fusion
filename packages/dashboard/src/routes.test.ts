@@ -701,10 +701,10 @@ describe("POST /tasks/:id/retry", () => {
 
     expect(res.status).toBe(200);
     expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
-      status: undefined,
-      error: undefined,
-      worktree: undefined,
-      branch: undefined,
+      status: null,
+      error: null,
+      worktree: null,
+      branch: null,
     });
     expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
   });
@@ -734,10 +734,10 @@ describe("POST /tasks/:id/retry", () => {
 
     expect(res.status).toBe(200);
     expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
-      status: undefined,
-      error: undefined,
-      worktree: undefined,
-      branch: undefined,
+      status: null,
+      error: null,
+      worktree: null,
+      branch: null,
     });
     expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
   });
@@ -755,10 +755,10 @@ describe("POST /tasks/:id/retry", () => {
 
     expect(res.status).toBe(200);
     expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
-      status: undefined,
-      error: undefined,
-      worktree: undefined,
-      branch: undefined,
+      status: null,
+      error: null,
+      worktree: null,
+      branch: null,
     });
     expect(store.moveTask).toHaveBeenCalledWith("KB-001", "todo");
     expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Retry requested from dashboard");

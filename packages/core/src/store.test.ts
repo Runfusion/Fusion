@@ -2971,6 +2971,34 @@ Task with acceptance criteria
       expect(duplicated.status).toBeUndefined();
     });
 
+    it("clears nullable execution fields via updateTask(null)", async () => {
+      const task = await store.createTask({ description: "Test clear nullable execution fields", column: "todo" });
+      await store.updateTask(task.id, {
+        worktree: "/some/path",
+        branch: "fusion/fn-001",
+        baseBranch: "main",
+        baseCommitSha: "abc123",
+        status: "executing",
+        error: "boom",
+      });
+
+      const updated = await store.updateTask(task.id, {
+        worktree: null,
+        branch: null,
+        baseBranch: null,
+        baseCommitSha: null,
+        status: null,
+        error: null,
+      });
+
+      expect(updated.worktree).toBeUndefined();
+      expect(updated.branch).toBeUndefined();
+      expect(updated.baseBranch).toBeUndefined();
+      expect(updated.baseCommitSha).toBeUndefined();
+      expect(updated.status).toBeUndefined();
+      expect(updated.error).toBeUndefined();
+    });
+
     it("does NOT copy dependencies", async () => {
       const dep = await store.createTask({ description: "Dependency" });
       const task = await store.createTask({ description: "Test task", dependencies: [dep.id] });

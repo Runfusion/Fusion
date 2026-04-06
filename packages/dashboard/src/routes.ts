@@ -1794,10 +1794,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         return;
       }
       await scopedStore.updateTask(req.params.id, {
-        status: undefined,
-        error: undefined,
-        worktree: undefined,
-        branch: undefined,
+        status: null,
+        error: null,
+        worktree: null,
+        branch: null,
       });
       await scopedStore.logEntry(req.params.id, "Retry requested from dashboard");
       const updated = await scopedStore.moveTask(req.params.id, "todo");

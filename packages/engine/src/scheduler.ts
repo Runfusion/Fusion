@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentSemaphore } from "./concurrency.js";
+import { generateReservedWorktreeName, slugify } from "./worktree-names.js";
 import { schedulerLog } from "./logger.js";
 import { type PrMonitor, type PrComment } from "./pr-monitor.js";
 import { getCurrentGitHubRepo } from "./github.js";
@@ -349,6 +350,39 @@ export class Scheduler {
   }
 
   /**
+   * Reserve the worktree path a task will use before it enters in-progress.
+   * This prevents tasks from appearing active without an assigned worktree.
+   */
+  private planWorktreePath(
+    task: Task,
+    naming: string | undefined,
+    reservedNames: Set<string>,
+  ): string {
+    if (task.worktree) {
+      const existingName = task.worktree.split("/").pop();
+      if (existingName) reservedNames.add(existingName);
+      return task.worktree;
+    }
+
+    let worktreeName: string;
+    switch (naming || "random") {
+      case "task-id":
+        worktreeName = task.id.toLowerCase();
+        break;
+      case "task-title":
+        worktreeName = slugify(task.title || task.description.slice(0, 60));
+        break;
+      case "random":
+      default:
+        worktreeName = generateReservedWorktreeName(this.store.getRootDir(), reservedNames);
+        break;
+    }
+
+    reservedNames.add(worktreeName);
+    return join(this.store.getRootDir(), ".worktrees", worktreeName);
+  }
+
+  /**
    * Run one scheduling pass.
    *
    * Uses a re-entrance guard (`this.scheduling`) to prevent overlapping
@@ -521,6 +555,11 @@ export class Scheduler {
       // Resolve dependency order among todo tasks
       const ordered = resolveDependencyOrder(todo);
       let started = 0;
+      const reservedWorktreeNames = new Set(
+        tasks
+          .map((task) => task.worktree?.split("/").pop())
+          .filter((name): name is string => Boolean(name)),
+      );
 
       for (const taskId of ordered) {
         const task = tasks.find((t) => t.id === taskId)!;
@@ -571,10 +610,20 @@ export class Scheduler {
 
         // Dependencies met — resolve base branch from in-review deps
         const baseBranch = this.resolveBaseBranch(task, tasks);
+        const plannedWorktree = this.planWorktreePath(
+          task,
+          settings.worktreeNaming,
+          reservedWorktreeNames,
+        );
 
-        // Clear status and move to in-progress
+        // Clear status, reserve worktree path, and then move to in-progress
         schedulerLog.log(`Starting ${task.id}: ${task.title || task.id} (deps satisfied)`);
-        await this.store.updateTask(task.id, { status: null, blockedBy: null, baseBranch: baseBranch ?? undefined });
+        await this.store.updateTask(task.id, {
+          status: null,
+          blockedBy: null,
+          baseBranch: baseBranch ?? undefined,
+          worktree: plannedWorktree,
+        });
         await this.store.moveTask(task.id, "in-progress");
         this.options.onSchedule?.(task);
         started++;
