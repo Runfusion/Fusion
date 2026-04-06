@@ -386,15 +386,15 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // No baseCommitSha set, so Priority 2: merge-base with base branch
-      if (cmd.includes("git merge-base merge789 origin/main") || cmd.includes("git merge-base merge789 main")) {
+      // No baseCommitSha set, so Priority 2: rev-parse first parent
+      if (cmd === "git rev-parse merge789^") {
         return "base456\n" as any;
       }
       // git diff --name-status base456..merge789 → only this task's files
       if (cmd === "git diff --name-status base456..merge789") {
         return "A\tfile-b.txt\n" as any;
       }
-      // Per-file diff using merge base
+      // Per-file diff using first parent
       if (cmd === 'git diff base456..merge789 -- "file-b.txt"') {
         return "diff --git a/file-b.txt b/file-b.txt\n--- /dev/null\n+++ b/file-b.txt\n+hello\n" as any;
       }
@@ -422,8 +422,8 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // No baseCommitSha, so Priority 2: merge-base with base branch
-      if (cmd.includes("git merge-base sha_with_modifications origin/main") || cmd.includes("git merge-base sha_with_modifications main")) {
+      // No baseCommitSha, so Priority 2: rev-parse first parent
+      if (cmd === "git rev-parse sha_with_modifications^") {
         return "base_xyz\n" as any;
       }
       if (cmd === "git diff --name-status base_xyz..sha_with_modifications") {
@@ -468,11 +468,7 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
       // No baseCommitSha — Priority 1 skipped
-      // Priority 2: merge-base with base branch fails
-      if (cmd.includes("git merge-base merge_ff origin/main") || cmd.includes("git merge-base merge_ff main")) {
-        throw new Error("fatal: not a git repository");
-      }
-      // Priority 3: fall back to first parent
+      // Priority 2: rev-parse first parent (used to be merge-base)
       if (cmd === "git rev-parse merge_ff^") {
         return "parent_ff\n" as any;
       }
@@ -528,8 +524,8 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // No baseCommitSha — Priority 2: merge-base with base branch
-      if (cmd.includes("git merge-base multi_merge origin/main") || cmd.includes("git merge-base multi_merge main")) {
+      // No baseCommitSha — Priority 2: rev-parse first parent
+      if (cmd === "git rev-parse multi_merge^") {
         return "multi_base\n" as any;
       }
       if (cmd === "git diff --name-status multi_base..multi_merge") {
@@ -615,11 +611,11 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
       if (cmd === "git merge-base --is-ancestor stale_base merged_commit") {
         throw new Error("not an ancestor");
       }
-      // Priority 2: merge-base with base branch succeeds
-      if (cmd.includes("git merge-base merged_commit origin/develop") || cmd.includes("git merge-base merged_commit develop")) {
+      // Priority 2: rev-parse first parent of merge commit
+      if (cmd === "git rev-parse merged_commit^") {
         return "branch_base\n" as any;
       }
-      // Diff from branch merge-base
+      // Diff from first parent
       if (cmd === "git diff --name-status branch_base..merged_commit") {
         return "M\tsrc/app.ts\n" as any;
       }
@@ -640,9 +636,9 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
       expect.stringContaining("git merge-base --is-ancestor stale_base merged_commit"),
       expect.any(Object),
     );
-    // Verify branch merge-base was called as fallback
+    // Verify rev-parse first parent was called as fallback
     expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("git merge-base merged_commit"),
+      expect.stringContaining("git rev-parse merged_commit^"),
       expect.any(Object),
     );
   });
@@ -658,8 +654,8 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
 
     mockExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      // Priority 2: merge-base with custom base branch
-      if (cmd.includes("git merge-base custom_merge origin/release/v2") || cmd.includes("git merge-base custom_merge release/v2")) {
+      // No baseCommitSha — Priority 2: rev-parse first parent
+      if (cmd === "git rev-parse custom_merge^") {
         return "release_base\n" as any;
       }
       if (cmd === "git diff --name-status release_base..custom_merge") {
@@ -677,9 +673,9 @@ describe("GET /api/tasks/:id/diff — done tasks", () => {
     expect(response.status).toBe(200);
     expect(response.body.files).toHaveLength(1);
     expect(response.body.files[0].path).toBe("release-file.ts");
-    // Verify the custom base branch was used
+    // Verify the first parent was resolved via rev-parse
     expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("release/v2"),
+      expect.stringContaining("git rev-parse custom_merge^"),
       expect.any(Object),
     );
   });

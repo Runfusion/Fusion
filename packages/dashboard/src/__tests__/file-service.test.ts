@@ -10,16 +10,26 @@ import {
   listWorkspaceFiles,
   readWorkspaceFile,
   writeWorkspaceFile,
+  copyWorkspaceFile,
+  moveWorkspaceFile,
+  deleteWorkspaceFile,
+  renameWorkspaceFile,
+  getWorkspaceFileForDownload,
+  getWorkspaceFolderForZip,
   MAX_FILE_SIZE,
 } from "../file-service.js";
 import type { TaskStore } from "@fusion/core";
 
 // Mock node:fs/promises - use vi.hoisted for proper hoisting with ES modules
-const { mockReaddir, mockReadFile, mockWriteFile, mockStat } = vi.hoisted(() => ({
+const { mockReaddir, mockReadFile, mockWriteFile, mockStat, mockCopyFile, mockRename, mockRm, mockMkdir } = vi.hoisted(() => ({
   mockReaddir: vi.fn(),
   mockReadFile: vi.fn(),
   mockWriteFile: vi.fn(),
   mockStat: vi.fn(),
+  mockCopyFile: vi.fn(),
+  mockRename: vi.fn(),
+  mockRm: vi.fn(),
+  mockMkdir: vi.fn(),
 }));
 
 // Mock node:fs
@@ -36,11 +46,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       readFile: mockReadFile,
       writeFile: mockWriteFile,
       stat: mockStat,
+      copyFile: mockCopyFile,
+      rename: mockRename,
+      rm: mockRm,
+      mkdir: mockMkdir,
     },
     readdir: mockReaddir,
     readFile: mockReadFile,
     writeFile: mockWriteFile,
     stat: mockStat,
+    copyFile: mockCopyFile,
+    rename: mockRename,
+    rm: mockRm,
+    mkdir: mockMkdir,
   };
 });
 
@@ -824,5 +842,470 @@ describe("URL-encoded characters handling", () => {
       "/test/project/file name.txt",
       "utf-8",
     );
+  });
+});
+
+// ── File Operation Tests (Copy, Move, Delete, Rename) ──────────────
+
+describe("copyWorkspaceFile", () => {
+  const mockGetRootDir = vi.fn();
+  const mockStore = {
+    getRootDir: mockGetRootDir,
+  } as unknown as TaskStore;
+
+  beforeEach(() => {
+    mockGetRootDir.mockReset();
+    mockStat.mockReset();
+    mockCopyFile.mockReset();
+    mockReaddir.mockReset();
+    mockMkdir.mockReset();
+  });
+
+  it("copies a file within the workspace", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    // stat for source (exists), stat for destination (ENOENT), stat for dest parent (exists)
+    mockStat
+      .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false, size: 100 })  // source
+      .mockRejectedValueOnce({ code: "ENOENT" })  // dest doesn't exist
+      .mockResolvedValueOnce({ isDirectory: () => true });  // dest parent
+
+    mockCopyFile.mockResolvedValue(undefined);
+
+    const result = await copyWorkspaceFile(mockStore, "project", "src/file.ts", "src/file-copy.ts");
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("Copied");
+    expect(mockCopyFile).toHaveBeenCalledWith("/project/src/file.ts", "/project/src/file-copy.ts");
+  });
+
+  it("copies a directory recursively", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat
+      .mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true })  // source is dir
+      .mockRejectedValueOnce({ code: "ENOENT" })  // dest doesn't exist
+      .mockResolvedValueOnce({ isDirectory: () => true });  // dest parent
+
+    // readdir for the source directory
+    mockReaddir.mockResolvedValue([
+      { name: "sub.ts", isDirectory: () => false },
+    ]);
+    // copyFile for the file inside
+    mockCopyFile.mockResolvedValue(undefined);
+    mockMkdir.mockResolvedValue(undefined);
+
+    const result = await copyWorkspaceFile(mockStore, "project", "src", "src-copy");
+
+    expect(result.success).toBe(true);
+    expect(mockMkdir).toHaveBeenCalledWith("/project/src-copy", { recursive: true });
+    expect(mockCopyFile).toHaveBeenCalledWith("/project/src/sub.ts", "/project/src-copy/sub.ts");
+  });
+
+  it("rejects path traversal in source", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(copyWorkspaceFile(mockStore, "project", "../secret", "dest")).rejects.toThrow("Path traversal");
+  });
+
+  it("rejects path traversal in destination", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(copyWorkspaceFile(mockStore, "project", "file.ts", "../outside")).rejects.toThrow("Path traversal");
+  });
+
+  it("rejects missing source path", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(copyWorkspaceFile(mockStore, "project", "", "dest")).rejects.toThrow("Source path is required");
+  });
+
+  it("rejects missing destination path", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(copyWorkspaceFile(mockStore, "project", "file.ts", "")).rejects.toThrow("Destination path is required");
+  });
+
+  it("rejects when source does not exist", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockRejectedValueOnce({ code: "ENOENT" });
+    await expect(copyWorkspaceFile(mockStore, "project", "missing.ts", "dest.ts")).rejects.toThrow("Source not found");
+  });
+
+  it("rejects when destination already exists", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat
+      .mockResolvedValueOnce({ isFile: () => true })  // source exists
+      .mockResolvedValueOnce({ isFile: () => true });  // dest exists
+    await expect(copyWorkspaceFile(mockStore, "project", "file.ts", "existing.ts")).rejects.toThrow("Destination already exists");
+  });
+
+  it("rejects when destination parent does not exist", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat
+      .mockResolvedValueOnce({ isFile: () => true })  // source
+      .mockRejectedValueOnce({ code: "ENOENT" })  // dest doesn't exist
+      .mockRejectedValueOnce({ code: "ENOENT" });  // dest parent doesn't exist
+    await expect(copyWorkspaceFile(mockStore, "project", "file.ts", "nonexistent/file.ts")).rejects.toThrow("Destination parent directory does not exist");
+  });
+
+  it("rejects operating on workspace root", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    // Even though validatePath would resolve "." to the root, the function checks for it
+    await expect(copyWorkspaceFile(mockStore, "project", ".", "dest")).rejects.toThrow("Cannot operate on workspace root");
+  });
+});
+
+describe("moveWorkspaceFile", () => {
+  const mockGetRootDir = vi.fn();
+  const mockStore = {
+    getRootDir: mockGetRootDir,
+  } as unknown as TaskStore;
+
+  beforeEach(() => {
+    mockGetRootDir.mockReset();
+    mockStat.mockReset();
+    mockRename.mockReset();
+    mockCopyFile.mockReset();
+    mockRm.mockReset();
+  });
+
+  it("moves a file within the workspace", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat
+      .mockResolvedValueOnce({ isFile: () => true })  // source exists
+      .mockRejectedValueOnce({ code: "ENOENT" })  // dest doesn't exist
+      .mockResolvedValueOnce({ isDirectory: () => true });  // dest parent
+
+    mockRename.mockResolvedValue(undefined);
+
+    const result = await moveWorkspaceFile(mockStore, "project", "old.ts", "new.ts");
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("Moved");
+    expect(mockRename).toHaveBeenCalledWith("/project/old.ts", "/project/new.ts");
+  });
+
+  it("rejects path traversal in source", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(moveWorkspaceFile(mockStore, "project", "../secret", "dest")).rejects.toThrow("Path traversal");
+  });
+
+  it("rejects path traversal in destination", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(moveWorkspaceFile(mockStore, "project", "file.ts", "../outside")).rejects.toThrow("Path traversal");
+  });
+
+  it("rejects when source does not exist", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockRejectedValueOnce({ code: "ENOENT" });
+    await expect(moveWorkspaceFile(mockStore, "project", "missing.ts", "dest.ts")).rejects.toThrow("Source not found");
+  });
+
+  it("rejects when destination already exists", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat
+      .mockResolvedValueOnce({ isFile: () => true })  // source
+      .mockResolvedValueOnce({ isFile: () => true });  // dest exists
+    await expect(moveWorkspaceFile(mockStore, "project", "file.ts", "existing.ts")).rejects.toThrow("Destination already exists");
+  });
+
+  it("rejects missing source path", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(moveWorkspaceFile(mockStore, "project", "", "dest")).rejects.toThrow("Source path is required");
+  });
+});
+
+describe("deleteWorkspaceFile", () => {
+  const mockGetRootDir = vi.fn();
+  const mockStore = {
+    getRootDir: mockGetRootDir,
+  } as unknown as TaskStore;
+
+  beforeEach(() => {
+    mockGetRootDir.mockReset();
+    mockStat.mockReset();
+    mockRm.mockReset();
+  });
+
+  it("deletes a file", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false });
+    mockRm.mockResolvedValue(undefined);
+
+    const result = await deleteWorkspaceFile(mockStore, "project", "src/old.ts");
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("Deleted");
+    expect(mockRm).toHaveBeenCalledWith("/project/src/old.ts");
+  });
+
+  it("deletes a directory recursively", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true });
+    mockRm.mockResolvedValue(undefined);
+
+    const result = await deleteWorkspaceFile(mockStore, "project", "src/olddir");
+
+    expect(result.success).toBe(true);
+    expect(mockRm).toHaveBeenCalledWith("/project/src/olddir", { recursive: true });
+  });
+
+  it("rejects path traversal", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(deleteWorkspaceFile(mockStore, "project", "../secret")).rejects.toThrow("Path traversal");
+  });
+
+  it("rejects deleting workspace root", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(deleteWorkspaceFile(mockStore, "project", ".")).rejects.toThrow("Cannot delete workspace root");
+  });
+
+  it("rejects missing file path", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(deleteWorkspaceFile(mockStore, "project", "")).rejects.toThrow("File path is required");
+  });
+
+  it("rejects when file does not exist", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockRejectedValueOnce({ code: "ENOENT" });
+    await expect(deleteWorkspaceFile(mockStore, "project", "missing.ts")).rejects.toThrow("Not found");
+  });
+});
+
+describe("renameWorkspaceFile", () => {
+  const mockGetRootDir = vi.fn();
+  const mockStore = {
+    getRootDir: mockGetRootDir,
+  } as unknown as TaskStore;
+
+  beforeEach(() => {
+    mockGetRootDir.mockReset();
+    mockStat.mockReset();
+    mockRename.mockReset();
+  });
+
+  it("renames a file", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    // stat: source exists, dest doesn't exist
+    mockStat
+      .mockResolvedValueOnce({ isFile: () => true })  // source
+      .mockRejectedValueOnce({ code: "ENOENT" });  // dest doesn't exist
+
+    mockRename.mockResolvedValue(undefined);
+
+    const result = await renameWorkspaceFile(mockStore, "project", "old.ts", "new.ts");
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("Renamed");
+    expect(mockRename).toHaveBeenCalledWith("/project/old.ts", "/project/new.ts");
+  });
+
+  it("renames a directory", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat
+      .mockResolvedValueOnce({ isDirectory: () => true })
+      .mockRejectedValueOnce({ code: "ENOENT" });
+
+    mockRename.mockResolvedValue(undefined);
+
+    const result = await renameWorkspaceFile(mockStore, "project", "src/olddir", "newdir");
+
+    expect(result.success).toBe(true);
+    expect(mockRename).toHaveBeenCalledWith("/project/src/olddir", "/project/src/newdir");
+  });
+
+  it("rejects path traversal", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(renameWorkspaceFile(mockStore, "project", "../secret", "newname")).rejects.toThrow("Path traversal");
+  });
+
+  it("rejects new name with path separator", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(renameWorkspaceFile(mockStore, "project", "file.ts", "sub/name.ts")).rejects.toThrow("path separators");
+  });
+
+  it("rejects new name with backslash", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(renameWorkspaceFile(mockStore, "project", "file.ts", "sub\\name.ts")).rejects.toThrow("path separators");
+  });
+
+  it("rejects empty new name", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(renameWorkspaceFile(mockStore, "project", "file.ts", "")).rejects.toThrow("New name is required");
+  });
+
+  it("rejects when file does not exist", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockRejectedValueOnce({ code: "ENOENT" });
+    await expect(renameWorkspaceFile(mockStore, "project", "missing.ts", "new.ts")).rejects.toThrow("Not found");
+  });
+
+  it("rejects when a file with the new name already exists", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat
+      .mockResolvedValueOnce({ isFile: () => true })  // source exists
+      .mockResolvedValueOnce({ isFile: () => true });  // dest exists
+
+    await expect(renameWorkspaceFile(mockStore, "project", "file.ts", "existing.ts")).rejects.toThrow("already exists");
+  });
+
+  it("rejects renaming workspace root", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(renameWorkspaceFile(mockStore, "project", ".", "newname")).rejects.toThrow("Cannot rename workspace root");
+  });
+
+  it("rejects null bytes in new name", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(renameWorkspaceFile(mockStore, "project", "file.ts", "bad\0name")).rejects.toThrow("path separators");
+  });
+});
+
+describe("getWorkspaceFileForDownload", () => {
+  const mockGetRootDir = vi.fn();
+  const mockStore = {
+    getRootDir: mockGetRootDir,
+  } as unknown as TaskStore;
+
+  beforeEach(() => {
+    mockGetRootDir.mockReset();
+    mockStat.mockReset();
+  });
+
+  it("returns file info for download", async () => {
+    const mtime = new Date("2024-01-15");
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 2048,
+      mtime,
+    });
+
+    const result = await getWorkspaceFileForDownload(mockStore, "project", "src/file.ts");
+
+    expect(result.absolutePath).toBe("/project/src/file.ts");
+    expect(result.fileName).toBe("file.ts");
+    expect(result.stats.size).toBe(2048);
+    expect(result.stats.isFile).toBe(true);
+  });
+
+  it("rejects directories", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockResolvedValue({
+      isFile: () => false,
+      isDirectory: () => true,
+    });
+
+    await expect(getWorkspaceFileForDownload(mockStore, "project", "src")).rejects.toThrow("Not a file");
+  });
+
+  it("rejects path traversal", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(getWorkspaceFileForDownload(mockStore, "project", "../secret")).rejects.toThrow("Path traversal");
+  });
+
+  it("rejects empty path", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(getWorkspaceFileForDownload(mockStore, "project", "")).rejects.toThrow("File path is required");
+  });
+
+  it("rejects non-existent file", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockRejectedValue({ code: "ENOENT" });
+    await expect(getWorkspaceFileForDownload(mockStore, "project", "missing.ts")).rejects.toThrow("File not found");
+  });
+
+  it("rejects downloading workspace root", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(getWorkspaceFileForDownload(mockStore, "project", ".")).rejects.toThrow("Cannot download workspace root");
+  });
+});
+
+describe("getWorkspaceFolderForZip", () => {
+  const mockGetRootDir = vi.fn();
+  const mockStore = {
+    getRootDir: mockGetRootDir,
+  } as unknown as TaskStore;
+
+  beforeEach(() => {
+    mockGetRootDir.mockReset();
+    mockStat.mockReset();
+  });
+
+  it("returns directory info for zip download", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockResolvedValue({
+      isFile: () => false,
+      isDirectory: () => true,
+    });
+
+    const result = await getWorkspaceFolderForZip(mockStore, "project", "src");
+
+    expect(result.absolutePath).toBe("/project/src");
+    expect(result.dirName).toBe("src");
+  });
+
+  it("rejects files (not directories)", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+    });
+
+    await expect(getWorkspaceFolderForZip(mockStore, "project", "file.ts")).rejects.toThrow("Not a directory");
+  });
+
+  it("rejects path traversal", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(getWorkspaceFolderForZip(mockStore, "project", "../secret")).rejects.toThrow("Path traversal");
+  });
+
+  it("rejects empty path", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(getWorkspaceFolderForZip(mockStore, "project", "")).rejects.toThrow("Directory path is required");
+  });
+
+  it("rejects downloading workspace root as ZIP", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    await expect(getWorkspaceFolderForZip(mockStore, "project", ".")).rejects.toThrow("Cannot download workspace root as ZIP");
+  });
+});
+
+describe("moveWorkspaceFile EXDEV fallback", () => {
+  const mockGetRootDir = vi.fn();
+  const mockStore = {
+    getRootDir: mockGetRootDir,
+  } as unknown as TaskStore;
+
+  beforeEach(() => {
+    mockGetRootDir.mockReset();
+    mockStat.mockReset();
+    mockRename.mockReset();
+    mockCopyFile.mockReset();
+    mockRm.mockReset();
+    mockReaddir.mockReset();
+    mockMkdir.mockReset();
+  });
+
+  it("falls back to copy+delete on cross-device move (EXDEV)", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+    // Source exists, destination doesn't exist, dest parent exists
+    mockStat
+      .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false })  // source exists (move check)
+      .mockRejectedValueOnce({ code: "ENOENT" })  // dest doesn't exist (move check)
+      .mockResolvedValueOnce({ isDirectory: () => true })  // dest parent (move check)
+      // copyWorkspaceFile will be called with same paths
+      .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false })  // source (copy)
+      .mockRejectedValueOnce({ code: "ENOENT" })  // dest doesn't exist (copy)
+      .mockResolvedValueOnce({ isDirectory: () => true })  // dest parent (copy)
+      // deleteWorkspaceFile will validate
+      .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false });  // source exists (delete)
+
+    // rename throws EXDEV
+    mockRename.mockRejectedValue({ code: "EXDEV" });
+    mockCopyFile.mockResolvedValue(undefined);
+    mockRm.mockResolvedValue(undefined);
+
+    const result = await moveWorkspaceFile(mockStore, "project", "file.ts", "moved.ts");
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("Moved");
+    expect(mockCopyFile).toHaveBeenCalledWith("/project/file.ts", "/project/moved.ts");
+    expect(mockRm).toHaveBeenCalledWith("/project/file.ts");
   });
 });

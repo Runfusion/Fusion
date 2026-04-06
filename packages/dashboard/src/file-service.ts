@@ -1,6 +1,8 @@
-import { join, resolve, relative, dirname } from "node:path";
-import { readdir, readFile as fsReadFile, writeFile as fsWriteFile, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { join, resolve, relative, dirname, basename } from "node:path";
+import { readdir, readFile as fsReadFile, writeFile as fsWriteFile, stat, copyFile as fsCopyFile, rename as fsRename, rm as fsRm, mkdir } from "node:fs/promises";
+import { existsSync, createReadStream, statSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
 import type { TaskStore } from "@fusion/core";
 
 /**
@@ -37,6 +39,14 @@ export interface SaveFileResponse {
   success: true;
   mtime: string;
   size: number;
+}
+
+/**
+ * File operation response for copy/move/delete/rename operations.
+ */
+export interface FileOperationResponse {
+  success: true;
+  message?: string;
 }
 
 /**
@@ -466,4 +476,432 @@ export async function writeWorkspaceFile(
 ): Promise<SaveFileResponse> {
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
   return writeFileForBasePath(workspaceBase, filePath, content);
+}
+
+// ── Workspace File Operations (Copy, Move, Delete, Rename) ─────────
+
+/**
+ * Validate that both source and destination paths are within the allowed workspace.
+ * Prevents copying/moving files outside the workspace boundary.
+ */
+function validateSourceAndDestination(basePath: string, sourcePath: string, destinationPath: string): { resolvedSource: string; resolvedDest: string } {
+  const resolvedSource = validatePath(basePath, sourcePath);
+  const resolvedDest = validatePath(basePath, destinationPath);
+
+  // Prevent operating on the workspace root itself
+  const sourceRelative = relative(resolve(basePath), resolvedSource);
+  if (!sourceRelative || sourceRelative === "." || sourceRelative === "") {
+    throw new FileServiceError("Cannot operate on workspace root directory", "EINVAL");
+  }
+
+  return { resolvedSource, resolvedDest };
+}
+
+/**
+ * Copy a file or directory within a workspace.
+ *
+ * @param store - The TaskStore instance
+ * @param workspace - Workspace identifier ("project" or task ID)
+ * @param sourcePath - Relative source path within the workspace
+ * @param destinationPath - Relative destination path within the workspace
+ * @returns FileOperationResponse indicating success
+ * @throws FileServiceError on validation or filesystem errors
+ */
+export async function copyWorkspaceFile(
+  store: TaskStore,
+  workspace: WorkspaceId,
+  sourcePath: string,
+  destinationPath: string,
+): Promise<FileOperationResponse> {
+  if (!sourcePath) {
+    throw new FileServiceError("Source path is required", "EINVAL");
+  }
+  if (!destinationPath) {
+    throw new FileServiceError("Destination path is required", "EINVAL");
+  }
+
+  const workspaceBase = await getWorkspaceBasePath(store, workspace);
+  const { resolvedSource, resolvedDest } = validateSourceAndDestination(workspaceBase, sourcePath, destinationPath);
+
+  // Verify source exists
+  let sourceStats;
+  try {
+    sourceStats = await stat(resolvedSource);
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      throw new FileServiceError(`Source not found: ${sourcePath}`, "ENOENT");
+    }
+    throw err;
+  }
+
+  // Check destination doesn't already exist
+  try {
+    await stat(resolvedDest);
+    throw new FileServiceError(`Destination already exists: ${destinationPath}`, "EEXIST");
+  } catch (err: any) {
+    if (err.code !== "ENOENT") {
+      if (err instanceof FileServiceError) throw err;
+    }
+    // ENOENT is expected - destination should not exist
+  }
+
+  // Ensure destination parent directory exists
+  const destParent = dirname(resolvedDest);
+  try {
+    const parentStats = await stat(destParent);
+    if (!parentStats.isDirectory()) {
+      throw new FileServiceError("Destination parent is not a directory", "ENOTDIR");
+    }
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      throw new FileServiceError("Destination parent directory does not exist", "ENOENT");
+    }
+    throw err;
+  }
+
+  try {
+    if (sourceStats.isFile()) {
+      await fsCopyFile(resolvedSource, resolvedDest);
+    } else if (sourceStats.isDirectory()) {
+      await copyDirectoryRecursive(resolvedSource, resolvedDest);
+    }
+    return { success: true, message: `Copied "${sourcePath}" to "${destinationPath}"` };
+  } catch (err: any) {
+    if (err.code === "EACCES" || err.code === "EPERM") {
+      throw new FileServiceError(`Permission denied: ${err.message}`, "EACCES");
+    }
+    throw err;
+  }
+}
+
+/**
+ * Move a file or directory within a workspace.
+ *
+ * @param store - The TaskStore instance
+ * @param workspace - Workspace identifier ("project" or task ID)
+ * @param sourcePath - Relative source path within the workspace
+ * @param destinationPath - Relative destination path within the workspace
+ * @returns FileOperationResponse indicating success
+ * @throws FileServiceError on validation or filesystem errors
+ */
+export async function moveWorkspaceFile(
+  store: TaskStore,
+  workspace: WorkspaceId,
+  sourcePath: string,
+  destinationPath: string,
+): Promise<FileOperationResponse> {
+  if (!sourcePath) {
+    throw new FileServiceError("Source path is required", "EINVAL");
+  }
+  if (!destinationPath) {
+    throw new FileServiceError("Destination path is required", "EINVAL");
+  }
+
+  const workspaceBase = await getWorkspaceBasePath(store, workspace);
+  const { resolvedSource, resolvedDest } = validateSourceAndDestination(workspaceBase, sourcePath, destinationPath);
+
+  // Verify source exists
+  try {
+    await stat(resolvedSource);
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      throw new FileServiceError(`Source not found: ${sourcePath}`, "ENOENT");
+    }
+    throw err;
+  }
+
+  // Check destination doesn't already exist
+  try {
+    await stat(resolvedDest);
+    throw new FileServiceError(`Destination already exists: ${destinationPath}`, "EEXIST");
+  } catch (err: any) {
+    if (err.code !== "ENOENT") {
+      if (err instanceof FileServiceError) throw err;
+    }
+  }
+
+  // Ensure destination parent directory exists
+  const destParent = dirname(resolvedDest);
+  try {
+    const parentStats = await stat(destParent);
+    if (!parentStats.isDirectory()) {
+      throw new FileServiceError("Destination parent is not a directory", "ENOTDIR");
+    }
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      throw new FileServiceError("Destination parent directory does not exist", "ENOENT");
+    }
+    throw err;
+  }
+
+  try {
+    await fsRename(resolvedSource, resolvedDest);
+    return { success: true, message: `Moved "${sourcePath}" to "${destinationPath}"` };
+  } catch (err: any) {
+    if (err.code === "EACCES" || err.code === "EPERM") {
+      throw new FileServiceError(`Permission denied: ${err.message}`, "EACCES");
+    }
+    if (err.code === "EXDEV") {
+      // Cross-device move: copy then delete
+      await copyWorkspaceFile(store, workspace, sourcePath, destinationPath);
+      await deleteWorkspaceFile(store, workspace, sourcePath);
+      return { success: true, message: `Moved "${sourcePath}" to "${destinationPath}"` };
+    }
+    throw err;
+  }
+}
+
+/**
+ * Delete a file or directory within a workspace.
+ * Directories are deleted recursively.
+ *
+ * @param store - The TaskStore instance
+ * @param workspace - Workspace identifier ("project" or task ID)
+ * @param filePath - Relative file/directory path within the workspace
+ * @returns FileOperationResponse indicating success
+ * @throws FileServiceError on validation or filesystem errors
+ */
+export async function deleteWorkspaceFile(
+  store: TaskStore,
+  workspace: WorkspaceId,
+  filePath: string,
+): Promise<FileOperationResponse> {
+  if (!filePath) {
+    throw new FileServiceError("File path is required", "EINVAL");
+  }
+
+  const workspaceBase = await getWorkspaceBasePath(store, workspace);
+  const resolvedPath = validatePath(workspaceBase, filePath);
+
+  // Prevent operating on the workspace root itself
+  const relativePath = relative(resolve(workspaceBase), resolvedPath);
+  if (!relativePath || relativePath === "." || relativePath === "") {
+    throw new FileServiceError("Cannot delete workspace root directory", "EINVAL");
+  }
+
+  // Verify the file/directory exists
+  let stats;
+  try {
+    stats = await stat(resolvedPath);
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      throw new FileServiceError(`Not found: ${filePath}`, "ENOENT");
+    }
+    throw err;
+  }
+
+  try {
+    if (stats.isDirectory()) {
+      await fsRm(resolvedPath, { recursive: true });
+    } else {
+      await fsRm(resolvedPath);
+    }
+    return { success: true, message: `Deleted "${filePath}"` };
+  } catch (err: any) {
+    if (err.code === "EACCES" || err.code === "EPERM") {
+      throw new FileServiceError(`Permission denied: ${filePath}`, "EACCES");
+    }
+    throw err;
+  }
+}
+
+/**
+ * Rename a file or directory within a workspace.
+ * The new name must not contain path separators.
+ *
+ * @param store - The TaskStore instance
+ * @param workspace - Workspace identifier ("project" or task ID)
+ * @param filePath - Relative file/directory path within the workspace
+ * @param newName - New name for the file/directory (no path separators)
+ * @returns FileOperationResponse indicating success
+ * @throws FileServiceError on validation or filesystem errors
+ */
+export async function renameWorkspaceFile(
+  store: TaskStore,
+  workspace: WorkspaceId,
+  filePath: string,
+  newName: string,
+): Promise<FileOperationResponse> {
+  if (!filePath) {
+    throw new FileServiceError("File path is required", "EINVAL");
+  }
+  if (!newName || !newName.trim()) {
+    throw new FileServiceError("New name is required", "EINVAL");
+  }
+
+  // Reject new names with path separators
+  if (newName.includes("/") || newName.includes("\\") || newName.includes("\0")) {
+    throw new FileServiceError("New name must not contain path separators", "EINVAL");
+  }
+
+  const workspaceBase = await getWorkspaceBasePath(store, workspace);
+  const resolvedPath = validatePath(workspaceBase, filePath);
+
+  // Prevent operating on the workspace root itself
+  const relativePath = relative(resolve(workspaceBase), resolvedPath);
+  if (!relativePath || relativePath === "." || relativePath === "") {
+    throw new FileServiceError("Cannot rename workspace root directory", "EINVAL");
+  }
+
+  // Verify source exists
+  try {
+    await stat(resolvedPath);
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      throw new FileServiceError(`Not found: ${filePath}`, "ENOENT");
+    }
+    throw err;
+  }
+
+  // Build destination path by replacing the basename
+  const destPath = join(dirname(resolvedPath), newName);
+
+  // Validate destination stays within workspace
+  const destRelative = relative(resolve(workspaceBase), destPath);
+  if (destRelative.startsWith("..") || destRelative.startsWith("../") || destRelative === "..") {
+    throw new FileServiceError("Destination would be outside workspace", "EINVAL");
+  }
+
+  if (!destPath.startsWith(resolve(workspaceBase))) {
+    throw new FileServiceError("Destination would be outside workspace", "EINVAL");
+  }
+
+  // Check destination doesn't already exist
+  try {
+    await stat(destPath);
+    throw new FileServiceError(`A file or directory named "${newName}" already exists`, "EEXIST");
+  } catch (err: any) {
+    if (err.code !== "ENOENT") {
+      if (err instanceof FileServiceError) throw err;
+    }
+  }
+
+  try {
+    await fsRename(resolvedPath, destPath);
+    return { success: true, message: `Renamed to "${newName}"` };
+  } catch (err: any) {
+    if (err.code === "EACCES" || err.code === "EPERM") {
+      throw new FileServiceError(`Permission denied: ${filePath}`, "EACCES");
+    }
+    throw err;
+  }
+}
+
+/**
+ * Get the absolute path for a file to download, along with file stats.
+ * Used by the download endpoint to create a stream response.
+ *
+ * @param store - The TaskStore instance
+ * @param workspace - Workspace identifier ("project" or task ID)
+ * @param filePath - Relative file path within the workspace
+ * @returns Object with resolved absolute path, stats, and basename
+ * @throws FileServiceError on validation or filesystem errors
+ */
+export async function getWorkspaceFileForDownload(
+  store: TaskStore,
+  workspace: WorkspaceId,
+  filePath: string,
+): Promise<{ absolutePath: string; stats: { size: number; mtime: Date; isFile: boolean }; fileName: string }> {
+  if (!filePath) {
+    throw new FileServiceError("File path is required", "EINVAL");
+  }
+
+  const workspaceBase = await getWorkspaceBasePath(store, workspace);
+  const resolvedPath = validatePath(workspaceBase, filePath);
+
+  // Prevent downloading the workspace root itself (it's not a file)
+  const relativePath = relative(resolve(workspaceBase), resolvedPath);
+  if (!relativePath || relativePath === "." || relativePath === "") {
+    throw new FileServiceError("Cannot download workspace root", "EINVAL");
+  }
+
+  let stats;
+  try {
+    stats = await stat(resolvedPath);
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      throw new FileServiceError(`File not found: ${filePath}`, "ENOENT");
+    }
+    throw err;
+  }
+
+  if (!stats.isFile()) {
+    throw new FileServiceError(`Not a file: ${filePath}`, "EISDIR");
+  }
+
+  return {
+    absolutePath: resolvedPath,
+    stats: {
+      size: stats.size,
+      mtime: stats.mtime,
+      isFile: true,
+    },
+    fileName: basename(resolvedPath),
+  };
+}
+
+/**
+ * Get the absolute path for a folder to download as ZIP.
+ *
+ * @param store - The TaskStore instance
+ * @param workspace - Workspace identifier ("project" or task ID)
+ * @param dirPath - Relative directory path within the workspace
+ * @returns Object with resolved absolute path and directory name
+ * @throws FileServiceError on validation or filesystem errors
+ */
+export async function getWorkspaceFolderForZip(
+  store: TaskStore,
+  workspace: WorkspaceId,
+  dirPath: string,
+): Promise<{ absolutePath: string; dirName: string }> {
+  if (!dirPath) {
+    throw new FileServiceError("Directory path is required", "EINVAL");
+  }
+
+  const workspaceBase = await getWorkspaceBasePath(store, workspace);
+  const resolvedPath = validatePath(workspaceBase, dirPath);
+
+  // Prevent downloading the workspace root as ZIP (too broad)
+  const relativePath = relative(resolve(workspaceBase), resolvedPath);
+  if (!relativePath || relativePath === "." || relativePath === "") {
+    throw new FileServiceError("Cannot download workspace root as ZIP", "EINVAL");
+  }
+
+  let stats;
+  try {
+    stats = await stat(resolvedPath);
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      throw new FileServiceError(`Directory not found: ${dirPath}`, "ENOENT");
+    }
+    throw err;
+  }
+
+  if (!stats.isDirectory()) {
+    throw new FileServiceError(`Not a directory: ${dirPath}`, "ENOTDIR");
+  }
+
+  return {
+    absolutePath: resolvedPath,
+    dirName: basename(resolvedPath),
+  };
+}
+
+/**
+ * Recursively copy a directory and all its contents.
+ */
+async function copyDirectoryRecursive(source: string, destination: string): Promise<void> {
+  await mkdir(destination, { recursive: true });
+  const entries = await readdir(source, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const sourcePath = join(source, entry.name);
+    const destPath = join(destination, entry.name);
+
+    if (entry.isDirectory()) {
+      await copyDirectoryRecursive(sourcePath, destPath);
+    } else {
+      await fsCopyFile(sourcePath, destPath);
+    }
+  }
 }

@@ -181,6 +181,8 @@ export function FileBrowserModal({
               loading={browserLoading}
               error={browserError}
               onRetry={refresh}
+              workspace={currentWorkspace}
+              onRefresh={refresh}
             />
           </div>
 

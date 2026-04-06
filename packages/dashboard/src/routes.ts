@@ -12,7 +12,7 @@ import { GitHubClient, getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
-import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse } from "./file-service.js";
+import { listFiles, readFile, writeFile, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, FileServiceError, type FileListResponse, type FileContentResponse, type SaveFileResponse, type FileOperationResponse } from "./file-service.js";
 import { fetchAllProviderUsage } from "./usage.js";
 import {
   getGitHubAppConfig,
@@ -4890,6 +4890,210 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           : err.code === "ENOENT" ? 404
           : err.code === "EACCES" ? 403
           : err.code === "ETOOLARGE" ? 413
+          : 400;
+        res.status(status).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
+  // ── File Operation Routes ─────────────────────────────────────────────
+
+  /**
+   * Helper to extract filepath and workspace from request.
+   */
+  function extractFileParams(req: Request): { filePath: string; workspace: string } {
+    const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
+    const workspace = typeof req.query.workspace === "string" && req.query.workspace.length > 0
+      ? req.query.workspace
+      : "project";
+    return { filePath, workspace };
+  }
+
+  /**
+   * POST /api/files/{*filepath}/copy
+   * Copy a file or directory to a new location within the workspace.
+   * Query param: ?workspace=project|TASK-ID
+   * Body: { destination: string }
+   * Returns: FileOperationResponse
+   */
+  router.post("/files/{*filepath}/copy", async (req, res) => {
+    try {
+      const { filePath, workspace } = extractFileParams(req);
+      const { destination } = req.body;
+
+      if (!destination || typeof destination !== "string") {
+        res.status(400).json({ error: "destination is required and must be a string" });
+        return;
+      }
+
+      const result = await copyWorkspaceFile(store, workspace, filePath, destination);
+      res.json(result);
+    } catch (err: any) {
+      if (err instanceof FileServiceError) {
+        const status = err.code === "ENOTASK" ? 404
+          : err.code === "ENOENT" ? 404
+          : err.code === "EEXIST" ? 409
+          : err.code === "EACCES" ? 403
+          : 400;
+        res.status(status).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
+  /**
+   * POST /api/files/{*filepath}/move
+   * Move a file or directory to a new location within the workspace.
+   * Query param: ?workspace=project|TASK-ID
+   * Body: { destination: string }
+   * Returns: FileOperationResponse
+   */
+  router.post("/files/{*filepath}/move", async (req, res) => {
+    try {
+      const { filePath, workspace } = extractFileParams(req);
+      const { destination } = req.body;
+
+      if (!destination || typeof destination !== "string") {
+        res.status(400).json({ error: "destination is required and must be a string" });
+        return;
+      }
+
+      const result = await moveWorkspaceFile(store, workspace, filePath, destination);
+      res.json(result);
+    } catch (err: any) {
+      if (err instanceof FileServiceError) {
+        const status = err.code === "ENOTASK" ? 404
+          : err.code === "ENOENT" ? 404
+          : err.code === "EEXIST" ? 409
+          : err.code === "EACCES" ? 403
+          : 400;
+        res.status(status).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
+  /**
+   * DELETE /api/files/{*filepath}
+   * Note: This conflicts with the existing GET endpoint for files.
+   * Instead, use POST /api/files/{*filepath}/delete to avoid route collision.
+   * Delete a file or directory within the workspace.
+   * Query param: ?workspace=project|TASK-ID
+   * Returns: FileOperationResponse
+   */
+  router.post("/files/{*filepath}/delete", async (req, res) => {
+    try {
+      const { filePath, workspace } = extractFileParams(req);
+      const result = await deleteWorkspaceFile(store, workspace, filePath);
+      res.json(result);
+    } catch (err: any) {
+      if (err instanceof FileServiceError) {
+        const status = err.code === "ENOTASK" ? 404
+          : err.code === "ENOENT" ? 404
+          : err.code === "EACCES" ? 403
+          : 400;
+        res.status(status).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
+  /**
+   * POST /api/files/{*filepath}/rename
+   * Rename a file or directory within the workspace.
+   * Query param: ?workspace=project|TASK-ID
+   * Body: { newName: string }
+   * Returns: FileOperationResponse
+   */
+  router.post("/files/{*filepath}/rename", async (req, res) => {
+    try {
+      const { filePath, workspace } = extractFileParams(req);
+      const { newName } = req.body;
+
+      if (!newName || typeof newName !== "string") {
+        res.status(400).json({ error: "newName is required and must be a string" });
+        return;
+      }
+
+      const result = await renameWorkspaceFile(store, workspace, filePath, newName);
+      res.json(result);
+    } catch (err: any) {
+      if (err instanceof FileServiceError) {
+        const status = err.code === "ENOTASK" ? 404
+          : err.code === "ENOENT" ? 404
+          : err.code === "EEXIST" ? 409
+          : err.code === "EACCES" ? 403
+          : 400;
+        res.status(status).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
+  /**
+   * GET /api/files/{*filepath}/download
+   * Download a single file from the workspace.
+   * Query param: ?workspace=project|TASK-ID
+   * Streams the file with Content-Disposition header.
+   */
+  router.get("/files/{*filepath}/download", async (req, res) => {
+    try {
+      const { filePath, workspace } = extractFileParams(req);
+      const { absolutePath, stats, fileName } = await getWorkspaceFileForDownload(store, workspace, filePath);
+
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.setHeader("Content-Length", stats.size);
+      res.setHeader("Last-Modified", stats.mtime.toUTCString());
+
+      const stream = createReadStream(absolutePath);
+      stream.pipe(res);
+    } catch (err: any) {
+      if (err instanceof FileServiceError) {
+        const status = err.code === "ENOTASK" ? 404
+          : err.code === "ENOENT" ? 404
+          : err.code === "EISDIR" ? 400
+          : err.code === "EACCES" ? 403
+          : 400;
+        res.status(status).json({ error: err.message, code: err.code });
+      } else {
+        res.status(500).json({ error: err.message || "Internal server error" });
+      }
+    }
+  });
+
+  /**
+   * GET /api/files/{*filepath}/download-zip
+   * Download a folder as a ZIP archive from the workspace.
+   * Query param: ?workspace=project|TASK-ID
+   * Streams the ZIP archive with Content-Disposition header.
+   */
+  router.get("/files/{*filepath}/download-zip", async (req, res) => {
+    try {
+      const { filePath, workspace } = extractFileParams(req);
+      const { absolutePath, dirName } = await getWorkspaceFolderForZip(store, workspace, filePath);
+
+      const archiver = await import("archiver");
+      const archive = archiver.default("zip", { zlib: { level: 6 } });
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${dirName}.zip"`);
+
+      archive.pipe(res);
+      archive.directory(absolutePath, dirName);
+      await archive.finalize();
+    } catch (err: any) {
+      if (err instanceof FileServiceError) {
+        const status = err.code === "ENOTASK" ? 404
+          : err.code === "ENOENT" ? 404
+          : err.code === "ENOTDIR" ? 400
+          : err.code === "EACCES" ? 403
           : 400;
         res.status(status).json({ error: err.message, code: err.code });
       } else {

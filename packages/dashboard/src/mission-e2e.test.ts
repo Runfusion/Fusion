@@ -89,6 +89,15 @@ function createMockMissionStore() {
       )
     ),
 
+    getMissionSummary: vi.fn((_missionId: string) => ({
+      totalMilestones: 0,
+      completedMilestones: 0,
+      totalSlices: 0,
+      completedSlices: 0,
+      totalFeatures: 0,
+      completedFeatures: 0,
+    })),
+
     updateMission: vi.fn((id: string, updates: Partial<Mission>) => {
       const mission = missions.get(id);
       if (!mission) throw new Error("Mission " + id + " not found");

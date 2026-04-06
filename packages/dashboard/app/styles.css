@@ -10846,6 +10846,156 @@ html .column.drag-over * {
   margin-left: 8px;
 }
 
+/* File Browser Context Menu */
+.context-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.file-browser-context-menu {
+  position: fixed;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 1001;
+}
+
+.file-browser-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: background var(--transition-fast);
+}
+
+.file-browser-context-menu__item:hover {
+  background: var(--card-hover);
+}
+
+.file-browser-context-menu__item-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.file-browser-context-menu__disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.file-browser-context-menu__disabled:hover {
+  background: none;
+}
+
+/* Delete action gets danger styling */
+.file-browser-context-menu__item--danger:hover {
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--color-error);
+}
+
+.file-browser-context-menu__item--danger .file-browser-context-menu__item-icon {
+  color: var(--color-error);
+}
+
+.file-browser-context-menu__divider {
+  height: 1px;
+  background: var(--border);
+  margin: var(--space-xs) var(--space-sm);
+}
+
+/* File Browser Operation Dialog */
+.file-browser-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-lg);
+  z-index: 1001;
+}
+
+.file-browser-dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-sm);
+}
+
+.file-browser-dialog-message {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-md);
+  line-height: 1.5;
+}
+
+.file-browser-dialog-info {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: var(--space-md);
+  font-family: var(--font-mono);
+  word-break: break-all;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.file-browser-dialog-input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font-mono);
+  outline: none;
+  box-sizing: border-box;
+  margin-bottom: var(--space-md);
+}
+
+.file-browser-dialog-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.file-browser-dialog-error {
+  font-size: 12px;
+  color: var(--color-error);
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(248, 81, 73, 0.1);
+  border-radius: var(--radius-sm);
+  line-height: 1.4;
+}
+
+.file-browser-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
 /* File Editor Toolbar */
 .file-browser-toolbar {
   display: flex;

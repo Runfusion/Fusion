@@ -1096,6 +1096,61 @@ export function saveWorkspaceFileContent(workspace: string, filePath: string, co
   });
 }
 
+// --- Workspace File Operations API (Copy, Move, Delete, Rename, Download) ---
+
+/** File operation response for copy/move/delete/rename operations */
+export interface FileOperationResponse {
+  success: true;
+  message?: string;
+}
+
+/** Copy a file or directory to a new location within a workspace. */
+export function copyFile(workspace: string, filePath: string, destination: string): Promise<FileOperationResponse> {
+  const query = new URLSearchParams({ workspace });
+  return api<FileOperationResponse>(`/files/${encodeURIComponent(filePath)}/copy?${query.toString()}`, {
+    method: "POST",
+    body: JSON.stringify({ destination }),
+  });
+}
+
+/** Move a file or directory to a new location within a workspace. */
+export function moveFile(workspace: string, filePath: string, destination: string): Promise<FileOperationResponse> {
+  const query = new URLSearchParams({ workspace });
+  return api<FileOperationResponse>(`/files/${encodeURIComponent(filePath)}/move?${query.toString()}`, {
+    method: "POST",
+    body: JSON.stringify({ destination }),
+  });
+}
+
+/** Delete a file or directory within a workspace. */
+export function deleteFile(workspace: string, filePath: string): Promise<FileOperationResponse> {
+  const query = new URLSearchParams({ workspace });
+  return api<FileOperationResponse>(`/files/${encodeURIComponent(filePath)}/delete?${query.toString()}`, {
+    method: "POST",
+  });
+}
+
+/** Rename a file or directory within a workspace. */
+export function renameFile(workspace: string, filePath: string, newName: string): Promise<FileOperationResponse> {
+  const query = new URLSearchParams({ workspace });
+  return api<FileOperationResponse>(`/files/${encodeURIComponent(filePath)}/rename?${query.toString()}`, {
+    method: "POST",
+    body: JSON.stringify({ newName }),
+  });
+}
+
+/** Get the download URL for a single file in a workspace. */
+export function downloadFileUrl(workspace: string, filePath: string): string {
+  const query = new URLSearchParams({ workspace });
+  return `/api/files/${encodeURIComponent(filePath)}/download?${query.toString()}`;
+}
+
+/** Get the download URL for a folder as ZIP in a workspace. */
+export function downloadZipUrl(workspace: string, filePath: string): string {
+  const query = new URLSearchParams({ workspace });
+  return `/api/files/${encodeURIComponent(filePath)}/download-zip?${query.toString()}`;
+}
+
 // --- Planning Mode API ---
 
 /** Planning session state returned from API */
