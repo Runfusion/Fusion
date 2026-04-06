@@ -13,7 +13,7 @@ export interface ProjectHealthBadgeProps {
 const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string; icon: typeof Play }> = {
   active: { label: "Active", color: "var(--success)", icon: Play },
   paused: { label: "Paused", color: "var(--warning)", icon: Pause },
-  errored: { label: "Error", color: "var(--error)", icon: AlertCircle },
+  errored: { label: "Error", color: "var(--color-error)", icon: AlertCircle },
   initializing: { label: "Initializing", color: "var(--info)", icon: Loader2 },
 };
 

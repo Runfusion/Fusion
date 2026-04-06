@@ -26,7 +26,7 @@ export interface ProjectSelectorProps {
 const STATUS_CONFIG: Record<ProjectStatus, { color: string; icon: typeof Play }> = {
   active: { color: "var(--success)", icon: Play },
   paused: { color: "var(--warning)", icon: Pause },
-  errored: { color: "var(--error)", icon: AlertCircle },
+  errored: { color: "var(--color-error)", icon: AlertCircle },
   initializing: { color: "var(--info)", icon: Loader2 },
 };
 
