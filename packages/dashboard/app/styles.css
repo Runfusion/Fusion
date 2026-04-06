@@ -102,6 +102,18 @@
   --color-muted: #8b949e;
   --color-info: #1f6feb;
 
+  /* Workflow Step type / state colors */
+  --ws-pre-merge: #3b82f6;
+  --ws-post-merge: #0ea58c;
+  --ws-info: #06b6d4;
+  --ws-warning: #ca8a04;
+  --ws-success: #22c55e;
+  --ws-error: #ef4444;
+  --ws-error-dark: #dc2626;
+  --ws-teal: #0ea58c;
+  --ws-quality: #3b82f6;
+  --ws-security: #ef4444;
+
   /* Executor status bar state accents */
   --executor-status-error-bg: color-mix(in srgb, var(--color-error) 8%, transparent);
 
@@ -8422,6 +8434,18 @@ html .column.drag-over * {
   /* Info color for light mode */
   --color-info: #0969da;
 
+  /* Workflow Step colors for light mode */
+  --ws-pre-merge: #2563eb;
+  --ws-post-merge: #0d9488;
+  --ws-info: #0891b2;
+  --ws-warning: #a16207;
+  --ws-success: #16a34a;
+  --ws-error: #dc2626;
+  --ws-error-dark: #b91c1c;
+  --ws-teal: #0d9488;
+  --ws-quality: #2563eb;
+  --ws-security: #dc2626;
+
   /* Logo accent for light mode */
   --logo-accent: var(--todo);
 
@@ -13962,8 +13986,8 @@ html .column.drag-over * {
 }
 
 .wfm-badge-enabled {
-  background: var(--status-success-bg, rgba(34, 197, 94, 0.15));
-  color: var(--status-success, #22c55e);
+  background: color-mix(in srgb, var(--ws-success) 15%, transparent);
+  color: var(--ws-success);
 }
 
 .wfm-badge-disabled {
@@ -13972,34 +13996,48 @@ html .column.drag-over * {
 }
 
 .wfm-badge-prompt {
-  background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
+  background: color-mix(in srgb, var(--ws-pre-merge) 15%, transparent);
+  color: var(--ws-pre-merge);
 }
 
 .wfm-badge-script {
-  background: rgba(14, 165, 140, 0.15);
-  color: #0ea58c;
+  background: color-mix(in srgb, var(--ws-post-merge) 15%, transparent);
+  color: var(--ws-post-merge);
 }
 
 .wfm-badge-pre-merge {
-  background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
+  background: color-mix(in srgb, var(--ws-pre-merge) 15%, transparent);
+  color: var(--ws-pre-merge);
 }
 
 .wfm-badge-post-merge {
-  background: rgba(6, 182, 212, 0.15);
-  color: #06b6d4;
+  background: color-mix(in srgb, var(--ws-info) 15%, transparent);
+  color: var(--ws-info);
 }
 
 .wfm-badge-default-on {
-  background: rgba(234, 179, 8, 0.15);
-  color: #ca8a04;
+  background: color-mix(in srgb, var(--ws-warning) 15%, transparent);
+  color: var(--ws-warning);
 }
 
 .wfm-badge-category {
   font-size: 11px;
   padding: 2px 6px;
   border-radius: var(--radius-sm);
+}
+
+.wfm-badge-category-quality {
+  background: color-mix(in srgb, var(--ws-quality) 15%, transparent);
+  color: var(--ws-quality);
+}
+
+.wfm-badge-category-security {
+  background: color-mix(in srgb, var(--ws-security) 15%, transparent);
+  color: var(--ws-security);
+}
+
+.wfm-delete-confirm-btn {
+  color: var(--ws-error);
 }
 
 /* Template cards */
@@ -14291,7 +14329,7 @@ html .column.drag-over * {
 
 .dep-chip-remove:hover {
   color: var(--color-error);
-  background: rgba(248, 81, 73, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 .model-select-row {
@@ -14444,7 +14482,7 @@ html .column.drag-over * {
 .schedule-cron {
   font-size: 11px;
   padding: 1px 5px;
-  background: var(--bg-secondary, rgba(128, 128, 128, 0.1));
+  background: var(--bg-secondary);
   border-radius: var(--radius-sm);
 }
 
@@ -14459,13 +14497,13 @@ html .column.drag-over * {
 }
 
 .schedule-run-badge.success {
-  color: var(--color-green, #22c55e);
-  background: rgba(34, 197, 94, 0.1);
+  color: var(--ws-success);
+  background: color-mix(in srgb, var(--ws-success) 10%, transparent);
 }
 
 .schedule-run-badge.failure {
-  color: var(--color-red, #ef4444);
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--ws-error);
+  background: color-mix(in srgb, var(--ws-error) 10%, transparent);
 }
 
 .schedule-run-duration {
@@ -14523,15 +14561,15 @@ html .column.drag-over * {
 }
 
 .schedule-history-header:hover {
-  background: var(--bg-secondary, rgba(128, 128, 128, 0.08));
+  background: var(--bg-secondary);
 }
 
 .schedule-history-status.success {
-  color: var(--color-green, #22c55e);
+  color: var(--ws-success);
 }
 
 .schedule-history-status.failure {
-  color: var(--color-red, #ef4444);
+  color: var(--ws-error);
 }
 
 .schedule-history-time {
@@ -14551,7 +14589,7 @@ html .column.drag-over * {
   line-height: 1.4;
   margin: 0;
   padding: var(--space-sm);
-  background: var(--bg-secondary, rgba(128, 128, 128, 0.08));
+  background: var(--bg-secondary);
   border-radius: var(--radius-sm);
   overflow-x: auto;
   max-height: 200px;
@@ -14562,7 +14600,7 @@ html .column.drag-over * {
 
 .schedule-history-error {
   font-size: 11px;
-  color: var(--color-red, #ef4444);
+  color: var(--ws-error);
   margin-top: var(--space-xs);
 }
 
@@ -14610,11 +14648,11 @@ html .column.drag-over * {
 }
 
 .step-result-dot.success {
-  background: var(--color-green, #22c55e);
+  background: var(--ws-success);
 }
 
 .step-result-dot.failure {
-  background: var(--color-red, #ef4444);
+  background: var(--ws-error);
 }
 
 /* Per-step results in run history detail */
@@ -14641,11 +14679,11 @@ html .column.drag-over * {
 }
 
 .schedule-step-result.success .schedule-step-result-status {
-  color: var(--color-green, #22c55e);
+  color: var(--ws-success);
 }
 
 .schedule-step-result.failure .schedule-step-result-status {
-  color: var(--color-red, #ef4444);
+  color: var(--ws-error);
 }
 
 .schedule-step-result-name {
@@ -14654,7 +14692,7 @@ html .column.drag-over * {
 }
 
 .schedule-step-result-error {
-  color: var(--color-red, #ef4444);
+  color: var(--ws-error);
   font-size: 10px;
 }
 
@@ -14672,13 +14710,13 @@ html .column.drag-over * {
 }
 
 .step-type-command {
-  color: var(--color-blue, #3b82f6);
-  background: color-mix(in srgb, var(--color-blue, #3b82f6) 12%, transparent);
+  color: var(--ws-pre-merge);
+  background: color-mix(in srgb, var(--ws-pre-merge) 12%, transparent);
 }
 
 .step-type-ai-prompt {
-  color: #0ea58c;
-  background: color-mix(in srgb, #0ea58c 12%, transparent);
+  color: var(--ws-teal);
+  background: color-mix(in srgb, var(--ws-teal) 12%, transparent);
 }
 
 /* Steps editor */
@@ -14818,7 +14856,7 @@ html .column.drag-over * {
 }
 
 .schedule-mode-btn.active {
-  background: var(--accent-color, #3b82f6);
+  background: var(--ws-pre-merge);
   color: white;
 }
 
@@ -14943,8 +14981,8 @@ html .column.drag-over * {
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-md) var(--space-lg);
-  background: var(--color-red, rgba(239, 68, 68, 0.1));
-  color: var(--color-red, #ef4444);
+  background: color-mix(in srgb, var(--ws-error) 10%, transparent);
+  color: var(--ws-error);
   border-radius: var(--radius-md);
   margin-bottom: var(--space-lg);
   font-size: 13px;
@@ -14982,27 +15020,27 @@ html .column.drag-over * {
 }
 
 .activity-icon.created {
-  color: var(--todo, #58a6ff);
+  color: var(--todo);
 }
 
 .activity-icon.moved {
-  color: var(--in-progress, #f0883e);
+  color: var(--in-progress);
 }
 
 .activity-icon.updated {
-  color: var(--info, #79c0ff);
+  color: var(--color-info);
 }
 
 .activity-icon.deleted {
-  color: var(--color-red, #ef4444);
+  color: var(--ws-error);
 }
 
 .activity-icon.merged {
-  color: var(--done, #3fb950);
+  color: var(--done);
 }
 
 .activity-icon.failed {
-  color: var(--color-red, #ef4444);
+  color: var(--ws-error);
 }
 
 .activity-icon.settings {
@@ -15045,7 +15083,7 @@ html .column.drag-over * {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
-  color: var(--todo, #58a6ff);
+  color: var(--todo);
   background: none;
   border: none;
   padding: 0;
@@ -15084,13 +15122,13 @@ html .column.drag-over * {
 }
 
 .activity-log-metadata-item.success {
-  color: var(--done, #3fb950);
-  background: rgba(63, 185, 80, 0.1);
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
 }
 
 .activity-log-metadata-item.error {
-  color: var(--color-red, #ef4444);
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--ws-error);
+  background: color-mix(in srgb, var(--ws-error) 10%, transparent);
 }
 
 .activity-log-load-more {
@@ -15193,7 +15231,7 @@ html .column.drag-over * {
 .activity-log-confirm-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: color-mix(in srgb, var(--text) 50%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -15250,14 +15288,14 @@ html .column.drag-over * {
 }
 
 .activity-log-confirm-clear {
-  background: var(--color-red, #ef4444);
-  border: 1px solid var(--color-red, #ef4444);
+  background: var(--ws-error);
+  border: 1px solid var(--ws-error);
   color: white;
 }
 
 .activity-log-confirm-clear:hover {
-  background: #dc2626;
-  border-color: #dc2626;
+  background: var(--ws-error-dark);
+  border-color: var(--ws-error-dark);
 }
 
 /* ── Activity Log — Mobile (≤ 768px) ─────────────────────────────── */
