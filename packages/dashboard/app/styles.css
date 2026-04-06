@@ -20173,6 +20173,215 @@ html .column.drag-over * {
   color: var(--color-success);
 }
 
+/* === Agent Detail View Mobile Responsive === */
+@media (max-width: 768px) {
+  .agent-detail-overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .agent-detail-modal {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-width: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .agent-detail-header {
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    padding: 16px;
+    padding-top: max(16px, env(safe-area-inset-top, 0));
+  }
+
+  .agent-detail-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-md);
+  }
+
+  .agent-detail-icon {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+  }
+
+  .agent-detail-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .agent-detail-info h2 {
+    font-size: 17px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .agent-detail-badges {
+    flex-wrap: wrap;
+  }
+
+  .agent-detail-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .agent-detail-actions .btn {
+    padding: 6px 10px;
+    font-size: 13px;
+    min-height: 36px;
+  }
+
+  .agent-detail-actions .btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .agent-detail-actions .btn-icon {
+    min-height: 36px;
+    min-width: 36px;
+  }
+
+  .agent-detail-tabs {
+    padding: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .agent-detail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .agent-detail-tab {
+    padding: 12px 14px;
+    font-size: 13px;
+    white-space: nowrap;
+    min-height: 44px;
+  }
+
+  .agent-detail-content {
+    padding: 16px;
+  }
+
+  .agent-detail-footer {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    padding: var(--space-sm) 16px;
+    padding-bottom: max(var(--space-sm), env(safe-area-inset-bottom, 0));
+    font-size: 11px;
+  }
+
+  .agent-detail-id {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Dashboard Tab mobile */
+  .dashboard-tab {
+    gap: 16px;
+  }
+
+  .dashboard-section {
+    padding: 16px;
+  }
+
+  .info-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-md);
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-md);
+  }
+
+  .stat-value {
+    font-size: 22px;
+  }
+
+  /* Logs Tab mobile */
+  .logs-container {
+    max-height: 50vh;
+  }
+
+  .logs-empty {
+    padding: 32px 16px;
+  }
+
+  .log-entry {
+    padding: 4px 2px;
+    font-size: 12px;
+  }
+
+  /* Runs Tab mobile */
+  .run-card {
+    padding: var(--space-md);
+  }
+
+  .run-details {
+    flex-wrap: wrap;
+  }
+
+  /* Config Tab mobile */
+  .config-tab {
+    gap: 16px;
+  }
+
+  .config-section {
+    padding: 16px;
+  }
+
+  .config-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+
+  .config-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-detail-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .agent-detail-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .agent-detail-actions .btn-icon {
+    align-self: flex-end;
+  }
+
+  .agent-detail-footer .divider,
+  .agent-detail-footer .text-muted,
+  .agent-detail-footer .link {
+    display: none;
+  }
+}
+
 /* === Active Agents Panel === */
 .active-agents-panel {
   margin-bottom: var(--space-lg);
