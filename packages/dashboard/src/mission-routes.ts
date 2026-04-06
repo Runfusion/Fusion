@@ -1332,6 +1332,52 @@ export function createMissionRouter(
     })
   );
 
+  // ── Mission Start Endpoint ────────────────────────────────────────────────────
+
+  /**
+   * POST /api/missions/:missionId/start
+   * Start a planning mission: set status to "active", activate the first
+   * pending slice, and auto-triage all "defined" features in that slice.
+   */
+  router.post(
+    "/:missionId/start",
+    asyncHandler(async (req, res) => {
+      const { missionId } = req.params;
+
+      if (!validateMissionId(missionId)) {
+        res.status(400).json({ error: "Invalid mission ID format" });
+        return;
+      }
+
+      const mission = missionStore.getMission(missionId);
+      if (!mission) {
+        res.status(404).json({ error: "Mission not found" });
+        return;
+      }
+
+      if (mission.status !== "planning") {
+        res.status(409).json({ error: "Mission must be in 'planning' status to start" });
+        return;
+      }
+
+      const nextSlice = missionStore.findNextPendingSlice(missionId);
+      if (!nextSlice) {
+        res.status(400).json({ error: "No pending slices found" });
+        return;
+      }
+
+      // Set autoAdvance: true so activateSlice() will auto-triage features
+      missionStore.updateMission(missionId, { autoAdvance: true, status: "active" });
+
+      // Activate the first pending slice (triggers auto-triage via activateSlice)
+      await missionStore.activateSlice(nextSlice.id);
+
+      // Return updated mission with hierarchy
+      const hierarchy = missionStore.getMissionWithHierarchy(missionId);
+      res.json(hierarchy);
+    })
+  );
+
   // ── Autopilot Endpoints ──────────────────────────────────────────────────────
 
   /**

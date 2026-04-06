@@ -159,6 +159,14 @@ function createMockMissionStore() {
         .sort((a, b) => a.orderIndex - b.orderIndex)
     ),
 
+    updateSlice: vi.fn((id: string, updates: Partial<Slice>) => {
+      const slice = slices.get(id);
+      if (!slice) throw new Error("Slice " + id + " not found");
+      const updated = { ...slice, ...updates, updatedAt: new Date().toISOString() };
+      slices.set(id, updated);
+      return updated;
+    }),
+
     addFeature: vi.fn((sliceId: string, input: { title: string; description?: string }) => {
       const feature: MissionFeature = {
         id: generateFeatureId(),
@@ -185,6 +193,23 @@ function createMockMissionStore() {
         updatedAt: new Date().toISOString(),
       };
       slices.set(id, updated);
+
+      // Simulate auto-triage: when mission.autoAdvance is true, triage "defined" features
+      const milestone = milestones.get(slice.milestoneId);
+      if (milestone) {
+        const mission = missions.get(milestone.missionId);
+        if (mission?.autoAdvance === true) {
+          const sliceFeatures = Array.from(features.values()).filter(
+            (f) => f.sliceId === id && f.status === "defined"
+          );
+          for (const f of sliceFeatures) {
+            const taskId = "FN-" + String(features.size + 1).padStart(3, "0");
+            const triaged = { ...f, taskId, status: "triaged" as const, updatedAt: new Date().toISOString() };
+            features.set(f.id, triaged);
+          }
+        }
+      }
+
       return updated;
     }),
 
@@ -243,6 +268,21 @@ function createMockMissionStore() {
         triaged.push(updated);
       }
       return triaged;
+    }),
+
+    findNextPendingSlice: vi.fn((missionId: string) => {
+      const missionMilestones = Array.from(milestones.values())
+        .filter((m) => m.missionId === missionId)
+        .sort((a, b) => a.orderIndex - b.orderIndex);
+      for (const milestone of missionMilestones) {
+        const milestoneSlices = Array.from(slices.values())
+          .filter((s) => s.milestoneId === milestone.id)
+          .sort((a, b) => a.orderIndex - b.orderIndex);
+        for (const slice of milestoneSlices) {
+          if (slice.status === "pending") return slice;
+        }
+      }
+      return undefined;
     }),
 
     // Mission status helpers for pause/stop
@@ -1048,6 +1088,119 @@ describe("Mission API", () => {
       );
 
       expect(res.status).toBe(404);
+    });
+  });
+
+  // ── Mission Start Endpoint ────────────────────────────────────────────────
+
+  describe("POST /api/missions/:missionId/start", () => {
+    it("should start a planning mission and activate the first slice", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      // Create mission with milestone, slice, and defined features
+      const mission = ms.createMission({ title: "Test Mission" });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone 1" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice 1" });
+      const feature1 = ms.addFeature(slice.id, { title: "Feature 1" });
+      const feature2 = ms.addFeature(slice.id, { title: "Feature 2" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/start`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      // Verify mission status is active
+      expect(res.body.status).toBe("active");
+      // Verify autoAdvance is true
+      expect(res.body.autoAdvance).toBe(true);
+      // Verify hierarchy is returned
+      expect(res.body.milestones).toBeDefined();
+      expect(res.body.milestones.length).toBe(1);
+
+      // Verify the slice was activated
+      const activatedSlice = res.body.milestones[0].slices[0];
+      expect(activatedSlice.status).toBe("active");
+      expect(activatedSlice.activatedAt).toBeDefined();
+
+      // Verify features were triaged (auto-triage via activateSlice)
+      const triagedFeatures = activatedSlice.features;
+      expect(triagedFeatures.length).toBe(2);
+      for (const f of triagedFeatures) {
+        expect(f.status).toBe("triaged");
+        expect(f.taskId).toBeDefined();
+      }
+    });
+
+    it("should return 409 for already-active mission", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Active Mission" });
+      ms.updateMission(mission.id, { status: "active" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/start`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain("planning");
+    });
+
+    it("should return 400 when no pending slices exist", async () => {
+      const { app, missionStore } = buildApp();
+      const ms = missionStore as ReturnType<typeof createMockMissionStore>;
+
+      const mission = ms.createMission({ title: "Empty Mission" });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Active Slice" });
+      // Mark the slice as active (not pending)
+      ms.updateSlice(slice.id, { status: "active" });
+
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/start`,
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("No pending slices");
+    });
+
+    it("should return 404 for non-existent mission", async () => {
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/M-NONEXISTENT-XXX/start",
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it("should return 400 for invalid mission ID format", async () => {
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions/bad-id/start",
+        JSON.stringify({}),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(400);
     });
   });
 });

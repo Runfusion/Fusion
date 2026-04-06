@@ -2654,6 +2654,13 @@ export function stopMission(missionId: string, projectId?: string): Promise<Miss
   });
 }
 
+/** Start a planning mission: sets status to "active" and activates the first pending slice */
+export function startMission(missionId: string, projectId?: string): Promise<MissionWithHierarchy> {
+  return api<MissionWithHierarchy>(withProjectId(`/missions/${encodeURIComponent(missionId)}/start`, projectId), {
+    method: "POST",
+  });
+}
+
 // ── Mission Autopilot API ────────────────────────────────────────────────
 
 /** Fetch autopilot status for a mission */

@@ -61,6 +61,7 @@ import {
   pauseMission,
   resumeMission,
   stopMission,
+  startMission,
   fetchMissionAutopilotStatus,
   updateMissionAutopilot,
   startMissionAutopilot,
@@ -686,6 +687,18 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
     }
   }, [addToast, loadMissionDetail, loadMissions, projectId]);
 
+  // Start a planning mission — set status to "active" and activate first slice
+  const handleStartMission = useCallback(async (missionId: string) => {
+    try {
+      await startMission(missionId, projectId);
+      addToast("Mission started — first slice activated", "success");
+      await loadMissionDetail(missionId);
+      loadMissions();
+    } catch (err: any) {
+      addToast(err.message || "Failed to start mission", "error");
+    }
+  }, [addToast, loadMissionDetail, loadMissions, projectId]);
+
   // ── Autopilot handlers ──
 
   const loadAutopilotStatus = useCallback(async (missionId: string) => {
@@ -978,6 +991,16 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                       aria-label="Resume mission"
                     >
                       <RefreshCw size={14} />
+                    </button>
+                  )}
+                  {selectedMission.status === "planning" && (
+                    <button
+                      className="mission-icon-btn mission-icon-btn--success"
+                      onClick={() => handleStartMission(selectedMission.id)}
+                      title="Start mission"
+                      aria-label="Start mission"
+                    >
+                      <Play size={14} />
                     </button>
                   )}
                   <button
@@ -1595,6 +1618,15 @@ export function MissionManager({ isOpen, onClose, addToast, projectId, onSelectT
                         title="Resume mission"
                       >
                         <RefreshCw size={14} />
+                      </button>
+                    )}
+                    {m.status === "planning" && (
+                      <button
+                        className="mission-icon-btn mission-icon-btn--success"
+                        onClick={() => handleStartMission(m.id)}
+                        title="Start mission"
+                      >
+                        <Play size={14} />
                       </button>
                     )}
                     <button
