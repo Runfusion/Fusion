@@ -501,13 +501,17 @@ export class TriageProcessor {
           onThinking: agentLogger.onThinking,
           onToolStart: agentLogger.onToolStart,
           onToolEnd: agentLogger.onToolEnd,
-          // Use planning model settings if both provider and modelId are set, otherwise fall back to defaults
-          defaultProvider: settings.planningProvider && settings.planningModelId
-            ? settings.planningProvider
-            : settings.defaultProvider,
-          defaultModelId: settings.planningProvider && settings.planningModelId
-            ? settings.planningModelId
-            : settings.defaultModelId,
+          // Per-task planning model override takes precedence, then project settings, then global defaults
+          defaultProvider: task.planningModelProvider && task.planningModelId
+            ? task.planningModelProvider
+            : (settings.planningProvider && settings.planningModelId
+              ? settings.planningProvider
+              : settings.defaultProvider),
+          defaultModelId: task.planningModelProvider && task.planningModelId
+            ? task.planningModelId
+            : (settings.planningProvider && settings.planningModelId
+              ? settings.planningModelId
+              : settings.defaultModelId),
           fallbackProvider: settings.planningFallbackProvider && settings.planningFallbackModelId
             ? settings.planningFallbackProvider
             : settings.fallbackProvider,

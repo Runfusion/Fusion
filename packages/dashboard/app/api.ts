@@ -174,6 +174,8 @@ export function batchUpdateTaskModels(
   modelId?: string | null,
   validatorModelProvider?: string | null,
   validatorModelId?: string | null,
+  planningModelProvider?: string | null,
+  planningModelId?: string | null,
   projectId?: string,
 ): Promise<{ updated: Task[]; count: number }> {
   return api<{ updated: Task[]; count: number }>(withProjectId("/tasks/batch-update-models", projectId), {
@@ -184,6 +186,8 @@ export function batchUpdateTaskModels(
       modelId,
       validatorModelProvider,
       validatorModelId,
+      planningModelProvider,
+      planningModelId,
     }),
   });
 }

@@ -1954,13 +1954,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   /**
    * POST /api/tasks/batch-update-models
    * Batch update AI model configuration for multiple tasks.
-   * Body: { taskIds: string[], modelProvider?: string | null, modelId?: string | null, validatorModelProvider?: string | null, validatorModelId?: string | null }
+   * Body: { taskIds: string[], modelProvider?: string | null, modelId?: string | null, validatorModelProvider?: string | null, validatorModelId?: string | null, planningModelProvider?: string | null, planningModelId?: string | null }
    * Returns: { updated: Task[], count: number }
    */
   router.post("/tasks/batch-update-models", async (req, res) => {
     try {
       const scopedStore = await getScopedStore(req);
-      const { taskIds, modelProvider, modelId, validatorModelProvider, validatorModelId } = req.body;
+      const { taskIds, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId } = req.body;
 
       // Validate taskIds
       if (!Array.isArray(taskIds)) {
@@ -1979,7 +1979,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Validate that at least one model field is being updated
       const hasExecutorModel = modelProvider !== undefined || modelId !== undefined;
       const hasValidatorModel = validatorModelProvider !== undefined || validatorModelId !== undefined;
-      if (!hasExecutorModel && !hasValidatorModel) {
+      const hasPlanningModel = planningModelProvider !== undefined || planningModelId !== undefined;
+      if (!hasExecutorModel && !hasValidatorModel && !hasPlanningModel) {
         res.status(400).json({ error: "At least one model field must be provided" });
         return;
       }
@@ -2003,10 +2004,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       let validatedExecutor: { provider?: string | null; modelId?: string | null };
       let validatedValidator: { provider?: string | null; modelId?: string | null };
+      let validatedPlanning: { provider?: string | null; modelId?: string | null };
 
       try {
         validatedExecutor = validateModelPair(modelProvider, modelId, "Executor model");
         validatedValidator = validateModelPair(validatorModelProvider, validatorModelId, "Validator model");
+        validatedPlanning = validateModelPair(planningModelProvider, planningModelId, "Planning model");
       } catch (err: any) {
         res.status(400).json({ error: err.message });
         return;
@@ -2028,7 +2031,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       // Build update payload (only include fields that were explicitly provided)
-      const updates: { modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null } = {};
+      const updates: { modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null } = {};
       if (validatedExecutor.provider !== undefined) {
         updates.modelProvider = validatedExecutor.provider;
       }
@@ -2040,6 +2043,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       if (validatedValidator.modelId !== undefined) {
         updates.validatorModelId = validatedValidator.modelId;
+      }
+      if (validatedPlanning.provider !== undefined) {
+        updates.planningModelProvider = validatedPlanning.provider;
+      }
+      if (validatedPlanning.modelId !== undefined) {
+        updates.planningModelId = validatedPlanning.modelId;
       }
 
       // Update all tasks in parallel

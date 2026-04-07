@@ -1439,6 +1439,59 @@ describe("TaskDetailModal", () => {
         expect(defaultBadges).toHaveLength(3);
       });
 
+      it("per-task planning model override takes precedence over settings", async () => {
+        const { fetchSettings } = await import("../../api");
+        const { useAgentLogs } = await import("../../hooks/useAgentLogs");
+
+        vi.mocked(fetchSettings).mockResolvedValueOnce({
+          modelPresets: [],
+          autoSelectModelPreset: false,
+          defaultPresetBySize: {},
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4-5",
+          planningProvider: "openai",
+          planningModelId: "gpt-4o",
+        } as any);
+
+        vi.mocked(useAgentLogs).mockReturnValue({
+          entries: [mockLogEntry],
+          loading: false,
+          clear: vi.fn(),
+        });
+
+        const { container } = render(
+          <TaskDetailModal
+            task={makeTask({
+              prompt: "# Hello\n\nContent",
+              planningModelProvider: "google",
+              planningModelId: "gemini-2.5-pro",
+            })}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        // Navigate to Agent Log subview
+        fireEvent.click(screen.getByText("Logs"));
+        fireEvent.click(screen.getByText("Agent Log"));
+
+        await waitFor(() => {
+          const header = container.querySelector("[data-testid='agent-log-model-header']");
+          expect(header).toBeTruthy();
+          // Per-task override should take precedence over settings
+          expect(header!.textContent).toContain("Planning/Triage:");
+          expect(header!.textContent).toContain("google/gemini-2.5-pro");
+        });
+
+        const header = container.querySelector("[data-testid='agent-log-model-header']")!;
+        // Should NOT show the settings planning model
+        expect(header.textContent).not.toContain("openai/gpt-4o");
+      });
+
       it("runtime triage marker takes precedence over planningProvider settings", async () => {
         const { fetchSettings } = await import("../../api");
         const { useAgentLogs } = await import("../../hooks/useAgentLogs");

@@ -26,6 +26,14 @@ vi.mock("./pi.js", () => ({
   promptWithFallback: vi.fn().mockReturnValue("mock-prompt"),
 }));
 
+vi.mock("@fusion/core", async () => {
+  const actual = await vi.importActual("@fusion/core");
+  return {
+    ...actual,
+    resolveAgentPrompt: vi.fn().mockReturnValue(null),
+  };
+});
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
@@ -1300,6 +1308,202 @@ describe("taskCreate tool model inheritance", () => {
         "text",
         undefined,
         "triage",
+      );
+    });
+  });
+
+  describe("per-task planning model override", () => {
+    it("uses per-task planningModelProvider/planningModelId when set on the task", async () => {
+      const task = {
+        id: "FN-400",
+        description: "Test per-task planning model override",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        planningModelProvider: "google",
+        planningModelId: "gemini-2.5-pro",
+      } as unknown as Task;
+
+      const mockDispose = vi.fn();
+      const mockPrompt = vi.fn().mockResolvedValue(undefined);
+      const mockGetLeafId = vi.fn().mockReturnValue(null);
+      const mockNavigateTree = vi.fn();
+
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4-5",
+          planningProvider: "openai",
+          planningModelId: "gpt-4o",
+        } as Settings),
+      });
+
+      mockCreateKbAgent.mockResolvedValue({
+        session: {
+          prompt: mockPrompt,
+          dispose: mockDispose,
+          sessionManager: {
+            getLeafId: mockGetLeafId,
+            navigateTree: mockNavigateTree,
+          },
+        },
+      });
+
+      const { promptWithFallback } = await import("./pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("test stop after model check"),
+      );
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+
+      await processor.specifyTask(task);
+
+      // Per-task override should take precedence over settings
+      expect(mockCreateKbAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "google",
+          defaultModelId: "gemini-2.5-pro",
+        }),
+      );
+    });
+
+    it("falls back to settings planningProvider/planningModelId when task has no override", async () => {
+      const task = {
+        id: "FN-401",
+        description: "Test fallback to settings planning model",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        // No planningModelProvider/planningModelId set
+      } as unknown as Task;
+
+      const mockDispose = vi.fn();
+      const mockPrompt = vi.fn().mockResolvedValue(undefined);
+      const mockGetLeafId = vi.fn().mockReturnValue(null);
+      const mockNavigateTree = vi.fn();
+
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4-5",
+          planningProvider: "openai",
+          planningModelId: "gpt-4o",
+        } as Settings),
+      });
+
+      mockCreateKbAgent.mockResolvedValue({
+        session: {
+          prompt: mockPrompt,
+          dispose: mockDispose,
+          sessionManager: {
+            getLeafId: mockGetLeafId,
+            navigateTree: mockNavigateTree,
+          },
+        },
+      });
+
+      const { promptWithFallback } = await import("./pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("test stop after model check"),
+      );
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+
+      await processor.specifyTask(task);
+
+      // Should use settings planning model when no per-task override
+      expect(mockCreateKbAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "openai",
+          defaultModelId: "gpt-4o",
+        }),
+      );
+    });
+
+    it("falls back to global defaults when neither task nor settings have planning model", async () => {
+      const task = {
+        id: "FN-402",
+        description: "Test fallback to global defaults",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+
+      const mockDispose = vi.fn();
+      const mockPrompt = vi.fn().mockResolvedValue(undefined);
+      const mockGetLeafId = vi.fn().mockReturnValue(null);
+      const mockNavigateTree = vi.fn();
+
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4-5",
+          // No planningProvider/planningModelId set
+        } as Settings),
+      });
+
+      mockCreateKbAgent.mockResolvedValue({
+        session: {
+          prompt: mockPrompt,
+          dispose: mockDispose,
+          sessionManager: {
+            getLeafId: mockGetLeafId,
+            navigateTree: mockNavigateTree,
+          },
+        },
+      });
+
+      const { promptWithFallback } = await import("./pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("test stop after model check"),
+      );
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+
+      await processor.specifyTask(task);
+
+      // Should fall back to global defaults
+      expect(mockCreateKbAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4-5",
+        }),
       );
     });
   });

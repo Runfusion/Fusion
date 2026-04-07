@@ -102,21 +102,30 @@ function extractPlanningModelFromLog(entries: AgentLogEntry[]): { provider: stri
 
 /**
  * Resolve the effective planning/triage model following the resolution order:
- * 1. Runtime triage model from agent log marker (if present)
- * 2. Project settings planningProvider/planningModelId
- * 3. Global settings defaultProvider/defaultModelId
+ * 1. Per-task planningModelProvider/planningModelId override
+ * 2. Runtime triage model from agent log marker (if present)
+ * 3. Project settings planningProvider/planningModelId
+ * 4. Global settings defaultProvider/defaultModelId
  */
 function resolveEffectivePlanning(
+  task: Task | TaskDetail,
   logEntries: AgentLogEntry[],
   settings?: Settings,
 ): ModelSelection {
+  // 1. Per-task override takes precedence
+  if (task.planningModelProvider && task.planningModelId) {
+    return { provider: task.planningModelProvider, modelId: task.planningModelId };
+  }
+  // 2. Runtime triage model from agent log marker
   const fromLog = extractPlanningModelFromLog(logEntries);
   if (fromLog) {
     return fromLog;
   }
+  // 3. Project settings planningProvider/planningModelId
   if (settings?.planningProvider && settings.planningModelId) {
     return { provider: settings.planningProvider, modelId: settings.planningModelId };
   }
+  // 4. Global settings defaultProvider/defaultModelId
   if (settings?.defaultProvider && settings.defaultModelId) {
     return { provider: settings.defaultProvider, modelId: settings.defaultModelId };
   }
@@ -922,7 +931,7 @@ export function TaskDetailModal({
                   loading={agentLogLoading}
                   executorModel={resolveEffectiveExecutor(task, settings)}
                   validatorModel={resolveEffectiveValidator(task, settings)}
-                  planningModel={resolveEffectivePlanning(agentLogEntries, settings)}
+                  planningModel={resolveEffectivePlanning(task, agentLogEntries, settings)}
                 />
               ) : (
                 <div className="detail-activity">

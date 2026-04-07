@@ -1458,6 +1458,72 @@ describe("POST /tasks/batch-update-models", () => {
 
     consoleSpy.mockRestore();
   });
+
+  it("updates only planning model when only planning fields provided", async () => {
+    const task1 = { ...FAKE_TASK_DETAIL, id: "FN-001" };
+    const updated1 = { ...task1, planningModelProvider: "google", planningModelId: "gemini-2.5-pro" };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task1);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated1);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["FN-001"],
+      planningModelProvider: "google",
+      planningModelId: "gemini-2.5-pro",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
+      planningModelProvider: "google",
+      planningModelId: "gemini-2.5-pro",
+    });
+  });
+
+  it("updates executor, validator, and planning models together", async () => {
+    const task1 = { ...FAKE_TASK_DETAIL, id: "FN-001" };
+    const updated1 = { ...task1, modelProvider: "openai", modelId: "gpt-4o", validatorModelProvider: "anthropic", validatorModelId: "claude-sonnet-4-5", planningModelProvider: "google", planningModelId: "gemini-2.5-pro" };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(task1);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updated1);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["FN-001"],
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      validatorModelProvider: "anthropic",
+      validatorModelId: "claude-sonnet-4-5",
+      planningModelProvider: "google",
+      planningModelId: "gemini-2.5-pro",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      validatorModelProvider: "anthropic",
+      validatorModelId: "claude-sonnet-4-5",
+      planningModelProvider: "google",
+      planningModelId: "gemini-2.5-pro",
+    });
+  });
+
+  it("returns 400 when only planning provider provided (missing modelId)", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/batch-update-models", JSON.stringify({
+      taskIds: ["FN-001"],
+      planningModelProvider: "google",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Planning model must include both provider and modelId");
+  });
 });
 
 describe("PATCH /tasks/:id", () => {
