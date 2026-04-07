@@ -50,26 +50,26 @@ interface AgentPreset {
 }
 
 const AGENT_PRESETS: AgentPreset[] = [
-  { id: "ceo", name: "CEO", icon: "👔", title: "Chief Executive Officer", role: "custom" },
-  { id: "cto", name: "CTO", icon: "🧠", title: "Chief Technology Officer", role: "custom" },
-  { id: "cmo", name: "CMO", icon: "📢", title: "Chief Marketing Officer", role: "custom" },
-  { id: "cfo", name: "CFO", icon: "💰", title: "Chief Financial Officer", role: "custom" },
-  { id: "engineer", name: "Engineer", icon: "👨‍💻", title: "Software Engineer", role: "engineer" },
-  { id: "backend-engineer", name: "Backend Engineer", icon: "⚙️", title: "Backend Engineer", role: "engineer" },
-  { id: "frontend-engineer", name: "Frontend Engineer", icon: "🎨", title: "Frontend Engineer", role: "engineer" },
-  { id: "fullstack-engineer", name: "Fullstack Engineer", icon: "🚀", title: "Full Stack Engineer", role: "engineer" },
-  { id: "qa-engineer", name: "QA Engineer", icon: "🧪", title: "Quality Assurance Engineer", role: "engineer" },
-  { id: "devops-engineer", name: "DevOps Engineer", icon: "🔧", title: "DevOps Engineer", role: "engineer" },
-  { id: "ci-engineer", name: "CI Engineer", icon: "⚡", title: "CI/CD Engineer", role: "engineer" },
-  { id: "security-engineer", name: "Security Engineer", icon: "🛡️", title: "Security Engineer", role: "engineer" },
-  { id: "data-engineer", name: "Data Engineer", icon: "📊", title: "Data Engineer", role: "engineer" },
-  { id: "ml-engineer", name: "ML Engineer", icon: "🤖", title: "Machine Learning Engineer", role: "engineer" },
-  { id: "product-manager", name: "Product Manager", icon: "📋", title: "Product Manager", role: "custom" },
-  { id: "designer", name: "Designer", icon: "✏️", title: "Product Designer", role: "custom" },
-  { id: "marketing-manager", name: "Marketing Manager", icon: "📣", title: "Marketing Manager", role: "custom" },
-  { id: "technical-writer", name: "Technical Writer", icon: "📝", title: "Technical Writer", role: "custom" },
-  { id: "triage", name: "Triage Agent", icon: "🔍", title: "Task Triage Agent", role: "triage" },
-  { id: "reviewer", name: "Reviewer", icon: "👁️", title: "Code Reviewer", role: "reviewer" },
+  { id: "ceo", name: "CEO", icon: "👔", title: "Chief Executive Officer", role: "custom", description: "Oversees project strategy, sets priorities, and coordinates between departments to ensure alignment with business goals." },
+  { id: "cto", name: "CTO", icon: "🧠", title: "Chief Technology Officer", role: "custom", description: "Defines technical architecture, evaluates technology choices, and guides engineering standards across the project." },
+  { id: "cmo", name: "CMO", icon: "📢", title: "Chief Marketing Officer", role: "custom", description: "Drives product positioning, audience engagement strategy, and content planning to grow user adoption." },
+  { id: "cfo", name: "CFO", icon: "💰", title: "Chief Financial Officer", role: "custom", description: "Manages budget allocation, cost optimization, and financial planning to maximize resource efficiency." },
+  { id: "engineer", name: "Engineer", icon: "👨‍💻", title: "Software Engineer", role: "engineer", description: "Implements features, fixes bugs, and writes well-tested code across the full application stack." },
+  { id: "backend-engineer", name: "Backend Engineer", icon: "⚙️", title: "Backend Engineer", role: "engineer", description: "Builds and maintains server-side logic, APIs, database schemas, and background processing pipelines." },
+  { id: "frontend-engineer", name: "Frontend Engineer", icon: "🎨", title: "Frontend Engineer", role: "engineer", description: "Develops user interfaces, manages component libraries, and ensures responsive, accessible UI experiences." },
+  { id: "fullstack-engineer", name: "Fullstack Engineer", icon: "🚀", title: "Full Stack Engineer", role: "engineer", description: "Works across frontend and backend to deliver end-to-end features from database to user interface." },
+  { id: "qa-engineer", name: "QA Engineer", icon: "🧪", title: "Quality Assurance Engineer", role: "engineer", description: "Designs test plans, writes automated tests, and validates that features meet acceptance criteria before release." },
+  { id: "devops-engineer", name: "DevOps Engineer", icon: "🔧", title: "DevOps Engineer", role: "engineer", description: "Manages infrastructure, deployment pipelines, and monitoring to ensure reliable and scalable service delivery." },
+  { id: "ci-engineer", name: "CI Engineer", icon: "⚡", title: "CI/CD Engineer", role: "engineer", description: "Builds and optimizes continuous integration and delivery pipelines for fast, reliable release cycles." },
+  { id: "security-engineer", name: "Security Engineer", icon: "🛡️", title: "Security Engineer", role: "engineer", description: "Identifies vulnerabilities, enforces security best practices, and conducts audits to protect application integrity." },
+  { id: "data-engineer", name: "Data Engineer", icon: "📊", title: "Data Engineer", role: "engineer", description: "Designs data pipelines, manages storage infrastructure, and ensures reliable data flow for analytics and features." },
+  { id: "ml-engineer", name: "ML Engineer", icon: "🤖", title: "Machine Learning Engineer", role: "engineer", description: "Builds, trains, and deploys machine learning models, and integrates AI capabilities into the product." },
+  { id: "product-manager", name: "Product Manager", icon: "📋", title: "Product Manager", role: "custom", description: "Defines product requirements, prioritizes the backlog, and coordinates cross-functional delivery from concept to launch." },
+  { id: "designer", name: "Designer", icon: "✏️", title: "Product Designer", role: "custom", description: "Creates wireframes, prototypes, and design systems that balance usability, aesthetics, and brand consistency." },
+  { id: "marketing-manager", name: "Marketing Manager", icon: "📣", title: "Marketing Manager", role: "custom", description: "Plans campaigns, manages content channels, and analyzes market data to drive brand awareness and growth." },
+  { id: "technical-writer", name: "Technical Writer", icon: "📝", title: "Technical Writer", role: "custom", description: "Writes and maintains documentation, API references, and guides that help users and developers succeed." },
+  { id: "triage", name: "Triage Agent", icon: "🔍", title: "Task Triage Agent", role: "triage", description: "Analyzes incoming tasks, generates detailed specifications, and prepares PROMPT.md files for execution." },
+  { id: "reviewer", name: "Reviewer", icon: "👁️", title: "Code Reviewer", role: "reviewer", description: "Reviews code changes for correctness, security, performance, and adherence to project coding standards." },
 ];
 
 export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAgentDialogProps) {
@@ -161,7 +161,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     setSelectedPresetId(preset.id);
     setName(preset.name);
     setIcon(preset.icon);
-    setTitle(preset.title);
+    setTitle(preset.description ?? preset.title);
     setRole(preset.role);
     // Advance to Step 1 so user can review model selection
     setStep(1);
@@ -257,6 +257,9 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                       <span className="agent-preset-icon">{preset.icon}</span>
                       <span className="agent-preset-name">{preset.name}</span>
                       <span className="agent-preset-role">{preset.role}</span>
+                      {preset.description && (
+                        <span className="agent-preset-description">{preset.description}</span>
+                      )}
                     </button>
                   ))}
                 </div>

@@ -622,7 +622,8 @@ describe("NewAgentDialog", () => {
       expect(nameInput.value).toBe("Engineer");
 
       const titleInput = screen.getByLabelText(/Title/) as HTMLInputElement;
-      expect(titleInput.value).toBe("Software Engineer");
+      // Title should be set to the preset's description (not the professional title)
+      expect(titleInput.value).toBe("Implements features, fixes bugs, and writes well-tested code across the full application stack.");
 
       // Verify role was set to engineer
       const roleGrid = document.querySelector(".agent-role-grid");
@@ -768,7 +769,8 @@ describe("NewAgentDialog", () => {
       const createCall = mockCreateAgent.mock.calls[0][0];
       expect(createCall.name).toBe("Reviewer");
       expect(createCall.icon).toBe("👁️");
-      expect(createCall.title).toBe("Code Reviewer");
+      // Title should be the preset's description
+      expect(createCall.title).toBe("Reviews code changes for correctness, security, performance, and adherence to project coding standards.");
       expect(createCall.role).toBe("reviewer");
     });
 
@@ -782,6 +784,63 @@ describe("NewAgentDialog", () => {
 
       const ctoCard = screen.getByTestId("preset-cto");
       expect(ctoCard.getAttribute("title")).toBe("Chief Technology Officer");
+    });
+
+    it("renders descriptions in all 20 preset cards", () => {
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      // Every preset should have a description element rendered
+      const descriptionElements = screen.getAllByText(/.\./, {
+        selector: ".agent-preset-description",
+      });
+      expect(descriptionElements).toHaveLength(20);
+
+      // Verify each description is non-empty
+      descriptionElements.forEach((el) => {
+        expect(el.textContent?.length).toBeGreaterThan(10);
+      });
+    });
+
+    it("all presets have non-empty description strings", () => {
+      // Import the array directly by checking the rendered cards
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      const presetIds = [
+        "ceo", "cto", "cmo", "cfo", "engineer", "backend-engineer",
+        "frontend-engineer", "fullstack-engineer", "qa-engineer",
+        "devops-engineer", "ci-engineer", "security-engineer",
+        "data-engineer", "ml-engineer", "product-manager", "designer",
+        "marketing-manager", "technical-writer", "triage", "reviewer",
+      ];
+
+      presetIds.forEach((id) => {
+        const card = screen.getByTestId(`preset-${id}`);
+        const desc = card.querySelector(".agent-preset-description");
+        expect(desc).toBeTruthy();
+        expect((desc as HTMLElement).textContent?.length).toBeGreaterThan(0);
+      });
+    });
+
+    it("selecting a preset sets title to the description value", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalledOnce());
+
+      // Click the CEO preset
+      await user.click(screen.getByTestId("preset-ceo"));
+
+      // Go back to verify the title field
+      await user.click(screen.getByText("Back"));
+
+      const titleInput = screen.getByLabelText(/Title/) as HTMLInputElement;
+      expect(titleInput.value).toBe("Oversees project strategy, sets priorities, and coordinates between departments to ensure alignment with business goals.");
     });
   });
 });
