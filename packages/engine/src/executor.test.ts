@@ -5120,6 +5120,163 @@ describe("Per-task model overrides", () => {
   });
 });
 
+// ── Per-task thinkingLevel override tests ───────────────────────────
+
+describe("Per-task thinkingLevel override", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("uses per-task thinkingLevel when set on the task", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    // Override getTask to return task with thinkingLevel override
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      thinkingLevel: "high",
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      thinkingLevel: "high",
+    });
+
+    // Should use per-task thinkingLevel override
+    const callArgs = mockedCreateHaiAgent.mock.calls[0];
+    expect(callArgs).toBeDefined();
+    expect(callArgs[0].defaultThinkingLevel).toBe("high");
+  });
+
+  it("falls back to global defaultThinkingLevel when task has no thinkingLevel", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: undefined,
+      defaultThinkingLevel: "medium",
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      // No thinkingLevel set
+    });
+
+    // Should fall back to global defaultThinkingLevel
+    const callArgs = mockedCreateHaiAgent.mock.calls[0];
+    expect(callArgs).toBeDefined();
+    expect(callArgs[0].defaultThinkingLevel).toBe("medium");
+  });
+
+  it("uses explicit 'off' thinkingLevel from task over global setting", async () => {
+    const store = createMockStore();
+
+    mockedCreateHaiAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: undefined,
+      defaultThinkingLevel: "high",
+    });
+
+    // Override getTask to return task with thinkingLevel: "off"
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      thinkingLevel: "off",
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      thinkingLevel: "off",
+    });
+
+    // Should use task's explicit "off" instead of global "high"
+    const callArgs = mockedCreateHaiAgent.mock.calls[0];
+    expect(callArgs).toBeDefined();
+    expect(callArgs[0].defaultThinkingLevel).toBe("off");
+  });
+});
+
 // ── Invalid transition error handling tests ─────────────────────────
 
 describe("Invalid transition error handling", () => {

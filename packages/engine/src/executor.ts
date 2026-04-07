@@ -978,6 +978,9 @@ export class TaskExecutor {
           : settings.defaultModelId;
         const executorFallbackProvider = settings.fallbackProvider;
         const executorFallbackModelId = settings.fallbackModelId;
+        const executorThinkingLevel = detail.thinkingLevel
+          ? detail.thinkingLevel
+          : settings.defaultThinkingLevel;
 
         // Determine whether we're resuming a previous session (pause/resume)
         // or starting fresh. Use file-based sessions so conversation state
@@ -1002,7 +1005,7 @@ export class TaskExecutor {
           defaultModelId: executorModelId,
           fallbackProvider: executorFallbackProvider,
           fallbackModelId: executorFallbackModelId,
-          defaultThinkingLevel: settings.defaultThinkingLevel,
+          defaultThinkingLevel: executorThinkingLevel,
           sessionManager,
         });
 
@@ -1189,7 +1192,7 @@ export class TaskExecutor {
               defaultModelId: executorModelId,
               fallbackProvider: executorFallbackProvider,
               fallbackModelId: executorFallbackModelId,
-              defaultThinkingLevel: settings.defaultThinkingLevel,
+              defaultThinkingLevel: executorThinkingLevel,
               sessionManager: SessionManager.create(worktreePath),
             });
             // Update session file for the retry session (so pause/resume works)
@@ -1708,7 +1711,7 @@ export class TaskExecutor {
               defaultModelId: settings.defaultModelId,
               fallbackProvider: settings.fallbackProvider,
               fallbackModelId: settings.fallbackModelId,
-              defaultThinkingLevel: settings.defaultThinkingLevel,
+              defaultThinkingLevel: detail.thinkingLevel ?? settings.defaultThinkingLevel,
               // Per-task validator overrides take precedence over global validator settings
               validatorModelProvider: detail.validatorModelProvider ?? settings.validatorProvider,
               validatorModelId: detail.validatorModelId ?? settings.validatorModelId,
