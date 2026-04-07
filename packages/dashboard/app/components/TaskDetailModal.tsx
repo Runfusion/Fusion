@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo, Settings, AgentLogEntry } from "@fusion/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@fusion/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, requestSpecRevision, approvePlan, rejectPlan, refineTask, fetchWorkflowResults } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults } from "../api";
 import type { WorkflowStepResult } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
@@ -523,6 +523,17 @@ export function TaskDetailModal({
       addToast(err.message, "error");
     }
   }, [task.id, onClose, addToast]);
+
+  const handleRespecify = useCallback(async () => {
+    if (!confirm("Rebuild the specification for this task? The task will move to triage for re-specification.")) return;
+    try {
+      await rebuildTaskSpec(task.id, projectId);
+      onClose();
+      addToast(`Respecifying ${task.id}...`, "info");
+    } catch (err: any) {
+      addToast(err.message, "error");
+    }
+  }, [task.id, projectId, onClose, addToast]);
 
   const handleOpenRefineModal = useCallback(() => {
     setShowRefineModal(true);
@@ -1243,6 +1254,11 @@ export function TaskDetailModal({
           {(task.column === "done" || task.column === "in-review") && (
             <button className="btn btn-sm" onClick={handleOpenRefineModal}>
               Refine
+            </button>
+          )}
+          {task.column !== "triage" && (
+            <button className="btn btn-sm" onClick={handleRespecify}>
+              Respecify
             </button>
           )}
           {(task.status === "failed" || task.status === "stuck-killed") && onRetryTask && (

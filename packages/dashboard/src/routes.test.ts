@@ -3884,6 +3884,108 @@ describe("POST /tasks/:id/spec/revise", () => {
 });
 
 
+// --- Spec Rebuild route tests ---
+
+describe("POST /tasks/:id/spec/rebuild", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      getTask: vi.fn(),
+      moveTask: vi.fn(),
+      updateTask: vi.fn(),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("rebuilds spec and moves task from todo to triage", async () => {
+    const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(todoTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+    expect(res.status).toBe(200);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "Specification rebuild requested by user"
+    );
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-respecify" });
+  });
+
+  it("rebuilds spec and moves task from in-progress to triage", async () => {
+    const inProgressTask = { ...FAKE_TASK_DETAIL, column: "in-progress" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(inProgressTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-respecify" });
+  });
+
+  it("rebuilds spec and moves task from done to triage", async () => {
+    const doneTask = { ...FAKE_TASK_DETAIL, column: "done" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
+  });
+
+  it("returns 400 when task is already in triage", async () => {
+    const triageTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(triageTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Cannot rebuild spec");
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when task is in in-review (cannot transition to triage)", async () => {
+    const inReviewTask = { ...FAKE_TASK_DETAIL, column: "in-review" as const };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(inReviewTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("in-review");
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when task not found", async () => {
+    const error = new Error("Task not found") as Error & { code?: string };
+    error.code = "ENOENT";
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-999/spec/rebuild");
+
+    expect(res.status).toBe(404);
+  });
+});
+
 // --- Plan Approval route tests ---
 
 describe("POST /tasks/:id/approve-plan", () => {

@@ -334,6 +334,12 @@ export function requestSpecRevision(id: string, feedback: string, projectId?: st
   });
 }
 
+export function rebuildTaskSpec(id: string, projectId?: string): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/spec/rebuild`, projectId), {
+    method: "POST",
+  });
+}
+
 export function refineTask(id: string, feedback: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/refine`, projectId), {
     method: "POST",

@@ -2506,6 +2506,42 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // Rebuild task spec without feedback
+  router.post("/tasks/:id/spec/rebuild", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+
+      // Get current task state
+      const task = await scopedStore.getTask(req.params.id);
+
+      // Check if task can transition to triage
+      const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
+      if (!canTransition) {
+        res.status(400).json({
+          error: `Cannot rebuild spec for tasks in '${task.column}' column. ` +
+                 `Move task to a valid column first.`,
+        });
+        return;
+      }
+
+      // Log the rebuild request
+      await scopedStore.logEntry(task.id, "Specification rebuild requested by user");
+
+      // Move to triage for re-specification
+      const updated = await scopedStore.moveTask(task.id, "triage");
+
+      // Update status to indicate needs re-specification
+      await scopedStore.updateTask(task.id, { status: "needs-respecify" });
+
+      res.json(updated);
+    } catch (err: any) {
+      const status = err.code === "ENOENT" ? 404
+        : err.message?.includes("Invalid transition") ? 400
+        : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // Update task
   router.patch("/tasks/:id", async (req, res) => {
     try {
