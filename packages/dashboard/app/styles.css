@@ -21684,3 +21684,265 @@ html .column.drag-over * {
   justify-content: flex-end;
   gap: 8px;
 }
+
+
+/* ── Agent Import Modal ──────────────────────────────────────────────────── */
+
+.agent-import-dialog {
+  max-width: 560px;
+}
+
+.agent-import-description {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 0 0 var(--space-md) 0;
+  line-height: 1.5;
+}
+
+.agent-import-description code {
+  background: var(--surface-hover);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.agent-import-file-upload {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.agent-import-file-input {
+  display: none;
+}
+
+.agent-import-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-import-file-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.agent-import-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.agent-import-divider::before,
+.agent-import-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.agent-import-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.agent-import-textarea:focus {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--todo) 20%, transparent);
+}
+
+.agent-import-company {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.agent-import-company-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.agent-import-company-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.agent-import-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: var(--space-md);
+}
+
+.agent-import-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.agent-import-agent-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.agent-import-agent-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.agent-import-agent-details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agent-import-agent-name {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.agent-import-agent-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.agent-import-agent-title {
+  color: var(--text-muted);
+}
+
+.agent-import-agent-role {
+  text-transform: capitalize;
+}
+
+.agent-import-agent-model {
+  color: var(--text-muted);
+}
+
+.agent-import-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: var(--space-lg);
+}
+
+.agent-import-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-sm);
+}
+
+.agent-import-result-icon {
+  color: var(--state-active-text);
+  margin-bottom: var(--space-xs);
+}
+
+.agent-import-result-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.agent-import-result-company {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 0 0 var(--space-md) 0;
+}
+
+.agent-import-result-stats {
+  display: flex;
+  gap: var(--space-lg);
+  margin-bottom: var(--space-md);
+}
+
+.agent-import-result-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.agent-import-result-stat--success {
+  color: var(--state-active-text);
+}
+
+.agent-import-result-stat--skipped {
+  color: var(--text-muted);
+}
+
+.agent-import-result-stat--error {
+  color: var(--state-error-text);
+}
+
+.agent-import-result-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+}
+
+.agent-import-result-agent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--state-active-text);
+  padding: 4px var(--space-sm);
+  background: color-mix(in srgb, var(--state-active-text) 8%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.agent-import-result-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  margin-top: var(--space-sm);
+}
+
+.agent-import-result-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--state-error-text);
+  padding: 4px var(--space-sm);
+  background: color-mix(in srgb, var(--state-error-text) 8%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* Agent controls actions row */
+.agent-controls-actions {
+  display: flex;
+  gap: var(--space-sm);
+}

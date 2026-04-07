@@ -6848,6 +6848,103 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * POST /api/agents/import
+   * Import agents from a companies.sh manifest.
+   * Body: { manifest: string (raw script content) | { companyName, agents, envVars }, skipExisting?: boolean, dryRun?: boolean }
+   */
+  router.post("/agents/import", async (req, res) => {
+    try {
+      const { manifest, skipExisting, dryRun } = req.body;
+
+      if (!manifest) {
+        res.status(400).json({ error: "manifest is required" });
+        return;
+      }
+
+      const { AgentStore, parseCompaniesShManifest, convertCompaniesShAgents, CompaniesShParseError } = await import("@fusion/core");
+
+      let parsed;
+      if (typeof manifest === "string") {
+        // Raw script content — parse it
+        try {
+          parsed = parseCompaniesShManifest(manifest);
+        } catch (err) {
+          if (err instanceof CompaniesShParseError) {
+            res.status(400).json({ error: err.message });
+            return;
+          }
+          throw err;
+        }
+      } else if (typeof manifest === "object" && Array.isArray((manifest as Record<string, unknown>).agents)) {
+        // Pre-parsed object
+        parsed = manifest as { companyName: string; agents: unknown[]; envVars?: unknown[] };
+      } else {
+        res.status(400).json({ error: "manifest must be a string (script content) or parsed object with agents array" });
+        return;
+      }
+
+      if (!parsed.agents || parsed.agents.length === 0) {
+        res.status(400).json({ error: "No agents found in manifest" });
+        return;
+      }
+
+      const scopedStore = await getScopedStore(req);
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      // Get existing agent names for skip logic
+      const existingAgents = await agentStore.listAgents();
+      const existingNames = new Set(existingAgents.map((a: any) => a.name));
+
+      // Convert agents to AgentCreateInput
+      const { inputs, result } = convertCompaniesShAgents(
+        parsed.agents as any[],
+        skipExisting ? { skipExisting: [...existingNames] } : undefined,
+      );
+
+      // Dry run: return preview without creating
+      if (dryRun) {
+        res.json({
+          dryRun: true,
+          companyName: parsed.companyName,
+          created: result.created,
+          skipped: result.skipped,
+          errors: result.errors,
+        });
+        return;
+      }
+
+      // Create agents
+      const created: any[] = [];
+      const errors: Array<{ name: string; error: string }> = [...result.errors];
+
+      for (const input of inputs) {
+        // Check for duplicates if not using skipExisting
+        if (!skipExisting && existingNames.has(input.name)) {
+          errors.push({ name: input.name, error: "Agent with this name already exists" });
+          continue;
+        }
+
+        try {
+          const agent = await agentStore.createAgent(input);
+          created.push(agent);
+        } catch (err: any) {
+          errors.push({ name: input.name, error: err.message });
+        }
+      }
+
+      res.json({
+        companyName: parsed.companyName,
+        created,
+        skipped: result.skipped,
+        errors,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * GET /api/agents/stats
    * Return aggregate stats across all agents.
    * Must be registered before /agents/:id to avoid "stats" matching :id.

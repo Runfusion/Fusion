@@ -1852,6 +1852,37 @@ export function fetchAgentChildren(agentId: string, projectId?: string): Promise
   });
 }
 
+// ── Agent Import API ────────────────────────────────────────────────────────
+
+/** Result of importing agents from a companies.sh manifest */
+export interface AgentImportResult {
+  companyName: string;
+  /** In dry-run mode: agent name strings. In live mode: agent objects with id and name. */
+  created: string[] | Array<{ id: string; name: string }>;
+  skipped: string[];
+  errors: Array<{ name: string; error: string }>;
+  dryRun?: boolean;
+}
+
+/**
+ * Import agents from a companies.sh manifest via the API.
+ * Uses dryRun for preview, then actual import.
+ */
+export function importAgents(
+  manifest: string,
+  options?: { dryRun?: boolean; skipExisting?: boolean },
+  projectId?: string,
+): Promise<AgentImportResult> {
+  return api<AgentImportResult>(withProjectId("/agents/import", projectId), {
+    method: "POST",
+    body: JSON.stringify({
+      manifest,
+      dryRun: options?.dryRun ?? false,
+      skipExisting: options?.skipExisting ?? true,
+    }),
+  });
+}
+
 // ── Agent Generation API ────────────────────────────────────────────────────
 
 /** Generated agent specification returned by the AI */
