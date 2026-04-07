@@ -929,6 +929,15 @@ export interface ProjectSettings {
    *  each prompt and proactively compacts context when the token count reaches
    *  this threshold. */
   tokenCap?: number;
+  /** When true, each task step runs in its own fresh agent session instead of a
+   *  single session for the entire task. Enables per-step error recovery and
+   *  optional parallel execution when steps have non-overlapping file scopes.
+   *  Default: false. */
+  runStepsInNewSessions?: boolean;
+  /** Maximum number of steps to run in parallel when runStepsInNewSessions is
+   *  enabled and steps have non-overlapping file scopes. Range: 1–4.
+   *  Default: 2. */
+  maxParallelSteps?: number;
 }
 
 /**
@@ -1019,6 +1028,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   insightExtractionMinIntervalMs: 86_400_000,
   memoryEnabled: true,
   tokenCap: undefined,
+  runStepsInNewSessions: false,
+  maxParallelSteps: 2,
 };
 
 /**
@@ -1100,6 +1111,8 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "memoryEnabled",
   "maxSpawnedAgentsPerParent",
   "maxSpawnedAgentsGlobal",
+  "runStepsInNewSessions",
+  "maxParallelSteps",
 ] as const;
 
 export interface BoardConfig {
