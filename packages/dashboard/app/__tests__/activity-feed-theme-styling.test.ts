@@ -20,11 +20,11 @@ describe("ActivityFeed theme styling", () => {
   /**
    * Extract the ActivityFeed CSS block from the full stylesheet.
    * The block starts at ".activity-feed {" and ends before the next
-   * top-level section comment (e.g., "SetupWizard").
+   * top-level section comment (e.g., "Modals").
    */
   function getActivityFeedBlock(): string {
     const startMatch = css.match(/\/\* === ActivityFeed Component === \*\//);
-    const endMatch = css.match(/\/\* === SetupWizard Component === \*\//);
+    const endMatch = css.match(/\/\* === Modals === \*\//);
 
     if (!startMatch || !endMatch) {
       throw new Error("Could not locate ActivityFeed CSS block boundaries");

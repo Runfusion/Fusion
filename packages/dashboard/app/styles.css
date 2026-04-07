@@ -2447,272 +2447,6 @@ body {
   max-width: 300px;
 }
 
-/* === SetupWizard Component === */
-.wizard-progress {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-lg) var(--space-xl);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.wizard-progress-step {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  opacity: 0.5;
-  transition: opacity var(--transition-fast);
-}
-
-.wizard-progress-step.active {
-  opacity: 1;
-}
-
-.wizard-progress-step.current .wizard-progress-number {
-  background: var(--todo);
-  color: var(--bg);
-}
-
-.wizard-progress-number {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--border);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.wizard-progress-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.wizard-content {
-  padding: var(--space-xl);
-  min-height: 280px;
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.wizard-step {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-  animation: fadeIn var(--transition-normal);
-}
-
-.wizard-step h4 {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0;
-}
-
-.wizard-description {
-  font-size: 14px;
-  color: var(--text-muted);
-  line-height: 1.5;
-  margin: 0;
-}
-
-.wizard-input-group {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.wizard-input-icon {
-  position: absolute;
-  left: 12px;
-  color: var(--text-muted);
-  pointer-events: none;
-}
-
-.wizard-input-group input {
-  padding-left: 40px !important;
-}
-
-.wizard-hint {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  background: var(--surface);
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.wizard-hint svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.wizard-hint code {
-  background: var(--card);
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.wizard-options {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-.wizard-option {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-md);
-  padding: var(--space-lg);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  transition:
-    background-color var(--transition-fast),
-    border-color var(--transition-fast);
-}
-
-.wizard-option:hover {
-  background: var(--card-hover);
-  border-color: var(--text-dim);
-}
-
-.wizard-option.selected {
-  background: rgba(88, 166, 255, 0.05);
-  border-color: var(--todo);
-  box-shadow: 0 0 0 1px var(--todo);
-}
-
-.wizard-option input[type="radio"] {
-  margin-top: 2px;
-}
-
-.wizard-option-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  flex: 1;
-}
-
-.wizard-option-content strong {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.wizard-option-content span {
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.wizard-option-recommended {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  padding: 2px 8px;
-  background: rgba(63, 185, 80, 0.1);
-  color: var(--color-success) !important;
-  border-radius: var(--radius-sm);
-  font-size: 11px !important;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.wizard-option-note {
-  font-size: 11px !important;
-  color: var(--text-dim) !important;
-  font-style: italic;
-}
-
-.wizard-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-lg);
-  padding: var(--space-2xl);
-  color: var(--text-muted);
-}
-
-.wizard-error {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  background: rgba(248, 81, 73, 0.1);
-  border: 1px solid var(--error);
-  border-radius: var(--radius-md);
-  color: var(--error);
-  font-size: 13px;
-}
-
-.wizard-validation-success {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-md);
-  padding: var(--space-2xl);
-  color: var(--color-success);
-}
-
-.wizard-summary {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-  padding: var(--space-lg);
-  background: var(--surface);
-  border-radius: var(--radius-lg);
-}
-
-.wizard-summary-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-}
-
-.wizard-summary-label {
-  width: 120px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.wizard-summary-value {
-  flex: 1;
-  font-size: 14px;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 /* === Modals === */
 .modal-overlay {
   display: none;
@@ -18146,6 +17880,33 @@ html .column.drag-over * {
   flex-shrink: 0;
   padding: 6px 16px !important;
   font-size: 13px !important;
+}
+
+/* === Wizard Shared Styles (used by SetupWizardModal) === */
+.wizard-option-recommended {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  background: rgba(63, 185, 80, 0.1);
+  color: var(--color-success) !important;
+  border-radius: var(--radius-sm);
+  font-size: 11px !important;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.wizard-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--error);
+  border-radius: var(--radius-md);
+  color: var(--error);
+  font-size: 13px;
 }
 
 /* === Setup Wizard Modal (Onboarding) === */
