@@ -1747,8 +1747,8 @@ export function cancelSubtaskBreakdown(sessionId: string, projectId?: string): P
 
 // ── Agent API ────────────────────────────────────────────────────────────
 
-import type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats } from "@fusion/core";
-export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats };
+import type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource } from "@fusion/core";
+export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource };
 
 function withProjectId(path: string, projectId?: string): string {
   if (!projectId) return path;
@@ -1846,10 +1846,16 @@ export function fetchAgentRunLogs(agentId: string, runId: string, projectId?: st
 }
 
 /** Manually start a heartbeat run for an agent */
-export function startAgentRun(agentId: string, projectId?: string): Promise<AgentHeartbeatRun> {
+export function startAgentRun(
+  agentId: string,
+  projectId?: string,
+  options?: { source?: HeartbeatInvocationSource; triggerDetail?: string },
+): Promise<AgentHeartbeatRun> {
+  const source = options?.source ?? "manual";
+  const triggerDetail = options?.triggerDetail ?? "Agent activated via dashboard";
   return api<AgentHeartbeatRun>(withProjectId(`/agents/${encodeURIComponent(agentId)}/runs`, projectId), {
     method: "POST",
-    body: JSON.stringify({ source: "manual", triggerDetail: "Agent activated via dashboard" }),
+    body: JSON.stringify({ source, triggerDetail }),
   });
 }
 

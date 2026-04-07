@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronRight
 } from "lucide-react";
 import type { AgentDetail, AgentState, AgentHeartbeatRun } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
@@ -237,8 +237,6 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
 
   const stateStyle = STATE_COLORS[agent.state];
   const health = getHealthStatus();
-  const runs = (agent as any).completedRuns || [];
-  const activeRun = (agent as any).activeRun;
 
   return (
     <div className="agent-detail-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -376,11 +374,11 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
           
           {activeTab === "runs" && (
             <RunsTab 
-              runs={runs} 
-              activeRun={activeRun}
               addToast={addToast}
               agentId={agent.id}
               projectId={projectId}
+              agentState={agent.state}
+              agentName={agent.name}
             />
           )}
           
@@ -675,48 +673,125 @@ function LogEntry({ entry, showTimestamp }: { entry: AgentLogEntry; showTimestam
 // ── Runs Tab ───────────────────────────────────────────────────────────────
 
 function RunsTab({ 
-  runs, 
-  activeRun,
   addToast,
   agentId,
   projectId,
+  agentState,
+  agentName,
 }: { 
-  runs: AgentHeartbeatRun[]; 
-  activeRun?: AgentHeartbeatRun;
   addToast: (msg: string, type?: "success" | "error") => void;
   agentId: string;
   projectId?: string;
+  agentState?: AgentState;
+  agentName?: string;
 }) {
+  const [runs, setRuns] = useState<AgentHeartbeatRun[]>([]);
+  const [isLoadingRuns, setIsLoadingRuns] = useState(true);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [runLogs, setRunLogs] = useState<AgentLogEntry[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [detailRun, setDetailRun] = useState<AgentHeartbeatRun | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
+  // Load runs on mount
+  const loadRuns = useCallback(async () => {
+    try {
+      const data = await fetchAgentRuns(agentId, 50, projectId);
+      setRuns(data);
+    } catch (err: any) {
+      addToast(`Failed to load runs: ${err.message}`, "error");
+    } finally {
+      setIsLoadingRuns(false);
+    }
+  }, [agentId, projectId, addToast]);
+
+  useEffect(() => {
+    void loadRuns();
+  }, [loadRuns]);
+
+  // Poll for active runs
+  const hasActiveRun = runs.some(r => r.status === "active");
+  useEffect(() => {
+    if (!hasActiveRun) return;
+    const interval = setInterval(() => {
+      void loadRuns();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hasActiveRun, loadRuns]);
+
+  // Load run detail when a run is selected
   const handleRunClick = useCallback(async (runId: string) => {
     if (selectedRunId === runId) {
       setSelectedRunId(null);
       setRunLogs([]);
+      setDetailRun(null);
       return;
     }
     setSelectedRunId(runId);
     setIsLoadingLogs(true);
+    setIsLoadingDetail(true);
     setRunLogs([]);
+    setDetailRun(null);
     try {
-      const logs = await fetchAgentRunLogs(agentId, runId, projectId);
+      const [logs, detail] = await Promise.all([
+        fetchAgentRunLogs(agentId, runId, projectId),
+        fetchAgentRunDetail(agentId, runId, projectId),
+      ]);
       setRunLogs(logs);
+      setDetailRun(detail);
     } catch (err: any) {
-      addToast(`Failed to load run logs: ${err.message}`, "error");
+      addToast(`Failed to load run details: ${err.message}`, "error");
       setRunLogs([]);
+      setDetailRun(null);
     } finally {
       setIsLoadingLogs(false);
+      setIsLoadingDetail(false);
     }
   }, [selectedRunId, agentId, projectId, addToast]);
 
-  if (runs.length === 0 && !activeRun) {
+  const handleRunHeartbeat = async () => {
+    try {
+      await startAgentRun(agentId, projectId, { source: "on_demand", triggerDetail: "Triggered from dashboard" });
+      addToast(`Heartbeat run started for ${agentName ?? agentId}`, "success");
+      setIsLoadingRuns(true);
+      void loadRuns();
+    } catch (err: any) {
+      addToast(`Failed to start heartbeat run: ${err.message}`, "error");
+    }
+  };
+
+  const canRunHeartbeat = agentState === "active" || agentState === "idle";
+
+  if (isLoadingRuns && runs.length === 0) {
     return (
-      <div className="runs-empty">
-        <Activity size={48} opacity={0.3} />
-        <p>No runs yet</p>
-        <p className="text-muted">Heartbeat runs will appear here</p>
+      <div className="runs-tab">
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "24px", justifyContent: "center" }}>
+          <Loader2 size={16} className="animate-spin" />
+          <span className="text-muted">Loading runs...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (runs.length === 0) {
+    return (
+      <div className="runs-tab">
+        {canRunHeartbeat && (
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-color)" }}>
+            <button
+              className="btn btn--sm btn--primary"
+              onClick={() => void handleRunHeartbeat()}
+              aria-label={`Run heartbeat for ${agentName ?? agentId}`}
+            >
+              <Activity size={14} /> Run Heartbeat
+            </button>
+          </div>
+        )}
+        <div className="runs-empty">
+          <Activity size={48} opacity={0.3} />
+          <p>No runs yet</p>
+          <p className="text-muted">Heartbeat runs will appear here</p>
+        </div>
       </div>
     );
   }
@@ -724,6 +799,20 @@ function RunsTab({
   const sortedRuns = [...runs].sort(
     (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
   );
+
+  const activeRuns = sortedRuns.filter(r => r.status === "active");
+  const completedRuns = sortedRuns.filter(r => r.status !== "active");
+
+  const renderUsage = (usage: { inputTokens: number; outputTokens: number; cachedTokens: number } | undefined) => {
+    if (!usage) return null;
+    return (
+      <div style={{ fontSize: "12px", color: "var(--text-secondary)", display: "flex", gap: "12px", flexWrap: "wrap" }}>
+        <span>Input: {usage.inputTokens.toLocaleString()}</span>
+        <span>Output: {usage.outputTokens.toLocaleString()}</span>
+        {usage.cachedTokens > 0 && <span>Cached: {usage.cachedTokens.toLocaleString()}</span>}
+      </div>
+    );
+  };
 
   const renderRunCard = (run: AgentHeartbeatRun, index: number, isActive: boolean) => {
     const statusInfo = RUN_STATUS_ICONS[run.status] || RUN_STATUS_ICONS.completed;
@@ -762,15 +851,28 @@ function RunsTab({
                 <span className="run-id">#{index + 1} {run.id.slice(0, 8)}</span>
               )}
             </div>
-            <span className={cn("run-status", run.status)}>
-              <StatusIcon size={14} className={statusInfo.color} style={run.status === "active" ? { color: statusInfo.color } : undefined} />
-              {run.status}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              {run.invocationSource && (
+                <span className="badge" style={{ fontSize: "10px", padding: "1px 6px" }}>
+                  {run.invocationSource}
+                </span>
+              )}
+              <span className={cn("run-status", run.status)}>
+                <StatusIcon size={14} className={statusInfo.color} style={run.status === "active" ? { color: statusInfo.color } : undefined} />
+                {run.status}
+              </span>
+            </div>
           </div>
           <div className="run-details">
             <span>Started {relativeTime(run.startedAt)}</span>
             <span>•</span>
             <span>{duration}</span>
+            {run.triggerDetail && (
+              <>
+                <span>•</span>
+                <span className="text-muted">{run.triggerDetail}</span>
+              </>
+            )}
           </div>
         </div>
         {isSelected && (
@@ -783,18 +885,137 @@ function RunsTab({
               borderTop: "1px solid var(--border-color)",
             }}
           >
-            {isLoadingLogs ? (
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "12px 0" }}>
-                <Loader2 size={16} className="animate-spin" />
-                <span className="text-muted">Loading logs...</span>
+            {/* Execution Details */}
+            {isLoadingDetail ? (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0" }}>
+                <Loader2 size={14} className="animate-spin" />
+                <span className="text-muted">Loading details...</span>
               </div>
-            ) : runLogs.length === 0 ? (
-              <div className="text-muted" style={{ padding: "12px 0", fontStyle: "italic" }}>
-                No logs available for this run
+            ) : detailRun && (
+              <div style={{ marginBottom: "12px" }}>
+                {/* Token Usage */}
+                {detailRun.usageJson && (
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "4px" }}>
+                      Token Usage
+                    </div>
+                    {renderUsage(detailRun.usageJson)}
+                  </div>
+                )}
+
+                {/* Output */}
+                {detailRun.stdoutExcerpt && (
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "4px" }}>
+                      Output
+                    </div>
+                    <pre style={{
+                      background: "var(--bg-tertiary, #161b22)",
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      maxHeight: "200px",
+                      overflow: "auto",
+                      margin: 0,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}>
+                      {detailRun.stdoutExcerpt.length > 2000
+                        ? `${detailRun.stdoutExcerpt.slice(0, 2000)}\n\n... (truncated, ${detailRun.stdoutExcerpt.length} chars total)`
+                        : detailRun.stdoutExcerpt}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Errors */}
+                {detailRun.stderrExcerpt && (
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", color: "var(--color-error, #f85149)", marginBottom: "4px" }}>
+                      Errors
+                    </div>
+                    <pre style={{
+                      background: "rgba(248, 81, 73, 0.1)",
+                      color: "var(--color-error, #f85149)",
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      maxHeight: "200px",
+                      overflow: "auto",
+                      margin: 0,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}>
+                      {detailRun.stderrExcerpt}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Result */}
+                {detailRun.resultJson && (
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "4px" }}>
+                      Result
+                    </div>
+                    <pre style={{
+                      background: "var(--bg-tertiary, #161b22)",
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      maxHeight: "200px",
+                      overflow: "auto",
+                      margin: 0,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}>
+                      {JSON.stringify(detailRun.resultJson, null, 2)}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Context */}
+                {detailRun.contextSnapshot && Object.keys(detailRun.contextSnapshot).length > 0 && (
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "4px" }}>
+                      Context
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", fontSize: "12px" }}>
+                      {Object.entries(detailRun.contextSnapshot).map(([key, value]) => (
+                        <span key={key}>
+                          <span className="text-muted">{key}:</span>{" "}
+                          <span>{String(value)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* No output state */}
+                {!detailRun.stdoutExcerpt && !detailRun.stderrExcerpt && !detailRun.resultJson && (
+                  <div className="text-muted" style={{ padding: "8px 0", fontStyle: "italic", fontSize: "12px" }}>
+                    No output captured
+                  </div>
+                )}
               </div>
-            ) : (
-              <AgentLogViewer entries={runLogs} loading={false} />
             )}
+
+            {/* Run Logs */}
+            <div style={{ borderTop: "1px solid var(--border-color)", paddingTop: "8px", marginTop: "4px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "4px" }}>
+                Agent Logs
+              </div>
+              {isLoadingLogs ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0" }}>
+                  <Loader2 size={14} className="animate-spin" />
+                  <span className="text-muted">Loading logs...</span>
+                </div>
+              ) : runLogs.length === 0 ? (
+                <div className="text-muted" style={{ padding: "8px 0", fontStyle: "italic" }}>
+                  No logs available for this run
+                </div>
+              ) : (
+                <AgentLogViewer entries={runLogs} loading={false} />
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -803,8 +1024,23 @@ function RunsTab({
 
   return (
     <div className="runs-tab">
-      {activeRun && renderRunCard(activeRun, 0, true)}
-      {sortedRuns.map((run, i) => renderRunCard(run, activeRun ? i + 1 : i, false))}
+      {canRunHeartbeat && (
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+            {runs.length} run{runs.length !== 1 ? "s" : ""}
+            {hasActiveRun && <span className="run-live-indicator" style={{ marginLeft: "8px" }}><span className="live-dot" />Live</span>}
+          </span>
+          <button
+            className="btn btn--sm btn--primary"
+            onClick={() => void handleRunHeartbeat()}
+            aria-label={`Run heartbeat for ${agentName ?? agentId}`}
+          >
+            <Activity size={14} /> Run Heartbeat
+          </button>
+        </div>
+      )}
+      {activeRuns.map((run, i) => renderRunCard(run, i, true))}
+      {completedRuns.map((run, i) => renderRunCard(run, activeRuns.length + i, false))}
     </div>
   );
 }

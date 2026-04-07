@@ -222,6 +222,16 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     }
   };
 
+  const handleRunHeartbeat = async (agentId: string, agentName: string) => {
+    try {
+      await startAgentRun(agentId, projectId, { source: "on_demand", triggerDetail: "Triggered from dashboard" });
+      addToast(`Heartbeat run started for ${agentName}`, "success");
+      void loadAgents();
+    } catch (err: any) {
+      addToast(`Failed to start heartbeat run: ${err.message}`, "error");
+    }
+  };
+
   const getRoleLabel = (role: AgentCapability) => AGENT_ROLES.find(r => r.value === role)?.label ?? role;
   const getRoleIcon = (role: AgentCapability) => AGENT_ROLES.find(r => r.value === role)?.icon ?? "🤖";
 
@@ -445,6 +455,16 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
                     )}
                     {agent.state === "active" && (
                       <>
+                        {agent.taskId && (
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleRunHeartbeat(agent.id, agent.name)}
+                            title="Run Heartbeat"
+                            aria-label={`Run heartbeat for ${agent.name}`}
+                          >
+                            <Activity size={14} />
+                          </button>
+                        )}
                         <button
                           className="btn btn--sm"
                           onClick={() => void handleStateChange(agent.id, "paused")}
@@ -481,6 +501,16 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
                     )}
                     {agent.state === "running" && (
                       <>
+                        {agent.taskId && (
+                          <button
+                            className="btn btn--sm"
+                            disabled
+                            title="Run in progress"
+                            aria-label={`Heartbeat run in progress for ${agent.name}`}
+                          >
+                            <Activity size={14} />
+                          </button>
+                        )}
                         <button
                           className="btn btn--sm"
                           onClick={() => void handleStateChange(agent.id, "paused")}
@@ -641,6 +671,16 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
                     )}
                     {agent.state === "active" && (
                       <>
+                        {agent.taskId && (
+                          <button
+                            className="btn btn--sm"
+                            onClick={() => void handleRunHeartbeat(agent.id, agent.name)}
+                            title="Run Heartbeat"
+                            aria-label={`Run heartbeat for ${agent.name}`}
+                          >
+                            <Activity size={14} /> Run
+                          </button>
+                        )}
                         <button
                           className="btn btn--sm"
                           onClick={() => void handleStateChange(agent.id, "paused")}
@@ -677,6 +717,16 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
                     )}
                     {agent.state === "running" && (
                       <>
+                        {agent.taskId && (
+                          <button
+                            className="btn btn--sm"
+                            disabled
+                            title="Run in progress"
+                            aria-label={`Heartbeat run in progress for ${agent.name}`}
+                          >
+                            <Activity size={14} /> Running
+                          </button>
+                        )}
                         <button
                           className="btn btn--sm"
                           onClick={() => void handleStateChange(agent.id, "paused")}

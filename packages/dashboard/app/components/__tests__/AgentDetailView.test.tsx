@@ -13,6 +13,9 @@ vi.mock("../../api", () => ({
   deleteAgent: vi.fn(),
   fetchAgentLogs: vi.fn(),
   fetchAgentRunLogs: vi.fn(),
+  fetchAgentRuns: vi.fn(),
+  fetchAgentRunDetail: vi.fn(),
+  startAgentRun: vi.fn(),
 }));
 
 vi.mock("../AgentLogViewer", () => ({
@@ -23,12 +26,14 @@ vi.mock("../AgentLogViewer", () => ({
   ),
 }));
 
-import { fetchAgent, updateAgent, updateAgentState, fetchAgentRunLogs } from "../../api";
+import { fetchAgent, updateAgent, updateAgentState, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail } from "../../api";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
 const mockUpdateAgent = vi.mocked(updateAgent);
 const mockUpdateAgentState = vi.mocked(updateAgentState);
 const mockFetchAgentRunLogs = vi.mocked(fetchAgentRunLogs);
+const mockFetchAgentRuns = vi.mocked(fetchAgentRuns);
+const mockFetchAgentRunDetail = vi.mocked(fetchAgentRunDetail);
 
 describe("AgentDetailView", () => {
   const createMockAgent = (overrides: Partial<{
@@ -71,9 +76,16 @@ describe("AgentDetailView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchAgent.mockResolvedValue(createMockAgent());
+    const mockAgent = createMockAgent();
+    mockFetchAgent.mockResolvedValue(mockAgent);
     mockUpdateAgentState.mockResolvedValue(createMockAgent({ state: "paused" }));
     mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
+    // Default: return runs from mock agent
+    mockFetchAgentRuns.mockResolvedValue([
+      ...(mockAgent.activeRun ? [mockAgent.activeRun] : []),
+      ...mockAgent.completedRuns,
+    ]);
+    mockFetchAgentRunDetail.mockResolvedValue(mockAgent.completedRuns[0]);
   });
 
   it("shows loading state initially", () => {
@@ -1077,6 +1089,7 @@ describe("AgentDetailView", () => {
     it("shows toast on fetch error", async () => {
       const addToast = vi.fn();
       mockFetchAgentRunLogs.mockRejectedValue(new Error("Network error"));
+      mockFetchAgentRunDetail.mockRejectedValue(new Error("Network error"));
 
       const user = userEvent.setup();
       render(
@@ -1103,7 +1116,7 @@ describe("AgentDetailView", () => {
 
       await waitFor(() => {
         expect(addToast).toHaveBeenCalledWith(
-          expect.stringContaining("Failed to load run logs"),
+          expect.stringContaining("Failed to load run details"),
           "error",
         );
       });

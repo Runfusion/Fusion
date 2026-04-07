@@ -1336,6 +1336,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // Get GitHub token from options or env
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
 
+  // HeartbeatMonitor for triggering agent execution runs
+  const heartbeatMonitor = options?.heartbeatMonitor;
+  const hasHeartbeatExecutor = Boolean(heartbeatMonitor);
+
   // Scheduler config (includes persisted settings)
   router.get("/config", async (req, res) => {
     try {
@@ -7110,10 +7114,14 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   /**
    * POST /api/agents/:id/heartbeat
    * Record a heartbeat for an agent.
+   * Body: { status?: "ok"|"missed"|"recovered", triggerExecution?: boolean }
+   *
+   * When triggerExecution is true AND HeartbeatMonitor is available,
+   * also starts a heartbeat run after recording the heartbeat event.
    */
   router.post("/agents/:id/heartbeat", async (req, res) => {
     try {
-      const { status = "ok" } = req.body;
+      const { status = "ok", triggerExecution } = req.body;
 
       const scopedStore = await getScopedStore(req);
       const { AgentStore } = await import("@fusion/core");
@@ -7121,7 +7129,26 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       await agentStore.init();
 
       const event = await agentStore.recordHeartbeat(req.params.id, status as "ok" | "missed" | "recovered");
-      res.json(event);
+
+      // Optionally trigger execution
+      let run: import("@fusion/core").AgentHeartbeatRun | undefined;
+      if (triggerExecution && hasHeartbeatExecutor && heartbeatMonitor) {
+        run = await heartbeatMonitor.startRun(req.params.id, {
+          source: "on_demand",
+          triggerDetail: "Triggered from heartbeat",
+        });
+
+        // Fire-and-forget execution
+        void heartbeatMonitor.executeHeartbeat({
+          agentId: req.params.id,
+          source: "on_demand",
+          triggerDetail: "Triggered from heartbeat",
+        }).catch((err: any) => {
+          console.error(`[heartbeat] Background execution failed for ${req.params.id}:`, err.message);
+        });
+      }
+
+      res.json(run ? { event, run } : event);
     } catch (err: any) {
       if (err.message?.includes("not found")) {
         res.status(404).json({ error: err.message });
@@ -7180,30 +7207,54 @@ Output ONLY the prompt text (no markdown, no explanations).`;
    * POST /api/agents/:id/runs
    * Manually start a heartbeat run for an agent.
    * Body: { source?: HeartbeatInvocationSource, triggerDetail?: string }
+   *
+   * When HeartbeatMonitor is available, delegates to startRun() which enriches
+   * the run with execution context, transitions the agent to "running", and
+   * fires the onRunStarted event. The route returns the run immediately with
+   * "active" status while execution continues in the background via
+   * executeHeartbeat() fire-and-forget.
    */
   router.post("/agents/:id/runs", async (req, res) => {
     try {
       const { source, triggerDetail } = req.body || {};
+      const invocationSource = source ?? "on_demand";
+      const trigger = triggerDetail ?? "Triggered from dashboard";
 
-      const scopedStore = await getScopedStore(req);
-      const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
-      await agentStore.init();
+      if (hasHeartbeatExecutor && heartbeatMonitor) {
+        // Delegate to HeartbeatMonitor for enriched run creation
+        const run = await heartbeatMonitor.startRun(req.params.id, {
+          source: invocationSource,
+          triggerDetail: trigger,
+        });
 
-      const run = await agentStore.startHeartbeatRun(req.params.id);
+        // Fire-and-forget execution in the background
+        void heartbeatMonitor.executeHeartbeat({
+          agentId: req.params.id,
+          source: invocationSource,
+          triggerDetail: trigger,
+        }).catch((err: any) => {
+          console.error(`[heartbeat] Background execution failed for ${req.params.id}:`, err.message);
+        });
 
-      // Enrich with invocation source and trigger detail
-      if (source) {
-        (run as any).invocationSource = source;
+        res.status(201).json(run);
       } else {
-        (run as any).invocationSource = "on_demand";
-      }
-      if (triggerDetail) {
-        (run as any).triggerDetail = triggerDetail;
-      }
+        // Fallback: record-only behavior without HeartbeatMonitor
+        const scopedStore = await getScopedStore(req);
+        const { AgentStore } = await import("@fusion/core");
+        const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+        await agentStore.init();
 
-      await agentStore.saveRun(run);
-      res.status(201).json(run);
+        const run = await agentStore.startHeartbeatRun(req.params.id);
+
+        // Enrich with invocation source and trigger detail
+        (run as any).invocationSource = invocationSource;
+        if (triggerDetail) {
+          (run as any).triggerDetail = triggerDetail;
+        }
+
+        await agentStore.saveRun(run);
+        res.status(201).json(run);
+      }
     } catch (err: any) {
       if (err.message?.includes("not found")) {
         res.status(404).json({ error: err.message });
