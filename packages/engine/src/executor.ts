@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability } from "@fusion/core";
 import type { AgentStore } from "@fusion/core";
+import { buildExecutionMemoryInstructions } from "@fusion/core";
 import { findWorktreeUser } from "./merger.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -3024,13 +3025,10 @@ git log --oneline
 
   // Build project memory section from settings
   // When enabled, agents consult and update .fusion/memory.md for durable project learnings.
-  // Actual memory instructions will be injected by FN-810; this placeholder establishes
-  // the conditional integration point.
   const memoryEnabled = settings?.memoryEnabled !== false;
   let memorySection = "";
   if (memoryEnabled && rootDir) {
-    // TODO(FN-810): Call buildMemoryInstructions(rootDir) to populate memory context
-    memorySection = "";
+    memorySection = "\n" + buildExecutionMemoryInstructions(rootDir);
   }
 
   // Build steering comments section (last 10 comments only to avoid context bloat)

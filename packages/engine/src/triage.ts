@@ -5,6 +5,7 @@ import type {
   TaskAttachment,
   Settings,
 } from "@fusion/core";
+import { buildTriageMemoryInstructions } from "@fusion/core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type {
@@ -1252,13 +1253,10 @@ export function buildSpecificationPrompt(
 
   // Build project memory section from settings.
   // When enabled, agents consult .fusion/memory.md for durable project learnings.
-  // Actual memory instructions will be injected by FN-810; this placeholder
-  // establishes the conditional integration point.
   const memoryEnabled = settings?.memoryEnabled !== false;
   let memorySection = "";
   if (memoryEnabled) {
-    // TODO(FN-810): Call buildMemoryInstructions(rootDir) to populate memory context
-    memorySection = "";
+    memorySection = "\n\n" + buildTriageMemoryInstructions("");
   }
 
   let attachmentsSection = "";

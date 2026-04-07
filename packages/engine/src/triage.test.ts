@@ -217,7 +217,7 @@ describe("buildSpecificationPrompt", () => {
   });
 
   describe("memoryEnabled setting", () => {
-    it("accepts memoryEnabled: true without error", () => {
+    it("includes memory instructions when memoryEnabled: true", () => {
       const settings: Settings = {
         maxConcurrent: 2,
         maxWorktrees: 4,
@@ -231,11 +231,12 @@ describe("buildSpecificationPrompt", () => {
         ".fusion/tasks/KB-001/PROMPT.md",
         settings,
       );
-      // Memory instructions are a placeholder until FN-810; just verify no crash
       expect(prompt).toContain("Specify this task");
+      expect(prompt).toContain("## Project Memory");
+      expect(prompt).toContain(".fusion/memory.md");
     });
 
-    it("accepts memoryEnabled: false without error", () => {
+    it("excludes memory instructions when memoryEnabled: false", () => {
       const settings: Settings = {
         maxConcurrent: 2,
         maxWorktrees: 4,
@@ -250,15 +251,18 @@ describe("buildSpecificationPrompt", () => {
         settings,
       );
       expect(prompt).toContain("Specify this task");
+      expect(prompt).not.toContain("## Project Memory");
     });
 
-    it("accepts undefined memoryEnabled (default enabled) without error", () => {
+    it("includes memory instructions when memoryEnabled is undefined (default enabled)", () => {
       const prompt = buildSpecificationPrompt(
         baseTask,
         ".fusion/tasks/KB-001/PROMPT.md",
         undefined,
       );
       expect(prompt).toContain("Specify this task");
+      expect(prompt).toContain("## Project Memory");
+      expect(prompt).toContain(".fusion/memory.md");
     });
   });
 

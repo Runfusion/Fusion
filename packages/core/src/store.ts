@@ -12,6 +12,7 @@ import { MissionStore } from "./mission-store.js";
 import { BackwardCompat, ProjectRequiredError } from "./migration.js";
 import { CentralCore } from "./central-core.js";
 import { getTaskMergeBlocker } from "./task-merge.js";
+import { ensureMemoryFile } from "./project-memory.js";
 
 export interface TaskStoreEvents {
   "task:created": [task: Task];
@@ -146,6 +147,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
     
     this.setupActivityLogListeners();
+
+    // Bootstrap project memory file if memory is enabled
+    try {
+      const config = await this.readConfig();
+      const mergedSettings: Settings = { ...DEFAULT_SETTINGS, ...config.settings };
+      if (mergedSettings.memoryEnabled !== false) {
+        await ensureMemoryFile(this.rootDir);
+      }
+    } catch {
+      // Non-fatal — memory bootstrap failure should not block startup
+    }
   }
 
   // ── Row <-> Task Conversion ────────────────────────────────────────
@@ -550,6 +562,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       await this.writeConfig(config);
       const updatedMerged: Settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings;
       this.emit("settings:updated", { settings: updatedMerged, previous: previousMerged });
+
+      // Bootstrap project memory file when memory is toggled on
+      if (updatedMerged.memoryEnabled !== false && previousMerged.memoryEnabled === false) {
+        try {
+          await ensureMemoryFile(this.rootDir);
+        } catch {
+          // Non-fatal — memory bootstrap failure should not block settings update
+        }
+      }
+
       return updatedMerged;
     });
   }

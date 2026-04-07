@@ -427,6 +427,7 @@ Fusion uses a hybrid storage architecture: structured metadata in **SQLite** wit
 .fusion/
 ├── fusion.db                # SQLite database (tasks, config, activity log, agents)
 ├── config.json              # Project config + settings (synced to SQLite)
+├── memory.md                # Project memory — durable learnings across task runs
 └── tasks/
     └── FN-001/
         ├── task.json.bak    # Legacy backup (after migration)
@@ -458,6 +459,34 @@ The engine automatically recovers from transient failures using bounded exponent
 - **Stale worktree/branch references** — Automatic pruning, branch deletion, and force-ref cleanup.
 - **Stuck task detection** — When `taskStuckTimeoutMs` is set, tasks with no agent activity are terminated and re-queued. Detects both dead sessions (no heartbeats) and loops (active but no step progress). Loop recovery attempts compact-and-resume before kill/requeue.
 - **Context-limit recovery** — When an LLM returns context-window overflow, the executor compacts the session and resumes with a fresh prompt.
+
+### Project Memory
+
+When `memoryEnabled` is `true` (the default), Fusion maintains a **project memory file** at `.fusion/memory.md` that accumulates durable learnings across task runs. This file is automatically created with a standard scaffold when:
+
+1. A project is initialized with memory enabled (the default)
+2. Memory is toggled from `false` to `true` via settings
+
+The memory file is never overwritten — if it already exists (even with custom content), the bootstrap is a no-op.
+
+**What goes in memory:**
+- Architecture patterns and module boundaries
+- Project-specific coding conventions and naming standards
+- Known pitfalls and things to avoid
+- Important context about dependencies, deployment, or constraints
+
+**How agents use it:**
+- **Triage agent** — Reads memory before writing specifications, incorporating documented patterns and constraints
+- **Executor agent** — Reads memory at the start of execution, then appends new durable learnings before calling `task_done()`
+
+The memory path is always the project-root `.fusion/memory.md`, never a worktree-local path. Agents running in worktrees access the file at its project-root location.
+
+To disable project memory:
+```json
+{
+  "memoryEnabled": false
+}
+```
 
 ## Packages
 

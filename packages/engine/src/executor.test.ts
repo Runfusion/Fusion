@@ -2163,27 +2163,48 @@ describe("buildExecutionPrompt", () => {
   });
 
   describe("memoryEnabled setting", () => {
-    it("accepts memoryEnabled: true without error", () => {
+    it("includes memory instructions when memoryEnabled: true", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project", {
         memoryEnabled: true,
       } as any);
-      // Memory instructions are a placeholder until FN-810; just verify no crash
       expect(result).toContain("Execute this task.");
+      expect(result).toContain("## Project Memory");
+      expect(result).toContain(".fusion/memory.md");
     });
 
-    it("accepts memoryEnabled: false without error", () => {
+    it("excludes memory instructions when memoryEnabled: false", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project", {
         memoryEnabled: false,
       } as any);
       expect(result).toContain("Execute this task.");
+      expect(result).not.toContain("## Project Memory");
     });
 
-    it("accepts undefined memoryEnabled (default enabled) without error", () => {
+    it("includes memory instructions when memoryEnabled is undefined (default enabled)", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project", {} as any);
       expect(result).toContain("Execute this task.");
+      expect(result).toContain("## Project Memory");
+      expect(result).toContain(".fusion/memory.md");
+    });
+
+    it("includes append instruction for updating memory at end of execution", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        memoryEnabled: true,
+      } as any);
+      expect(result).toContain("append");
+      expect(result).toMatch(/end of execution|before calling.*task_done/i);
+    });
+
+    it("uses project-root memory path not worktree-local path", () => {
+      const task = createMockTaskDetail();
+      const result = buildExecutionPrompt(task, "/project", {
+        memoryEnabled: true,
+      } as any);
+      expect(result).toContain("`.fusion/memory.md`");
     });
   });
 });

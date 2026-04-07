@@ -180,3 +180,13 @@ export type {
   MemoryInsight,
   InsightExtractionResult,
 } from "./memory-insights.js";
+
+export {
+  MEMORY_FILE_PATH,
+  memoryFilePath,
+  getDefaultMemoryScaffold,
+  ensureMemoryFile,
+  buildTriageMemoryInstructions,
+  buildExecutionMemoryInstructions,
+  readProjectMemory,
+} from "./project-memory.js";
