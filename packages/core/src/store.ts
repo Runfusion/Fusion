@@ -2625,6 +2625,30 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return entries;
   }
 
+  /**
+   * Get agent log entries for a task filtered by a time range.
+   *
+   * Returns all log entries whose `timestamp` falls within [startIso, endIso]
+   * (inclusive on both ends). If endIso is null (active run), the current
+   * time is used as the upper bound.
+   *
+   * @param taskId - The task ID (e.g. "KB-001")
+   * @param startIso - ISO-8601 start timestamp (inclusive)
+   * @param endIso - ISO-8601 end timestamp (inclusive), or null for "now"
+   * @returns Filtered array of agent log entries
+   */
+  async getAgentLogsByTimeRange(
+    taskId: string,
+    startIso: string,
+    endIso: string | null,
+  ): Promise<AgentLogEntry[]> {
+    const allEntries = await this.getAgentLogs(taskId);
+    const end = endIso ?? new Date().toISOString();
+    return allEntries.filter((entry) => {
+      return entry.timestamp >= startIso && entry.timestamp <= end;
+    });
+  }
+
   // ── Archive Cleanup Methods ─────────────────────────────────────────
 
   /**

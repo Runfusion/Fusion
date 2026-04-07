@@ -70,6 +70,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getGlobalSettingsStore: vi.fn().mockReturnValue(createMockGlobalSettingsStore()),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),
+    getAgentLogsByTimeRange: vi.fn().mockResolvedValue([]),
     addSteeringComment: vi.fn(),
     addTaskComment: vi.fn(),
     updateTaskComment: vi.fn(),
@@ -7800,5 +7801,130 @@ describe("POST /api/agents/:id/runs", () => {
     const res = await REQUEST(app, "POST", `/api/agents/${agentId}/runs`);
 
     expect(res.status).toBe(500);
+  });
+});
+
+describe("GET /api/agents/:id/runs/:runId/logs", () => {
+  let tempDir: string;
+  let fusionDir: string;
+  let agentId: string;
+  let taskId: string;
+  let runId: string;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-routes-agent-run-logs-"));
+    fusionDir = join(tempDir, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+
+    const agent = await agentStore.createAgent({
+      name: "Test Agent",
+      role: "executor",
+    });
+    agentId = agent.id;
+
+    // Start a run, complete it, and record its ID
+    const run = await agentStore.startHeartbeatRun(agentId);
+    runId = run.id;
+
+    // End the run with a context snapshot containing a taskId
+    run.endedAt = new Date().toISOString();
+    run.status = "completed";
+    run.contextSnapshot = { taskId: "FN-001", projectId: "test-project" };
+    await agentStore.saveRun(run);
+
+    taskId = "FN-001";
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function buildApp() {
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getAgentLogsByTimeRange: vi.fn().mockResolvedValue([
+        {
+          timestamp: "2024-01-01T00:01:00.000Z",
+          taskId: "FN-001",
+          text: "Starting task execution",
+          type: "text",
+        },
+        {
+          timestamp: "2024-01-01T00:02:00.000Z",
+          taskId: "FN-001",
+          text: "Read file: src/index.ts",
+          type: "tool",
+        },
+      ]),
+    } as any);
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns logs for a valid run with contextSnapshot.taskId", async () => {
+    const res = await REQUEST(buildApp(), "GET", `/api/agents/${agentId}/runs/${runId}/logs`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    expect(res.body[0]).toMatchObject({ taskId: "FN-001", type: "text" });
+    expect(res.body[1]).toMatchObject({ taskId: "FN-001", type: "tool" });
+  });
+
+  it("returns empty array for run without contextSnapshot.taskId", async () => {
+    // Create a run without contextSnapshot
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    const run = await agentStore.startHeartbeatRun(agentId);
+    run.endedAt = new Date().toISOString();
+    run.status = "completed";
+    // No contextSnapshot
+    await agentStore.saveRun(run);
+
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getAgentLogsByTimeRange: vi.fn().mockResolvedValue([]),
+    } as any);
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    const res = await REQUEST(app, "GET", `/api/agents/${agentId}/runs/${run.id}/logs`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns 404 for non-existent run", async () => {
+    const res = await REQUEST(buildApp(), "GET", `/api/agents/${agentId}/runs/run-nonexistent/logs`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("Run not found");
+  });
+
+  it("returns 404 for non-existent agent", async () => {
+    const res = await REQUEST(buildApp(), "GET", `/api/agents/agent-nonexistent/runs/${runId}/logs`);
+
+    expect(res.status).toBe(404);
+  });
+
+  it("handles store errors gracefully", async () => {
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue("/nonexistent/path"),
+    } as any);
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    const res = await REQUEST(app, "GET", `/api/agents/${agentId}/runs/${runId}/logs`);
+
+    // Either 404 or 500 depending on where the error occurs
+    expect([404, 500]).toContain(res.status);
   });
 });

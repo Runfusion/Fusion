@@ -6,6 +6,8 @@ import { fetchAgentRuns } from "../api";
 interface AgentRunHistoryProps {
   agentId: string;
   projectId?: string;
+  /** Optional callback when a run row is clicked */
+  onRunClick?: (runId: string) => void;
 }
 
 const STATUS_ICONS: Record<string, { icon: typeof CheckCircle; color: string }> = {
@@ -15,7 +17,7 @@ const STATUS_ICONS: Record<string, { icon: typeof CheckCircle; color: string }> 
   terminated: { icon: Square, color: "var(--text-muted, #8b949e)" },
 };
 
-export function AgentRunHistory({ agentId, projectId }: AgentRunHistoryProps) {
+export function AgentRunHistory({ agentId, projectId, onRunClick }: AgentRunHistoryProps) {
   const [runs, setRuns] = useState<AgentHeartbeatRun[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -46,7 +48,20 @@ export function AgentRunHistory({ agentId, projectId }: AgentRunHistoryProps) {
         const usage = run.usageJson;
 
         return (
-          <div key={run.id} className="agent-run-row">
+          <div
+            key={run.id}
+            className={onRunClick ? "agent-run-row agent-run-row--clickable" : "agent-run-row"}
+            onClick={onRunClick ? () => onRunClick(run.id) : undefined}
+            role={onRunClick ? "button" : undefined}
+            tabIndex={onRunClick ? 0 : undefined}
+            aria-label={onRunClick ? `Run ${run.id.slice(0, 8)}, ${run.status}` : undefined}
+            onKeyDown={onRunClick ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onRunClick(run.id);
+              }
+            } : undefined}
+          >
             <StatusIcon size={16} style={{ color: statusInfo.color }} className={run.status === "active" ? "animate-spin" : ""} />
             <div className="agent-run-info">
               <span className="agent-run-id">{run.id}</span>

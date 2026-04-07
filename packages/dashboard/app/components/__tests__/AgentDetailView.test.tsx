@@ -12,13 +12,23 @@ vi.mock("../../api", () => ({
   updateAgentState: vi.fn(),
   deleteAgent: vi.fn(),
   fetchAgentLogs: vi.fn(),
+  fetchAgentRunLogs: vi.fn(),
 }));
 
-import { fetchAgent, updateAgent, updateAgentState } from "../../api";
+vi.mock("../AgentLogViewer", () => ({
+  AgentLogViewer: ({ entries }: { entries: Array<{ text: string }> }) => (
+    <div data-testid="agent-log-viewer">
+      {entries.map((e, i) => <span key={i}>{e.text}</span>)}
+    </div>
+  ),
+}));
+
+import { fetchAgent, updateAgent, updateAgentState, fetchAgentRunLogs } from "../../api";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
 const mockUpdateAgent = vi.mocked(updateAgent);
 const mockUpdateAgentState = vi.mocked(updateAgentState);
+const mockFetchAgentRunLogs = vi.mocked(fetchAgentRunLogs);
 
 describe("AgentDetailView", () => {
   const createMockAgent = (overrides: Partial<{
@@ -879,6 +889,223 @@ describe("AgentDetailView", () => {
         expect(payload.metadata.customKey).toBe("preserved");
         expect(payload.runtimeConfig.heartbeatIntervalMs).toBe(45000);
         expect(payload.runtimeConfig.otherConfig).toBe("also-preserved");
+      });
+    });
+  });
+
+  // ── Runs Tab — Click to show logs ──────────────────────────────────
+
+  describe("Runs Tab — click to show logs", () => {
+    const navigateToRuns = async (user: ReturnType<typeof userEvent.setup>) => {
+      await waitFor(() => {
+        expect(screen.getByText("Runs")).toBeInTheDocument();
+      });
+      await user.click(screen.getByText("Runs"));
+    };
+
+    it("shows run cards as clickable with chevron indicators", async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToRuns(user);
+
+      await waitFor(() => {
+        // Completed run card should be clickable (has role="button")
+        const buttons = screen.getAllByRole("button");
+        const runButtons = buttons.filter(btn => btn.getAttribute("aria-label")?.includes("run"));
+        expect(runButtons.length).toBeGreaterThan(0);
+      });
+    });
+
+    it("fetches and displays logs when clicking a completed run", async () => {
+      const mockLogs = [
+        { timestamp: "2024-01-01T00:01:00.000Z", taskId: "FN-001", text: "Starting task execution", type: "text" },
+        { timestamp: "2024-01-01T00:02:00.000Z", taskId: "FN-001", text: "Read file: src/index.ts", type: "tool" },
+      ];
+      mockFetchAgentRunLogs.mockResolvedValue(mockLogs);
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToRuns(user);
+
+      // Wait for run cards to render
+      await waitFor(() => {
+        const runButtons = screen.getAllByRole("button").filter(
+          btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+        );
+        expect(runButtons.length).toBeGreaterThan(0);
+      });
+
+      // Click the completed run
+      const completedRunButton = screen.getAllByRole("button").find(
+        btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+      )!;
+      await user.click(completedRunButton);
+
+      // Verify fetchAgentRunLogs was called
+      await waitFor(() => {
+        expect(mockFetchAgentRunLogs).toHaveBeenCalled();
+      });
+
+      // Verify logs appear
+      await waitFor(() => {
+        expect(screen.getByText("Starting task execution")).toBeInTheDocument();
+      });
+    });
+
+    it("shows loading state while fetching run logs", async () => {
+      // Create a promise that won't resolve immediately
+      let resolveLogs: (value: any) => void;
+      mockFetchAgentRunLogs.mockImplementation(() => new Promise(r => { resolveLogs = r; }));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToRuns(user);
+
+      await waitFor(() => {
+        const runButtons = screen.getAllByRole("button").filter(
+          btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+        );
+        expect(runButtons.length).toBeGreaterThan(0);
+      });
+
+      const completedRunButton = screen.getAllByRole("button").find(
+        btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+      )!;
+      await user.click(completedRunButton);
+
+      // Should show loading state
+      await waitFor(() => {
+        expect(screen.getByText("Loading logs...")).toBeInTheDocument();
+      });
+
+      // Resolve to clean up
+      resolveLogs!([]);
+    });
+
+    it("shows empty message when no logs available for a run", async () => {
+      mockFetchAgentRunLogs.mockResolvedValue([]);
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToRuns(user);
+
+      await waitFor(() => {
+        const runButtons = screen.getAllByRole("button").filter(
+          btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+        );
+        expect(runButtons.length).toBeGreaterThan(0);
+      });
+
+      const completedRunButton = screen.getAllByRole("button").find(
+        btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+      )!;
+      await user.click(completedRunButton);
+
+      await waitFor(() => {
+        expect(screen.getByText("No logs available for this run")).toBeInTheDocument();
+      });
+    });
+
+    it("collapses log viewer when clicking the same run again", async () => {
+      mockFetchAgentRunLogs.mockResolvedValue([
+        { timestamp: "2024-01-01T00:01:00.000Z", taskId: "FN-001", text: "Test log entry", type: "text" },
+      ]);
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToRuns(user);
+
+      await waitFor(() => {
+        const runButtons = screen.getAllByRole("button").filter(
+          btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+        );
+        expect(runButtons.length).toBeGreaterThan(0);
+      });
+
+      const completedRunButton = screen.getAllByRole("button").find(
+        btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+      )!;
+
+      // Click to expand
+      await user.click(completedRunButton);
+      await waitFor(() => {
+        expect(screen.getByText("Test log entry")).toBeInTheDocument();
+      });
+
+      // Click to collapse
+      await user.click(completedRunButton);
+      await waitFor(() => {
+        expect(screen.queryByText("Test log entry")).not.toBeInTheDocument();
+      });
+    });
+
+    it("shows toast on fetch error", async () => {
+      const addToast = vi.fn();
+      mockFetchAgentRunLogs.mockRejectedValue(new Error("Network error"));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={addToast}
+        />
+      );
+
+      await navigateToRuns(user);
+
+      await waitFor(() => {
+        const runButtons = screen.getAllByRole("button").filter(
+          btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+        );
+        expect(runButtons.length).toBeGreaterThan(0);
+      });
+
+      const completedRunButton = screen.getAllByRole("button").find(
+        btn => btn.getAttribute("aria-label")?.includes("run") && btn.getAttribute("aria-label")?.includes("completed")
+      )!;
+      await user.click(completedRunButton);
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith(
+          expect.stringContaining("Failed to load run logs"),
+          "error",
+        );
       });
     });
   });

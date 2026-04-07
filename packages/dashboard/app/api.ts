@@ -1836,6 +1836,11 @@ export function fetchAgentRunDetail(agentId: string, runId: string, projectId?: 
   return api<AgentHeartbeatRun>(withProjectId(`/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`, projectId));
 }
 
+/** Fetch agent logs for a specific run's time window */
+export function fetchAgentRunLogs(agentId: string, runId: string, projectId?: string): Promise<AgentLogEntry[]> {
+  return api<AgentLogEntry[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}/logs`, projectId));
+}
+
 /** Manually start a heartbeat run for an agent */
 export function startAgentRun(agentId: string, projectId?: string): Promise<AgentHeartbeatRun> {
   return api<AgentHeartbeatRun>(withProjectId(`/agents/${encodeURIComponent(agentId)}/runs`, projectId), {

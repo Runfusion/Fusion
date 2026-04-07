@@ -1774,6 +1774,89 @@ Task with acceptance criteria
       expect(logs[0].detail).toBe(longDetail);
       expect(logs[0].detail!.length).toBe(2000);
     });
+
+    it("getAgentLogsByTimeRange filters entries by start and end timestamps (inclusive)", async () => {
+      const task = await createTestTask();
+      const dir = (store as any).taskDir(task.id);
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+
+      // Write entries at specific timestamps directly to the JSONL file
+      mkdirSync(dir, { recursive: true });
+      const entries = [
+        { timestamp: "2024-01-01T00:00:00.000Z", taskId: task.id, text: "before start", type: "text" },
+        { timestamp: "2024-01-01T01:00:00.000Z", taskId: task.id, text: "at start", type: "text" },
+        { timestamp: "2024-01-01T02:00:00.000Z", taskId: task.id, text: "middle", type: "text" },
+        { timestamp: "2024-01-01T03:00:00.000Z", taskId: task.id, text: "at end", type: "text" },
+        { timestamp: "2024-01-01T04:00:00.000Z", taskId: task.id, text: "after end", type: "text" },
+      ];
+      writeFileSync(join(dir, "agent.log"), entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
+
+      const logs = await store.getAgentLogsByTimeRange(
+        task.id,
+        "2024-01-01T01:00:00.000Z",
+        "2024-01-01T03:00:00.000Z",
+      );
+
+      expect(logs).toHaveLength(3);
+      expect(logs.map((l) => l.text)).toEqual(["at start", "middle", "at end"]);
+    });
+
+    it("getAgentLogsByTimeRange uses current time when endIso is null", async () => {
+      const task = await createTestTask();
+      const dir = (store as any).taskDir(task.id);
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+
+      mkdirSync(dir, { recursive: true });
+      const entries = [
+        { timestamp: "2024-01-01T00:00:00.000Z", taskId: task.id, text: "entry1", type: "text" },
+        { timestamp: "2024-06-01T00:00:00.000Z", taskId: task.id, text: "entry2", type: "text" },
+      ];
+      writeFileSync(join(dir, "agent.log"), entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
+
+      // With null end, should include all entries after start
+      const logs = await store.getAgentLogsByTimeRange(
+        task.id,
+        "2024-01-01T00:00:00.000Z",
+        null,
+      );
+
+      expect(logs).toHaveLength(2);
+    });
+
+    it("getAgentLogsByTimeRange returns empty array when no entries match", async () => {
+      const task = await createTestTask();
+      const dir = (store as any).taskDir(task.id);
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+
+      mkdirSync(dir, { recursive: true });
+      const entries = [
+        { timestamp: "2024-01-01T00:00:00.000Z", taskId: task.id, text: "entry1", type: "text" },
+      ];
+      writeFileSync(join(dir, "agent.log"), entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
+
+      const logs = await store.getAgentLogsByTimeRange(
+        task.id,
+        "2025-01-01T00:00:00.000Z",
+        "2025-12-31T23:59:59.000Z",
+      );
+
+      expect(logs).toEqual([]);
+    });
+
+    it("getAgentLogsByTimeRange returns empty array when no log file exists", async () => {
+      const task = await createTestTask();
+
+      const logs = await store.getAgentLogsByTimeRange(
+        task.id,
+        "2024-01-01T00:00:00.000Z",
+        "2024-12-31T23:59:59.000Z",
+      );
+
+      expect(logs).toEqual([]);
+    });
   });
 
   describe("task comments", () => {

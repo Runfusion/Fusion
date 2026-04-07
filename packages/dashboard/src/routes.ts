@@ -7231,6 +7231,50 @@ Output ONLY the prompt text (no markdown, no explanations).`;
   });
 
   /**
+   * GET /api/agents/:id/runs/:runId/logs
+   * Get agent log entries for a specific run's time window.
+   * Uses the run's contextSnapshot.taskId to locate the task's agent log,
+   * then filters entries by the run's startedAt/endedAt timestamps.
+   * Returns an empty array if the run has no associated task.
+   */
+  router.get("/agents/:id/runs/:runId/logs", async (req, res) => {
+    try {
+      const scopedStore = await getScopedStore(req);
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const run = await agentStore.getRunDetail(req.params.id, req.params.runId);
+      if (!run) {
+        res.status(404).json({ error: "Run not found" });
+        return;
+      }
+
+      // Only use the run's context snapshot for task ID — do not fall back
+      // to agent.taskId since that represents the agent's *current* task,
+      // not the task active during a historical run.
+      const taskId = run.contextSnapshot?.taskId as string | undefined;
+      if (!taskId) {
+        res.json([]);
+        return;
+      }
+
+      const logs = await scopedStore.getAgentLogsByTimeRange(
+        taskId,
+        run.startedAt,
+        run.endedAt,
+      );
+      res.json(logs);
+    } catch (err: any) {
+      if (err.message?.includes("not found")) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
+    }
+  });
+
+  /**
    * GET /api/agents/:id/children
    * Fetch agents that report to a given agent (parent-child hierarchy).
    * Response 200: Agent[] — Array of agents where reportsTo equals :id

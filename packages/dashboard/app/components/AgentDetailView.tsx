@@ -2,12 +2,14 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { 
   Bot, Heart, Activity, Pause, Play, Square, Trash2, RefreshCw, 
   Settings, FileText, ActivitySquare, X, Copy, 
-  ExternalLink, CheckCircle, XCircle, Loader2, GitBranch
+  ExternalLink, CheckCircle, XCircle, Loader2, GitBranch,
+  ChevronDown, ChevronRight
 } from "lucide-react";
 import type { AgentDetail, AgentState, AgentHeartbeatRun } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentChildren } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogs, fetchAgentRunLogs, fetchAgentChildren } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry } from "@fusion/core";
+import { AgentLogViewer } from "./AgentLogViewer";
 
 /**
  * Simple className utility - joins class names conditionally
@@ -377,6 +379,8 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               runs={runs} 
               activeRun={activeRun}
               addToast={addToast}
+              agentId={agent.id}
+              projectId={projectId}
             />
           )}
           
@@ -673,12 +677,40 @@ function LogEntry({ entry, showTimestamp }: { entry: AgentLogEntry; showTimestam
 function RunsTab({ 
   runs, 
   activeRun,
-  addToast 
+  addToast,
+  agentId,
+  projectId,
 }: { 
   runs: AgentHeartbeatRun[]; 
   activeRun?: AgentHeartbeatRun;
   addToast: (msg: string, type?: "success" | "error") => void;
+  agentId: string;
+  projectId?: string;
 }) {
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [runLogs, setRunLogs] = useState<AgentLogEntry[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+
+  const handleRunClick = useCallback(async (runId: string) => {
+    if (selectedRunId === runId) {
+      setSelectedRunId(null);
+      setRunLogs([]);
+      return;
+    }
+    setSelectedRunId(runId);
+    setIsLoadingLogs(true);
+    setRunLogs([]);
+    try {
+      const logs = await fetchAgentRunLogs(agentId, runId, projectId);
+      setRunLogs(logs);
+    } catch (err: any) {
+      addToast(`Failed to load run logs: ${err.message}`, "error");
+      setRunLogs([]);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  }, [selectedRunId, agentId, projectId, addToast]);
+
   if (runs.length === 0 && !activeRun) {
     return (
       <div className="runs-empty">
@@ -693,50 +725,86 @@ function RunsTab({
     (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
   );
 
-  return (
-    <div className="runs-tab">
-      {activeRun && (
-        <div className="run-card run-card--active">
+  const renderRunCard = (run: AgentHeartbeatRun, index: number, isActive: boolean) => {
+    const statusInfo = RUN_STATUS_ICONS[run.status] || RUN_STATUS_ICONS.completed;
+    const StatusIcon = statusInfo.icon;
+    const duration = run.endedAt 
+      ? formatDuration(new Date(run.startedAt), new Date(run.endedAt))
+      : "In progress";
+    const isSelected = selectedRunId === run.id;
+
+    return (
+      <div key={run.id}>
+        <div 
+          className={cn("run-card", isActive && "run-card--active", isSelected && "run-card--selected")}
+          onClick={() => void handleRunClick(run.id)}
+          style={{ cursor: "pointer" }}
+          role="button"
+          tabIndex={0}
+          aria-expanded={isSelected}
+          aria-label={`${isActive ? "Active" : ""} run ${run.id.slice(0, 8)}, ${run.status}`}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              void handleRunClick(run.id);
+            }
+          }}
+        >
           <div className="run-header">
-            <span className="run-live-indicator">
-              <span className="live-dot" />
-              Live Run
-            </span>
-            <span className="run-status active">
-              <Loader2 size={14} className="animate-spin" />
-              Active
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              {isSelected ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {isActive ? (
+                <span className="run-live-indicator">
+                  <span className="live-dot" />
+                  Live Run
+                </span>
+              ) : (
+                <span className="run-id">#{index + 1} {run.id.slice(0, 8)}</span>
+              )}
+            </div>
+            <span className={cn("run-status", run.status)}>
+              <StatusIcon size={14} className={statusInfo.color} style={run.status === "active" ? { color: statusInfo.color } : undefined} />
+              {run.status}
             </span>
           </div>
           <div className="run-details">
-            <span>Started {relativeTime(activeRun.startedAt)}</span>
+            <span>Started {relativeTime(run.startedAt)}</span>
+            <span>•</span>
+            <span>{duration}</span>
           </div>
         </div>
-      )}
-
-      {sortedRuns.map((run, i) => {
-        const statusInfo = RUN_STATUS_ICONS[run.status] || RUN_STATUS_ICONS.completed;
-        const StatusIcon = statusInfo.icon;
-        const duration = run.endedAt 
-          ? formatDuration(new Date(run.startedAt), new Date(run.endedAt))
-          : "In progress";
-
-        return (
-          <div key={run.id} className="run-card">
-            <div className="run-header">
-              <span className="run-id">#{i + 1} {run.id.slice(0, 8)}</span>
-              <span className={cn("run-status", run.status)}>
-                <StatusIcon size={14} className={statusInfo.color} />
-                {run.status}
-              </span>
-            </div>
-            <div className="run-details">
-              <span>Started {relativeTime(run.startedAt)}</span>
-              <span>•</span>
-              <span>{duration}</span>
-            </div>
+        {isSelected && (
+          <div 
+            className="run-logs-container"
+            style={{
+              padding: "12px",
+              background: "var(--bg-secondary)",
+              borderBottom: "1px solid var(--border-color)",
+              borderTop: "1px solid var(--border-color)",
+            }}
+          >
+            {isLoadingLogs ? (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "12px 0" }}>
+                <Loader2 size={16} className="animate-spin" />
+                <span className="text-muted">Loading logs...</span>
+              </div>
+            ) : runLogs.length === 0 ? (
+              <div className="text-muted" style={{ padding: "12px 0", fontStyle: "italic" }}>
+                No logs available for this run
+              </div>
+            ) : (
+              <AgentLogViewer entries={runLogs} loading={false} />
+            )}
           </div>
-        );
-      })}
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="runs-tab">
+      {activeRun && renderRunCard(activeRun, 0, true)}
+      {sortedRuns.map((run, i) => renderRunCard(run, activeRun ? i + 1 : i, false))}
     </div>
   );
 }
