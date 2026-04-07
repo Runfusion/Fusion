@@ -10,6 +10,7 @@ import {
   checkRateLimit,
   getRateLimitResetTime,
   __resetPlanningState,
+  __setCreateKbAgent,
   RateLimitError,
   SessionNotFoundError,
   InvalidSessionStateError,
@@ -18,28 +19,122 @@ import {
 } from "./planning.js";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 
+// ── Mock Agent Factory ──────────────────────────────────────────────────────
+
+/**
+ * Creates a mock AI agent that responds with predefined JSON responses.
+ * Each call to `prompt()` consumes the next response in the array.
+ */
+function createMockAgent(responses: string[]) {
+  const messages: Array<{ role: string; content: string }> = [];
+  let callIndex = 0;
+
+  return {
+    session: {
+      state: { messages },
+      prompt: vi.fn(async (msg: string) => {
+        messages.push({ role: "user", content: msg });
+        const response = responses[callIndex++] ?? responses[responses.length - 1];
+        messages.push({ role: "assistant", content: response });
+      }),
+      dispose: vi.fn(),
+    },
+  };
+}
+
+/** Standard AI responses for a 3-question flow */
+const STANDARD_QUESTION_RESPONSES = [
+  JSON.stringify({
+    type: "question",
+    data: {
+      id: "q-scope",
+      type: "single_select",
+      question: "What is the scope of this plan?",
+      description: "This helps estimate the size and complexity of the task.",
+      options: [
+        { id: "small", label: "Small", description: "Quick" },
+        { id: "medium", label: "Medium", description: "Standard" },
+        { id: "large", label: "Large", description: "Complex" },
+      ],
+    },
+  }),
+  JSON.stringify({
+    type: "question",
+    data: {
+      id: "q-requirements",
+      type: "text",
+      question: "What are the key requirements?",
+      description: "List acceptance criteria.",
+    },
+  }),
+  JSON.stringify({
+    type: "question",
+    data: {
+      id: "q-confirm",
+      type: "confirm",
+      question: "Are there specific technologies to use?",
+      description: "Answer yes if you have preferences.",
+    },
+  }),
+  JSON.stringify({
+    type: "complete",
+    data: {
+      title: "Build Auth System",
+      description: "Build a user authentication system\n\nRequirements: Standard implementation\n\nGenerated via Planning Mode",
+      suggestedSize: "M",
+      suggestedDependencies: [],
+      keyDeliverables: ["Implementation", "Tests", "Documentation"],
+    },
+  }),
+];
+
+/** Root dir for all test sessions */
+const TEST_ROOT_DIR = "/test/project";
+
 // Counter for unique IPs per test
 let ipCounter = 0;
 function getUniqueIp(): string {
   return `127.0.0.${++ipCounter}`;
 }
 
+/**
+ * Helper: set up a fresh mock agent for the next createSession call.
+ * Returns the agent so tests can inspect `.session.prompt` calls.
+ */
+function setupMockAgent(responses?: string[]) {
+  const agent = createMockAgent(responses ?? STANDARD_QUESTION_RESPONSES);
+  __setCreateKbAgent(async () => agent);
+  return agent;
+}
+
 describe("planning module", () => {
   const initialPlan = "Build a user authentication system";
 
+  // Ensure the engine is loaded before any tests run.
+  // The module-level `engineReady` promise may still be resolving
+  // (importing @fusion/engine) when the first test starts.
+  // We set the mock BEFORE awaiting, so initEngine skips the real import
+  // on subsequent calls (though the first call may already be in-flight).
+  beforeAll(async () => {
+    // Wait for the initial engine load to complete (could be real or failed)
+    // by importing the module and waiting for its side effects.
+    // Then set our mock which will take effect for all test calls.
+    setupMockAgent();
+  });
+
   beforeEach(() => {
-    vi.useFakeTimers();
     __resetPlanningState();
+    setupMockAgent();
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    __setCreateKbAgent(undefined as any);
   });
 
   describe("createSession", () => {
     it("creates a session with valid initial plan", async () => {
       const mockIp = getUniqueIp();
-      const result = await createSession(mockIp, initialPlan);
+      const result = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       expect(result.sessionId).toBeDefined();
       expect(typeof result.sessionId).toBe("string");
@@ -48,45 +143,107 @@ describe("planning module", () => {
       expect(result.firstQuestion.type).toBe("single_select");
     });
 
+    it("throws if rootDir is not provided", async () => {
+      const mockIp = getUniqueIp();
+      await expect(createSession(mockIp, initialPlan)).rejects.toThrow("rootDir is required");
+    });
+
     it("enforces rate limiting", async () => {
       const mockIp = getUniqueIp();
       // Create max sessions (5 per hour)
       for (let i = 0; i < 5; i++) {
-        await createSession(mockIp, `${initialPlan} ${i}`);
+        await createSession(mockIp, `${initialPlan} ${i}`, undefined, TEST_ROOT_DIR);
       }
 
       // 6th session should fail
-      await expect(createSession(mockIp, initialPlan)).rejects.toThrow(RateLimitError);
+      await expect(createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR)).rejects.toThrow(RateLimitError);
     });
 
     it("allows new sessions after rate limit window expires", async () => {
-      const mockIp = getUniqueIp();
-      // Create max sessions
-      for (let i = 0; i < 5; i++) {
-        await createSession(mockIp, `${initialPlan} ${i}`);
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const mockIp = getUniqueIp();
+        // Create max sessions
+        for (let i = 0; i < 5; i++) {
+          await createSession(mockIp, `${initialPlan} ${i}`, undefined, TEST_ROOT_DIR);
+        }
+
+        // Advance time by 1 hour + 1 minute
+        vi.advanceTimersByTime(61 * 60 * 1000);
+
+        // Should now be able to create a new session
+        const result = await createSession(mockIp, "New plan after reset", undefined, TEST_ROOT_DIR);
+        expect(result.sessionId).toBeDefined();
+      } finally {
+        vi.useRealTimers();
       }
-
-      // Advance time by 1 hour + 1 minute
-      vi.advanceTimersByTime(61 * 60 * 1000);
-
-      // Should now be able to create a new session
-      const result = await createSession(mockIp, "New plan after reset");
-      expect(result.sessionId).toBeDefined();
     });
 
     it("generates different session IDs for each session", async () => {
       const mockIp = getUniqueIp();
-      const result1 = await createSession(mockIp, "Plan 1");
-      const result2 = await createSession(mockIp, "Plan 2");
+      const result1 = await createSession(mockIp, "Plan 1", undefined, TEST_ROOT_DIR);
+      const result2 = await createSession(mockIp, "Plan 2", undefined, TEST_ROOT_DIR);
 
       expect(result1.sessionId).not.toBe(result2.sessionId);
+    });
+
+    it("stores the AI agent on the session", async () => {
+      const mockIp = getUniqueIp();
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
+
+      const session = getSession(sessionId);
+      expect(session).toBeDefined();
+      expect(session?.agent).toBeDefined();
+    });
+
+    it("cleans up session on agent failure", async () => {
+      __setCreateKbAgent(async () => {
+        throw new Error("Agent creation failed");
+      });
+
+      const mockIp = getUniqueIp();
+      await expect(createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR)).rejects.toThrow(
+        "Agent creation failed"
+      );
+    });
+
+    it("cleans up session when AI returns unparseable output", async () => {
+      setupMockAgent(["I am not JSON at all"]);
+
+      const mockIp = getUniqueIp();
+      await expect(createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR)).rejects.toThrow(
+        "Failed to get first question from AI"
+      );
+    });
+
+    it("handles AI returning a summary instead of a first question", async () => {
+      setupMockAgent([
+        JSON.stringify({
+          type: "complete",
+          data: {
+            title: "Auth System",
+            description: "Build auth",
+            suggestedSize: "M",
+            suggestedDependencies: [],
+            keyDeliverables: ["Login"],
+          },
+        }),
+      ]);
+
+      const mockIp = getUniqueIp();
+      const result = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
+
+      // Should return a confirm question wrapping the summary
+      expect(result.firstQuestion.type).toBe("confirm");
+      expect(result.firstQuestion.id).toBe("q-direct-summary");
+      expect(result.firstQuestion.question).toContain("Auth System");
     });
   });
 
   describe("submitResponse", () => {
     it("processes response and returns next question", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       const response = await submitResponse(sessionId, { scope: "medium" });
 
@@ -98,7 +255,7 @@ describe("planning module", () => {
 
     it("returns summary after multiple responses", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       // Submit first response
       const response1 = await submitResponse(sessionId, { scope: "medium" });
@@ -126,7 +283,7 @@ describe("planning module", () => {
 
     it("throws InvalidSessionStateError when no active question", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       // Complete the session
       await submitResponse(sessionId, { scope: "small" });
@@ -136,12 +293,34 @@ describe("planning module", () => {
       // Try to submit another response
       await expect(submitResponse(sessionId, {})).rejects.toThrow(InvalidSessionStateError);
     });
+
+    it("throws InvalidSessionStateError if session has no AI agent", async () => {
+      // Create a session without an agent by directly manipulating state
+      const mockIp = getUniqueIp();
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
+
+      // Manually remove the agent to simulate a corrupted session
+      const session = getSession(sessionId);
+      expect(session).toBeDefined();
+      if (session) {
+        session.agent = undefined;
+      }
+
+      await expect(submitResponse(sessionId, { answer: "test" })).rejects.toThrow(
+        InvalidSessionStateError
+      );
+      try {
+        await submitResponse(sessionId, { answer: "test" });
+      } catch (err) {
+        expect((err as Error).message).toBe("Planning session has no AI agent");
+      }
+    });
   });
 
   describe("cancelSession", () => {
     it("removes an active session", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       await cancelSession(sessionId);
 
@@ -157,7 +336,7 @@ describe("planning module", () => {
   describe("getSession", () => {
     it("returns session for valid ID", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       const session = getSession(sessionId);
       expect(session).toBeDefined();
@@ -174,7 +353,7 @@ describe("planning module", () => {
   describe("getCurrentQuestion", () => {
     it("returns current question for active session", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId, firstQuestion } = await createSession(mockIp, initialPlan);
+      const { sessionId, firstQuestion } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       const question = getCurrentQuestion(sessionId);
       expect(question).toEqual(firstQuestion);
@@ -182,7 +361,7 @@ describe("planning module", () => {
 
     it("returns undefined for completed session", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       // Complete the session
       await submitResponse(sessionId, { scope: "small" });
@@ -197,7 +376,7 @@ describe("planning module", () => {
   describe("getSummary", () => {
     it("returns summary for completed session", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       // Complete the session
       await submitResponse(sessionId, { scope: "small" });
@@ -212,7 +391,7 @@ describe("planning module", () => {
 
     it("returns undefined for incomplete session", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       const summary = getSummary(sessionId);
       expect(summary).toBeUndefined();
@@ -222,7 +401,7 @@ describe("planning module", () => {
   describe("cleanupSession", () => {
     it("removes a session from memory", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
       cleanupSession(sessionId);
 
@@ -246,7 +425,7 @@ describe("planning module", () => {
 
       // Max out the rate limit
       for (let i = 0; i < 5; i++) {
-        await createSession(mockIp, `Plan ${i}`);
+        await createSession(mockIp, `Plan ${i}`, undefined, TEST_ROOT_DIR);
       }
 
       const resetTime = getRateLimitResetTime(mockIp);
@@ -257,20 +436,25 @@ describe("planning module", () => {
 
   describe("session TTL", () => {
     it("sessions expire after TTL", async () => {
-      const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, initialPlan);
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const mockIp = getUniqueIp();
+        const { sessionId } = await createSession(mockIp, initialPlan, undefined, TEST_ROOT_DIR);
 
-      // Verify session exists
-      expect(getSession(sessionId)).toBeDefined();
+        // Verify session exists
+        expect(getSession(sessionId)).toBeDefined();
 
-      // Advance time by 31 minutes
-      vi.advanceTimersByTime(31 * 60 * 1000);
+        // Advance time by 31 minutes
+        vi.advanceTimersByTime(31 * 60 * 1000);
 
-      // Trigger cleanup by creating a new session
-      await createSession(getUniqueIp(), "Another plan");
+        // Trigger cleanup by creating a new session
+        await createSession(getUniqueIp(), "Another plan", undefined, TEST_ROOT_DIR);
 
-      // Note: Session should be expired after cleanup runs
-      // We can't directly verify as cleanup is async
+        // Note: Session should be expired after cleanup runs
+        // We can't directly verify as cleanup is async
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -378,10 +562,9 @@ describe("planning module", () => {
     /** Helper: create a session and complete it to get a summary */
     async function createCompletedSession(
       ip: string,
-      plan: string,
-      overrides?: Partial<PlanningSummary>
+      plan: string
     ): Promise<string> {
-      const { sessionId } = await createSession(ip, plan);
+      const { sessionId } = await createSession(ip, plan, undefined, TEST_ROOT_DIR);
       // Complete the session by submitting 3 responses
       await submitResponse(sessionId, { scope: "medium" });
       await submitResponse(sessionId, { requirements: "Test requirements" });
@@ -396,7 +579,7 @@ describe("planning module", () => {
 
     it("returns empty array if session has no summary (not complete)", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, "Incomplete session");
+      const { sessionId } = await createSession(mockIp, "Incomplete session", undefined, TEST_ROOT_DIR);
 
       const result = generateSubtasksFromPlanning(sessionId);
       expect(result).toEqual([]);
@@ -408,7 +591,7 @@ describe("planning module", () => {
 
       const result = generateSubtasksFromPlanning(sessionId);
 
-      // The stubbed session generates 3 key deliverables:
+      // The AI-generated session produces 3 key deliverables:
       // "Implementation", "Tests", "Documentation"
       expect(result.length).toBe(3);
 
@@ -442,7 +625,7 @@ describe("planning module", () => {
 
     it("generates fallback subtasks when keyDeliverables is empty", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, "Fallback test");
+      const { sessionId } = await createSession(mockIp, "Fallback test", undefined, TEST_ROOT_DIR);
 
       // Complete the session normally, then manually clear keyDeliverables
       await submitResponse(sessionId, { scope: "small" });
@@ -484,7 +667,7 @@ describe("planning module", () => {
 
     it("assigns correct sizes based on deliverable position", async () => {
       const mockIp = getUniqueIp();
-      const { sessionId } = await createSession(mockIp, "Multi-deliverable test");
+      const { sessionId } = await createSession(mockIp, "Multi-deliverable test", undefined, TEST_ROOT_DIR);
 
       // Complete the session
       await submitResponse(sessionId, { scope: "large" });

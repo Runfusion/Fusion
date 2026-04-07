@@ -15,7 +15,7 @@ import type { TaskStore, TaskAttachment } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { __resetBatchImportRateLimiter } from "./routes.js";
-import { __resetPlanningState } from "./planning.js";
+import { __resetPlanningState, __setCreateKbAgent } from "./planning.js";
 import { __resetSubtaskBreakdownState } from "./subtask-breakdown.js";
 import * as terminalServiceModule from "./terminal-service.js";
 import { get as performGet, request as performRequest } from "./test-request.js";
@@ -5266,9 +5266,77 @@ describe("Git Management endpoints", () => {
   });
 
   describe("Planning Mode Routes", () => {
+    /** Mock agent for planning session tests */
+    function setupPlanningMockAgent() {
+      const questionResponses = [
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-scope",
+            type: "single_select",
+            question: "What is the scope of this plan?",
+            description: "This helps estimate the size and complexity of the task.",
+            options: [
+              { id: "small", label: "Small", description: "Quick" },
+              { id: "medium", label: "Medium", description: "Standard" },
+              { id: "large", label: "Large", description: "Complex" },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-requirements",
+            type: "text",
+            question: "What are the key requirements?",
+            description: "List acceptance criteria.",
+          },
+        }),
+        JSON.stringify({
+          type: "question",
+          data: {
+            id: "q-confirm",
+            type: "confirm",
+            question: "Are there specific technologies to use?",
+            description: "Answer yes if you have preferences.",
+          },
+        }),
+        JSON.stringify({
+          type: "complete",
+          data: {
+            title: "Build a user auth system",
+            description: "Build a user authentication system\n\nRequirements: Standard implementation\n\nGenerated via Planning Mode",
+            suggestedSize: "M",
+            suggestedDependencies: [],
+            keyDeliverables: ["Implementation", "Tests", "Documentation"],
+          },
+        }),
+      ];
+
+      const messages: Array<{ role: string; content: string }> = [];
+      let callIndex = 0;
+      const mockAgent = {
+        session: {
+          state: { messages },
+          prompt: vi.fn(async (msg: string) => {
+            messages.push({ role: "user", content: msg });
+            const response = questionResponses[callIndex++] ?? questionResponses[questionResponses.length - 1];
+            messages.push({ role: "assistant", content: response });
+          }),
+          dispose: vi.fn(),
+        },
+      };
+      __setCreateKbAgent(async () => mockAgent);
+    }
+
     beforeEach(() => {
       // Reset planning state before each test to avoid cross-test contamination
       __resetPlanningState();
+      setupPlanningMockAgent();
+    });
+
+    afterEach(() => {
+      __setCreateKbAgent(undefined as any);
     });
 
     describe("POST /planning/start", () => {

@@ -5,12 +5,11 @@
  * Sessions are stored in-memory with TTL cleanup.
  * 
  * Features:
- * - AI agent integration with real-time streaming via SSE
+ * - AI agent integration via createKbAgent for real-time planning conversations
+ * - Streaming via SSE (createSessionWithAgent) and non-streaming (createSession)
  * - Rate limiting per IP
  * - Session expiration and cleanup
- * 
- * NOTE: AI Agent integration uses createKbAgent from "@fusion/engine" for
- * real-time planning conversations with thinking output streaming.
+ * - JSON response parsing with robust extraction and repair
  */
 
 import type {
@@ -353,217 +352,6 @@ export function getRateLimitResetTime(ip: string): Date | null {
   return new Date(entry.firstRequestAt.getTime() + RATE_LIMIT_WINDOW_MS);
 }
 
-// ── Planning Session Class ──────────────────────────────────────────────────
-
-/**
- * PlanningSession class for managing AI-guided planning conversations.
- * 
- * This class encapsulates the planning session state and provides methods
- * for interacting with the AI agent to generate questions and summaries.
- */
-export class PlanningSession {
-  id: string;
-  ip: string;
-  initialPlan: string;
-  history: Array<{ question: PlanningQuestion; response: unknown }>;
-  currentQuestion?: PlanningQuestion;
-  summary?: PlanningSummary;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  agent?: any;
-  createdAt: Date;
-  updatedAt: Date;
-
-  constructor(initialPlan: string, ip: string) {
-    this.id = randomUUID();
-    this.ip = ip;
-    this.initialPlan = initialPlan;
-    this.history = [];
-    this.createdAt = new Date();
-    this.updatedAt = new Date();
-  }
-
-  /**
-   * Get the next question from the AI agent based on the initial plan.
-   * Stubbed - will be replaced with AI agent integration.
-   */
-  async getNextQuestion(): Promise<PlanningQuestion | PlanningSummary> {
-    if (this.history.length === 0) {
-      return generateFirstQuestion(this.initialPlan);
-    }
-    return this.generateNextQuestionOrSummary();
-  }
-
-  /**
-   * Submit a response and get the next question or summary.
-   * Stubbed - will be replaced with AI agent integration.
-   */
-  async submitResponse(response: unknown): Promise<PlanningQuestion | PlanningSummary> {
-    if (!this.currentQuestion) {
-      throw new InvalidSessionStateError("No active question in session");
-    }
-
-    this.history.push({
-      question: this.currentQuestion,
-      response,
-    });
-    this.updatedAt = new Date();
-
-    return this.generateNextQuestionOrSummary();
-  }
-
-  /**
-   * Dispose of the session and cleanup resources.
-   */
-  dispose(): void {
-    // Cleanup any resources if needed
-  }
-
-  /**
-   * Generate next question or summary based on session history.
-   * Stubbed - will be replaced with AI agent integration.
-   */
-  private generateNextQuestionOrSummary(): PlanningQuestion | PlanningSummary {
-    const historyLength = this.history.length;
-
-    if (historyLength < 2) {
-      return {
-        id: `q-${historyLength + 1}`,
-        type: "text",
-        question: "What are the key requirements or acceptance criteria?",
-        description: "List the specific things that need to be true for this task to be considered complete.",
-      };
-    }
-
-    if (historyLength < 3) {
-      return {
-        id: "q-confirm",
-        type: "confirm",
-        question: "Are there any specific technologies or libraries that should be used?",
-        description: "Answer yes if you have preferences for specific tech stack choices.",
-      };
-    }
-
-    return this.generateSummary();
-  }
-
-  /**
-   * Generate a summary from session history.
-   * Stubbed - will be replaced with AI agent integration.
-   */
-  private generateSummary(): PlanningSummary {
-    const scopeResponse = this.history.find((h) => h.question.id === "q-scope")?.response as
-      | { scope?: string }
-      | undefined;
-
-    const requirementsResponse = this.history.find((h) => h.question.type === "text")?.response as
-      | { requirements?: string }
-      | undefined;
-
-    const suggestedSize =
-      scopeResponse?.scope === "small" ? "S" : scopeResponse?.scope === "large" ? "L" : "M";
-
-    return {
-      title: this.initialPlan.slice(0, 80),
-      description:
-        `${this.initialPlan}\n\n` +
-        `Requirements: ${requirementsResponse?.requirements || "Standard implementation"}\n\n` +
-        `Generated via Planning Mode`,
-      suggestedSize,
-      suggestedDependencies: [],
-      keyDeliverables: ["Implementation", "Tests", "Documentation"],
-    };
-  }
-}
-
-// ── Stubbed AI Integration (to be replaced with real AI agent) ──────────────
-
-/**
- * Generate the first question based on the initial plan.
- * This is a stub - will be replaced with AI agent.
- */
-function generateFirstQuestion(initialPlan: string): PlanningQuestion {
-  // Simple stub: ask about scope
-  return {
-    id: "q-scope",
-    type: "single_select",
-    question: "What is the scope of this plan?",
-    description: "This helps estimate the size and complexity of the task.",
-    options: [
-      { id: "small", label: "Small - focused change affecting 1-3 files", description: "Quick implementation" },
-      { id: "medium", label: "Medium - moderate change affecting 3-10 files", description: "Standard feature" },
-      { id: "large", label: "Large - significant change affecting 10+ files", description: "Complex feature or refactor" },
-    ],
-  };
-}
-
-/**
- * Generate next question or summary based on session history.
- * This is a stub - will be replaced with AI agent.
- */
-function generateNextQuestionOrSummary(session: Session): PlanningResponse {
-  const historyLength = session.history.length;
-
-  // Simple stub: ask 2-3 questions then generate summary
-  if (historyLength < 2) {
-    return {
-      type: "question",
-      data: {
-        id: `q-${historyLength + 1}`,
-        type: "text",
-        question: "What are the key requirements or acceptance criteria?",
-        description: "List the specific things that need to be true for this task to be considered complete.",
-      },
-    };
-  }
-
-  if (historyLength < 3) {
-    return {
-      type: "question",
-      data: {
-        id: "q-confirm",
-        type: "confirm",
-        question: "Are there any specific technologies or libraries that should be used?",
-        description: "Answer yes if you have preferences for specific tech stack choices.",
-      },
-    };
-  }
-
-  // Generate summary after 3 questions
-  return {
-    type: "complete",
-    data: generateSummary(session),
-  };
-}
-
-/**
- * Generate a summary from session history.
- * This is a stub - will be replaced with AI agent.
- */
-function generateSummary(session: Session): PlanningSummary {
-  // Simple stub: create summary from initial plan and history
-  const scopeResponse = session.history.find((h) => h.question.id === "q-scope")?.response as
-    | { scope?: string }
-    | undefined;
-
-  const requirementsResponse = session.history.find((h) => h.question.type === "text")?.response as
-    | { requirements?: string }
-    | undefined;
-
-  const suggestedSize =
-    scopeResponse?.scope === "small" ? "S" : scopeResponse?.scope === "large" ? "L" : "M";
-
-  return {
-    title: session.initialPlan.slice(0, 80),
-    description:
-      `${session.initialPlan}\n\n` +
-      `Requirements: ${requirementsResponse?.requirements || "Standard implementation"}\n\n` +
-      `Generated via Planning Mode`,
-    suggestedSize,
-    suggestedDependencies: [],
-    keyDeliverables: ["Implementation", "Tests", "Documentation"],
-  };
-}
-
 // ── Session Management ───────────────────────────────────────────────────────
 
 /**
@@ -575,7 +363,7 @@ export async function createSession(
   ip: string,
   initialPlan: string,
   _store?: TaskStore,
-  _rootDir?: string
+  rootDir?: string
 ): Promise<{ sessionId: string; firstQuestion: PlanningQuestion }> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -586,25 +374,157 @@ export async function createSession(
     );
   }
 
-  const sessionId = randomUUID();
+  if (!rootDir) {
+    throw new Error("rootDir is required for AI-powered planning sessions");
+  }
 
-  // Generate first question based on initial plan (stub - maintains backward compatibility)
-  const firstQuestion = generateFirstQuestion(initialPlan);
+  const sessionId = randomUUID();
 
   const session: Session = {
     id: sessionId,
     ip,
     initialPlan,
     history: [],
-    currentQuestion: firstQuestion,
     thinkingOutput: "",
     createdAt: new Date(),
     updatedAt: new Date(),
   };
 
   sessions.set(sessionId, session);
+  persistSession(session, "generating");
+
+  // Create AI agent and get the first question
+  // Only await engineReady if createKbAgent hasn't been set externally (e.g., via __setCreateKbAgent)
+  if (!createKbAgent) {
+    await engineReady;
+  }
+
+  const agentResult = await createKbAgent({
+    cwd: rootDir,
+    systemPrompt: PLANNING_SYSTEM_PROMPT,
+    tools: "readonly",
+    onThinking: () => {
+      // Non-streaming path ignores thinking output
+    },
+    onText: () => {
+      // Non-streaming path ignores incremental text
+    },
+  });
+
+  session.agent = agentResult;
+  session.updatedAt = new Date();
+
+  // Send initial plan to get first question from AI
+  const firstQuestion = await getFirstQuestionFromAgent(session, initialPlan);
+
+  session.currentQuestion = firstQuestion;
+  session.updatedAt = new Date();
+  persistSession(session, "awaiting_input");
 
   return { sessionId, firstQuestion };
+}
+
+/**
+ * Get the first question from the AI agent by sending the initial plan.
+ * Waits for the agent response and parses it as a PlanningQuestion.
+ * Throws if the agent returns a summary instead of a question.
+ */
+async function getFirstQuestionFromAgent(
+  session: Session,
+  message: string
+): Promise<PlanningQuestion> {
+  if (!session.agent) {
+    throw new InvalidSessionStateError("AI agent not initialized");
+  }
+
+  // Send message to agent
+  await session.agent.session.prompt(message);
+
+  // Extract response text
+  interface AgentMessage {
+    role: string;
+    content?: string | Array<{ type: string; text: string }>;
+  }
+  const lastMessage = (session.agent.session.state.messages as AgentMessage[])
+    .filter((m: AgentMessage) => m.role === "assistant")
+    .pop();
+
+  let responseText = "";
+  if (lastMessage?.content) {
+    if (typeof lastMessage.content === "string") {
+      responseText = lastMessage.content;
+    } else if (Array.isArray(lastMessage.content)) {
+      responseText = lastMessage.content
+        .filter((c: { type: string; text: string }): c is { type: "text"; text: string } => c.type === "text")
+        .map((c: { type: string; text: string }) => c.text)
+        .join("");
+    }
+  }
+
+  // Parse response with retry
+  let parsed: PlanningResponse | undefined;
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= MAX_PARSE_RETRIES; attempt++) {
+    try {
+      parsed = parseAgentResponse(responseText);
+      break;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      if (attempt < MAX_PARSE_RETRIES) {
+        try {
+          await session.agent.session.prompt(
+            "Your previous response could not be parsed as JSON. " +
+            'Please respond with ONLY a valid JSON object: {"type":"question","data":{...}}. ' +
+            "No markdown, no explanation, just the JSON."
+          );
+
+          const retryMessage = (session.agent.session.state.messages as AgentMessage[])
+            .filter((m: AgentMessage) => m.role === "assistant")
+            .pop();
+
+          if (retryMessage?.content) {
+            if (typeof retryMessage.content === "string") {
+              responseText = retryMessage.content;
+            } else if (Array.isArray(retryMessage.content)) {
+              responseText = retryMessage.content
+                .filter((c: { type: string; text: string }): c is { type: "text"; text: string } => c.type === "text")
+                .map((c: { type: string; text: string }) => c.text)
+                .join("");
+            }
+          }
+        } catch {
+          break;
+        }
+      }
+    }
+  }
+
+  if (!parsed) {
+    // Clean up the session on failure
+    sessions.delete(session.id);
+    unpersistSession(session.id);
+    throw new Error(
+      `Failed to get first question from AI: ${lastError?.message || "Unknown error"}`
+    );
+  }
+
+  if (parsed.type === "complete") {
+    // AI returned a summary instead of a question — return a minimal question
+    // so the caller can present the summary
+    const summary = parsed.data;
+    session.summary = summary;
+    persistSession(session, "complete");
+    return {
+      id: "q-direct-summary",
+      type: "confirm",
+      question: `The AI has generated a plan: "${summary.title}". Proceed with this?`,
+      description: summary.description,
+    };
+  }
+
+  return parsed.data;
 }
 
 /**
@@ -1051,33 +971,23 @@ export async function submitResponse(
   persistSession(session, "generating");
 
   // If AI agent is active, use it for next question
-  if (session.agent) {
-    const message = formatResponseForAgent(session.currentQuestion, responses);
-    await continueAgentConversation(session, message);
-    
-    // Return the current state (will be updated via SSE)
-    if (session.summary) {
-      return { type: "complete", data: session.summary };
-    }
-    if (session.currentQuestion) {
-      return { type: "question", data: session.currentQuestion };
-    }
-    return { type: "question", data: generateFirstQuestion(session.initialPlan) };
+  if (!session.agent) {
+    throw new InvalidSessionStateError("Planning session has no AI agent");
   }
 
-  // Stubbed mode: generate next question or summary
-  const result = generateNextQuestionOrSummary(session);
+  const message = formatResponseForAgent(session.currentQuestion, responses);
+  await continueAgentConversation(session, message);
 
-  if (result.type === "question") {
-    session.currentQuestion = result.data;
-  } else {
-    session.summary = result.data;
-    session.currentQuestion = undefined;
+  // Return the current state (will be updated via SSE)
+  if (session.summary) {
+    return { type: "complete", data: session.summary };
+  }
+  if (session.currentQuestion) {
+    return { type: "question", data: session.currentQuestion };
   }
 
-  session.updatedAt = new Date();
-
-  return result;
+  // Should not reach here, but handle gracefully
+  throw new InvalidSessionStateError("AI agent did not return a question or summary");
 }
 
 /**
@@ -1254,6 +1164,13 @@ export function __resetPlanningState(): void {
   sessions.clear();
   rateLimits.clear();
   planningStreamManager.removeAllListeners();
+}
+
+/**
+ * Inject a mock createKbAgent function. Used for testing only.
+ */
+export function __setCreateKbAgent(mock: typeof createKbAgent): void {
+  createKbAgent = mock;
 }
 
 // ── Custom Errors ───────────────────────────────────────────────────────────

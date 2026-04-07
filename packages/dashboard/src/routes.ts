@@ -5459,9 +5459,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const rootDir = store.getRootDir();
 
       const { createSession, RateLimitError } = await import("./planning.js");
-      const result = await createSession(ip, initialPlan);
+      const result = await createSession(ip, initialPlan, store, rootDir);
       res.status(201).json(result);
     } catch (err: any) {
       if (err.name === "RateLimitError") {
