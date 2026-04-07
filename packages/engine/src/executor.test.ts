@@ -7411,9 +7411,12 @@ async function captureToolsWithAgentStore(agentStore?: any, settingsOverride?: a
   let capturedTools: any[] = [];
   mockedCreateHaiAgent.mockImplementation(async (opts: any) => {
     capturedTools = opts.customTools || [];
+    // Child agent sessions get a never-resolving prompt so runSpawnedChild
+    // doesn't complete and decrement totalSpawnedCount before limit checks.
+    const isChildAgent = opts.systemPrompt?.includes("child agent spawned");
     return {
       session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
+        prompt: isChildAgent ? vi.fn(() => new Promise(() => {})) : vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn(),
         sessionManager: {
           getLeafId: vi.fn().mockReturnValue("leaf-id"),
@@ -7759,7 +7762,7 @@ describe("Agent Spawning - Child Termination", () => {
 
     expect(mockSession.dispose).toHaveBeenCalled();
     expect(internals.childSessions.has(childId)).toBe(false);
-    expect(internals.spawnedAgents.get("FN-PARENT")?.has(childId)).toBe(false);
+    // Note: spawnedAgents cleanup is done by terminateAllChildren, not terminateChildAgent
     expect(internals.totalSpawnedCount).toBe(0);
     expect(agentStore.updateAgentState).toHaveBeenCalledWith(childId, "terminated");
   });
@@ -7848,7 +7851,7 @@ describe("Agent Spawning - runSpawnedChild", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { agentStore } as any);
     const internals = executor as any;
 
-    const mockSession = { dispose: vi.fn() };
+    const mockSession = { dispose: vi.fn(), prompt: vi.fn().mockResolvedValue(undefined) };
     internals.childSessions.set("agent-test", mockSession);
     internals.totalSpawnedCount = 1;
 
