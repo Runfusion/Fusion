@@ -914,4 +914,59 @@ describe("TaskChangesTab — compact spacing class", () => {
     const fileList = container.querySelector(".changes-file-list.task-changes-file-list--compact");
     expect(fileList).toBeTruthy();
   });
+
+  it("renders root element with task-changes-tab class for margin scoping", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // The task-changes-tab class on the root element enables the negative-margin
+    // CSS rule that reclaims horizontal space from .detail-body padding
+    const root = container.querySelector(".task-changes-tab");
+    expect(root).toBeTruthy();
+
+    // The compact file list should be a child of the root scoping element
+    const fileList = root?.querySelector(".changes-file-list.task-changes-file-list--compact");
+    expect(fileList).toBeTruthy();
+  });
+
+  it("diff patches have no extraneous inline padding styles", async () => {
+    mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
+
+    const { container } = render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeTruthy();
+    });
+
+    // Diff patches should not have inline style padding — all spacing comes from CSS classes
+    const diffPatches = container.querySelectorAll(".changes-diff-patch");
+    for (const patch of Array.from(diffPatches)) {
+      expect(patch.getAttribute("style")).toBeNull();
+    }
+
+    // File content containers should also have no inline padding
+    const fileContents = container.querySelectorAll(".changes-file-content");
+    for (const content of Array.from(fileContents)) {
+      expect(content.getAttribute("style")).toBeNull();
+    }
+  });
 });
