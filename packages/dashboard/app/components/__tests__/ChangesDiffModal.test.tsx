@@ -521,4 +521,68 @@ describe("ChangesDiffModal", () => {
       expect(screen.getByText("Select a file to view its diff")).toBeTruthy();
     });
   });
+
+  describe("modal height constraint regression", () => {
+    it("max-height uses calc() to stay within viewport padding", async () => {
+      const { container } = render(
+        <ChangesDiffModal {...defaultProps} />,
+      );
+
+      const modal = container.querySelector(".changes-diff-modal");
+      expect(modal).toBeTruthy();
+
+      // Load the stylesheet and verify the .changes-diff-modal rule contains
+      // a calc()-based max-height that accounts for overlay padding.
+      // This prevents the modal from extending past the viewport bottom.
+      const fs = await import("fs");
+      const path = await import("path");
+      const cssPath = path.resolve(
+        __dirname,
+        "../../styles.css",
+      );
+      const css = fs.readFileSync(cssPath, "utf-8");
+
+      // Extract the .changes-diff-modal block (not the mobile override)
+      // Match from ".changes-diff-modal {" to its closing "}"
+      const blockMatch = css.match(
+        /\.changes-diff-modal\s*\{[^}]*max-height:\s*([^;]+);/,
+      );
+      expect(blockMatch).toBeTruthy();
+      const maxHeightValue = blockMatch![1].trim();
+
+      // The max-height must use calc() with the overlay-padding-top variable
+      // so the modal fits within the visible viewport (100vh minus top+bottom padding)
+      expect(maxHeightValue).toContain("calc(");
+      expect(maxHeightValue).toContain("--overlay-padding-top");
+      expect(maxHeightValue).toContain("100vh");
+    });
+
+    it("height and max-height together do not exceed viewport with default padding", async () => {
+      const fs = await import("fs");
+      const path = await import("path");
+      const cssPath = path.resolve(__dirname, "../../styles.css");
+      const css = fs.readFileSync(cssPath, "utf-8");
+
+      const blockMatch = css.match(
+        /\.changes-diff-modal\s*\{([^}]*)\}/,
+      );
+      expect(blockMatch).toBeTruthy();
+      const block = blockMatch![1];
+
+      // Extract height value
+      const heightMatch = block.match(/height:\s*([^;]+);/);
+      expect(heightMatch).toBeTruthy();
+      const heightValue = heightMatch![1].trim();
+
+      // height should be a reasonable vh value (≤ 85vh)
+      const heightNum = parseFloat(heightValue);
+      expect(heightNum).toBeGreaterThan(0);
+      expect(heightNum).toBeLessThanOrEqual(85);
+
+      // max-height must be present and use calc()
+      const maxHeightMatch = block.match(/max-height:\s*([^;]+);/);
+      expect(maxHeightMatch).toBeTruthy();
+      expect(maxHeightMatch![1].trim()).toContain("calc(");
+    });
+  });
 });

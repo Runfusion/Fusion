@@ -11561,8 +11561,8 @@ html .column.drag-over * {
 .changes-diff-modal {
   width: 90vw;
   max-width: 1200px;
-  height: 85vh;
-  max-height: 90vh;
+  height: 80vh;
+  max-height: calc(100vh - 2 * var(--overlay-padding-top, 10vh));
   display: flex;
   flex-direction: column;
 }
