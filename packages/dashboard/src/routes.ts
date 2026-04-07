@@ -2,11 +2,11 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import multer from "multer";
 import { createReadStream, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { resolve, sep } from "node:path";
+import { resolve, sep, join } from "node:path";
 import * as nodeFs from "node:fs";
 import * as nodeChildProcess from "node:child_process";
-import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset, AutomationStep } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData } from "@fusion/core";
+import type { TaskStore, Column, MergeResult, ScheduleType, ActivityEventType, ModelPreset, AutomationStep, MessageType, ParticipantType, MessageCreateInput } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, isGhAuthenticated, AUTOMATION_PRESETS, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupAutomation, exportSettings, importSettings, validateImportData, MessageStore } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { GitHubClient, getCurrentGitHubRepo, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
@@ -8351,6 +8351,234 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       delete scripts[name];
       await scopedStore.updateSettings({ scripts });
       res.json(scripts);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Messaging Routes ──────────────────────────────────────────────────
+
+  /** Cache of MessageStore instances keyed by rootDir */
+  const messageStoreCache = new Map<string, MessageStore>();
+
+  async function getMessageStore(req: Request): Promise<MessageStore> {
+    const scopedStore = await getScopedStore(req);
+    const rootDir = scopedStore.getRootDir();
+    let msgStore = messageStoreCache.get(rootDir);
+    if (!msgStore) {
+      msgStore = new MessageStore({ rootDir: join(rootDir, ".fusion") });
+      await msgStore.init();
+      messageStoreCache.set(rootDir, msgStore);
+    }
+    return msgStore;
+  }
+
+  const VALID_MESSAGE_TYPES: MessageType[] = ["agent-to-agent", "agent-to-user", "user-to-agent", "system"];
+  const VALID_PARTICIPANT_TYPES: ParticipantType[] = ["agent", "user", "system"];
+  const DASHBOARD_USER_ID = "dashboard";
+
+  /**
+   * GET /api/messages/inbox
+   * Fetch inbox messages for the dashboard user.
+   * Query params: limit, offset, unreadOnly, type
+   */
+  router.get("/messages/inbox", async (req, res) => {
+    try {
+      const msgStore = await getMessageStore(req);
+      const filter = {
+        limit: parseInt(req.query.limit as string) || 20,
+        offset: parseInt(req.query.offset as string) || 0,
+        read: req.query.unreadOnly === "true" ? false : undefined,
+        type: req.query.type as MessageType | undefined,
+      };
+      const messages = await msgStore.getInbox(DASHBOARD_USER_ID, "user", filter);
+      const mailbox = await msgStore.getMailbox(DASHBOARD_USER_ID, "user");
+      res.json({ messages, total: messages.length, unreadCount: mailbox.unreadCount });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/messages/outbox
+   * Fetch sent messages for the dashboard user.
+   * Query params: limit, offset, type
+   */
+  router.get("/messages/outbox", async (req, res) => {
+    try {
+      const msgStore = await getMessageStore(req);
+      const filter = {
+        limit: parseInt(req.query.limit as string) || 20,
+        offset: parseInt(req.query.offset as string) || 0,
+        type: req.query.type as MessageType | undefined,
+      };
+      const messages = await msgStore.getOutbox(DASHBOARD_USER_ID, "user", filter);
+      res.json({ messages, total: messages.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/messages/unread-count
+   * Get unread message count (lightweight for header badge).
+   */
+  router.get("/messages/unread-count", async (req, res) => {
+    try {
+      const msgStore = await getMessageStore(req);
+      const mailbox = await msgStore.getMailbox(DASHBOARD_USER_ID, "user");
+      res.json({ unreadCount: mailbox.unreadCount });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/messages/read-all
+   * Mark all inbox messages as read.
+   * IMPORTANT: Must be registered before /messages/:id to avoid path conflicts.
+   */
+  router.post("/messages/read-all", async (req, res) => {
+    try {
+      const msgStore = await getMessageStore(req);
+      const count = await msgStore.markAllAsRead(DASHBOARD_USER_ID, "user");
+      res.json({ markedAsRead: count });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/messages
+   * Send a new message.
+   * Body: { toId, toType, content, type, metadata? }
+   */
+  router.post("/messages", async (req, res) => {
+    try {
+      const { toId, toType, content, type, metadata } = req.body;
+
+      // Validate required fields
+      if (!toId || typeof toId !== "string") {
+        res.status(400).json({ error: "toId is required" });
+        return;
+      }
+      if (!toType || !VALID_PARTICIPANT_TYPES.includes(toType)) {
+        res.status(400).json({ error: `toType must be one of: ${VALID_PARTICIPANT_TYPES.join(", ")}` });
+        return;
+      }
+      if (!content || typeof content !== "string" || content.length === 0 || content.length > 2000) {
+        res.status(400).json({ error: "content is required and must be 1-2000 characters" });
+        return;
+      }
+      if (!type || !VALID_MESSAGE_TYPES.includes(type)) {
+        res.status(400).json({ error: `type must be one of: ${VALID_MESSAGE_TYPES.join(", ")}` });
+        return;
+      }
+
+      const msgStore = await getMessageStore(req);
+      const message = await msgStore.sendMessage({
+        fromId: DASHBOARD_USER_ID,
+        fromType: "user",
+        toId,
+        toType,
+        content,
+        type,
+        metadata,
+      });
+      res.status(201).json(message);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/messages/conversation/:participantType/:participantId
+   * Get conversation between dashboard user and a specific participant.
+   */
+  router.get("/messages/conversation/:participantType/:participantId", async (req, res) => {
+    try {
+      const { participantType, participantId } = req.params;
+      if (!VALID_PARTICIPANT_TYPES.includes(participantType as ParticipantType)) {
+        res.status(400).json({ error: `participantType must be one of: ${VALID_PARTICIPANT_TYPES.join(", ")}` });
+        return;
+      }
+
+      const msgStore = await getMessageStore(req);
+      const messages = await msgStore.getConversation(
+        { id: DASHBOARD_USER_ID, type: "user" },
+        { id: participantId, type: participantType as ParticipantType },
+      );
+      res.json(messages);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/messages/:id
+   * Fetch a single message.
+   */
+  router.get("/messages/:id", async (req, res) => {
+    try {
+      const msgStore = await getMessageStore(req);
+      const message = await msgStore.getMessage(req.params.id);
+      if (!message) {
+        res.status(404).json({ error: "Message not found" });
+        return;
+      }
+      res.json(message);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/messages/:id/read
+   * Mark a specific message as read.
+   */
+  router.post("/messages/:id/read", async (req, res) => {
+    try {
+      const msgStore = await getMessageStore(req);
+      const message = await msgStore.markAsRead(req.params.id);
+      res.json(message);
+    } catch (err: any) {
+      if (err.message.includes("not found")) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/messages/:id
+   * Delete a message.
+   */
+  router.delete("/messages/:id", async (req, res) => {
+    try {
+      const msgStore = await getMessageStore(req);
+      await msgStore.deleteMessage(req.params.id);
+      res.status(204).send();
+    } catch (err: any) {
+      if (err.message.includes("not found")) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/agents/:id/mailbox
+   * View an agent's mailbox (admin read-only access).
+   */
+  router.get("/agents/:id/mailbox", async (req, res) => {
+    try {
+      const msgStore = await getMessageStore(req);
+      const agentId = req.params.id;
+      const mailbox = await msgStore.getMailbox(agentId, "agent");
+      const inbox = await msgStore.getInbox(agentId, "agent");
+      res.json({ ...mailbox, messages: inbox });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

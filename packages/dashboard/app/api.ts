@@ -18,6 +18,9 @@ import type {
   WorkflowStep,
   WorkflowStepInput,
   WorkflowStepResult,
+  Message,
+  MessageType,
+  ParticipantType,
 } from "@fusion/core";
 import type { PlanningQuestion, PlanningSummary, PlanningResponse } from "@fusion/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, AutomationStep } from "@fusion/core";
@@ -2913,4 +2916,130 @@ export async function fetchAiSession(id: string): Promise<AiSessionDetail | null
 
 export async function deleteAiSession(id: string): Promise<void> {
   await fetch(buildApiUrl(`/ai-sessions/${encodeURIComponent(id)}`), { method: "DELETE" });
+}
+
+// ── Messages API ──────────────────────────────────────────────────────────
+
+/** Response shape for GET /messages/inbox */
+export interface InboxResponse {
+  messages: Message[];
+  total: number;
+  unreadCount: number;
+}
+
+/** Response shape for GET /messages/outbox */
+export interface OutboxResponse {
+  messages: Message[];
+  total: number;
+}
+
+/** Response shape for GET /messages/unread-count */
+export interface UnreadCountResponse {
+  unreadCount: number;
+}
+
+/** Response shape for POST /messages/read-all */
+export interface MarkAllReadResponse {
+  markedAsRead: number;
+}
+
+/** Response shape for GET /agents/:id/mailbox */
+export interface AgentMailboxResponse {
+  ownerId: string;
+  ownerType: ParticipantType;
+  unreadCount: number;
+  lastMessage?: Message;
+  messages: Message[];
+}
+
+/** Input for sending a message via the dashboard */
+export interface SendMessageInput {
+  toId: string;
+  toType: ParticipantType;
+  content: string;
+  type: MessageType;
+  metadata?: Record<string, unknown>;
+}
+
+/** Fetch inbox messages for the current user. */
+export function fetchInbox(
+  options?: { limit?: number; offset?: number; unreadOnly?: boolean; type?: MessageType },
+  projectId?: string,
+): Promise<InboxResponse> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set("limit", String(options.limit));
+  if (options?.offset !== undefined) params.set("offset", String(options.offset));
+  if (options?.unreadOnly) params.set("unreadOnly", "true");
+  if (options?.type) params.set("type", options.type);
+  if (projectId) params.set("projectId", projectId);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<InboxResponse>(`/messages/inbox${query}`);
+}
+
+/** Fetch sent messages for the current user. */
+export function fetchOutbox(
+  options?: { limit?: number; offset?: number; type?: MessageType },
+  projectId?: string,
+): Promise<OutboxResponse> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set("limit", String(options.limit));
+  if (options?.offset !== undefined) params.set("offset", String(options.offset));
+  if (options?.type) params.set("type", options.type);
+  if (projectId) params.set("projectId", projectId);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<OutboxResponse>(`/messages/outbox${query}`);
+}
+
+/** Fetch unread message count (lightweight, for header badge). */
+export function fetchUnreadCount(projectId?: string): Promise<UnreadCountResponse> {
+  return api<UnreadCountResponse>(withProjectId("/messages/unread-count", projectId));
+}
+
+/** Fetch a single message by ID. */
+export function fetchMessage(id: string, projectId?: string): Promise<Message> {
+  return api<Message>(withProjectId(`/messages/${encodeURIComponent(id)}`, projectId));
+}
+
+/** Send a new message. */
+export function sendMessage(input: SendMessageInput, projectId?: string): Promise<Message> {
+  return api<Message>(withProjectId("/messages", projectId), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Mark a specific message as read. */
+export function markMessageRead(id: string, projectId?: string): Promise<Message> {
+  return api<Message>(withProjectId(`/messages/${encodeURIComponent(id)}/read`, projectId), {
+    method: "POST",
+  });
+}
+
+/** Mark all inbox messages as read. */
+export function markAllMessagesRead(projectId?: string): Promise<MarkAllReadResponse> {
+  return api<MarkAllReadResponse>(withProjectId("/messages/read-all", projectId), {
+    method: "POST",
+  });
+}
+
+/** Delete a message. */
+export function deleteMessage(id: string, projectId?: string): Promise<void> {
+  return api<void>(withProjectId(`/messages/${encodeURIComponent(id)}`, projectId), {
+    method: "DELETE",
+  });
+}
+
+/** Fetch conversation between current user and a specific participant. */
+export function fetchConversation(
+  participantId: string,
+  participantType: ParticipantType,
+  projectId?: string,
+): Promise<Message[]> {
+  const path = `/messages/conversation/${encodeURIComponent(participantType)}/${encodeURIComponent(participantId)}`;
+  return api<Message[]>(withProjectId(path, projectId));
+}
+
+/** Fetch an agent's mailbox (admin read-only view). */
+export function fetchAgentMailbox(agentId: string, projectId?: string): Promise<AgentMailboxResponse> {
+  return api<AgentMailboxResponse>(withProjectId(`/agents/${encodeURIComponent(agentId)}/mailbox`, projectId));
 }

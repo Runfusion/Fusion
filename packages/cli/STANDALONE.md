@@ -108,6 +108,17 @@ fn task import owner/repo --limit 10 --labels "bug,enhancement"
 ```bash
 fn agent stop <agent-id>            # Stop (pause) a running agent
 fn agent start <agent-id>           # Start (resume) a stopped agent
+fn agent mailbox <agent-id>         # View an agent's mailbox
+```
+
+### Messaging
+
+```bash
+fn message inbox                    # List inbox messages
+fn message outbox                   # List sent messages
+fn message send <agent-id> <msg>    # Send a message to an agent
+fn message read <id>                # Read a specific message
+fn message delete <id>              # Delete a message
 ```
 
 ### Typical workflow

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3 } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Workflow, Bot, ChevronLeft, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail } from "lucide-react";
 import type { ProjectInfo } from "../api";
 import { fetchScripts } from "../api";
 import { ProjectSelector } from "./ProjectSelector";
@@ -30,6 +30,10 @@ export interface HeaderProps {
   activePlanningSessionCount?: number;
   onOpenUsage?: () => void;
   onOpenActivityLog?: () => void;
+  /** Opens the mailbox modal */
+  onOpenMailbox?: () => void;
+  /** Unread message count for badge display */
+  mailboxUnreadCount?: number;
   onOpenSchedules?: () => void;
   onOpenGitManager?: () => void;
   onOpenWorkflowSteps?: () => void;
@@ -103,6 +107,8 @@ export function Header({
   activePlanningSessionCount = 0,
   onOpenUsage,
   onOpenActivityLog,
+  onOpenMailbox,
+  mailboxUnreadCount = 0,
   onOpenSchedules,
   onOpenGitManager,
   onOpenWorkflowSteps,
@@ -414,6 +420,23 @@ export function Header({
         {!isCompact && onOpenActivityLog && (
           <button className="btn-icon" onClick={onOpenActivityLog} title="View Activity Log">
             <History size={16} />
+          </button>
+        )}
+
+        {/* Mailbox button - desktop only */}
+        {!isCompact && onOpenMailbox && (
+          <button
+            className={`btn-icon${mailboxUnreadCount > 0 ? " btn-icon--has-indicator" : ""}`}
+            onClick={onOpenMailbox}
+            title={`Mailbox${mailboxUnreadCount > 0 ? ` (${mailboxUnreadCount} unread)` : ""}`}
+            data-testid="header-mailbox-btn"
+          >
+            <Mail size={16} />
+            {mailboxUnreadCount > 0 && (
+              <span className="btn-icon-indicator" data-testid="header-mailbox-badge">
+                {mailboxUnreadCount > 9 ? "9+" : mailboxUnreadCount}
+              </span>
+            )}
           </button>
         )}
 
@@ -734,6 +757,18 @@ export function Header({
               >
                 <History size={16} />
                 <span>View Activity Log</span>
+              </button>
+            )}
+            {/* Mailbox - in overflow on mobile */}
+            {onOpenMailbox && (
+              <button
+                className="mobile-overflow-item"
+                onClick={() => handleOverflowAction(onOpenMailbox)}
+                role="menuitem"
+                data-testid="overflow-mailbox-btn"
+              >
+                <Mail size={16} />
+                <span>Mailbox{mailboxUnreadCount > 0 ? ` (${mailboxUnreadCount})` : ""}</span>
               </button>
             )}
             {/* Usage - in overflow on mobile */}

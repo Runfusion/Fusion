@@ -49,6 +49,7 @@ const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runM
 const { runProjectList, runProjectAdd, runProjectRemove, runProjectShow, runProjectInfo, runProjectSetDefault, runProjectDetect } = await import("./commands/project.js");
 const { runInit } = await import("./commands/init.js");
 const { runAgentStop, runAgentStart } = await import("./commands/agent.js");
+const { runMessageInbox, runMessageOutbox, runMessageSend, runMessageRead, runMessageDelete, runAgentMailbox } = await import("./commands/message.js");
 
 const HELP = `
 fn — AI-orchestrated task board
@@ -109,6 +110,12 @@ Usage:
   fn git fetch [remote]      Fetch from remote (default: origin)
   fn agent stop <id>                Stop a running agent (pause execution)
   fn agent start <id>               Start a stopped agent (resume execution)
+  fn agent mailbox <id>             View an agent's mailbox
+  fn message inbox                  List inbox messages
+  fn message outbox                 List sent messages
+  fn message send <agent-id> <msg>  Send a message to an agent
+  fn message read <id>              Read a specific message
+  fn message delete <id>            Delete a message
   fn backup --create         Create a database backup immediately
   fn backup --list           List all database backups
   fn backup --restore <file> Restore database from a backup file
@@ -746,9 +753,56 @@ async function main() {
             await runAgentStart(id, projectName);
             break;
           }
+          case "mailbox": {
+            const id = args[2];
+            if (!id) { console.error("Usage: fn agent mailbox <id>"); process.exit(1); }
+            await runAgentMailbox(id, projectName);
+            break;
+          }
           default:
             console.error(`Unknown subcommand: agent ${subcommand || ""}`);
-            console.log("Try: fn agent stop <id> | fn agent start <id>");
+            console.log("Try: fn agent stop <id> | fn agent start <id> | fn agent mailbox <id>");
+            process.exit(1);
+        }
+        break;
+      }
+
+      case "message": {
+        const subcommand = args[1];
+        switch (subcommand) {
+          case "inbox": {
+            await runMessageInbox(projectName);
+            break;
+          }
+          case "outbox": {
+            await runMessageOutbox(projectName);
+            break;
+          }
+          case "send": {
+            const toId = args[2];
+            const content = args[3];
+            if (!toId || !content) {
+              console.error("Usage: fn message send <agent-id> <content>");
+              process.exit(1);
+            }
+            await runMessageSend(toId, content, projectName);
+            break;
+          }
+          case "read": {
+            const id = args[2];
+            if (!id) { console.error("Usage: fn message read <id>"); process.exit(1); }
+            await runMessageRead(id, projectName);
+            break;
+          }
+          case "delete": {
+            const id = args[2];
+            if (!id) { console.error("Usage: fn message delete <id>"); process.exit(1); }
+            await runMessageDelete(id, projectName);
+            break;
+          }
+          default:
+            console.error(`Unknown subcommand: message ${subcommand || ""}`);
+            console.log("Try: fn message inbox | fn message outbox | fn message send | fn message read | fn message delete");
             process.exit(1);
         }
         break;

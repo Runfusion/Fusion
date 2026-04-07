@@ -529,6 +529,18 @@ When `FUSION_BADGE_PUBSUB_REDIS_URL` is not set, the dashboard uses an in-memory
 - `DELETE /api/terminal/sessions/:id` - Kill session
 - `WS /api/terminal/ws` - WebSocket connection
 
+### Messaging
+- `GET /api/messages/inbox` - Fetch inbox messages (query: `limit`, `offset`, `unreadOnly`, `type`)
+- `GET /api/messages/outbox` - Fetch sent messages (query: `limit`, `offset`, `type`)
+- `GET /api/messages/unread-count` - Get unread count (for header badge)
+- `POST /api/messages` - Send a message (body: `{ toId, toType, content, type, metadata? }`)
+- `GET /api/messages/:id` - Fetch a single message
+- `POST /api/messages/:id/read` - Mark message as read
+- `POST /api/messages/read-all` - Mark all inbox as read
+- `DELETE /api/messages/:id` - Delete a message
+- `GET /api/messages/conversation/:participantType/:participantId` - Get conversation thread
+- `GET /api/agents/:id/mailbox` - View agent mailbox (admin read-only)
+
 ### Configuration
 - `GET /api/config` - Server configuration
 - `GET /api/settings` - Merged settings (project overrides global)

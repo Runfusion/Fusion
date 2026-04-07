@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { TaskDetail, TaskCreateInput, Task, ThemeMode } from "@fusion/core";
-import { fetchConfig, fetchSettings, fetchAuthStatus, fetchGlobalSettings, updateSettings, updateGlobalSettings, fetchModels, fetchTaskDetail, updateProject, unregisterProject } from "./api";
-import type { ModelInfo, ProjectInfo } from "./api";
+import { fetchConfig, fetchSettings, fetchAuthStatus, fetchGlobalSettings, updateSettings, updateGlobalSettings, fetchModels, fetchTaskDetail, updateProject, unregisterProject, fetchUnreadCount, fetchAgents } from "./api";
+import type { ModelInfo, ProjectInfo, Agent } from "./api";
 import { Header } from "./components/Header";
 import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
@@ -26,6 +26,7 @@ import { WorkflowStepManager } from "./components/WorkflowStepManager";
 import { MissionManager } from "./components/MissionManager";
 import { AgentListModal } from "./components/AgentListModal";
 import { AgentsView } from "./components/AgentsView";
+import { MailboxModal } from "./components/MailboxModal";
 import { ScriptsModal } from "./components/ScriptsModal";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
@@ -89,6 +90,9 @@ function AppInner() {
   const [filesOpen, setFilesOpen] = useState(false);
   const [fileBrowserWorkspace, setFileBrowserWorkspace] = useState("project");
   const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [mailboxOpen, setMailboxOpen] = useState(false);
+  const [mailboxUnreadCount, setMailboxUnreadCount] = useState(0);
+  const [mailboxAgents, setMailboxAgents] = useState<Agent[]>([]);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
   const [missionsOpen, setMissionsOpen] = useState(false);
@@ -533,6 +537,18 @@ function AppInner() {
   const handleOpenActivityLog = useCallback(() => setActivityLogOpen(true), []);
   const handleCloseActivityLog = useCallback(() => setActivityLogOpen(false), []);
 
+  const handleOpenMailbox = useCallback(() => {
+    setMailboxOpen(true);
+    // Refresh unread count and agents when opening mailbox
+    fetchUnreadCount(currentProject?.id).then((data) => {
+      setMailboxUnreadCount(data.unreadCount);
+    }).catch(() => {});
+    fetchAgents(undefined, currentProject?.id).then((agents) => {
+      setMailboxAgents(agents);
+    }).catch(() => {});
+  }, [currentProject?.id]);
+  const handleCloseMailbox = useCallback(() => setMailboxOpen(false), []);
+
   // Mission link handler from TaskCard
   const handleOpenMission = useCallback((missionId: string) => {
     setMissionTargetId(missionId);
@@ -654,6 +670,8 @@ function AppInner() {
         activePlanningSessionCount={bgPlanningSessions.length}
         onOpenUsage={handleOpenUsage}
         onOpenActivityLog={handleOpenActivityLog}
+        onOpenMailbox={handleOpenMailbox}
+        mailboxUnreadCount={mailboxUnreadCount}
         onOpenSchedules={handleOpenSchedules}
         onOpenGitManager={handleOpenGitManager}
         onOpenWorkflowSteps={() => setWorkflowStepsOpen(true)}
@@ -848,6 +866,13 @@ function AppInner() {
         onClose={handleCloseAgents}
         addToast={addToast}
         projectId={currentProject?.id}
+      />
+      <MailboxModal
+        isOpen={mailboxOpen}
+        onClose={handleCloseMailbox}
+        projectId={currentProject?.id}
+        addToast={addToast}
+        agents={mailboxAgents}
       />
       {setupWizardOpen && (
         <SetupWizardModal

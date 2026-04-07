@@ -1608,3 +1608,79 @@ export interface MigrationResult {
   /** Errors encountered during migration */
   errors: Array<{ path: string; error: string }>;
 }
+
+// ── Messaging Types ──────────────────────────────────────────────────────────
+
+/** Participant types for message routing */
+export type ParticipantType = "agent" | "user" | "system";
+
+/** Message types/categories */
+export type MessageType = "agent-to-agent" | "agent-to-user" | "user-to-agent" | "system";
+
+/** Message record stored in the system */
+export interface Message {
+  /** Unique identifier */
+  id: string;
+  /** Sender identifier */
+  fromId: string;
+  /** Sender type */
+  fromType: ParticipantType;
+  /** Recipient identifier */
+  toId: string;
+  /** Recipient type */
+  toType: ParticipantType;
+  /** Message body */
+  content: string;
+  /** Message category */
+  type: MessageType;
+  /** Whether the recipient has read this message */
+  read: boolean;
+  /** Optional extra data */
+  metadata?: Record<string, unknown>;
+  /** ISO-8601 timestamp of creation */
+  createdAt: string;
+  /** ISO-8601 timestamp of last update */
+  updatedAt: string;
+}
+
+/** Input for creating a new message */
+export interface MessageCreateInput {
+  /** Sender identifier (auto-filled by the transport layer if omitted) */
+  fromId?: string;
+  /** Sender type (auto-filled by the transport layer if omitted) */
+  fromType?: ParticipantType;
+  /** Recipient identifier */
+  toId: string;
+  /** Recipient type */
+  toType: ParticipantType;
+  /** Message body */
+  content: string;
+  /** Message category */
+  type: MessageType;
+  /** Optional extra data */
+  metadata?: Record<string, unknown>;
+}
+
+/** Filter options for querying messages */
+export interface MessageFilter {
+  /** Filter by message type */
+  type?: MessageType;
+  /** Filter by read status */
+  read?: boolean;
+  /** Maximum number of messages to return */
+  limit?: number;
+  /** Number of messages to skip (for pagination) */
+  offset?: number;
+}
+
+/** Mailbox summary for a participant */
+export interface Mailbox {
+  /** Owner identifier */
+  ownerId: string;
+  /** Owner type */
+  ownerType: ParticipantType;
+  /** Number of unread messages */
+  unreadCount: number;
+  /** Most recent message (if any) */
+  lastMessage?: Message;
+}

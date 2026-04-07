@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -451,7 +451,7 @@ export class Database {
     }
 
     // Future migrations go here:
-    // if (version < 12) { this.applyMigration(12, () => { ... }); }
+    // if (version < 13) { this.applyMigration(13, () => { ... }); }
 
     if (version < 10) {
       this.applyMigration(10, () => {
@@ -465,6 +465,29 @@ export class Database {
       this.applyMigration(11, () => {
         this.addColumnIfMissing("tasks", "planningModelProvider", "TEXT");
         this.addColumnIfMissing("tasks", "planningModelId", "TEXT");
+      });
+    }
+
+    if (version < 12) {
+      this.applyMigration(12, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS messages (
+            id TEXT PRIMARY KEY,
+            fromId TEXT NOT NULL,
+            fromType TEXT NOT NULL,
+            toId TEXT NOT NULL,
+            toType TEXT NOT NULL,
+            content TEXT NOT NULL,
+            type TEXT NOT NULL,
+            read INTEGER DEFAULT 0,
+            metadata TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxMessagesTo ON messages(toId, toType, read)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxMessagesFrom ON messages(fromId, fromType)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxMessagesCreatedAt ON messages(createdAt)`);
       });
     }
   }
