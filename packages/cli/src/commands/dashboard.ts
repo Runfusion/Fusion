@@ -565,11 +565,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
   // ── MissionAutopilot: autonomous mission progression ─────────────
   //
-  // Declared before createServer so it can be passed to both the server
-  // and the Scheduler. Assigned inside the engine block below (dev mode
-  // skips the engine entirely, so missionAutopilot stays undefined).
+  // Created before createServer so it can be passed to both the server
+  // and the Scheduler. The scheduler reference is set after Scheduler
+  // construction via setScheduler() to break the circular dependency.
+  // In dev mode the autopilot is created but never started.
   //
-  let missionAutopilot: InstanceType<typeof MissionAutopilot> | undefined;
+  const missionAutopilot = new MissionAutopilot(store, store.getMissionStore());
 
   // Start the web server with AI merge, auth, and model registry wired in
   const app = createServer(store, { onMerge, authStorage, modelRegistry, automationStore, missionAutopilot });
@@ -629,13 +630,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       prCommentHandler.handleNewComments(taskId, prInfo, comments),
     );
 
-    // ── MissionAutopilot: autonomous mission progression ─────────────
-    //
-    // Created before the Scheduler since Scheduler's constructor accepts
-    // missionAutopilot. The scheduler reference is set after construction
-    // via setScheduler() to break the circular dependency.
-    //
-    missionAutopilot = new MissionAutopilot(store, store.getMissionStore());
+    // ── MissionAutopilot is already created above (before createServer) ──
+    // The scheduler reference is set after construction via setScheduler()
+    // to break the circular dependency.
 
     const scheduler = new Scheduler(store, {
       semaphore,

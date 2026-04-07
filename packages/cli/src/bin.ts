@@ -49,6 +49,7 @@ const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runM
 const { runProjectList, runProjectAdd, runProjectRemove, runProjectShow, runProjectInfo, runProjectSetDefault, runProjectDetect } = await import("./commands/project.js");
 const { runInit } = await import("./commands/init.js");
 const { runAgentStop, runAgentStart } = await import("./commands/agent.js");
+const { runAgentImport } = await import("./commands/agent-import.js");
 const { runMessageInbox, runMessageOutbox, runMessageSend, runMessageRead, runMessageDelete, runAgentMailbox } = await import("./commands/message.js");
 
 const HELP = `
@@ -110,6 +111,8 @@ Usage:
   fn git fetch [remote]      Fetch from remote (default: origin)
   fn agent stop <id>                Stop a running agent (pause execution)
   fn agent start <id>               Start a stopped agent (resume execution)
+  fn agent import <file> [--dry-run] [--skip-existing]
+                                      Import agents from a companies.sh manifest
   fn agent mailbox <id>             View an agent's mailbox
   fn message inbox                  List inbox messages
   fn message outbox                 List sent messages
@@ -759,9 +762,18 @@ async function main() {
             await runAgentMailbox(id, projectName);
             break;
           }
+          case "import": {
+            const source = args[2];
+            if (!source) { console.error("Usage: fn agent import <file> [--dry-run] [--skip-existing]"); process.exit(1); }
+            const importArgs = args.slice(3);
+            const dryRun = importArgs.includes("--dry-run");
+            const skipExisting = importArgs.includes("--skip-existing");
+            await runAgentImport(source, { dryRun, skipExisting, project: projectName });
+            break;
+          }
           default:
             console.error(`Unknown subcommand: agent ${subcommand || ""}`);
-            console.log("Try: fn agent stop <id> | fn agent start <id> | fn agent mailbox <id>");
+            console.log("Try: fn agent stop <id> | fn agent start <id> | fn agent mailbox <id> | fn agent import <file>");
             process.exit(1);
         }
         break;

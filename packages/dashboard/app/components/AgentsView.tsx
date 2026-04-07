@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { JSX } from "react";
-import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, ChevronDown, GitBranch, Filter } from "lucide-react";
+import { Plus, Play, Pause, Square, Activity, Heart, Trash2, RefreshCw, Bot, LayoutGrid, List, ChevronRight, ChevronDown, GitBranch, Filter, Upload } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
 import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun } from "../api";
 import { AgentDetailView } from "./AgentDetailView";
@@ -10,6 +10,7 @@ import { useAgents } from "../hooks/useAgents";
 import { useAgentHierarchy } from "../hooks/useAgentHierarchy";
 import type { AgentNode } from "../hooks/useAgentHierarchy";
 import { NewAgentDialog } from "./NewAgentDialog";
+import { AgentImportModal } from "./AgentImportModal";
 
 export interface AgentsViewProps {
   addToast: (message: string, type?: "success" | "error") => void;
@@ -128,6 +129,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentView, setAgentView] = useState<"board" | "list" | "tree">(() => {
@@ -317,19 +319,35 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
             </select>
           </div>
 
-          <button
-            className="btn btn--primary"
-            onClick={() => setIsCreating(true)}
-          >
-            <Plus size={16} />
-            New Agent
-          </button>
+          <div className="agent-controls-actions">
+            <button
+              className="btn"
+              onClick={() => setIsImporting(true)}
+            >
+              <Upload size={16} />
+              Import
+            </button>
+            <button
+              className="btn btn--primary"
+              onClick={() => setIsCreating(true)}
+            >
+              <Plus size={16} />
+              New Agent
+            </button>
+          </div>
         </div>
 
         <NewAgentDialog
           isOpen={isCreating}
           onClose={() => setIsCreating(false)}
           onCreated={() => { setIsCreating(false); void loadAgents(); }}
+          projectId={projectId}
+        />
+
+        <AgentImportModal
+          isOpen={isImporting}
+          onClose={() => setIsImporting(false)}
+          onImported={() => void loadAgents()}
           projectId={projectId}
         />
 
