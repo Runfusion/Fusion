@@ -4,6 +4,8 @@ import type {
   Task,
   CentralCore,
   AgentStore,
+  HeartbeatInvocationSource,
+  AgentHeartbeatRun,
 } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
@@ -214,6 +216,8 @@ export class InProcessRuntime
         this.heartbeatMonitor = new HeartbeatMonitor({
           store: this.agentStore,
           agentStore: this.agentStore, // enables per-agent config resolution
+          taskStore: this.taskStore,
+          rootDir: this.config.workingDirectory,
           onMissed: (agentId) => {
             runtimeLog.warn(`Agent ${agentId} missed heartbeat`);
           },
@@ -387,6 +391,47 @@ export class InProcessRuntime
       lastActivityAt: this.lastActivityAt,
       memoryBytes,
     };
+  }
+
+  /**
+   * Get the HeartbeatMonitor instance (if initialized).
+   * Returns undefined when agent monitoring is not available.
+   */
+  getHeartbeatMonitor(): HeartbeatMonitor | undefined {
+    return this.heartbeatMonitor;
+  }
+
+  /**
+   * Execute a heartbeat run for an agent.
+   *
+   * Delegates to HeartbeatMonitor.executeHeartbeat().
+   * Throws if the runtime is not active or the heartbeat monitor is not initialized.
+   *
+   * @param agentId - The agent ID to execute a heartbeat for
+   * @param source - What triggered this heartbeat
+   * @param options - Optional task ID override and trigger detail
+   * @returns The completed heartbeat run
+   */
+  async executeHeartbeat(
+    agentId: string,
+    source: HeartbeatInvocationSource,
+    options?: { taskId?: string; triggerDetail?: string }
+  ): Promise<AgentHeartbeatRun | null> {
+    if (this.status !== "active") {
+      throw new Error(`Cannot execute heartbeat: runtime status is ${this.status}`);
+    }
+    if (!this.heartbeatMonitor) {
+      return null;
+    }
+
+    runtimeLog.log(`Executing heartbeat for agent ${agentId} (source=${source})`);
+    const result = await this.heartbeatMonitor.executeHeartbeat({
+      agentId,
+      source,
+      ...options,
+    });
+    runtimeLog.log(`Heartbeat completed for agent ${agentId}`);
+    return result;
   }
 
   /**

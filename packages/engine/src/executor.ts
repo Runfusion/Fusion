@@ -22,9 +22,11 @@ import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./re
 import type { StuckTaskDetector, StuckTaskEvent } from "./stuck-task-detector.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { StepSessionExecutor, type StepSessionExecutorOptions, type StepResult } from "./step-session-executor.js";
+import { createTaskCreateTool as sharedCreateTaskCreateTool, createTaskLogTool as sharedCreateTaskLogTool, taskCreateParams, taskLogParams } from "./agent-tools.js";
 
 // Re-export for backward compatibility (tests import from executor.ts)
 export { summarizeToolArgs } from "./agent-logger.js";
+export { createTaskCreateTool, createTaskLogTool, taskCreateParams, taskLogParams } from "./agent-tools.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -38,17 +40,7 @@ const taskUpdateParams = Type.Object({
   ),
 });
 
-const taskLogParams = Type.Object({
-  message: Type.String({ description: "What happened" }),
-  outcome: Type.Optional(Type.String({ description: "Result or consequence (optional)" })),
-});
-
-const taskCreateParams = Type.Object({
-  description: Type.String({ description: "What needs to be done" }),
-  dependencies: Type.Optional(
-    Type.Array(Type.String(), { description: "Task IDs this new task depends on (e.g. [\"KB-001\"])" }),
-  ),
-});
+// taskLogParams and taskCreateParams are imported from agent-tools.ts
 
 const taskAddDepParams = Type.Object({
   task_id: Type.String({ description: "The ID of the task to depend on (e.g. \"KB-001\")" }),
@@ -1514,51 +1506,11 @@ export class TaskExecutor {
   }
 
   private createTaskLogTool(taskId: string): ToolDefinition {
-    const store = this.store;
-    return {
-      name: "task_log",
-      label: "Log Entry",
-      description:
-        "Log an important action, decision, or issue for this task. " +
-        "Use for significant events — not every small step.",
-      parameters: taskLogParams,
-      execute: async (_id: string, params: Static<typeof taskLogParams>) => {
-        await store.logEntry(taskId, params.message, params.outcome);
-        return {
-          content: [{ type: "text" as const, text: `Logged: ${params.message}` }],
-          details: {},
-        };
-      },
-    };
+    return sharedCreateTaskLogTool(this.store, taskId);
   }
 
   private createTaskCreateTool(): ToolDefinition {
-    const store = this.store;
-    return {
-      name: "task_create",
-      label: "Create Task",
-      description:
-        "Create a new task for out-of-scope work discovered during execution. " +
-        "The task goes into triage where it will be specified by the AI. " +
-        "Optionally set dependencies (e.g., the new task depends on the current one, " +
-        "or the current task should wait for the new one).",
-      parameters: taskCreateParams,
-      execute: async (_id: string, params: Static<typeof taskCreateParams>) => {
-        const task = await store.createTask({
-          description: params.description,
-          dependencies: params.dependencies,
-          column: "triage",
-        });
-        const deps = task.dependencies.length ? ` (depends on: ${task.dependencies.join(", ")})` : "";
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Created ${task.id}: ${params.description}${deps}`,
-          }],
-          details: {},
-        };
-      },
-    };
+    return sharedCreateTaskCreateTool(this.store);
   }
 
   private createTaskAddDepTool(taskId: string): ToolDefinition {

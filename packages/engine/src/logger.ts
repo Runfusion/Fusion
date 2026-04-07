@@ -79,3 +79,6 @@ export const hybridExecutorLog = createLogger("hybrid-executor");
 
 /** Logger for the mission autopilot subsystem. */
 export const autopilotLog = createLogger("autopilot");
+
+/** Logger for the heartbeat execution subsystem. */
+export const heartbeatLog = createLogger("heartbeat");

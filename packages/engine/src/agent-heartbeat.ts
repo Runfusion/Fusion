@@ -1,8 +1,15 @@
 /**
- * HeartbeatMonitor - Runtime monitoring for agent health
+ * HeartbeatMonitor - Runtime monitoring and execution for agents
  * 
- * Monitors agents via periodic polling and detects missed heartbeats.
- * Follows the StuckTaskDetector pattern for consistency.
+ * Monitors agents via periodic polling, detects missed heartbeats,
+ * and provides the Paperclip-style heartbeat execution engine:
+ * 
+ *   wake → check inbox → work → exit
+ * 
+ * When `executeHeartbeat()` is called (via API, timer, or assignment),
+ * the system wakes the agent, checks its assigned task from AgentStore,
+ * executes work in a lightweight agent session with `task_create` capability,
+ * records results, and transitions the run to completed.
  * 
  * Callback pattern (not EventEmitter):
  * - onMissed: Called when an agent misses its heartbeat
@@ -10,7 +17,16 @@
  * - onTerminated: Called when an unresponsive agent is terminated
  */
 
-import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig } from "@fusion/core";
+import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, TaskStore, TaskDetail } from "@fusion/core";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { Type, type Static } from "@mariozechner/pi-ai";
+import { createTaskCreateTool, createTaskLogTool } from "./agent-tools.js";
+import { heartbeatLog } from "./logger.js";
+
+// Lazy import for pi — avoids pulling the pi SDK into the module graph
+// when heartbeat execution isn't needed.
+type CreateKbAgentFn = (options: import("./pi.js").AgentOptions) => Promise<import("./pi.js").AgentResult>;
+type PromptWithFallbackFn = (session: import("@mariozechner/pi-coding-agent").AgentSession, prompt: string) => Promise<void>;
 
 /** Resolved per-agent heartbeat config after validation and fallback */
 interface ResolvedHeartbeatConfig {
@@ -42,6 +58,12 @@ export interface HeartbeatMonitorOptions {
   onRunStarted?: (agentId: string, run: AgentHeartbeatRun) => void;
   /** Callback when a run completes */
   onRunCompleted?: (agentId: string, run: AgentHeartbeatRun) => void;
+  /** TaskStore for task_create and task_log tools during heartbeat execution.
+   *  When not provided, executeHeartbeat() will throw. */
+  taskStore?: TaskStore;
+  /** Project root directory for agent session CWD.
+   *  When not provided, executeHeartbeat() will throw. */
+  rootDir?: string;
 }
 
 /** Options for waking up an agent */
@@ -52,6 +74,18 @@ export interface WakeupOptions {
   triggerDetail?: string;
   /** Context snapshot for the run */
   contextSnapshot?: Record<string, unknown>;
+}
+
+/** Options for executing a heartbeat run */
+export interface HeartbeatExecutionOptions {
+  /** Agent ID to execute heartbeat for */
+  agentId: string;
+  /** What triggered this heartbeat */
+  source: HeartbeatInvocationSource;
+  /** Human-readable trigger detail */
+  triggerDetail?: string;
+  /** Optional task ID override (uses agent.taskId if not set) */
+  taskId?: string;
 }
 
 /** Session interface for disposing agent resources */
@@ -72,8 +106,30 @@ interface TrackedAgent {
 }
 
 /**
+ * System prompt for heartbeat agent sessions.
+ * Instructs the agent to perform a single-pass check on its assigned task
+ * and use `task_create` / `task_log` to record findings or spawn follow-up work.
+ */
+export const HEARTBEAT_SYSTEM_PROMPT = `You are a heartbeat agent running in a short execution window.
+
+Your job:
+1. Check your assigned task — read the description and PROMPT.md if present.
+2. Do ONE useful action: analyze, review, create follow-up tasks, or log findings.
+3. Use task_create to spawn follow-up work, task_log to record observations.
+4. Call heartbeat_done when finished with an optional summary of what was accomplished.
+
+Keep work lightweight — this is a single-pass check, not a full implementation run.
+You have readonly file access plus task_create and task_log tools.`;
+
+/** Parameter schema for the heartbeat_done tool */
+const heartbeatDoneParams = Type.Object({
+  summary: Type.Optional(Type.String({ description: "Summary of what was accomplished this heartbeat" })),
+});
+
+/**
  * HeartbeatMonitor monitors agents via periodic polling.
- * Detects missed heartbeats and auto-terminates unresponsive agents.
+ * Detects missed heartbeats, auto-terminates unresponsive agents,
+ * and provides the Paperclip-style execution engine via executeHeartbeat().
  */
 export class HeartbeatMonitor {
   private store: AgentStore;
@@ -86,6 +142,8 @@ export class HeartbeatMonitor {
   private onTerminated?: (agentId: string) => void;
   private onRunStarted?: (agentId: string, run: AgentHeartbeatRun) => void;
   private onRunCompleted?: (agentId: string, run: AgentHeartbeatRun) => void;
+  private taskStore?: TaskStore;
+  private rootDir?: string;
 
   private trackedAgents: Map<string, TrackedAgent> = new Map();
   private agentStartLocks: Map<string, Promise<unknown>> = new Map();
@@ -103,6 +161,8 @@ export class HeartbeatMonitor {
     this.onTerminated = options.onTerminated;
     this.onRunStarted = options.onRunStarted;
     this.onRunCompleted = options.onRunCompleted;
+    this.taskStore = options.taskStore;
+    this.rootDir = options.rootDir;
   }
 
   /**
@@ -345,6 +405,199 @@ export class HeartbeatMonitor {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Heartbeat execution (Paperclip wake → check → work → exit)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Execute a heartbeat run for an agent.
+   * 
+   * Implements the Paperclip-style execution model:
+   * 1. Wake — start a heartbeat run record
+   * 2. Check inbox — resolve the agent's assigned task
+   * 3. Work — run a lightweight agent session with readonly tools + task_create/task_log
+   * 4. Exit — record results and complete the run
+   * 
+   * Per-agent execution is serialized via `withAgentStartLock` — concurrent calls
+   * for the same agent wait for the previous run to complete.
+   * 
+   * @param options - Execution options (agent ID, source, optional task override)
+   * @returns The completed heartbeat run, or null if the monitor isn't configured for execution
+   * @throws Error if taskStore or rootDir are not configured
+   */
+  async executeHeartbeat(options: HeartbeatExecutionOptions): Promise<AgentHeartbeatRun> {
+    const { agentId, source, triggerDetail, taskId: explicitTaskId } = options;
+
+    // Validate execution dependencies
+    if (!this.taskStore || !this.rootDir) {
+      throw new Error("HeartbeatMonitor not configured for execution (missing taskStore/rootDir)");
+    }
+    const taskStore = this.taskStore;
+    const rootDir = this.rootDir;
+
+    // Serialize per-agent
+    return this.withAgentStartLock(agentId, async () => {
+      heartbeatLog.log(`Executing heartbeat for ${agentId} (source=${source})`);
+
+      // Start run
+      const run = await this.startRun(agentId, { source, triggerDetail });
+
+      try {
+        // Resolve agent
+        const agent = await this.store.getAgent(agentId);
+        if (!agent) {
+          heartbeatLog.warn(`Agent ${agentId} not found — completing run as failed`);
+          await this.completeRun(agentId, run.id, {
+            status: "failed",
+            stderrExcerpt: `Agent ${agentId} not found`,
+          });
+          return (await this.store.getRunDetail(agentId, run.id))!;
+        }
+
+        // Resolve task assignment
+        const taskId = explicitTaskId ?? agent.taskId;
+        if (!taskId) {
+          heartbeatLog.log(`Agent ${agentId} has no task assignment — graceful exit`);
+          await this.completeRun(agentId, run.id, {
+            status: "completed",
+            resultJson: { reason: "no_assignment" },
+          });
+          return (await this.store.getRunDetail(agentId, run.id))!;
+        }
+
+        // Validate agent state
+        const validStates = ["active", "running", "idle"];
+        if (!validStates.includes(agent.state)) {
+          heartbeatLog.log(`Agent ${agentId} state is "${agent.state}" — graceful exit`);
+          await this.completeRun(agentId, run.id, {
+            status: "completed",
+            resultJson: { reason: "invalid_state", state: agent.state },
+          });
+          return (await this.store.getRunDetail(agentId, run.id))!;
+        }
+
+        // Fetch task context
+        let taskDetail: TaskDetail;
+        try {
+          taskDetail = await taskStore.getTask(taskId);
+        } catch {
+          heartbeatLog.warn(`Task ${taskId} not found — graceful exit`);
+          await this.completeRun(agentId, run.id, {
+            status: "completed",
+            resultJson: { reason: "task_not_found", taskId },
+          });
+          return (await this.store.getRunDetail(agentId, run.id))!;
+        }
+
+        // Track usage via callbacks
+        let outputLength = 0;
+        let toolCallCount = 0;
+        let heartbeatSummary: string | undefined;
+
+        // Create heartbeat_done tool
+        const heartbeatDoneTool: ToolDefinition = {
+          name: "heartbeat_done",
+          label: "Heartbeat Done",
+          description: "Signal that the heartbeat execution is complete. Call when finished.",
+          parameters: heartbeatDoneParams,
+          execute: async (_id: string, params: Static<typeof heartbeatDoneParams>) => {
+            if (params.summary) {
+              heartbeatSummary = params.summary;
+            }
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Heartbeat complete.${params.summary ? ` Summary: ${params.summary}` : ""}`,
+              }],
+              details: {},
+            };
+          },
+        };
+
+        // Lazy-load createKbAgent and promptWithFallback
+        const { createKbAgent, promptWithFallback } = await import("./pi.js");
+
+        // Create agent session
+        const { session } = await createKbAgent({
+          cwd: rootDir,
+          systemPrompt: HEARTBEAT_SYSTEM_PROMPT,
+          tools: "readonly",
+          customTools: [
+            createTaskCreateTool(taskStore),
+            createTaskLogTool(taskStore, taskId),
+            heartbeatDoneTool,
+          ],
+          defaultProvider: agent.runtimeConfig?.modelProvider as string | undefined,
+          defaultModelId: agent.runtimeConfig?.modelId as string | undefined,
+          onText: (delta) => { outputLength += delta.length; },
+          onToolEnd: () => { toolCallCount++; },
+        });
+
+        // Track for monitoring
+        this.trackAgent(agentId, { dispose: () => session.dispose() }, run.id);
+
+        try {
+          // Build execution prompt
+          const taskTitle = taskDetail.title ?? taskDetail.description.slice(0, 100);
+          const executionPrompt = [
+            `Heartbeat execution for agent "${agent.name}" (ID: ${agent.id})`,
+            `Source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
+            `Assigned task: ${taskId} — ${taskTitle}`,
+            "",
+            "Task description:",
+            taskDetail.description,
+            "",
+            taskDetail.prompt ? `PROMPT.md:\n${taskDetail.prompt}` : "No PROMPT.md available.",
+            "",
+            "Review the task status and take appropriate action. Call heartbeat_done when finished.",
+          ].join("\n");
+
+          // Execute
+          await promptWithFallback(session, executionPrompt);
+
+          // Estimate output tokens (rough: ~4 chars per token)
+          const estimatedOutputTokens = Math.ceil(outputLength / 4);
+
+          // Complete run successfully
+          await this.completeRun(agentId, run.id, {
+            status: "completed",
+            usageJson: { inputTokens: 0, outputTokens: estimatedOutputTokens, cachedTokens: 0 },
+            resultJson: { summary: heartbeatSummary, toolCallCount },
+          });
+
+          heartbeatLog.log(`Heartbeat completed for ${agentId} (${toolCallCount} tool calls, ~${estimatedOutputTokens} output tokens)`);
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          heartbeatLog.error(`Heartbeat execution failed for ${agentId}: ${errorMessage}`);
+          await this.completeRun(agentId, run.id, {
+            status: "failed",
+            stderrExcerpt: errorMessage,
+          });
+        } finally {
+          this.untrackAgent(agentId);
+          try { session.dispose(); } catch { /* ignore */ }
+        }
+
+        return (await this.store.getRunDetail(agentId, run.id))!;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        heartbeatLog.error(`Heartbeat execution error for ${agentId}: ${errorMessage}`);
+
+        // Attempt to complete the run as failed if it's still active
+        try {
+          await this.completeRun(agentId, run.id, {
+            status: "failed",
+            stderrExcerpt: errorMessage,
+          });
+        } catch {
+          // If completeRun also fails, the run remains active — nothing more we can do
+        }
+
+        return (await this.store.getRunDetail(agentId, run.id))!;
+      }
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Private methods
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -370,11 +623,6 @@ export class HeartbeatMonitor {
     };
 
     try {
-      // Synchronous read — AgentStore.getAgent is async, but we can't make this
-      // method async without changing the call chain. Instead, we'll resolve
-      // per-agent config on the checkMissedHeartbeats path (which is async).
-      // For synchronous callers (isAgentHealthy), we use a cached approach.
-      // For simplicity, we read from the store's underlying agent data.
       const agent = this.configStore.getCachedAgent?.(agentId);
       if (agent?.runtimeConfig) {
         const rc = agent.runtimeConfig;

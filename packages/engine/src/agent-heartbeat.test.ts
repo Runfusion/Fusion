@@ -1,6 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { HeartbeatMonitor, type AgentSession } from "./agent-heartbeat.js";
-import type { AgentStore } from "@fusion/core";
+import { HeartbeatMonitor, type AgentSession, type HeartbeatExecutionOptions, HEARTBEAT_SYSTEM_PROMPT } from "./agent-heartbeat.js";
+import type { AgentStore, AgentHeartbeatRun, TaskStore, TaskDetail, Agent } from "@fusion/core";
+
+// Mock logger to suppress noise in test output
+vi.mock("./logger.js", () => {
+  const createMockLogger = () => ({
+    log: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  });
+  return {
+    createLogger: vi.fn(() => createMockLogger()),
+    heartbeatLog: createMockLogger(),
+  };
+});
+
+// Mock pi.ts for executeHeartbeat tests
+vi.mock("./pi.js", () => ({
+  createKbAgent: vi.fn(),
+  promptWithFallback: vi.fn(async (session: any, prompt: string) => {
+    await session.prompt(prompt);
+  }),
+}));
+
+// Import the mocked functions for test control
+import { createKbAgent } from "./pi.js";
+const mockedCreateKbAgent = vi.mocked(createKbAgent);
 
 // Mock store factory
 function createMockStore(overrides: Partial<AgentStore> = {}): AgentStore {
@@ -716,6 +741,577 @@ describe("HeartbeatMonitor", () => {
         expect(monitor.isAgentHealthy("agent-001")).toBe(false);
 
         vi.useRealTimers();
+      });
+    });
+  });
+
+  // ── Heartbeat Execution Tests ──────────────────────────────────────────
+
+  describe("executeHeartbeat", () => {
+    let mockTaskStore: TaskStore;
+    let mockAgent: Agent;
+
+    // Helper: create a mock session returned by createKbAgent
+    function createMockAgentSession() {
+      return {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        model: { provider: "mock", id: "mock-model" },
+      };
+    }
+
+    // Helper: create a basic mock task store
+    function createMockTaskStore(overrides: Partial<TaskStore> = {}): TaskStore {
+      return {
+        getTask: vi.fn().mockResolvedValue({
+          id: "FN-001",
+          title: "Test Task",
+          description: "Test task description",
+          prompt: "# Test PROMPT.md\nSome content",
+          steps: [],
+          column: "todo",
+          dependencies: [],
+          log: [],
+          attachments: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as TaskDetail),
+        createTask: vi.fn().mockResolvedValue({
+          id: "FN-002",
+          description: "Created task",
+          dependencies: [],
+          column: "triage",
+        }),
+        logEntry: vi.fn().mockResolvedValue({}),
+        ...overrides,
+      } as unknown as TaskStore;
+    }
+
+    // Helper: create a mock store that returns a specific agent
+    function createStoreWithAgentForExec(agentData: Partial<Agent> = {}): AgentStore {
+      mockAgent = {
+        id: "agent-001",
+        name: "Test Agent",
+        role: "executor",
+        state: "active",
+        taskId: "FN-001",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: {},
+        ...agentData,
+      } as Agent;
+
+      // Track saved runs so getRunDetail returns the most recent state
+      const savedRuns: Map<string, AgentHeartbeatRun> = new Map();
+
+      return {
+        recordHeartbeat: vi.fn().mockResolvedValue(undefined),
+        updateAgentState: vi.fn().mockResolvedValue(undefined),
+        updateAgent: vi.fn().mockResolvedValue(undefined),
+        getAgent: vi.fn().mockResolvedValue(mockAgent),
+        startHeartbeatRun: vi.fn().mockResolvedValue({
+          id: "run-001",
+          agentId: "agent-001",
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          status: "active",
+        } as AgentHeartbeatRun),
+        saveRun: vi.fn().mockImplementation(async (run: AgentHeartbeatRun) => {
+          savedRuns.set(run.id, run);
+        }),
+        getRunDetail: vi.fn().mockImplementation(async (_agentId: string, runId: string) => {
+          return savedRuns.get(runId) ?? {
+            id: runId,
+            agentId: "agent-001",
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+            status: "completed" as const,
+          };
+        }),
+        endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
+        getCachedAgent: vi.fn().mockReturnValue(null),
+      } as unknown as AgentStore;
+    }
+
+    beforeEach(() => {
+      mockTaskStore = createMockTaskStore();
+      vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    describe("dependency validation", () => {
+      it("throws when taskStore is not configured", async () => {
+        const store = createStoreWithAgentForExec();
+        const monitor = new HeartbeatMonitor({ store, rootDir: "/tmp" });
+
+        await expect(
+          monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" })
+        ).rejects.toThrow("HeartbeatMonitor not configured for execution (missing taskStore/rootDir)");
+      });
+
+      it("throws when rootDir is not configured", async () => {
+        const store = createStoreWithAgentForExec();
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore });
+
+        await expect(
+          monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" })
+        ).rejects.toThrow("HeartbeatMonitor not configured for execution (missing taskStore/rootDir)");
+      });
+    });
+
+    describe("graceful exit", () => {
+      it("completes with no_assignment when agent has no taskId and no explicit taskId", async () => {
+        const store = createStoreWithAgentForExec({ taskId: undefined });
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(result).toBeDefined();
+        expect(result.status).toBe("completed");
+        expect(result.resultJson).toEqual({ reason: "no_assignment" });
+        // Should NOT have created an agent session
+        expect(mockedCreateKbAgent).not.toHaveBeenCalled();
+      });
+
+      it("completes with invalid_state when agent state is terminated", async () => {
+        const store = createStoreWithAgentForExec({ state: "terminated" });
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(result).toBeDefined();
+        expect(result.status).toBe("completed");
+        expect(result.resultJson).toEqual({ reason: "invalid_state", state: "terminated" });
+        expect(mockedCreateKbAgent).not.toHaveBeenCalled();
+      });
+
+      it("completes as failed when agent not found in store", async () => {
+        const store = createStoreWithAgentForExec();
+        (store.getAgent as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(result).toBeDefined();
+        expect(result.status).toBe("failed");
+        expect(result.stderrExcerpt).toContain("not found");
+      });
+
+      it("completes with task_not_found when task does not exist", async () => {
+        const store = createStoreWithAgentForExec({ taskId: "FN-MISSING" });
+        mockTaskStore.getTask = vi.fn().mockRejectedValue(new Error("Task FN-MISSING not found"));
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(result).toBeDefined();
+        expect(result.status).toBe("completed");
+        expect(result.resultJson).toEqual({ reason: "task_not_found", taskId: "FN-MISSING" });
+      });
+    });
+
+    describe("execution", () => {
+      it("creates session with correct system prompt and tools", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp/test" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        expect(mockedCreateKbAgent).toHaveBeenCalledOnce();
+        const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
+        expect(callArgs.cwd).toBe("/tmp/test");
+        expect(callArgs.systemPrompt).toBe(HEARTBEAT_SYSTEM_PROMPT);
+        expect(callArgs.tools).toBe("readonly");
+        expect(callArgs.customTools).toHaveLength(3);
+        expect(callArgs.customTools![0]!.name).toBe("task_create");
+        expect(callArgs.customTools![1]!.name).toBe("task_log");
+        expect(callArgs.customTools![2]!.name).toBe("heartbeat_done");
+      });
+
+      it("calls promptWithFallback with task context", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "assignment", triggerDetail: "new task assigned" });
+
+        expect(mockSession.prompt).toHaveBeenCalledOnce();
+        const promptArg = mockSession.prompt.mock.calls[0]![0] as string;
+        expect(promptArg).toContain("agent-001");
+        expect(promptArg).toContain("Test Task");
+        expect(promptArg).toContain("assignment");
+        expect(promptArg).toContain("new task assigned");
+        expect(promptArg).toContain("PROMPT.md");
+      });
+
+      it("completes run with status completed on successful execution", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(result).toBeDefined();
+        expect(result.status).toBe("completed");
+        // Agent state should be set back to active
+        expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "active");
+        // Session should be disposed
+        expect(mockSession.dispose).toHaveBeenCalled();
+      });
+
+      it("uses explicit taskId override instead of agent.taskId", async () => {
+        const store = createStoreWithAgentForExec({ taskId: "FN-DEFAULT" });
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        // Override getTask to return a different task
+        mockTaskStore.getTask = vi.fn().mockResolvedValue({
+          id: "FN-OVERRIDE",
+          title: "Override Task",
+          description: "Override description",
+          prompt: "",
+          steps: [],
+          column: "todo",
+          dependencies: [],
+          log: [],
+          attachments: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as TaskDetail);
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        await monitor.executeHeartbeat({
+          agentId: "agent-001",
+          source: "on_demand",
+          taskId: "FN-OVERRIDE",
+        });
+
+        // Should have fetched the override task
+        expect(mockTaskStore.getTask).toHaveBeenCalledWith("FN-OVERRIDE");
+        // task_log tool should use the override task ID
+        const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
+        const taskLogTool = callArgs.customTools![1]!;
+        expect(taskLogTool.name).toBe("task_log");
+      });
+
+      it("passes model config from agent runtimeConfig to createKbAgent", async () => {
+        const store = createStoreWithAgentForExec({
+          runtimeConfig: { modelProvider: "openai", modelId: "gpt-4o" },
+        });
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(mockedCreateKbAgent).toHaveBeenCalledOnce();
+        const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
+        expect(callArgs.defaultProvider).toBe("openai");
+        expect(callArgs.defaultModelId).toBe("gpt-4o");
+      });
+
+      it("passes undefined model when runtimeConfig has no model", async () => {
+        const store = createStoreWithAgentForExec({ runtimeConfig: {} });
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        const callArgs = mockedCreateKbAgent.mock.calls[0]![0];
+        expect(callArgs.defaultProvider).toBeUndefined();
+        expect(callArgs.defaultModelId).toBeUndefined();
+      });
+    });
+
+    describe("heartbeat_done tool", () => {
+      it("captures summary from heartbeat_done in resultJson", async () => {
+        const store = createStoreWithAgentForExec();
+        let capturedDoneTool: any;
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockImplementation(async (opts: any) => {
+          capturedDoneTool = opts.customTools[2]; // heartbeat_done
+          return { session: mockSession as any };
+        });
+
+        // Simulate: when prompt is called, invoke the heartbeat_done tool
+        mockSession.prompt = vi.fn().mockImplementation(async (prompt: string) => {
+          // Simulate the agent calling heartbeat_done
+          const result = await capturedDoneTool.execute("call-1", { summary: "Checked task, all good" });
+          expect(result.content[0].text).toContain("Heartbeat complete");
+          expect(result.content[0].text).toContain("Checked task, all good");
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const run = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        expect(run.resultJson).toBeDefined();
+        expect((run.resultJson as any).summary).toBe("Checked task, all good");
+      });
+
+      it("works without summary in heartbeat_done", async () => {
+        const store = createStoreWithAgentForExec();
+        let capturedDoneTool: any;
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockImplementation(async (opts: any) => {
+          capturedDoneTool = opts.customTools[2];
+          return { session: mockSession as any };
+        });
+
+        mockSession.prompt = vi.fn().mockImplementation(async () => {
+          await capturedDoneTool.execute("call-1", {});
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const run = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        expect(run.resultJson).toBeDefined();
+        expect((run.resultJson as any).summary).toBeUndefined();
+      });
+    });
+
+    describe("task_create tool", () => {
+      it("creates a task in the store when task_create tool is called", async () => {
+        const store = createStoreWithAgentForExec();
+        let capturedCreateTool: any;
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockImplementation(async (opts: any) => {
+          capturedCreateTool = opts.customTools[0]; // task_create
+          return { session: mockSession as any };
+        });
+
+        mockSession.prompt = vi.fn().mockImplementation(async () => {
+          await capturedCreateTool.execute("call-1", { description: "Follow-up task" });
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(mockTaskStore.createTask).toHaveBeenCalledWith({
+          description: "Follow-up task",
+          dependencies: undefined,
+          column: "triage",
+        });
+      });
+    });
+
+    describe("error handling", () => {
+      it("completes run as failed when createKbAgent throws", async () => {
+        const store = createStoreWithAgentForExec();
+        mockedCreateKbAgent.mockRejectedValue(new Error("Model unavailable"));
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(result).toBeDefined();
+        expect(result.status).toBe("failed");
+        expect(result.stderrExcerpt).toContain("Model unavailable");
+        // Agent state should be set to error
+        expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "error");
+      });
+
+      it("completes run as failed when promptWithFallback throws", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+        mockSession.prompt = vi.fn().mockRejectedValue(new Error("Prompt failed"));
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(result).toBeDefined();
+        expect(result.status).toBe("failed");
+        expect(result.stderrExcerpt).toContain("Prompt failed");
+        // Session should still be disposed in finally block
+        expect(mockSession.dispose).toHaveBeenCalled();
+        // Agent should be untracked
+        expect(monitor.getTrackedAgents()).not.toContain("agent-001");
+      });
+    });
+
+    describe("concurrency", () => {
+      it("serializes concurrent executeHeartbeat calls for the same agent", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        let promptCallCount = 0;
+
+        // Make prompt take some time to ensure overlap
+        mockSession.prompt = vi.fn().mockImplementation(async () => {
+          promptCallCount++;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        // We need getRunDetail to return different runs for each call
+        let runCount = 0;
+        const concurrentSavedRuns: Map<string, AgentHeartbeatRun> = new Map();
+        (store.startHeartbeatRun as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+          runCount++;
+          return {
+            id: `run-${runCount}`,
+            agentId: "agent-001",
+            startedAt: new Date().toISOString(),
+            endedAt: null,
+            status: "active",
+          } as AgentHeartbeatRun;
+        });
+        (store.saveRun as ReturnType<typeof vi.fn>).mockImplementation(async (run: AgentHeartbeatRun) => {
+          concurrentSavedRuns.set(run.id, run);
+        });
+        (store.getRunDetail as ReturnType<typeof vi.fn>).mockImplementation(async (_agentId: string, runId: string) => {
+          return concurrentSavedRuns.get(runId) ?? {
+            id: runId,
+            agentId: "agent-001",
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+            status: "completed" as const,
+          };
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        // Fire two concurrent executions
+        const [result1, result2] = await Promise.all([
+          monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" }),
+          monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" }),
+        ]);
+
+        // Both should complete
+        expect(result1).toBeDefined();
+        expect(result2).toBeDefined();
+        // Both should have called prompt (serialized, not concurrent)
+        expect(promptCallCount).toBe(2);
+      });
+    });
+
+    describe("usage tracking", () => {
+      it("records estimated output tokens in usageJson", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        let onTextCallback: ((delta: string) => void) | undefined;
+
+        mockedCreateKbAgent.mockImplementation(async (opts: any) => {
+          onTextCallback = opts.onText;
+          return { session: mockSession as any };
+        });
+
+        // Simulate text output
+        mockSession.prompt = vi.fn().mockImplementation(async () => {
+          // Simulate 100 chars of output (roughly 25 tokens at 4 chars/token)
+          if (onTextCallback) {
+            onTextCallback("A".repeat(100));
+          }
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(result.usageJson).toBeDefined();
+        expect(result.usageJson!.inputTokens).toBe(0);
+        expect(result.usageJson!.outputTokens).toBe(25); // 100/4 = 25
+        expect(result.usageJson!.cachedTokens).toBe(0);
+      });
+
+      it("accumulates usage on agent record", async () => {
+        const store = createStoreWithAgentForExec({
+          totalInputTokens: 100,
+          totalOutputTokens: 200,
+        });
+        const mockSession = createMockAgentSession();
+        let onTextCallback: ((delta: string) => void) | undefined;
+
+        mockedCreateKbAgent.mockImplementation(async (opts: any) => {
+          onTextCallback = opts.onText;
+          return { session: mockSession as any };
+        });
+
+        mockSession.prompt = vi.fn().mockImplementation(async () => {
+          if (onTextCallback) {
+            onTextCallback("A".repeat(100));
+          }
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        // Should update cumulative tokens: 200 + 25 = 225
+        expect(store.updateAgent).toHaveBeenCalledWith("agent-001", {
+          totalInputTokens: 100,
+          totalOutputTokens: 225,
+        });
+      });
+    });
+
+    describe("cleanup", () => {
+      it("disposes session and untracks agent even on error", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+        mockSession.prompt = vi.fn().mockRejectedValue(new Error("Crash"));
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        // Session disposed
+        expect(mockSession.dispose).toHaveBeenCalled();
+        // Agent untracked
+        expect(monitor.getTrackedAgents()).not.toContain("agent-001");
+      });
+
+      it("disposes session and untracks agent on success", async () => {
+        const store = createStoreWithAgentForExec();
+        const mockSession = createMockAgentSession();
+        mockedCreateKbAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+        expect(mockSession.dispose).toHaveBeenCalled();
+        expect(monitor.getTrackedAgents()).not.toContain("agent-001");
       });
     });
   });
