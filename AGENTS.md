@@ -1090,6 +1090,56 @@ The dashboard Settings modal includes a "Backups" section where you can:
 - View current backup count and total size
 - Create manual backups with the "Backup Now" button
 
+### `agentPrompts` (default: `undefined`)
+
+Configurable agent role prompt templates and assignments. When set, allows per-project customization of system prompts for different agent roles (executor, triage, reviewer, merger).
+
+**Configuration:**
+```json
+{
+  "settings": {
+    "agentPrompts": {
+      "templates": [
+        {
+          "id": "my-custom-executor",
+          "name": "My Custom Executor",
+          "description": "A custom executor with specific behavioral guidelines",
+          "role": "executor",
+          "prompt": "You are a custom task execution agent..."
+        }
+      ],
+      "roleAssignments": {
+        "executor": "my-custom-executor",
+        "reviewer": "strict-reviewer"
+      }
+    }
+  }
+}
+```
+
+**Built-in Templates:**
+
+| Template ID | Role | Description |
+|-------------|------|-------------|
+| `default-executor` | executor | Standard task execution agent with full tooling and review support |
+| `default-triage` | triage | Standard task specification agent producing detailed PROMPT.md files |
+| `default-reviewer` | reviewer | Standard independent code and plan reviewer with balanced criteria |
+| `default-merger` | merger | Standard merge agent for squash merges with conflict resolution |
+| `senior-engineer` | executor | Autonomous executor with architectural awareness, performance focus, and minimal hand-holding |
+| `strict-reviewer` | reviewer | Rigorous reviewer with stricter criteria for security, edge cases, backward compatibility, and type safety |
+| `concise-triage` | triage | Shorter, more focused specification format with minimal prose |
+
+**How It Works:**
+- Set `roleAssignments` to map an agent role to a template ID (built-in or custom)
+- Custom templates can override built-in templates by using the same ID
+- When no assignment is configured for a role, the default built-in prompt is used (identical to pre-feature behavior)
+- The merger prompt is used as a base — commit format instructions and build verification steps are always appended dynamically
+
+**Notes:**
+- Workflow step prompts and child agent prompts are NOT affected by this configuration (they are context-specific)
+- The built-in prompt texts are derived from the engine's hardcoded prompts and should be kept in sync
+- When `agentPrompts` is `undefined` (default), behavior is identical to before this feature existed
+
 ## Model Presets
 
 The kb dashboard supports reusable model presets so teams can standardize AI model choices without manually selecting executor and validator models for every task.

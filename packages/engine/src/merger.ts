@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { getTaskMergeBlocker, type TaskStore, type MergeResult, type MergeDetails, type WorkflowStep, type WorkflowStepResult, type Settings } from "@fusion/core";
+import { getTaskMergeBlocker, type TaskStore, type MergeResult, type MergeDetails, type WorkflowStep, type WorkflowStepResult, type Settings, type AgentPromptsConfig } from "@fusion/core";
+import { resolveAgentPrompt } from "@fusion/core";
 import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
@@ -447,7 +448,7 @@ export function resolveConflicts(
  * the commit format uses `<type>(<scope>): <summary>` where scope is the
  * task ID. When false, it uses `<type>: <summary>` with no scope.
  */
-function buildMergeSystemPrompt(includeTaskId: boolean): string {
+function buildMergeSystemPrompt(includeTaskId: boolean, agentPrompts?: AgentPromptsConfig): string {
   const commitFormat = includeTaskId
     ? `\`\`\`
 git commit -m "<type>(<scope>): <summary>" -m "<body>"
@@ -486,6 +487,40 @@ git commit -m "feat: add user profile page" -m "- Add /profile route with avatar
 - Update nav bar with profile link
 - Add profile e2e tests"
 \`\`\``;
+
+  // Resolve the base merger prompt from agent prompts config, falling back to the inline default
+  const basePrompt = resolveAgentPrompt("merger", agentPrompts);
+
+  // If a custom merger prompt is configured, use it as the base with commit format appended
+  const customAssignment = agentPrompts?.roleAssignments?.merger;
+  if (customAssignment && basePrompt) {
+    return `${basePrompt}
+
+## Commit message
+After all conflicts are resolved (or if there were none), write and execute the squash commit.
+
+Look at the branch commits and diff to understand what was done, then run:
+${commitFormat}
+
+Do NOT use generic messages like "merge branch" or "resolve conflicts".
+Base the message on the ACTUAL work done in the branch commits.
+
+## Build verification
+
+If a build command is configured for this project, build verification is a hard gate.
+You MUST run the exact configured build command in this worktree before committing.
+Do not assume the build passes. Do not describe it as passing unless you actually ran it
+and the bash tool returned exit code 0.
+
+1. Run the build command (shown in the prompt context below)
+2. If the build succeeds (exit code 0), proceed with the commit
+3. If the build fails (non-zero exit code), DO NOT commit. Instead:
+   - Call the \`report_build_failure\` tool with the real error details
+   - Stop immediately and do not run \`git commit\`
+   - Do not claim success in plain text
+
+The merge will only be completed if the build passes or no build command is configured.`;
+  }
 
   return `You are a merge agent for "kb", an AI-orchestrated task board.
 
@@ -1298,7 +1333,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
 
   const { session } = await createKbAgent({
     cwd: rootDir,
-    systemPrompt: buildMergeSystemPrompt(includeTaskId),
+    systemPrompt: buildMergeSystemPrompt(includeTaskId, settings.agentPrompts),
     tools: "coding",
     customTools: [reportBuildFailureTool],
     onText: agentLogger.onText,

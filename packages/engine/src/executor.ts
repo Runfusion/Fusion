@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability } from "@fusion/core";
 import type { AgentStore } from "@fusion/core";
-import { buildExecutionMemoryInstructions } from "@fusion/core";
+import { buildExecutionMemoryInstructions, resolveAgentPrompt } from "@fusion/core";
 import { findWorktreeUser } from "./merger.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -215,6 +215,12 @@ Tests and typecheck are also hard quality gates:
 - Keep fixing failures until the configured/full test suite passes
 - If the repository exposes a typecheck command, run it and keep fixing failures until it passes
 - Do not stop at "out of scope" if additional fixes are required to restore green tests, build, or typecheck`;
+
+/** Resolve the executor system prompt from settings, falling back to the hardcoded constant. */
+function getExecutorSystemPrompt(settings: Settings): string {
+  const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts);
+  return customPrompt || EXECUTOR_SYSTEM_PROMPT;
+}
 
 export interface TaskExecutorOptions {
   semaphore?: AgentSemaphore;
@@ -979,7 +985,7 @@ export class TaskExecutor {
 
         let { session, sessionFile } = await createKbAgent({
           cwd: worktreePath,
-          systemPrompt: EXECUTOR_SYSTEM_PROMPT,
+          systemPrompt: getExecutorSystemPrompt(settings),
           tools: "coding",
           customTools,
           onText: agentLogger.onText,
@@ -1166,7 +1172,7 @@ export class TaskExecutor {
 
             const { session: retrySession, sessionFile: retrySessionFile } = await createKbAgent({
               cwd: worktreePath,
-              systemPrompt: EXECUTOR_SYSTEM_PROMPT,
+              systemPrompt: getExecutorSystemPrompt(settings),
               tools: "coding",
               customTools,
               onText: agentLogger.onText,
@@ -1744,6 +1750,7 @@ export class TaskExecutor {
               validatorFallbackModelId: settings.validatorFallbackModelId,
               store,
               taskId,
+              agentPrompts: settings.agentPrompts,
             },
           );
 

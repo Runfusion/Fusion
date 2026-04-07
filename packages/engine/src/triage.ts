@@ -5,7 +5,7 @@ import type {
   TaskAttachment,
   Settings,
 } from "@fusion/core";
-import { buildTriageMemoryInstructions } from "@fusion/core";
+import { buildTriageMemoryInstructions, resolveAgentPrompt } from "@fusion/core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type {
@@ -494,7 +494,7 @@ export class TriageProcessor {
 
         const { session } = await createKbAgent({
           cwd: this.rootDir,
-          systemPrompt: TRIAGE_SYSTEM_PROMPT,
+          systemPrompt: resolveAgentPrompt("triage", settings.agentPrompts) || TRIAGE_SYSTEM_PROMPT,
           tools: "coding",
           customTools,
           onText: agentLogger.onText,

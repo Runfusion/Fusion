@@ -8,7 +8,8 @@
  * - Verdict + feedback is returned to the worker
  */
 
-import type { TaskStore, TaskComment } from "@fusion/core";
+import type { TaskStore, TaskComment, AgentPromptsConfig } from "@fusion/core";
+import { resolveAgentPrompt } from "@fusion/core";
 import { createKbAgent, describeModel, promptWithFallback } from "./pi.js";
 import { AgentLogger } from "./agent-logger.js";
 import { reviewerLog } from "./logger.js";
@@ -195,6 +196,8 @@ export interface ReviewOptions {
   taskId?: string;
   /** User comments on the task (author === "user"). For spec reviews, the reviewer explicitly checks that every comment is addressed. */
   userComments?: TaskComment[];
+  /** Agent prompt configuration for resolving custom reviewer prompts. */
+  agentPrompts?: AgentPromptsConfig;
 }
 
 /**
@@ -245,7 +248,7 @@ export async function reviewStep(
   // Spawn a reviewer agent with read-only tools
   const { session } = await createKbAgent({
     cwd,
-    systemPrompt: REVIEWER_SYSTEM_PROMPT,
+    systemPrompt: resolveAgentPrompt("reviewer", options.agentPrompts) || REVIEWER_SYSTEM_PROMPT,
     tools: "readonly",
     onText: agentLogger ? agentLogger.onText : (delta) => options.onText?.(delta),
     onThinking: agentLogger?.onThinking,

@@ -954,6 +954,10 @@ export interface ProjectSettings {
    *  enabled and steps have non-overlapping file scopes. Range: 1–4.
    *  Default: 2. */
   maxParallelSteps?: number;
+  /** Configurable agent role prompt templates and assignments.
+   *  When set, allows per-project customization of system prompts
+   *  for different agent roles (executor, triage, reviewer, merger). */
+  agentPrompts?: AgentPromptsConfig;
 }
 
 /**
@@ -1046,6 +1050,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   tokenCap: undefined,
   runStepsInNewSessions: false,
   maxParallelSteps: 2,
+  agentPrompts: undefined,
 };
 
 /**
@@ -1129,6 +1134,7 @@ export const PROJECT_SETTINGS_KEYS: ReadonlyArray<keyof ProjectSettings> = [
   "maxSpawnedAgentsGlobal",
   "runStepsInNewSessions",
   "maxParallelSteps",
+  "agentPrompts",
 ] as const;
 
 export interface BoardConfig {
@@ -1428,6 +1434,32 @@ export interface AgentHeartbeatRun {
 
 /** Capabilities/roles an agent can have */
 export type AgentCapability = "triage" | "executor" | "reviewer" | "merger" | "scheduler" | "engineer" | "custom";
+
+/** A configurable agent role prompt template. */
+export interface AgentPromptTemplate {
+  /** Unique identifier (e.g., "default-executor", "senior-engineer") */
+  id: string;
+  /** Human-readable name */
+  name: string;
+  /** Description of this template's behavioral style */
+  description: string;
+  /** The agent role this template applies to */
+  role: AgentCapability;
+  /** The system prompt content for this template */
+  prompt: string;
+  /** Whether this is a built-in template (true) or user-created (false) */
+  builtIn?: boolean;
+}
+
+/** Configuration for per-agent prompts stored in project settings. */
+export interface AgentPromptsConfig {
+  /** Custom prompt templates. Built-in templates are always available. */
+  templates?: AgentPromptTemplate[];
+  /** Mapping from agent role to template ID.
+   *  When set, overrides the default built-in prompt for that role.
+   *  Key is the AgentCapability string, value is a template ID. */
+  roleAssignments?: Partial<Record<AgentCapability, string>>;
+}
 
 /** Agent record stored in the system */
 export interface Agent {
