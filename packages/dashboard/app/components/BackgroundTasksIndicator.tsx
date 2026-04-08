@@ -50,25 +50,10 @@ export function BackgroundTasksIndicator({
   const hasAttention = needsInput > 0;
 
   return (
-    <div ref={containerRef} className="background-tasks-indicator" style={{ position: "relative" }}>
+    <div ref={containerRef} className="background-tasks-indicator">
       <button
-        className="background-tasks-indicator__pill"
+        className={`background-tasks-indicator__pill${hasAttention ? " background-tasks-indicator__pill--attention" : ""}`}
         onClick={() => setPopoverOpen((prev) => !prev)}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: "6px",
-          padding: "2px 10px",
-          borderRadius: "12px",
-          border: "1px solid var(--border-color)",
-          background: hasAttention ? "var(--triage)" : "var(--surface-secondary)",
-          color: hasAttention ? "#fff" : "var(--text-primary)",
-          cursor: "pointer",
-          fontSize: "12px",
-          fontWeight: 500,
-          lineHeight: "20px",
-          whiteSpace: "nowrap",
-        }}
         title={`${total} background AI task${total !== 1 ? "s" : ""}${needsInput > 0 ? ` (${needsInput} need${needsInput !== 1 ? "" : "s"} input)` : ""}`}
       >
         {generating > 0 && (
@@ -79,26 +64,11 @@ export function BackgroundTasksIndicator({
       </button>
 
       {popoverOpen && (
-        <div
-          className="background-tasks-indicator__popover"
-          style={{
-            position: "absolute",
-            bottom: "calc(100% + 8px)",
-            left: 0,
-            minWidth: "280px",
-            maxWidth: "360px",
-            background: "var(--surface-primary)",
-            border: "1px solid var(--border-color)",
-            borderRadius: "8px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-            zIndex: 1000,
-            overflow: "hidden",
-          }}
-        >
-          <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-color)", fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+        <div className="background-tasks-indicator__popover">
+          <div className="background-tasks-indicator__popover-header">
             Background Tasks
           </div>
-          <div style={{ maxHeight: "240px", overflowY: "auto" }}>
+          <div className="background-tasks-indicator__sessions">
             {sessions.map((session) => {
               const Icon = TYPE_ICONS[session.type];
               const isGenerating = session.status === "generating";
@@ -107,45 +77,45 @@ export function BackgroundTasksIndicator({
               return (
                 <div
                   key={session.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    padding: "8px 12px",
-                    borderBottom: "1px solid var(--border-color)",
-                    cursor: "pointer",
-                  }}
+                  className="background-tasks-indicator__session"
                   onClick={() => {
                     onOpenSession(session);
                     setPopoverOpen(false);
                   }}
                 >
-                  <Icon size={14} style={{ flexShrink: 0, color: "var(--text-secondary)" }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "13px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <Icon size={14} className="background-tasks-indicator__session-icon" />
+                  <div className="background-tasks-indicator__session-content">
+                    <div className="background-tasks-indicator__session-title">
                       {session.title}
                     </div>
-                    <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
+                    <div className="background-tasks-indicator__session-meta">
                       {TYPE_LABELS[session.type]}
                       {isGenerating && " — generating..."}
                       {isAwaiting && " — needs input"}
                     </div>
                   </div>
-                  {isGenerating && <Loader2 size={14} style={{ flexShrink: 0, animation: "spin 1s linear infinite", color: "var(--color-success)" }} />}
-                  {isAwaiting && <HelpCircle size={14} style={{ flexShrink: 0, color: "var(--triage)" }} />}
+                  {isGenerating && (
+                    <Loader2
+                      size={14}
+                      className="background-tasks-indicator__session-icon"
+                      style={{
+                        animation: "spin 1s linear infinite",
+                        color: "var(--color-success)",
+                      }}
+                    />
+                  )}
+                  {isAwaiting && (
+                    <HelpCircle
+                      size={14}
+                      className="background-tasks-indicator__session-icon"
+                      style={{ color: "var(--triage)" }}
+                    />
+                  )}
                   <button
+                    className="background-tasks-indicator__dismiss"
                     onClick={(e) => {
                       e.stopPropagation();
                       onDismissSession(session.id);
-                    }}
-                    style={{
-                      flexShrink: 0,
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                      padding: "2px",
-                      color: "var(--text-secondary)",
-                      borderRadius: "4px",
                     }}
                     title="Dismiss"
                   >
