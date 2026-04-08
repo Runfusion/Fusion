@@ -11,7 +11,7 @@ interface UseTaskHandlersOptions {
 }
 
 export interface UseTaskHandlersResult {
-  handleBoardQuickCreate: (input: TaskCreateInput) => Promise<void>;
+  handleBoardQuickCreate: (input: TaskCreateInput) => Promise<Task>;
   handleModalCreate: (input: TaskCreateInput) => Promise<Task>;
   handlePlanningTaskCreated: (task: Task) => void;
   handlePlanningTasksCreated: (tasks: Task[]) => void;
@@ -29,8 +29,8 @@ export function useTaskHandlers(options: UseTaskHandlersOptions): UseTaskHandler
   } = options;
 
   const handleBoardQuickCreate = useCallback(
-    async (input: TaskCreateInput): Promise<void> => {
-      await createTask({ ...input, column: "triage" });
+    async (input: TaskCreateInput): Promise<Task> => {
+      return createTask({ ...input, column: "triage" });
     },
     [createTask],
   );

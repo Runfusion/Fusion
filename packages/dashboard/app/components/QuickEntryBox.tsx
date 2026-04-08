@@ -3,15 +3,21 @@ import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
 import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import type { ModelInfo, RefinementType, Agent } from "../api";
-import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings, fetchAgents } from "../api";
-import { Link, Brain, Lightbulb, ListTree, Sparkles, Save, MoreHorizontal, ChevronDown, ChevronUp, ChevronRight, Bot } from "lucide-react";
+import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings, fetchAgents, uploadAttachment } from "../api";
+import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, MoreHorizontal, ChevronDown, ChevronUp, ChevronRight, Bot } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 
 const STORAGE_KEY = "kb-quick-entry-text";
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+interface PendingImage {
+  file: File;
+  previewUrl: string;
+}
 
 interface QuickEntryBoxProps {
-  onCreate?: (input: TaskCreateInput) => Promise<void>;
+  onCreate?: (input: TaskCreateInput) => Promise<Task | void>;
   addToast: (message: string, type?: ToastType) => void;
   tasks?: Task[];
   availableModels?: ModelInfo[];
@@ -87,7 +93,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   // Always starts collapsed — user must explicitly toggle each session
   const [isDisclosureExpanded, setIsDisclosureExpanded] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const justResetRef = useRef(false);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const pendingImagesRef = useRef<PendingImage[]>([]);
 
   // Rich creation state (mirrors InlineCreateCard)
   const [dependencies, setDependencies] = useState<string[]>([]);
@@ -200,7 +209,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     : selectedModelCount > 0
       ? `${selectedModelCount} model${selectedModelCount === 1 ? "" : "s"}`
       : "Models";
-  const actionSelectionCount = dependencies.length + selectedModelCount + (selectedAgentId ? 1 : 0);
+  const actionSelectionCount = dependencies.length + selectedModelCount + pendingImages.length + (selectedAgentId ? 1 : 0);
 
   const getModelBadgeLabel = useCallback(
     (provider?: string, modelId?: string) => {
@@ -234,10 +243,14 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setPortalRoot(document.body);
   }, []);
 
-  // Cleanup on unmount
+  useEffect(() => {
+    pendingImagesRef.current = pendingImages;
+  }, [pendingImages]);
+
+  // Cleanup image preview URLs on unmount
   useEffect(() => {
     return () => {
-      // No blur timeout to clean up
+      pendingImagesRef.current.forEach((img) => URL.revokeObjectURL(img.previewUrl));
     };
   }, []);
 
@@ -350,6 +363,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, [showAgentPicker]);
 
   const resetForm = useCallback(() => {
+    pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+    setPendingImages([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
     setDescription("");
     setDependencies([]);
     setSelectedAgentId(null);
@@ -379,7 +398,38 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     if (typeof window !== "undefined") {
       removeScopedItem(STORAGE_KEY, projectId);
     }
-  }, [projectId]);
+  }, [pendingImages, projectId]);
+
+  const handleImageFiles = useCallback((files: FileList | null | undefined) => {
+    if (!files || files.length === 0) return;
+
+    const newImages: PendingImage[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (ALLOWED_IMAGE_TYPES.includes(file.type)) {
+        newImages.push({ file, previewUrl: URL.createObjectURL(file) });
+      }
+    }
+
+    if (newImages.length > 0) {
+      setPendingImages((prev) => [...prev, ...newImages]);
+    }
+  }, []);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (isSubmitting) return;
+    handleImageFiles(e.clipboardData?.files);
+  }, [handleImageFiles, isSubmitting]);
+
+  const removeImage = useCallback((index: number) => {
+    setPendingImages((prev) => {
+      const removed = prev[index];
+      if (removed) {
+        URL.revokeObjectURL(removed.previewUrl);
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     const trimmed = description.trim();
@@ -387,7 +437,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
     setIsSubmitting(true);
     try {
-      await onCreate({
+      const createdTask = await onCreate({
         description: trimmed,
         column: "triage",
         dependencies: dependencies.length ? dependencies : undefined,
@@ -400,6 +450,20 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
       });
+      if (createdTask && pendingImages.length > 0) {
+        const failures: string[] = [];
+        for (const pendingImage of pendingImages) {
+          try {
+            await uploadAttachment(createdTask.id, pendingImage.file, projectId);
+          } catch {
+            failures.push(pendingImage.file.name);
+          }
+        }
+
+        if (failures.length > 0) {
+          addToast(`Failed to upload: ${failures.join(", ")}`, "error");
+        }
+      }
       // Clear input for rapid entry
       resetForm();
       // Note: Focus restoration is handled by useEffect when isSubmitting becomes false
@@ -424,6 +488,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     hasPlanningOverride,
     planningProvider,
     planningModelId,
+    pendingImages,
+    projectId,
     addToast,
     resetForm,
   ]);
@@ -932,6 +998,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           onFocus={handleFocus}
           onBlur={handleBlur}
           disabled={isSubmitting || isDisabled}
@@ -1057,6 +1124,25 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             </div>
           </div>
         )}
+        {pendingImages.length > 0 && (
+          <div className="inline-create-previews">
+            {pendingImages.map((img, index) => (
+              <div key={img.previewUrl} className="inline-create-preview">
+                <img src={img.previewUrl} alt={img.file.name} />
+                <button
+                  type="button"
+                  className="inline-create-preview-remove"
+                  onClick={() => removeImage(index)}
+                  disabled={isSubmitting}
+                  title="Remove image"
+                  data-testid={`quick-entry-preview-remove-${index}`}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="quick-entry-controls-left">
           <div
             className="quick-entry-actions-wrap dep-trigger-wrap"
@@ -1111,6 +1197,19 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   >
                     <Link size={12} style={{ verticalAlign: "middle" }} />
                     {dependencies.length > 0 ? `${dependencies.length} deps` : "Deps"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    data-testid="quick-entry-actions-attach"
+                    onClick={() => {
+                      setIsActionsMenuOpen(false);
+                      setActionsMenuPosition(null);
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    <Paperclip size={12} style={{ verticalAlign: "middle" }} />
+                    {pendingImages.length > 0 ? `Attach (${pendingImages.length})` : "Attach"}
                   </button>
                   <button
                     type="button"
@@ -1376,6 +1475,18 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             portalRoot,
           )}
         </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            handleImageFiles(e.target.files);
+            e.currentTarget.value = "";
+          }}
+          data-testid="quick-entry-file-input"
+        />
         <div className="quick-entry-hint">
           Enter to create · Esc to cancel
         </div>

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
 import type { Task } from "@fusion/core";
-import { fetchSettings, fetchAgents } from "../../api";
+import { fetchSettings, fetchAgents, uploadAttachment } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
 
 const MOCK_MODELS = [
@@ -24,6 +24,19 @@ const MOCK_MODELS = [
 
 const TEST_PROJECT_ID = "proj-123";
 const QUICK_ENTRY_STORAGE_KEY = scopedKey("kb-quick-entry-text", TEST_PROJECT_ID);
+
+const CREATED_TASK: Task = {
+  id: "FN-999",
+  title: "Created task",
+  description: "Created task description",
+  column: "triage",
+  dependencies: [],
+  steps: [],
+  currentStep: 0,
+  log: [],
+  createdAt: "2026-04-08T00:00:00Z",
+  updatedAt: "2026-04-08T00:00:00Z",
+};
 
 const mockTasks: Task[] = [
   {
@@ -83,12 +96,14 @@ vi.mock("../../api", () => ({
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err) => err?.message || "Failed to refine text. Please try again."),
   fetchAgents: vi.fn().mockResolvedValue([]),
+  uploadAttachment: vi.fn().mockResolvedValue({}),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
 }));
 
 // Mock lucide-react
 vi.mock("lucide-react", () => ({
   Link: () => null,
+  Paperclip: () => null,
   Brain: () => null,
   Lightbulb: () => null,
   ListTree: () => null,
@@ -190,9 +205,23 @@ function clickSaveFromActions() {
 
 describe("QuickEntryBox", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.clear();
     vi.mocked(fetchAgents).mockResolvedValue([]);
+    vi.mocked(uploadAttachment).mockResolvedValue({} as any);
+
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      writable: true,
+      value: vi.fn((file: Blob | MediaSource) => `blob:${(file as File).name ?? "mock"}`),
+    });
+
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    });
   });
 
   afterEach(() => {
@@ -1144,6 +1173,126 @@ describe("QuickEntryBox", () => {
 
       openDepsFromActions();
       expect(document.querySelector(".dep-dropdown-item.selected")).toBeTruthy();
+    });
+  });
+
+  describe("image attachments", () => {
+    it("shows Attach in the actions dropdown", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      openActionsMenu();
+      expect(screen.getByTestId("quick-entry-actions-attach")).toBeInTheDocument();
+    });
+
+    it("clicking Attach triggers the hidden file input", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const fileInput = screen.getByTestId("quick-entry-file-input") as HTMLInputElement;
+      const clickSpy = vi.spyOn(fileInput, "click");
+
+      openActionsMenu();
+      fireEvent.click(screen.getByTestId("quick-entry-actions-attach"));
+
+      expect(clickSpy).toHaveBeenCalled();
+    });
+
+    it("adds a preview when an image is pasted", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const textarea = screen.getByTestId("quick-entry-input");
+      const file = new File(["image-bytes"], "pasted.png", { type: "image/png" });
+      fireEvent.paste(textarea, { clipboardData: { files: [file] } });
+
+      expect(screen.getByAltText("pasted.png")).toBeInTheDocument();
+    });
+
+    it("removes pending image previews", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const textarea = screen.getByTestId("quick-entry-input");
+      const file = new File(["image-bytes"], "remove.png", { type: "image/png" });
+      fireEvent.paste(textarea, { clipboardData: { files: [file] } });
+
+      expect(screen.getByAltText("remove.png")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("quick-entry-preview-remove-0"));
+      expect(screen.queryByAltText("remove.png")).toBeNull();
+    });
+
+    it("uploads each pending image after task creation", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      const textarea = screen.getByTestId("quick-entry-input");
+      const fileInput = screen.getByTestId("quick-entry-file-input") as HTMLInputElement;
+      const fileA = new File(["a"], "a.png", { type: "image/png" });
+      const fileB = new File(["b"], "b.png", { type: "image/png" });
+
+      fireEvent.change(textarea, { target: { value: "Create with images" } });
+      fireEvent.change(fileInput, { target: { files: [fileA, fileB] } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalled();
+        expect(uploadAttachment).toHaveBeenCalledTimes(2);
+      });
+
+      expect(uploadAttachment).toHaveBeenCalledWith(CREATED_TASK.id, fileA, TEST_PROJECT_ID);
+      expect(uploadAttachment).toHaveBeenCalledWith(CREATED_TASK.id, fileB, TEST_PROJECT_ID);
+    });
+
+    it("does not upload attachments when no pending images exist", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      const textarea = screen.getByTestId("quick-entry-input");
+      fireEvent.change(textarea, { target: { value: "Create without images" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalled();
+      });
+
+      expect(uploadAttachment).not.toHaveBeenCalled();
+    });
+
+    it("includes pending image count in the actions badge", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const fileInput = screen.getByTestId("quick-entry-file-input") as HTMLInputElement;
+      const file = new File(["badge"], "badge.png", { type: "image/png" });
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      expect(screen.getByTestId("quick-entry-actions-badge").textContent).toBe("1");
+    });
+
+    it("resetForm clears pending images and revokes object URLs", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      const textarea = screen.getByTestId("quick-entry-input");
+      const fileInput = screen.getByTestId("quick-entry-file-input") as HTMLInputElement;
+      const file = new File(["reset"], "reset.png", { type: "image/png" });
+
+      fireEvent.change(textarea, { target: { value: "Create and reset" } });
+      fireEvent.change(fileInput, { target: { files: [file] } });
+      expect(screen.getByAltText("reset.png")).toBeInTheDocument();
+
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalled();
+        expect(screen.queryByAltText("reset.png")).toBeNull();
+      });
+
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:reset.png");
     });
   });
 

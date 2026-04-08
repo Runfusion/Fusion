@@ -13,7 +13,7 @@ interface BoardProps {
   onMoveTask: (id: string, column: ColumnType) => Promise<Task>;
   onOpenDetail: (task: TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
-  onQuickCreate?: (input: TaskCreateInput) => Promise<void>;
+  onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
   onNewTask: () => void;
   autoMerge: boolean;
   onToggleAutoMerge: () => void;

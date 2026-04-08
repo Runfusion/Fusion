@@ -35,16 +35,18 @@ describe("useTaskHandlers", () => {
     vi.clearAllMocks();
   });
 
-  it("handleBoardQuickCreate calls createTask with triage column", async () => {
+  it("handleBoardQuickCreate calls createTask with triage column and returns task", async () => {
     const options = createOptions();
     const { result } = renderHook(() => useTaskHandlers(options));
     const input: TaskCreateInput = { description: "Do work" };
 
+    let created: Task | null = null;
     await act(async () => {
-      await result.current.handleBoardQuickCreate(input);
+      created = await result.current.handleBoardQuickCreate(input);
     });
 
     expect(options.createTask).toHaveBeenCalledWith({ description: "Do work", column: "triage" });
+    expect(created).toEqual(CREATED_TASK);
   });
 
   it("handleModalCreate calls createTask with triage column and returns task", async () => {

@@ -101,7 +101,7 @@ interface ListViewProps {
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   onNewTask?: () => void;
-  onQuickCreate?: (input: TaskCreateInput) => Promise<void>;
+  onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
   availableModels?: ModelInfo[];
   favoriteProviders?: string[];
   favoriteModels?: string[];
