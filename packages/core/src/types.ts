@@ -464,6 +464,67 @@ export interface TaskCommentInput {
   author: string;
 }
 
+export interface TaskDocument {
+  /** UUID primary key */
+  id: string;
+  /** Task this document belongs to */
+  taskId: string;
+  /** Document key (e.g., "plan", "notes", "research"). Alphanumeric, hyphens, underscores. */
+  key: string;
+  /** Document body content */
+  content: string;
+  /** Monotonically increasing revision number (starts at 1) */
+  revision: number;
+  /** Who created/last-edited this revision: "user" | "agent" | "system" */
+  author: string;
+  /** Optional extensible metadata (JSON object) */
+  metadata?: Record<string, unknown>;
+  /** ISO-8601 creation timestamp */
+  createdAt: string;
+  /** ISO-8601 last-update timestamp */
+  updatedAt: string;
+}
+
+export interface TaskDocumentRevision {
+  /** Auto-increment row ID */
+  id: number;
+  /** Task this revision belongs to */
+  taskId: string;
+  /** Document key */
+  key: string;
+  /** Snapshot of document content at this revision */
+  content: string;
+  /** Revision number of this snapshot */
+  revision: number;
+  /** Author who created this revision */
+  author: string;
+  /** Optional metadata snapshot */
+  metadata?: Record<string, unknown>;
+  /** ISO-8601 timestamp when this revision was archived */
+  createdAt: string;
+}
+
+export interface TaskDocumentCreateInput {
+  /** Document key. Must match /^[a-zA-Z0-9_-]{1,64}$/ */
+  key: string;
+  /** Document body content */
+  content: string;
+  /** Author (defaults to "user" if not provided) */
+  author?: string;
+  /** Optional extensible metadata */
+  metadata?: Record<string, unknown>;
+}
+
+export const DOCUMENT_KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+export function validateDocumentKey(key: string): void {
+  if (!DOCUMENT_KEY_RE.test(key)) {
+    throw new Error(
+      `Invalid document key: "${key}". Must be 1-64 characters: letters, digits, hyphens, or underscores.`,
+    );
+  }
+}
+
 export interface MergeDetails {
   commitSha?: string;
   filesChanged?: number;

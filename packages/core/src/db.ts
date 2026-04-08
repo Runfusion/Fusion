@@ -59,7 +59,7 @@ export function fromJson<T>(json: string | null | undefined): T | undefined {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -267,6 +267,35 @@ CREATE TABLE IF NOT EXISTS agentHeartbeats (
 );
 CREATE INDEX IF NOT EXISTS idxAgentHeartbeatsAgentId ON agentHeartbeats(agentId);
 CREATE INDEX IF NOT EXISTS idxAgentHeartbeatsRunId ON agentHeartbeats(runId);
+
+-- Task documents (key-value store per task with revision tracking)
+CREATE TABLE IF NOT EXISTS task_documents (
+  id TEXT PRIMARY KEY,
+  taskId TEXT NOT NULL,
+  key TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  revision INTEGER NOT NULL DEFAULT 1,
+  author TEXT NOT NULL DEFAULT 'user',
+  metadata TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (taskId) REFERENCES tasks(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idxTaskDocumentsTaskKey ON task_documents(taskId, key);
+CREATE INDEX IF NOT EXISTS idxTaskDocumentsTaskId ON task_documents(taskId);
+
+-- Task document revision history (shadow table for archived snapshots)
+CREATE TABLE IF NOT EXISTS task_document_revisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  taskId TEXT NOT NULL,
+  key TEXT NOT NULL,
+  content TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  author TEXT NOT NULL,
+  metadata TEXT,
+  createdAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idxTaskDocumentRevisionsTaskKey ON task_document_revisions(taskId, key);
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS __meta (
@@ -666,6 +695,40 @@ export class Database {
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxMissionEventsMissionId ON mission_events(missionId)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxMissionEventsTimestamp ON mission_events(timestamp)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxMissionEventsType ON mission_events(eventType)`);
+      });
+    }
+
+    if (version < 18) {
+      this.applyMigration(18, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS task_documents (
+            id TEXT PRIMARY KEY,
+            taskId TEXT NOT NULL,
+            key TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            revision INTEGER NOT NULL DEFAULT 1,
+            author TEXT NOT NULL DEFAULT 'user',
+            metadata TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            FOREIGN KEY (taskId) REFERENCES tasks(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idxTaskDocumentsTaskKey ON task_documents(taskId, key)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxTaskDocumentsTaskId ON task_documents(taskId)`);
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS task_document_revisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            taskId TEXT NOT NULL,
+            key TEXT NOT NULL,
+            content TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            author TEXT NOT NULL,
+            metadata TEXT,
+            createdAt TEXT NOT NULL
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxTaskDocumentRevisionsTaskKey ON task_document_revisions(taskId, key)`);
       });
     }
   }

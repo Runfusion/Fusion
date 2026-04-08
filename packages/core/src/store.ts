@@ -1,10 +1,11 @@
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType } from "./types.js";
-import { VALID_TRANSITIONS, DEFAULT_SETTINGS, GLOBAL_SETTINGS_KEYS, WORKFLOW_STEP_TEMPLATES } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput } from "./types.js";
+import { VALID_TRANSITIONS, DEFAULT_SETTINGS, GLOBAL_SETTINGS_KEYS, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { GlobalSettingsStore } from "./global-settings.js";
 import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
 import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
@@ -229,6 +230,39 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       missionId: row.missionId || undefined,
       sliceId: row.sliceId || undefined,
       assignedAgentId: row.assignedAgentId || undefined,
+    };
+  }
+
+  /**
+   * Convert a task_documents row to a TaskDocument object.
+   */
+  private rowToTaskDocument(row: any): TaskDocument {
+    return {
+      id: row.id,
+      taskId: row.taskId,
+      key: row.key,
+      content: row.content,
+      revision: row.revision,
+      author: row.author,
+      metadata: fromJson<Record<string, unknown>>(row.metadata),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  /**
+   * Convert a task_document_revisions row to a TaskDocumentRevision object.
+   */
+  private rowToTaskDocumentRevision(row: any): TaskDocumentRevision {
+    return {
+      id: row.id,
+      taskId: row.taskId,
+      key: row.key,
+      content: row.content,
+      revision: row.revision,
+      author: row.author,
+      metadata: fromJson<Record<string, unknown>>(row.metadata),
+      createdAt: row.createdAt,
     };
   }
 
@@ -2558,6 +2592,172 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     return task;
+  }
+
+  /**
+   * List all current task documents for a task, ordered by key.
+   */
+  async getTaskDocuments(taskId: string): Promise<TaskDocument[]> {
+    const rows = this.db
+      .prepare("SELECT * FROM task_documents WHERE taskId = ? ORDER BY key")
+      .all(taskId) as any[];
+    return rows.map((row) => this.rowToTaskDocument(row));
+  }
+
+  /**
+   * Get the current revision of a specific task document.
+   */
+  async getTaskDocument(taskId: string, key: string): Promise<TaskDocument | null> {
+    const row = this.db
+      .prepare("SELECT * FROM task_documents WHERE taskId = ? AND key = ?")
+      .get(taskId, key) as any | undefined;
+    if (!row) return null;
+    return this.rowToTaskDocument(row);
+  }
+
+  /**
+   * Create or update a task document while archiving previous revisions.
+   */
+  async upsertTaskDocument(taskId: string, input: TaskDocumentCreateInput): Promise<TaskDocument> {
+    try {
+      validateDocumentKey(input.key);
+    } catch {
+      throw new Error(
+        `Invalid document key: "${input.key}". Must be 1-64 alphanumeric characters, hyphens, or underscores.`,
+      );
+    }
+
+    const taskExists = this.db.prepare("SELECT id FROM tasks WHERE id = ?").get(taskId) as
+      | { id: string }
+      | undefined;
+    if (!taskExists) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    const now = new Date().toISOString();
+    const author = input.author ?? "user";
+    const metadata = toJsonNullable(input.metadata);
+
+    const document = this.db.transaction(() => {
+      const existing = this.db
+        .prepare("SELECT * FROM task_documents WHERE taskId = ? AND key = ?")
+        .get(taskId, input.key) as any | undefined;
+
+      if (existing) {
+        this.db.prepare(
+          `INSERT INTO task_document_revisions (taskId, key, content, revision, author, metadata, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          taskId,
+          input.key,
+          existing.content,
+          existing.revision,
+          existing.author,
+          existing.metadata ?? null,
+          now,
+        );
+
+        this.db.prepare(
+          `UPDATE task_documents
+           SET content = ?, revision = ?, author = ?, metadata = ?, updatedAt = ?
+           WHERE taskId = ? AND key = ?`
+        ).run(
+          input.content,
+          existing.revision + 1,
+          author,
+          metadata,
+          now,
+          taskId,
+          input.key,
+        );
+      } else {
+        this.db.prepare(
+          `INSERT INTO task_documents (id, taskId, key, content, revision, author, metadata, createdAt, updatedAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          randomUUID(),
+          taskId,
+          input.key,
+          input.content,
+          1,
+          author,
+          metadata,
+          now,
+          now,
+        );
+      }
+
+      const row = this.db
+        .prepare("SELECT * FROM task_documents WHERE taskId = ? AND key = ?")
+        .get(taskId, input.key) as any | undefined;
+
+      if (!row) {
+        throw new Error(`Failed to upsert document ${input.key} for task ${taskId}`);
+      }
+
+      return this.rowToTaskDocument(row);
+    });
+
+    this.db.bumpLastModified();
+    const task = await this.getTask(taskId);
+    this.emit("task:updated", task);
+
+    return document;
+  }
+
+  /**
+   * List archived revisions for a task document, newest first.
+   */
+  async getTaskDocumentRevisions(
+    taskId: string,
+    key: string,
+    options?: { limit?: number },
+  ): Promise<TaskDocumentRevision[]> {
+    const hasLimit = options?.limit !== undefined;
+    const rows = hasLimit
+      ? (this.db
+          .prepare(
+            "SELECT * FROM task_document_revisions WHERE taskId = ? AND key = ? ORDER BY revision DESC LIMIT ?",
+          )
+          .all(taskId, key, Math.max(0, options.limit ?? 0)) as any[])
+      : (this.db
+          .prepare(
+            "SELECT * FROM task_document_revisions WHERE taskId = ? AND key = ? ORDER BY revision DESC",
+          )
+          .all(taskId, key) as any[]);
+
+    return rows.map((row) => this.rowToTaskDocumentRevision(row));
+  }
+
+  /**
+   * Delete a task document and all archived revisions for its key.
+   */
+  async deleteTaskDocument(taskId: string, key: string): Promise<void> {
+    const existing = this.db
+      .prepare("SELECT id FROM task_documents WHERE taskId = ? AND key = ?")
+      .get(taskId, key) as { id: string } | undefined;
+
+    if (!existing) {
+      throw new Error(`Document ${key} not found for task ${taskId}`);
+    }
+
+    this.db.transaction(() => {
+      this.db
+        .prepare("DELETE FROM task_document_revisions WHERE taskId = ? AND key = ?")
+        .run(taskId, key);
+
+      const result = this.db
+        .prepare("DELETE FROM task_documents WHERE taskId = ? AND key = ?")
+        .run(taskId, key) as { changes?: number };
+
+      if ((result.changes ?? 0) === 0) {
+        throw new Error(`Document ${key} not found for task ${taskId}`);
+      }
+    });
+
+    this.db.bumpLastModified();
+    const task = await this.getTask(taskId);
+    this.emit("task:updated", task);
   }
 
   /**
