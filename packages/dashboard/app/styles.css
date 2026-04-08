@@ -520,6 +520,12 @@ body {
   position: relative;
 }
 
+.mobile-overflow-item--has-indicator .header-badge {
+  top: 6px;
+  left: 20px;
+  right: auto;
+}
+
 /* View Toggle */
 .view-toggle {
   display: flex;
