@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+coverage/
+
+# Local runtime/state directories
+.fusion/
+.hai/
+.worktrees/
+.pi/
+.kb/
+.fusion-backup/
+.fusion-backup-*/
+
+# Mobile platform artifacts
+packages/dashboard/ios/
+packages/dashboard/android/
+
+# VCS/editor/OS artifacts
+.git/
+.DS_Store
+.idea/
+.vscode/
+
+# Release metadata not needed in image build context
+.changeset/

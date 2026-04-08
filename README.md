@@ -37,6 +37,16 @@ Fusion reuses your existing pi authentication.
 
 For Capacitor + PWA workflow, see [MOBILE.md](./MOBILE.md).
 
+## Docker
+
+Quick start:
+
+```bash
+docker build -t fusion . && docker run -p 4040:4040 -v $(pwd):/project -e ANTHROPIC_API_KEY=... fusion
+```
+
+For full Docker usage (env vars, persistence volumes, and runtime options), see [docs/docker.md](./docs/docker.md).
+
 ## Workflow
 
 ```mermaid
