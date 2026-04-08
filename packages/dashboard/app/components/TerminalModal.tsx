@@ -10,6 +10,62 @@ import type { FitAddon } from "@xterm/addon-fit";
 /** Timeout for xterm.js dynamic imports + terminal.open() setup. */
 const XTERM_INIT_TIMEOUT_MS = 10000;
 
+const XTERM_IMPORT_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
+
+function isRetryableDynamicImportError(error: unknown): boolean {
+  const message =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : String(error);
+
+  return (
+    message.includes("MIME type") ||
+    message.includes("Failed to fetch dynamically imported module")
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function retryDynamicImport<T>(
+  importFactory: () => Promise<T>,
+  retryDelaysMs: readonly number[] = XTERM_IMPORT_RETRY_DELAYS_MS,
+): Promise<T> {
+  let originalError: unknown;
+
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    try {
+      return await importFactory();
+    } catch (error) {
+      if (!isRetryableDynamicImportError(error)) {
+        throw error;
+      }
+
+      if (originalError === undefined) {
+        originalError = error;
+      }
+
+      const delayMs = retryDelaysMs[attempt];
+      if (delayMs === undefined) {
+        throw originalError ?? error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[TerminalModal] Dynamic xterm import failed (attempt ${attempt + 1}/${retryDelaysMs.length + 1}). Retrying in ${delayMs}ms...`,
+        message,
+      );
+
+      await sleep(delayMs);
+    }
+  }
+
+  throw originalError ?? new Error("Dynamic import failed");
+}
+
 /** Whether the current device is likely mobile (touch-primary, small viewport). */
 function isMobileDevice(): boolean {
   if (typeof window === "undefined") return false;
@@ -241,11 +297,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand }: TerminalModal
 
     const initTerminal = async () => {
       // Dynamically import xterm modules with watchdog timeout
-      const importsPromise = Promise.all([
-        import("@xterm/xterm"),
-        import("@xterm/addon-fit"),
-        import("@xterm/addon-web-links"),
-      ]);
+      const importsPromise = retryDynamicImport(() =>
+        Promise.all([
+          import("@xterm/xterm"),
+          import("@xterm/addon-fit"),
+          import("@xterm/addon-web-links"),
+        ]),
+      );
 
       // Watchdog: reject if imports + setup take too long
       const timeoutPromise = new Promise<never>((_resolve, reject) => {

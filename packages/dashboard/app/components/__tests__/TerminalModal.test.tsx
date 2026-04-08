@@ -843,6 +843,115 @@ describe("TerminalModal", () => {
     });
   });
 
+  describe("xterm import MIME type retry", () => {
+    function isXtermImportBatch(values: Iterable<unknown>): values is Promise<unknown>[] {
+      return (
+        Array.isArray(values) &&
+        values.length === 3 &&
+        values.every((entry) => entry && typeof (entry as Promise<unknown>).then === "function")
+      );
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("retries MIME type import failures and initializes successfully on a later attempt", async () => {
+      vi.useFakeTimers();
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const originalPromiseAll = Promise.all.bind(Promise);
+      let importAttempts = 0;
+
+      vi.spyOn(Promise, "all").mockImplementation(((values: Iterable<unknown>) => {
+        if (isXtermImportBatch(values)) {
+          importAttempts += 1;
+          if (importAttempts === 1) {
+            return Promise.reject(
+              new Error("'text/html' is not a valid JavaScript MIME type"),
+            );
+          }
+        }
+
+        return originalPromiseAll(values);
+      }) as typeof Promise.all);
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+
+      vi.useRealTimers();
+
+      await waitFor(() => {
+        expect(mockTerminalInstance.open).toHaveBeenCalled();
+      });
+
+      expect(importAttempts).toBe(2);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId("terminal-xterm-init-error")).toBeNull();
+    });
+
+    it("shows xterm init error UI when MIME type import retries are exhausted", async () => {
+      vi.useFakeTimers();
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const originalPromiseAll = Promise.all.bind(Promise);
+      let importAttempts = 0;
+
+      vi.spyOn(Promise, "all").mockImplementation(((values: Iterable<unknown>) => {
+        if (isXtermImportBatch(values)) {
+          importAttempts += 1;
+          return Promise.reject(
+            new Error("'text/html' is not a valid JavaScript MIME type"),
+          );
+        }
+
+        return originalPromiseAll(values);
+      }) as typeof Promise.all);
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+
+      vi.useRealTimers();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-xterm-init-error")).toBeTruthy();
+      });
+
+      expect(screen.getByText(/MIME type/)).toBeTruthy();
+      expect(importAttempts).toBe(4);
+      expect(warnSpy).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not retry non-MIME import failures", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const originalPromiseAll = Promise.all.bind(Promise);
+      let importAttempts = 0;
+
+      vi.spyOn(Promise, "all").mockImplementation(((values: Iterable<unknown>) => {
+        if (isXtermImportBatch(values)) {
+          importAttempts += 1;
+          return Promise.reject(new Error("xterm constructor failed"));
+        }
+
+        return originalPromiseAll(values);
+      }) as typeof Promise.all);
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-xterm-init-error")).toBeTruthy();
+      });
+
+      expect(screen.getByText(/xterm constructor failed/)).toBeTruthy();
+      expect(importAttempts).toBe(1);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+  });
+
   // --- Invalid session auto-recovery ---
   describe("invalid session auto-recovery (FN-1021)", () => {
     it("calls replaceActiveTabSession when WebSocket reports session invalid (code 4004)", async () => {
