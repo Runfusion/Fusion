@@ -148,12 +148,20 @@ function createMockMissionStore() {
       return updated;
     }),
 
+    updateMissionInterviewState: vi.fn((id: string, state: Mission["interviewState"]) => {
+      const mission = missions.get(id);
+      if (!mission) throw new Error("Mission " + id + " not found");
+      const updated = { ...mission, interviewState: state, updatedAt: new Date().toISOString() };
+      missions.set(id, updated);
+      return updated;
+    }),
+
     deleteMission: vi.fn((id: string) => {
       if (!missions.has(id)) throw new Error("Mission " + id + " not found");
       missions.delete(id);
     }),
 
-    addMilestone: vi.fn((missionId: string, input: { title: string; description?: string }) => {
+    addMilestone: vi.fn((missionId: string, input: { title: string; description?: string; dependencies?: string[] }) => {
       const milestone: Milestone = {
         id: generateMilestoneId(),
         missionId,
@@ -162,7 +170,7 @@ function createMockMissionStore() {
         status: "planning",
         orderIndex: Array.from(milestones.values()).filter((m) => m.missionId === missionId).length,
         interviewState: "not_started",
-        dependencies: [],
+        dependencies: input.dependencies ?? [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -177,6 +185,37 @@ function createMockMissionStore() {
         .filter((m) => m.missionId === missionId)
         .sort((a, b) => a.orderIndex - b.orderIndex)
     ),
+
+    updateMilestone: vi.fn((id: string, updates: Partial<Milestone>) => {
+      const milestone = milestones.get(id);
+      if (!milestone) throw new Error("Milestone " + id + " not found");
+      const updated = { ...milestone, ...updates, updatedAt: new Date().toISOString() };
+      milestones.set(id, updated);
+      return updated;
+    }),
+
+    updateMilestoneInterviewState: vi.fn((id: string, state: Milestone["interviewState"]) => {
+      const milestone = milestones.get(id);
+      if (!milestone) throw new Error("Milestone " + id + " not found");
+      const updated = { ...milestone, interviewState: state, updatedAt: new Date().toISOString() };
+      milestones.set(id, updated);
+      return updated;
+    }),
+
+    deleteMilestone: vi.fn((id: string) => {
+      if (!milestones.has(id)) throw new Error("Milestone " + id + " not found");
+      milestones.delete(id);
+      for (const slice of Array.from(slices.values())) {
+        if (slice.milestoneId === id) {
+          slices.delete(slice.id);
+          for (const feature of Array.from(features.values())) {
+            if (feature.sliceId === slice.id) {
+              features.delete(feature.id);
+            }
+          }
+        }
+      }
+    }),
 
     addSlice: vi.fn((milestoneId: string, input: { title: string; description?: string }) => {
       const slice: Slice = {
@@ -209,12 +248,23 @@ function createMockMissionStore() {
       return updated;
     }),
 
-    addFeature: vi.fn((sliceId: string, input: { title: string; description?: string }) => {
+    deleteSlice: vi.fn((id: string) => {
+      if (!slices.has(id)) throw new Error("Slice " + id + " not found");
+      slices.delete(id);
+      for (const feature of Array.from(features.values())) {
+        if (feature.sliceId === id) {
+          features.delete(feature.id);
+        }
+      }
+    }),
+
+    addFeature: vi.fn((sliceId: string, input: { title: string; description?: string; acceptanceCriteria?: string }) => {
       const feature: MissionFeature = {
         id: generateFeatureId(),
         sliceId,
         title: input.title,
         description: input.description,
+        acceptanceCriteria: input.acceptanceCriteria,
         status: "defined",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -224,6 +274,10 @@ function createMockMissionStore() {
     }),
 
     getFeature: vi.fn((id: string) => features.get(id)),
+
+    listFeatures: vi.fn((sliceId: string) =>
+      Array.from(features.values()).filter((feature) => feature.sliceId === sliceId)
+    ),
 
     activateSlice: vi.fn((id: string) => {
       const slice = slices.get(id);
@@ -284,8 +338,32 @@ function createMockMissionStore() {
       return updated;
     }),
 
-    reorderMilestones: vi.fn(),
-    reorderSlices: vi.fn(),
+    reorderMilestones: vi.fn((missionId: string, orderedIds: string[]) => {
+      orderedIds.forEach((id, index) => {
+        const milestone = milestones.get(id);
+        if (!milestone || milestone.missionId !== missionId) {
+          throw new Error("Milestone " + id + " not found");
+        }
+        milestones.set(id, {
+          ...milestone,
+          orderIndex: index,
+          updatedAt: new Date().toISOString(),
+        });
+      });
+    }),
+    reorderSlices: vi.fn((milestoneId: string, orderedIds: string[]) => {
+      orderedIds.forEach((id, index) => {
+        const slice = slices.get(id);
+        if (!slice || slice.milestoneId !== milestoneId) {
+          throw new Error("Slice " + id + " not found");
+        }
+        slices.set(id, {
+          ...slice,
+          orderIndex: index,
+          updatedAt: new Date().toISOString(),
+        });
+      });
+    }),
 
     // Triage methods
     triageFeature: vi.fn(async (featureId: string) => {
@@ -360,11 +438,21 @@ function createMockMissionAutopilot() {
   };
 }
 
-function buildApp(options?: { missionAutopilot?: ReturnType<typeof createMockMissionAutopilot> }) {
+function buildApp(options?: {
+  missionAutopilot?: ReturnType<typeof createMockMissionAutopilot>;
+  withErrorHandler?: boolean;
+}) {
   const app = express();
   app.use(express.json());
   const store = createMockStore();
   app.use("/api/missions", createMissionRouter(store, options?.missionAutopilot));
+
+  if (options?.withErrorHandler) {
+    app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      res.status(500).json({ error: err.message });
+    });
+  }
+
   return { app, store, missionStore: store.getMissionStore() };
 }
 
@@ -875,8 +963,713 @@ describe("Mission API", () => {
     });
   });
 
-  describe("Interview endpoints", () => {
-    beforeEach(() => {
+  describe("Milestone CRUD", () => {
+    it("GET /api/missions/:missionId/milestones returns sorted milestones and 404 for missing mission", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const first = missionStore.addMilestone(mission.id, { title: "First" });
+      const second = missionStore.addMilestone(mission.id, { title: "Second" });
+
+      missionStore.updateMilestone(first.id, { orderIndex: 1 });
+      missionStore.updateMilestone(second.id, { orderIndex: 0 });
+
+      const ok = await get(app, `/api/missions/${mission.id}/milestones`);
+      expect(ok.status).toBe(200);
+      expect(ok.body.map((milestone: Milestone) => milestone.id)).toEqual([second.id, first.id]);
+
+      const missing = await get(app, "/api/missions/M-NOT-FOUND/milestones");
+      expect(missing.status).toBe(404);
+    });
+
+    it("POST /api/missions/:missionId/milestones creates milestones and validates payload", async () => {
+      const { app, missionStore } = buildApp({ withErrorHandler: true });
+      const mission = missionStore.createMission({ title: "Mission" });
+
+      const created = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/milestones`,
+        JSON.stringify({
+          title: "Milestone A",
+          description: "Detailed milestone",
+          dependencies: ["MS-UPSTREAM-1"],
+        }),
+        { "content-type": "application/json" },
+      );
+
+      expect(created.status).toBe(201);
+      expect(created.body.title).toBe("Milestone A");
+      expect(created.body.description).toBe("Detailed milestone");
+      expect(created.body.dependencies).toEqual(["MS-UPSTREAM-1"]);
+
+      const missingMission = await request(
+        app,
+        "POST",
+        "/api/missions/M-NOT-FOUND/milestones",
+        JSON.stringify({ title: "Milestone" }),
+        { "content-type": "application/json" },
+      );
+      expect(missingMission.status).toBe(404);
+
+      const missingTitle = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/milestones`,
+        JSON.stringify({ description: "No title" }),
+        { "content-type": "application/json" },
+      );
+      expect(missingTitle.status).toBe(500);
+      expect(missingTitle.body.error).toContain("Title is required");
+
+      const tooLongTitle = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/milestones`,
+        JSON.stringify({ title: "x".repeat(201) }),
+        { "content-type": "application/json" },
+      );
+      expect(tooLongTitle.status).toBe(500);
+      expect(tooLongTitle.body.error).toContain("Title must not exceed 200 characters");
+    });
+
+    it("PATCH /api/missions/milestones/:milestoneId updates individual fields", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Original" });
+
+      const updateTitle = await request(
+        app,
+        "PATCH",
+        `/api/missions/milestones/${milestone.id}`,
+        JSON.stringify({ title: "Renamed" }),
+        { "content-type": "application/json" },
+      );
+      expect(updateTitle.status).toBe(200);
+      expect(updateTitle.body.title).toBe("Renamed");
+
+      const updateStatus = await request(
+        app,
+        "PATCH",
+        `/api/missions/milestones/${milestone.id}`,
+        JSON.stringify({ status: "active" }),
+        { "content-type": "application/json" },
+      );
+      expect(updateStatus.status).toBe(200);
+      expect(updateStatus.body.status).toBe("active");
+
+      const updateDescription = await request(
+        app,
+        "PATCH",
+        `/api/missions/milestones/${milestone.id}`,
+        JSON.stringify({ description: "Updated description" }),
+        { "content-type": "application/json" },
+      );
+      expect(updateDescription.status).toBe(200);
+      expect(updateDescription.body.description).toBe("Updated description");
+
+      const updateDependencies = await request(
+        app,
+        "PATCH",
+        `/api/missions/milestones/${milestone.id}`,
+        JSON.stringify({ dependencies: ["MS-DEP-1"] }),
+        { "content-type": "application/json" },
+      );
+      expect(updateDependencies.status).toBe(200);
+      expect(updateDependencies.body.dependencies).toEqual(["MS-DEP-1"]);
+
+      const noFields = await request(
+        app,
+        "PATCH",
+        `/api/missions/milestones/${milestone.id}`,
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+      expect(noFields.status).toBe(400);
+      expect(noFields.body.error).toContain("No valid fields to update");
+
+      const missingMilestone = await request(
+        app,
+        "PATCH",
+        "/api/missions/milestones/MS-NOT-FOUND",
+        JSON.stringify({ title: "Nope" }),
+        { "content-type": "application/json" },
+      );
+      expect(missingMilestone.status).toBe(404);
+    });
+
+    it("DELETE /api/missions/milestones/:milestoneId validates ID and existence", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "To Delete" });
+
+      const removed = await request(app, "DELETE", `/api/missions/milestones/${milestone.id}`);
+      expect(removed.status).toBe(204);
+
+      const missing = await request(app, "DELETE", "/api/missions/milestones/MS-NOT-FOUND");
+      expect(missing.status).toBe(404);
+
+      const invalid = await request(app, "DELETE", "/api/missions/milestones/bad-id");
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error).toContain("Invalid milestone ID format");
+    });
+
+    it("POST /api/missions/:missionId/milestones/reorder enforces complete ordered IDs", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const m1 = missionStore.addMilestone(mission.id, { title: "One" });
+      const m2 = missionStore.addMilestone(mission.id, { title: "Two" });
+
+      const ok = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/milestones/reorder`,
+        JSON.stringify({ orderedIds: [m2.id, m1.id] }),
+        { "content-type": "application/json" },
+      );
+      expect(ok.status).toBe(204);
+      expect(missionStore.reorderMilestones).toHaveBeenCalledWith(mission.id, [m2.id, m1.id]);
+
+      const incomplete = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/milestones/reorder`,
+        JSON.stringify({ orderedIds: [m1.id] }),
+        { "content-type": "application/json" },
+      );
+      expect(incomplete.status).toBe(400);
+      expect(incomplete.body.error).toContain("orderedIds must include all milestones");
+
+      const wrongMissionIds = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/milestones/reorder`,
+        JSON.stringify({ orderedIds: [m1.id, "MS-OTHER-MISSION"] }),
+        { "content-type": "application/json" },
+      );
+      expect(wrongMissionIds.status).toBe(400);
+      expect(wrongMissionIds.body.error).toContain("Invalid milestone IDs in orderedIds");
+    });
+  });
+
+  describe("Slice CRUD", () => {
+    it("GET /api/missions/milestones/:milestoneId/slices returns sorted slices and 404 for missing milestone", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const first = missionStore.addSlice(milestone.id, { title: "First" });
+      const second = missionStore.addSlice(milestone.id, { title: "Second" });
+
+      missionStore.updateSlice(first.id, { orderIndex: 2 });
+      missionStore.updateSlice(second.id, { orderIndex: 0 });
+
+      const ok = await get(app, `/api/missions/milestones/${milestone.id}/slices`);
+      expect(ok.status).toBe(200);
+      expect(ok.body.map((slice: Slice) => slice.id)).toEqual([second.id, first.id]);
+
+      const missing = await get(app, "/api/missions/milestones/MS-NOT-FOUND/slices");
+      expect(missing.status).toBe(404);
+    });
+
+    it("POST /api/missions/milestones/:milestoneId/slices handles success, 404, and missing title", async () => {
+      const { app, missionStore } = buildApp({ withErrorHandler: true });
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+
+      const created = await request(
+        app,
+        "POST",
+        `/api/missions/milestones/${milestone.id}/slices`,
+        JSON.stringify({ title: "Slice A", description: "Slice details" }),
+        { "content-type": "application/json" },
+      );
+      expect(created.status).toBe(201);
+      expect(created.body.title).toBe("Slice A");
+
+      const missingMilestone = await request(
+        app,
+        "POST",
+        "/api/missions/milestones/MS-NOT-FOUND/slices",
+        JSON.stringify({ title: "Slice" }),
+        { "content-type": "application/json" },
+      );
+      expect(missingMilestone.status).toBe(404);
+
+      const missingTitle = await request(
+        app,
+        "POST",
+        `/api/missions/milestones/${milestone.id}/slices`,
+        JSON.stringify({ description: "No title" }),
+        { "content-type": "application/json" },
+      );
+      expect(missingTitle.status).toBe(500);
+      expect(missingTitle.body.error).toContain("Title is required");
+    });
+
+    it("PATCH /api/missions/slices/:sliceId updates individual fields and validates empty body", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Original" });
+
+      const titleUpdate = await request(
+        app,
+        "PATCH",
+        `/api/missions/slices/${slice.id}`,
+        JSON.stringify({ title: "Renamed" }),
+        { "content-type": "application/json" },
+      );
+      expect(titleUpdate.status).toBe(200);
+      expect(titleUpdate.body.title).toBe("Renamed");
+
+      const descriptionUpdate = await request(
+        app,
+        "PATCH",
+        `/api/missions/slices/${slice.id}`,
+        JSON.stringify({ description: "Updated description" }),
+        { "content-type": "application/json" },
+      );
+      expect(descriptionUpdate.status).toBe(200);
+      expect(descriptionUpdate.body.description).toBe("Updated description");
+
+      const statusUpdate = await request(
+        app,
+        "PATCH",
+        `/api/missions/slices/${slice.id}`,
+        JSON.stringify({ status: "active" }),
+        { "content-type": "application/json" },
+      );
+      expect(statusUpdate.status).toBe(200);
+      expect(statusUpdate.body.status).toBe("active");
+
+      const empty = await request(
+        app,
+        "PATCH",
+        `/api/missions/slices/${slice.id}`,
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+      expect(empty.status).toBe(400);
+      expect(empty.body.error).toContain("No valid fields to update");
+    });
+
+    it("DELETE /api/missions/slices/:sliceId validates ID and existence", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "To Delete" });
+
+      const removed = await request(app, "DELETE", `/api/missions/slices/${slice.id}`);
+      expect(removed.status).toBe(204);
+
+      const missing = await request(app, "DELETE", "/api/missions/slices/SL-NOT-FOUND");
+      expect(missing.status).toBe(404);
+
+      const invalid = await request(app, "DELETE", "/api/missions/slices/bad-id");
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error).toContain("Invalid slice ID format");
+    });
+
+    it("POST /api/missions/milestones/:milestoneId/slices/reorder validates IDs", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const s1 = missionStore.addSlice(milestone.id, { title: "One" });
+      const s2 = missionStore.addSlice(milestone.id, { title: "Two" });
+
+      const ok = await request(
+        app,
+        "POST",
+        `/api/missions/milestones/${milestone.id}/slices/reorder`,
+        JSON.stringify({ orderedIds: [s2.id, s1.id] }),
+        { "content-type": "application/json" },
+      );
+      expect(ok.status).toBe(204);
+      expect(missionStore.reorderSlices).toHaveBeenCalledWith(milestone.id, [s2.id, s1.id]);
+
+      const incomplete = await request(
+        app,
+        "POST",
+        `/api/missions/milestones/${milestone.id}/slices/reorder`,
+        JSON.stringify({ orderedIds: [s1.id] }),
+        { "content-type": "application/json" },
+      );
+      expect(incomplete.status).toBe(400);
+      expect(incomplete.body.error).toContain("orderedIds must include all slices");
+
+      const invalidIds = await request(
+        app,
+        "POST",
+        `/api/missions/milestones/${milestone.id}/slices/reorder`,
+        JSON.stringify({ orderedIds: [s1.id, "SL-OTHER-MILESTONE"] }),
+        { "content-type": "application/json" },
+      );
+      expect(invalidIds.status).toBe(400);
+      expect(invalidIds.body.error).toContain("Invalid slice IDs in orderedIds");
+    });
+  });
+
+  describe("Feature CRUD detail", () => {
+    it("GET /api/missions/slices/:sliceId/features returns features and 404 for missing slice", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Feature A" });
+
+      const ok = await get(app, `/api/missions/slices/${slice.id}/features`);
+      expect(ok.status).toBe(200);
+      expect(ok.body).toHaveLength(1);
+      expect(ok.body[0].id).toBe(feature.id);
+
+      const missing = await get(app, "/api/missions/slices/SL-NOT-FOUND/features");
+      expect(missing.status).toBe(404);
+    });
+
+    it("POST /api/missions/slices/:sliceId/features supports acceptanceCriteria and missing slice", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Slice" });
+
+      const created = await request(
+        app,
+        "POST",
+        `/api/missions/slices/${slice.id}/features`,
+        JSON.stringify({
+          title: "Feature A",
+          description: "Feature details",
+          acceptanceCriteria: "All tests pass",
+        }),
+        { "content-type": "application/json" },
+      );
+      expect(created.status).toBe(201);
+      expect(created.body.acceptanceCriteria).toBe("All tests pass");
+
+      const missingSlice = await request(
+        app,
+        "POST",
+        "/api/missions/slices/SL-NOT-FOUND/features",
+        JSON.stringify({ title: "Feature" }),
+        { "content-type": "application/json" },
+      );
+      expect(missingSlice.status).toBe(404);
+    });
+
+    it("PATCH /api/missions/features/:featureId updates acceptanceCriteria", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Feature" });
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/features/${feature.id}`,
+        JSON.stringify({ acceptanceCriteria: "Updated criteria" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.acceptanceCriteria).toBe("Updated criteria");
+      expect(missionStore.updateFeature).toHaveBeenCalledWith(feature.id, {
+        acceptanceCriteria: "Updated criteria",
+      });
+    });
+
+    it("DELETE /api/missions/features/:featureId succeeds and rejects invalid ID format", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Feature" });
+
+      const removed = await request(app, "DELETE", `/api/missions/features/${feature.id}`);
+      expect(removed.status).toBe(204);
+
+      const invalid = await request(app, "DELETE", "/api/missions/features/invalid-id");
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error).toContain("Invalid feature ID format");
+    });
+
+    it("POST /api/missions/features/:featureId/unlink-task handles linked and unlinked features", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Slice" });
+      const linkedFeature = missionStore.addFeature(slice.id, { title: "Linked Feature" });
+      missionStore.linkFeatureToTask(linkedFeature.id, "FN-001");
+
+      const unlinked = await request(
+        app,
+        "POST",
+        `/api/missions/features/${linkedFeature.id}/unlink-task`,
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+      expect(unlinked.status).toBe(200);
+      expect(unlinked.body.taskId).toBeUndefined();
+
+      const plainFeature = missionStore.addFeature(slice.id, { title: "No Task Feature" });
+      const error = await request(
+        app,
+        "POST",
+        `/api/missions/features/${plainFeature.id}/unlink-task`,
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+      expect(error.status).toBe(400);
+      expect(error.body).toEqual({ error: "Feature is not linked to a task" });
+    });
+
+    it("POST /api/missions/features/:featureId/link-task validates taskId and returns 409 for already linked", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Slice" });
+      const feature = missionStore.addFeature(slice.id, { title: "Feature" });
+
+      const missingTaskId = await request(
+        app,
+        "POST",
+        `/api/missions/features/${feature.id}/link-task`,
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+      expect(missingTaskId.status).toBe(400);
+
+      const nonStringTaskId = await request(
+        app,
+        "POST",
+        `/api/missions/features/${feature.id}/link-task`,
+        JSON.stringify({ taskId: 42 }),
+        { "content-type": "application/json" },
+      );
+      expect(nonStringTaskId.status).toBe(400);
+
+      (missionStore.linkFeatureToTask as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+        throw new Error("Feature is already linked to a task");
+      });
+
+      const conflict = await request(
+        app,
+        "POST",
+        `/api/missions/features/${feature.id}/link-task`,
+        JSON.stringify({ taskId: "FN-123" }),
+        { "content-type": "application/json" },
+      );
+      expect(conflict.status).toBe(409);
+      expect(conflict.body.error).toContain("already linked");
+    });
+  });
+
+  describe("Interview state endpoints", () => {
+    it("GET /api/missions/:missionId/interview-state returns default state and validates ids", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+
+      const ok = await get(app, `/api/missions/${mission.id}/interview-state`);
+      expect(ok.status).toBe(200);
+      expect(ok.body).toEqual({ state: "not_started" });
+
+      const missing = await get(app, "/api/missions/M-NOT-FOUND/interview-state");
+      expect(missing.status).toBe(404);
+
+      const invalid = await get(app, "/api/missions/invalid-id/interview-state");
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error).toContain("Invalid mission ID format");
+    });
+
+    it("POST /api/missions/:missionId/interview-state updates mission interview state", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+
+      const updated = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/interview-state`,
+        JSON.stringify({ state: "in_progress" }),
+        { "content-type": "application/json" },
+      );
+      expect(updated.status).toBe(200);
+      expect(updated.body.interviewState).toBe("in_progress");
+      expect(missionStore.updateMissionInterviewState).toHaveBeenCalledWith(mission.id, "in_progress");
+      expect(missionStore.getMission(mission.id)?.interviewState).toBe("in_progress");
+
+      const missing = await request(
+        app,
+        "POST",
+        "/api/missions/M-NOT-FOUND/interview-state",
+        JSON.stringify({ state: "in_progress" }),
+        { "content-type": "application/json" },
+      );
+      expect(missing.status).toBe(404);
+    });
+
+    it("POST /api/missions/:missionId/interview-state rejects invalid interview state values", async () => {
+      const { app, missionStore } = buildApp({ withErrorHandler: true });
+      const mission = missionStore.createMission({ title: "Mission" });
+
+      const invalid = await request(
+        app,
+        "POST",
+        `/api/missions/${mission.id}/interview-state`,
+        JSON.stringify({ state: "bogus" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(invalid.status).toBe(500);
+      expect(invalid.body.error).toContain("Invalid interview state");
+    });
+
+    it("GET/POST milestone interview-state endpoints read and update milestone state", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+
+      const getState = await get(app, `/api/missions/milestones/${milestone.id}/interview-state`);
+      expect(getState.status).toBe(200);
+      expect(getState.body).toEqual({ state: "not_started" });
+
+      const setState = await request(
+        app,
+        "POST",
+        `/api/missions/milestones/${milestone.id}/interview-state`,
+        JSON.stringify({ state: "completed" }),
+        { "content-type": "application/json" },
+      );
+      expect(setState.status).toBe(200);
+      expect(setState.body.interviewState).toBe("completed");
+      expect(missionStore.updateMilestoneInterviewState).toHaveBeenCalledWith(milestone.id, "completed");
+
+      const missingGet = await get(app, "/api/missions/milestones/MS-NOT-FOUND/interview-state");
+      expect(missingGet.status).toBe(404);
+
+      const missingPost = await request(
+        app,
+        "POST",
+        "/api/missions/milestones/MS-NOT-FOUND/interview-state",
+        JSON.stringify({ state: "completed" }),
+        { "content-type": "application/json" },
+      );
+      expect(missingPost.status).toBe(404);
+    });
+
+    it("POST milestone interview-state rejects invalid values", async () => {
+      const { app, missionStore } = buildApp({ withErrorHandler: true });
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+
+      const invalid = await request(
+        app,
+        "POST",
+        `/api/missions/milestones/${milestone.id}/interview-state`,
+        JSON.stringify({ state: "bad" }),
+        { "content-type": "application/json" },
+      );
+      expect(invalid.status).toBe(500);
+      expect(invalid.body.error).toContain("Invalid interview state");
+    });
+  });
+
+  describe("Mission status endpoint", () => {
+    it("GET /api/missions/:missionId/status returns computed status and validates errors", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+
+      const ok = await get(app, `/api/missions/${mission.id}/status`);
+      expect(ok.status).toBe(200);
+      expect(ok.body).toEqual({ status: "active" });
+      expect(missionStore.computeMissionStatus).toHaveBeenCalledWith(mission.id);
+
+      const missing = await get(app, "/api/missions/M-NOT-FOUND/status");
+      expect(missing.status).toBe(404);
+
+      const invalid = await get(app, "/api/missions/invalid-id/status");
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error).toContain("Invalid mission ID format");
+    });
+  });
+
+  describe("Validation edge cases", () => {
+    it("mission creation validates empty title, whitespace title, and oversized description", async () => {
+      const { app } = buildApp({ withErrorHandler: true });
+
+      const emptyTitle = await request(
+        app,
+        "POST",
+        "/api/missions",
+        JSON.stringify({ title: "" }),
+        { "content-type": "application/json" },
+      );
+      expect(emptyTitle.status).toBe(500);
+      expect(emptyTitle.body.error).toContain("Title is required");
+
+      const whitespaceTitle = await request(
+        app,
+        "POST",
+        "/api/missions",
+        JSON.stringify({ title: "   " }),
+        { "content-type": "application/json" },
+      );
+      expect(whitespaceTitle.status).toBe(500);
+      expect(whitespaceTitle.body.error).toContain("Title is required");
+
+      const oversizedDescription = await request(
+        app,
+        "POST",
+        "/api/missions",
+        JSON.stringify({ title: "Valid title", description: "x".repeat(5001) }),
+        { "content-type": "application/json" },
+      );
+      expect(oversizedDescription.status).toBe(500);
+      expect(oversizedDescription.body.error).toContain("Description must not exceed 5000 characters");
+    });
+
+    it("mission update validates invalid status values", async () => {
+      const { app, missionStore } = buildApp({ withErrorHandler: true });
+      const mission = missionStore.createMission({ title: "Mission" });
+
+      const invalid = await request(
+        app,
+        "PATCH",
+        `/api/missions/${mission.id}`,
+        JSON.stringify({ status: "bogus" }),
+        { "content-type": "application/json" },
+      );
+      expect(invalid.status).toBe(500);
+      expect(invalid.body.error).toContain("Invalid status");
+    });
+
+    it("mission creation rejects non-boolean autoAdvance", async () => {
+      const { app } = buildApp({ withErrorHandler: true });
+
+      const invalid = await request(
+        app,
+        "POST",
+        "/api/missions",
+        JSON.stringify({ title: "Mission", autoAdvance: "yes" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(invalid.status).toBe(500);
+      expect(invalid.body.error).toContain("autoAdvance must be a boolean");
+    });
+
+    it("400-level route validation responses return explicit route messages", async () => {
+      const { app } = buildApp();
+
+      const invalidMissionId = await get(app, "/api/missions/invalid-id/status");
+      expect(invalidMissionId.status).toBe(400);
+      expect(invalidMissionId.body).toEqual({ error: "Invalid mission ID format" });
+
+      const invalidFeatureId = await request(app, "DELETE", "/api/missions/features/invalid-id");
+      expect(invalidFeatureId.status).toBe(400);
+      expect(invalidFeatureId.body).toEqual({ error: "Invalid feature ID format" });
+    });
+  });
+
+  describe("Interview endpoints", () => {    beforeEach(() => {
       __resetMissionInterviewState();
     });
 

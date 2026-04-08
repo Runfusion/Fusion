@@ -1,15 +1,115 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import ts from "typescript";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { AiSessionRow } from "./ai-session-store.js";
+// @ts-expect-error Vite raw loader import for source-level utility tests
+import subtaskBreakdownSource from "./subtask-breakdown.ts?raw";
 import {
   __resetSubtaskBreakdownState,
+  cancelSubtaskSession,
+  cleanupSubtaskSession,
+  createSubtaskSession,
   getSubtaskSession,
   rehydrateFromStore,
+  SessionNotFoundError,
   setAiSessionStore,
-  subtaskStreamManager,
+  SubtaskStreamManager,
 } from "./subtask-breakdown.js";
-import type { AiSessionRow } from "./ai-session-store.js";
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type InternalSubtaskFns = {
+  parseSubtasks: (text: string) => Array<{
+    id: string;
+    title: string;
+    description: string;
+    suggestedSize: "S" | "M" | "L";
+    dependsOn: string[];
+  }>;
+  normalizeSubtaskItem: (
+    item: Partial<{
+      id: string;
+      title: string;
+      description: string;
+      suggestedSize: "S" | "M" | "L" | "";
+      dependsOn: unknown[];
+    }>,
+    index?: number,
+  ) => {
+    id: string;
+    title: string;
+    description: string;
+    suggestedSize: "S" | "M" | "L";
+    dependsOn: string[];
+  };
+  generateFallbackSubtasks: (initialDescription: string) => Array<{
+    id: string;
+    title: string;
+    description: string;
+    suggestedSize: "S" | "M" | "L";
+    dependsOn: string[];
+  }>;
+};
+
+function extractFunctionSource(startToken: string, endToken: string): string {
+  const start = subtaskBreakdownSource.indexOf(startToken);
+  if (start < 0) {
+    throw new Error(`Unable to find function start token: ${startToken}`);
+  }
+  const end = subtaskBreakdownSource.indexOf(endToken, start);
+  if (end < 0) {
+    throw new Error(`Unable to find function end token: ${endToken}`);
+  }
+  return subtaskBreakdownSource.slice(start, end).trim();
+}
+
+async function loadInternalSubtaskFunctions(): Promise<InternalSubtaskFns> {
+  const parseSource = extractFunctionSource(
+    "function parseSubtasks",
+    "\nfunction normalizeSubtaskItem",
+  );
+  const normalizeSource = extractFunctionSource(
+    "function normalizeSubtaskItem",
+    "\nfunction generateFallbackSubtasks",
+  );
+  const fallbackSource = extractFunctionSource(
+    "function generateFallbackSubtasks",
+    "\nfunction completeSession",
+  );
+
+  const utilityModuleSource = `
+    type SubtaskItem = {
+      id: string;
+      title: string;
+      description: string;
+      suggestedSize: "S" | "M" | "L";
+      dependsOn: string[];
+    };
+
+    ${parseSource}
+
+    ${normalizeSource}
+
+    ${fallbackSource}
+
+    export { parseSubtasks, normalizeSubtaskItem, generateFallbackSubtasks };
+  `;
+
+  const transpiled = ts.transpileModule(utilityModuleSource, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+
+  const moduleUrl = `data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`;
+  return (await import(moduleUrl)) as InternalSubtaskFns;
+}
+
+let internalFns: InternalSubtaskFns;
 
 class MockAiSessionStore extends EventEmitter {
   rows = new Map<string, AiSessionRow>();
@@ -65,81 +165,267 @@ function buildSubtaskRow(
   };
 }
 
-describe("subtask-breakdown stream buffering", () => {
-  beforeEach(() => {
-    __resetSubtaskBreakdownState();
-  });
+beforeAll(async () => {
+  internalFns = await loadInternalSubtaskFunctions();
+});
 
-  it("buffers broadcast events and forwards ids to subscribers", () => {
-    const sessionId = "subtask-session-1";
+afterEach(() => {
+  __resetSubtaskBreakdownState();
+  vi.restoreAllMocks();
+});
+
+describe("SubtaskStreamManager", () => {
+  it("subscribe/broadcast delivers events and unsubscribe stops delivery", () => {
+    const manager = new SubtaskStreamManager();
     const callback = vi.fn();
 
-    const unsubscribe = subtaskStreamManager.subscribe(sessionId, callback);
+    const unsubscribe = manager.subscribe("session-1", callback);
 
-    const firstId = subtaskStreamManager.broadcast(sessionId, {
-      type: "thinking",
-      data: "delta-1",
-    });
-    const secondId = subtaskStreamManager.broadcast(sessionId, {
-      type: "subtasks",
-      data: [
-        {
-          id: "subtask-1",
-          title: "Title",
-          description: "Description",
-          suggestedSize: "S",
-          dependsOn: [],
-        },
-      ],
-    });
-
-    expect(firstId).toBe(1);
-    expect(secondId).toBe(2);
-    expect(callback).toHaveBeenNthCalledWith(1, { type: "thinking", data: "delta-1" }, 1);
-    expect(callback).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: "subtasks" }), 2);
-
-    const buffered = subtaskStreamManager.getBufferedEvents(sessionId, 1);
-    expect(buffered).toHaveLength(1);
-    expect(buffered[0]).toMatchObject({ id: 2, event: "subtasks" });
+    manager.broadcast("session-1", { type: "thinking", data: "first delta" });
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(
+      { type: "thinking", data: "first delta" },
+      expect.any(Number),
+    );
 
     unsubscribe();
+    manager.broadcast("session-1", { type: "thinking", data: "second delta" });
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    expect(() => manager.broadcast("missing-session", { type: "complete" })).not.toThrow();
   });
 
-  it("buffers complete events without subscribers", () => {
-    const sessionId = "subtask-session-2";
+  it("cleanupSession removes subscribers and prior buffered events", () => {
+    const manager = new SubtaskStreamManager();
+    const callback = vi.fn();
 
-    const eventId = subtaskStreamManager.broadcast(sessionId, { type: "complete" });
+    manager.subscribe("session-2", callback);
+    manager.broadcast("session-2", { type: "thinking", data: "before cleanup" });
 
-    expect(eventId).toBe(1);
-    expect(subtaskStreamManager.getBufferedEvents(sessionId, 0)).toEqual([
-      { id: 1, event: "complete", data: "{}" },
+    expect(manager.getBufferedEvents("session-2", 0)).toHaveLength(1);
+
+    manager.cleanupSession("session-2");
+
+    manager.broadcast("session-2", { type: "thinking", data: "after cleanup" });
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(manager.getBufferedEvents("session-2", 0)).toEqual([
+      { id: 1, event: "thinking", data: JSON.stringify("after cleanup") },
     ]);
   });
 
-  it("clears subscriptions and buffered events on cleanupSession", () => {
-    const sessionId = "subtask-session-3";
-    const callback = vi.fn();
+  it("notifies multiple subscribers and isolates subscriber errors", () => {
+    const manager = new SubtaskStreamManager();
+    const goodSubscriber = vi.fn();
+    const throwingSubscriber = vi.fn(() => {
+      throw new Error("subscriber failed");
+    });
 
-    subtaskStreamManager.subscribe(sessionId, callback);
-    subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: "delta" });
+    manager.subscribe("session-3", throwingSubscriber);
+    manager.subscribe("session-3", goodSubscriber);
 
-    expect(subtaskStreamManager.getBufferedEvents(sessionId, 0)).toHaveLength(1);
+    expect(() =>
+      manager.broadcast("session-3", { type: "subtasks", data: [] }),
+    ).not.toThrow();
 
-    subtaskStreamManager.cleanupSession(sessionId);
-
-    expect(subtaskStreamManager.getBufferedEvents(sessionId, 0)).toEqual([]);
+    expect(throwingSubscriber).toHaveBeenCalledTimes(1);
+    expect(goodSubscriber).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("subtask-breakdown rehydration", () => {
-  beforeEach(() => {
-    __resetSubtaskBreakdownState();
+describe("normalizeSubtaskItem", () => {
+  it("keeps valid items unchanged", () => {
+    const result = internalFns.normalizeSubtaskItem(
+      {
+        id: "subtask-9",
+        title: "Title",
+        description: "Description",
+        suggestedSize: "L",
+        dependsOn: ["subtask-1"],
+      },
+      8,
+    );
+
+    expect(result).toEqual({
+      id: "subtask-9",
+      title: "Title",
+      description: "Description",
+      suggestedSize: "L",
+      dependsOn: ["subtask-1"],
+    });
   });
 
+  it("fills default id, suggestedSize, and dependsOn when fields are missing", () => {
+    const result = internalFns.normalizeSubtaskItem(
+      {
+        title: "  Plan  ",
+        description: "  Work  ",
+      },
+      1,
+    );
+
+    expect(result).toEqual({
+      id: "subtask-2",
+      title: "Plan",
+      description: "Work",
+      suggestedSize: "M",
+      dependsOn: [],
+    });
+  });
+
+  it("defaults empty suggestedSize and filters non-string dependsOn entries", () => {
+    const result = internalFns.normalizeSubtaskItem(
+      {
+        id: "",
+        title: "Task",
+        description: "Desc",
+        suggestedSize: "",
+        dependsOn: ["subtask-1", 123, null, "subtask-2"],
+      },
+      0,
+    );
+
+    expect(result.id).toBe("subtask-1");
+    expect(result.suggestedSize).toBe("M");
+    expect(result.dependsOn).toEqual(["subtask-1", "subtask-2"]);
+  });
+});
+
+describe("parseSubtasks", () => {
+  it("parses markdown-wrapped JSON and normalizes items", () => {
+    const parsed = internalFns.parseSubtasks(`\`\`\`json\n{"subtasks":[{"title":"First"}]}\n\`\`\``);
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toMatchObject({
+      id: "subtask-1",
+      title: "First",
+      description: "",
+      suggestedSize: "M",
+      dependsOn: [],
+    });
+  });
+
+  it("parses raw JSON objects", () => {
+    const parsed = internalFns.parseSubtasks(
+      JSON.stringify({
+        subtasks: [
+          {
+            id: "subtask-1",
+            title: "First",
+            description: "Do first",
+            suggestedSize: "S",
+            dependsOn: [],
+          },
+        ],
+      }),
+    );
+
+    expect(parsed[0].title).toBe("First");
+  });
+
+  it("throws for invalid JSON, missing subtasks key, and empty subtasks array", () => {
+    expect(() => internalFns.parseSubtasks("not-json")).toThrow();
+    expect(() => internalFns.parseSubtasks(JSON.stringify({ foo: [] }))).toThrow(
+      "AI did not return a valid subtasks array",
+    );
+    expect(() => internalFns.parseSubtasks(JSON.stringify({ subtasks: [] }))).toThrow(
+      "AI did not return a valid subtasks array",
+    );
+  });
+});
+
+describe("generateFallbackSubtasks", () => {
+  it("returns three sequential subtasks with expected dependency chain", () => {
+    const description = "Implement a new dashboard flow";
+    const subtasks = internalFns.generateFallbackSubtasks(description);
+
+    expect(subtasks).toHaveLength(3);
+    expect(subtasks[0]).toMatchObject({ id: "subtask-1", dependsOn: [] });
+    expect(subtasks[1]).toMatchObject({ id: "subtask-2", dependsOn: ["subtask-1"] });
+    expect(subtasks[2]).toMatchObject({ id: "subtask-3", dependsOn: ["subtask-2"] });
+    expect(subtasks[0].description).toContain(description);
+
+    for (const subtask of subtasks) {
+      expect(["S", "M"]).toContain(subtask.suggestedSize);
+    }
+  });
+});
+
+describe("subtask session lifecycle", () => {
+  it("createSubtaskSession returns generating session metadata", async () => {
+    const description = "Build dashboard coverage tests for mission routes";
+
+    const created = await createSubtaskSession(description);
+
+    expect(created).toEqual({
+      sessionId: expect.stringMatching(UUID_REGEX),
+      initialDescription: description,
+      subtasks: [],
+      status: "generating",
+      createdAt: expect.any(Date),
+    });
+
+    const inMemory = getSubtaskSession(created.sessionId);
+    expect(inMemory).toBeDefined();
+    expect(inMemory).toMatchObject({
+      sessionId: created.sessionId,
+      initialDescription: description,
+      status: "generating",
+      subtasks: [],
+      createdAt: expect.any(Date),
+    });
+  });
+
+  it("getSubtaskSession returns undefined for unknown session and public shape for known session", async () => {
+    expect(getSubtaskSession("unknown-session")).toBeUndefined();
+
+    const created = await createSubtaskSession("Public session shape verification");
+
+    const session = getSubtaskSession(created.sessionId);
+    expect(session).toBeDefined();
+    expect(session).toMatchObject({
+      sessionId: created.sessionId,
+      initialDescription: "Public session shape verification",
+      status: "generating",
+      subtasks: [],
+      createdAt: expect.any(Date),
+    });
+    expect(session).not.toHaveProperty("updatedAt");
+    expect(session).not.toHaveProperty("agent");
+    expect(session).not.toHaveProperty("thinkingOutput");
+  });
+
+  it("cancelSubtaskSession throws SessionNotFoundError for unknown session", async () => {
+    await expect(cancelSubtaskSession("missing-session")).rejects.toMatchObject({
+      name: "SessionNotFoundError",
+    });
+  });
+
+  it("cancelSubtaskSession removes an existing session", async () => {
+    const created = await createSubtaskSession("Cancel active session");
+
+    await cancelSubtaskSession(created.sessionId);
+
+    expect(getSubtaskSession(created.sessionId)).toBeUndefined();
+  });
+
+  it("cleanupSubtaskSession is idempotent", async () => {
+    const created = await createSubtaskSession("Cleanup idempotency");
+
+    expect(() => cleanupSubtaskSession(created.sessionId)).not.toThrow();
+    expect(() => cleanupSubtaskSession(created.sessionId)).not.toThrow();
+    expect(getSubtaskSession(created.sessionId)).toBeUndefined();
+  });
+});
+
+describe("subtask session rehydration", () => {
   it("rehydrates recoverable subtask sessions from SQLite rows", () => {
     const store = new MockAiSessionStore();
     const subtaskRow = buildSubtaskRow({ id: "subtask-rehydrate-1", status: "generating" });
-    const planningRow = buildSubtaskRow({ id: "planning-rehydrate-1", status: "awaiting_input", type: "planning" });
+    const planningRow = buildSubtaskRow({
+      id: "planning-rehydrate-1",
+      status: "awaiting_input",
+      type: "planning",
+    });
 
     store.rows.set(subtaskRow.id, subtaskRow);
     store.rows.set(planningRow.id, planningRow);
@@ -179,7 +465,6 @@ describe("subtask-breakdown rehydration", () => {
       `[subtask-breakdown] Failed to rehydrate session ${badRow.id}:`,
       expect.any(Error),
     );
-    errorSpy.mockRestore();
   });
 
   it("falls through to SQLite when session is missing in memory", () => {
@@ -219,11 +504,14 @@ describe("subtask-breakdown rehydration", () => {
     expect(session?.initialDescription).toBe("Break this task down");
     expect(getSpy).not.toHaveBeenCalled();
   });
+});
 
-  it("returns undefined when session exists nowhere", () => {
-    const store = new MockAiSessionStore();
-    setAiSessionStore(store as any);
+describe("SessionNotFoundError", () => {
+  it("is an Error subtype with SessionNotFoundError name", () => {
+    const error = new SessionNotFoundError("Missing session");
 
-    expect(getSubtaskSession("missing-subtask-session")).toBeUndefined();
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe("SessionNotFoundError");
+    expect(error.message).toBe("Missing session");
   });
 });
