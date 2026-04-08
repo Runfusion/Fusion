@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AgentStore } from "@fusion/core";
@@ -21,6 +22,48 @@ function makeScript(companyName: string, agents: unknown[], envLines?: string[])
   return script;
 }
 
+function makeAgentManifest(options: {
+  name: string;
+  title?: string;
+  skills?: string[];
+  body?: string;
+}): string {
+  const lines = ["---", `name: ${options.name}`];
+  if (options.title) {
+    lines.push(`title: ${options.title}`);
+  }
+  if (options.skills && options.skills.length > 0) {
+    lines.push("skills:");
+    for (const skill of options.skills) {
+      lines.push(`  - ${skill}`);
+    }
+  }
+  lines.push("---", options.body ?? `${options.name} instructions`);
+  return lines.join("\n");
+}
+
+function createCompanyDirectory(basePath: string, agentName = "CEO"): string {
+  mkdirSync(basePath, { recursive: true });
+  writeFileSync(
+    join(basePath, "COMPANY.md"),
+    "---\nname: Example Company\n---\nCompany description",
+  );
+
+  const agentDir = join(basePath, "agents", "ceo");
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(
+    join(agentDir, "AGENTS.md"),
+    makeAgentManifest({
+      name: agentName,
+      title: "Chief Executive",
+      skills: ["executor"],
+      body: "Lead the company",
+    }),
+  );
+
+  return basePath;
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 
 describe("agent-import", () => {
@@ -34,6 +77,10 @@ describe("agent-import", () => {
     createAgentMock = vi.fn();
     listAgentsMock = vi.fn().mockResolvedValue([]);
     initMock = vi.fn().mockResolvedValue(undefined);
+
+    vi.spyOn(AgentStore.prototype, "init").mockImplementation(initMock);
+    vi.spyOn(AgentStore.prototype, "listAgents").mockImplementation(listAgentsMock);
+    vi.spyOn(AgentStore.prototype, "createAgent").mockImplementation(createAgentMock);
   });
 
   afterEach(() => {
@@ -134,10 +181,6 @@ describe("agent-import", () => {
       return { id: `agent-${createdAgents.length}`, ...input };
     });
 
-    vi.spyOn(AgentStore.prototype, "init").mockImplementation(initMock);
-    vi.spyOn(AgentStore.prototype, "listAgents").mockImplementation(listAgentsMock);
-    vi.spyOn(AgentStore.prototype, "createAgent").mockImplementation(createAgentMock);
-
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await runAgentImport(manifestFile);
@@ -176,10 +219,6 @@ describe("agent-import", () => {
       return { id: `agent-${createdAgents.length}`, ...input };
     });
 
-    vi.spyOn(AgentStore.prototype, "init").mockImplementation(initMock);
-    vi.spyOn(AgentStore.prototype, "listAgents").mockImplementation(listAgentsMock);
-    vi.spyOn(AgentStore.prototype, "createAgent").mockImplementation(createAgentMock);
-
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await runAgentImport(manifestFile, { skipExisting: true });
@@ -208,10 +247,6 @@ describe("agent-import", () => {
       .mockResolvedValueOnce({ id: "agent-1", name: "Good Agent" })
       .mockRejectedValueOnce(new Error("Database error"));
 
-    vi.spyOn(AgentStore.prototype, "init").mockImplementation(initMock);
-    vi.spyOn(AgentStore.prototype, "listAgents").mockImplementation(listAgentsMock);
-    vi.spyOn(AgentStore.prototype, "createAgent").mockImplementation(createAgentMock);
-
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await runAgentImport(manifestFile);
@@ -223,5 +258,96 @@ describe("agent-import", () => {
     expect(output).toContain("Database error");
 
     logSpy.mockRestore();
+  });
+
+  it("imports agents from an Agent Companies directory", async () => {
+    const companyDir = createCompanyDirectory(join(tmpDir, "company-dir"));
+
+    await runAgentImport(companyDir);
+
+    expect(createAgentMock).toHaveBeenCalledTimes(1);
+    expect(createAgentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "CEO", role: "executor", title: "Chief Executive" }),
+    );
+  });
+
+  it("imports agents from a single .md AGENTS manifest", async () => {
+    const manifestPath = join(tmpDir, "AGENTS.md");
+    writeFileSync(
+      manifestPath,
+      makeAgentManifest({
+        name: "Solo Agent",
+        title: "Single File Agent",
+        skills: ["reviewer"],
+      }),
+    );
+
+    await runAgentImport(manifestPath);
+
+    expect(createAgentMock).toHaveBeenCalledTimes(1);
+    expect(createAgentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Solo Agent", role: "reviewer" }),
+    );
+  });
+
+  it("imports agents from a .tar.gz archive", async () => {
+    const companyDir = createCompanyDirectory(join(tmpDir, "company-archive-src"), "Archive CEO");
+    const archivePath = join(tmpDir, "company.tar.gz");
+
+    execSync(`tar czf ${JSON.stringify(archivePath)} -C ${JSON.stringify(companyDir)} .`);
+
+    await runAgentImport(archivePath);
+
+    expect(createAgentMock).toHaveBeenCalledTimes(1);
+    expect(createAgentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Archive CEO", role: "executor" }),
+    );
+  });
+
+  it("supports dry-run for directory imports", async () => {
+    const companyDir = createCompanyDirectory(join(tmpDir, "company-dry-run"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runAgentImport(companyDir, { dryRun: true });
+
+    expect(createAgentMock).not.toHaveBeenCalled();
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("[DRY RUN]");
+    expect(output).toContain("CEO");
+
+    logSpy.mockRestore();
+  });
+
+  it("supports skip-existing for directory imports", async () => {
+    const companyDir = createCompanyDirectory(join(tmpDir, "company-skip"));
+    listAgentsMock.mockResolvedValue([{ id: "agent-1", name: "CEO", role: "executor" }]);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runAgentImport(companyDir, { skipExisting: true });
+
+    expect(createAgentMock).not.toHaveBeenCalled();
+    const output = logSpy.mock.calls.flat().join(" ");
+    expect(output).toContain("Skipped: 1");
+    logSpy.mockRestore();
+  });
+
+  it("reports unsupported file formats", async () => {
+    const unsupportedPath = join(tmpDir, "manifest.json");
+    writeFileSync(unsupportedPath, JSON.stringify({ name: "Not a manifest" }));
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(runAgentImport(unsupportedPath)).rejects.toThrow("process.exit");
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Unsupported format"),
+    );
+
+    exitSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 });

@@ -7270,64 +7270,154 @@ Output ONLY the prompt text (no markdown, no explanations).`;
 
   /**
    * POST /api/agents/import
-   * Import agents from a companies.sh manifest.
-   * Body: { manifest: string (raw script content) | { companyName, agents, envVars }, skipExisting?: boolean, dryRun?: boolean }
+   * Import agents from Agent Companies packages or legacy companies.sh manifests.
+   *
+   * Body modes (checked in order):
+   *  - { agents: AgentManifest[], skipExisting?, dryRun? }
+   *  - { source: string, skipExisting?, dryRun? }
+   *  - { manifest: string, skipExisting?, dryRun? }
    */
   router.post("/agents/import", async (req, res) => {
     try {
-      const { manifest, skipExisting, dryRun } = req.body;
-
-      if (!manifest) {
-        res.status(400).json({ error: "manifest is required" });
-        return;
-      }
-
-      const { AgentStore, parseCompaniesShManifest, convertCompaniesShAgents, CompaniesShParseError } = await import("@fusion/core");
-
-      let parsed;
-      if (typeof manifest === "string") {
-        // Raw script content — parse it
-        try {
-          parsed = parseCompaniesShManifest(manifest);
-        } catch (err) {
-          if (err instanceof CompaniesShParseError) {
-            res.status(400).json({ error: err.message });
-            return;
-          }
-          throw err;
-        }
-      } else if (typeof manifest === "object" && Array.isArray((manifest as Record<string, unknown>).agents)) {
-        // Pre-parsed object
-        parsed = manifest as { companyName: string; agents: unknown[]; envVars?: unknown[] };
-      } else {
-        res.status(400).json({ error: "manifest must be a string (script content) or parsed object with agents array" });
-        return;
-      }
-
-      if (!parsed.agents || parsed.agents.length === 0) {
-        res.status(400).json({ error: "No agents found in manifest" });
-        return;
-      }
+      const { agents, source, manifest, skipExisting, dryRun } = req.body ?? {};
+      const {
+        AgentStore,
+        parseCompanyDirectory,
+        parseCompanyArchive,
+        parseAgentManifest,
+        convertAgentCompanies,
+        AgentCompaniesParseError,
+        parseCompaniesShManifest,
+        convertCompaniesShAgents,
+        CompaniesShParseError,
+      } = await import("@fusion/core");
 
       const scopedStore = await getScopedStore(req);
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
-      // Get existing agent names for skip logic
       const existingAgents = await agentStore.listAgents();
       const existingNames = new Set(existingAgents.map((a: any) => a.name));
+      const conversionOptions = skipExisting ? { skipExisting: [...existingNames] } : undefined;
 
-      // Convert agents to AgentCreateInput
-      const { inputs, result } = convertCompaniesShAgents(
-        parsed.agents as any[],
-        skipExisting ? { skipExisting: [...existingNames] } : undefined,
-      );
+      let companyName: string | undefined;
+      let inputs: any[] = [];
+      let result: {
+        created: string[];
+        skipped: string[];
+        errors: Array<{ name: string; error: string }>;
+      } = {
+        created: [],
+        skipped: [],
+        errors: [],
+      };
 
-      // Dry run: return preview without creating
+      if (Array.isArray(agents)) {
+        const pkg = {
+          agents,
+          teams: [],
+          projects: [],
+          tasks: [],
+          skills: [],
+        };
+        ({ inputs, result } = convertAgentCompanies(pkg as any, conversionOptions));
+      } else if (typeof source === "string" && source.trim()) {
+        const sourcePath = resolve(source);
+        if (!existsSync(sourcePath)) {
+          res.status(400).json({ error: `source does not exist: ${sourcePath}` });
+          return;
+        }
+
+        const isArchive =
+          sourcePath.endsWith(".tar.gz") || sourcePath.endsWith(".tgz") || sourcePath.endsWith(".zip");
+
+        let pkg;
+        if (nodeFs.statSync(sourcePath).isDirectory()) {
+          pkg = parseCompanyDirectory(sourcePath);
+        } else if (isArchive) {
+          pkg = await parseCompanyArchive(sourcePath);
+        } else {
+          res.status(400).json({ error: "Unsupported source format. Provide a directory or .tar.gz/.zip archive path." });
+          return;
+        }
+
+        companyName = pkg.company?.name;
+        ({ inputs, result } = convertAgentCompanies(pkg, conversionOptions));
+      } else if (typeof manifest === "string") {
+        try {
+          const segmentedMatches = [...manifest.matchAll(
+            /--- FILE:\s*([^\n]+)\s*---\n([\s\S]*?)(?=(?:\n--- FILE:\s*[^\n]+\s*---\n)|$)/g,
+          )];
+
+          if (segmentedMatches.length > 0) {
+            const parsedAgents = segmentedMatches
+              .map(([, relativePath, content]) => ({
+                relativePath: relativePath.trim(),
+                content,
+              }))
+              .filter(({ relativePath }) => relativePath.toLowerCase().endsWith("agents.md"))
+              .map(({ content }) => parseAgentManifest(content));
+
+            const pkg = {
+              agents: parsedAgents,
+              teams: [],
+              projects: [],
+              tasks: [],
+              skills: [],
+            };
+            ({ inputs, result } = convertAgentCompanies(pkg, conversionOptions));
+          } else {
+            const parsedAgentManifest = parseAgentManifest(manifest);
+            const pkg = {
+              agents: [parsedAgentManifest],
+              teams: [],
+              projects: [],
+              tasks: [],
+              skills: [],
+            };
+            ({ inputs, result } = convertAgentCompanies(pkg, conversionOptions));
+          }
+        } catch (err) {
+          if (!(err instanceof AgentCompaniesParseError)) {
+            throw err;
+          }
+
+          try {
+            const parsedCompaniesSh = parseCompaniesShManifest(manifest);
+            companyName = parsedCompaniesSh.companyName;
+            ({ inputs, result } = convertCompaniesShAgents(parsedCompaniesSh.agents as any[], conversionOptions));
+          } catch (fallbackErr) {
+            if (fallbackErr instanceof CompaniesShParseError) {
+              res.status(400).json({ error: fallbackErr.message });
+              return;
+            }
+            throw fallbackErr;
+          }
+        }
+      } else {
+        res.status(400).json({ error: "Provide one of: agents (array), source (path), or manifest (string)" });
+        return;
+      }
+
+      if (inputs.length === 0 && result.errors.length === 0 && result.skipped.length === 0) {
+        res.status(400).json({ error: "No agents found in manifest" });
+        return;
+      }
+
       if (dryRun) {
+        const agentPreview = inputs.map((input: any) => ({
+          name: input.name,
+          role: input.role,
+          title: typeof input.title === "string" ? input.title : undefined,
+          skills: Array.isArray(input.metadata?.skills)
+            ? input.metadata.skills.filter((skill: unknown): skill is string => typeof skill === "string")
+            : undefined,
+        }));
+
         res.json({
           dryRun: true,
-          companyName: parsed.companyName,
+          companyName,
+          agents: agentPreview,
           created: result.created,
           skipped: result.skipped,
           errors: result.errors,
@@ -7335,12 +7425,10 @@ Output ONLY the prompt text (no markdown, no explanations).`;
         return;
       }
 
-      // Create agents
       const created: any[] = [];
       const errors: Array<{ name: string; error: string }> = [...result.errors];
 
       for (const input of inputs) {
-        // Check for duplicates if not using skipExisting
         if (!skipExisting && existingNames.has(input.name)) {
           errors.push({ name: input.name, error: "Agent with this name already exists" });
           continue;
@@ -7355,12 +7443,16 @@ Output ONLY the prompt text (no markdown, no explanations).`;
       }
 
       res.json({
-        companyName: parsed.companyName,
+        companyName,
         created,
         skipped: result.skipped,
         errors,
       });
     } catch (err: any) {
+      if (err?.name === "AgentCompaniesParseError" || err?.name === "CompaniesShParseError") {
+        res.status(400).json({ error: err.message });
+        return;
+      }
       res.status(500).json({ error: err.message });
     }
   });

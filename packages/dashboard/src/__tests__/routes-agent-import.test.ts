@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { request } from "../test-request.js";
 
 // ── Mock @fusion/core for agent import ────────────────────────────────
@@ -10,6 +13,24 @@ const mockCreateAgent = vi.fn();
 
 const mockParseCompaniesShManifest = vi.fn();
 const mockConvertCompaniesShAgents = vi.fn();
+const mockParseCompanyDirectory = vi.fn();
+const mockParseCompanyArchive = vi.fn();
+const mockParseAgentManifest = vi.fn();
+const mockConvertAgentCompanies = vi.fn();
+
+class MockCompaniesShParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CompaniesShParseError";
+  }
+}
+
+class MockAgentCompaniesParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentCompaniesParseError";
+  }
+}
 
 vi.mock("@fusion/core", () => {
   return {
@@ -20,12 +41,12 @@ vi.mock("@fusion/core", () => {
     },
     parseCompaniesShManifest: (...args: unknown[]) => mockParseCompaniesShManifest(...args),
     convertCompaniesShAgents: (...args: unknown[]) => mockConvertCompaniesShAgents(...args),
-    CompaniesShParseError: class CompaniesShParseError extends Error {
-      constructor(message: string) {
-        super(message);
-        this.name = "CompaniesShParseError";
-      }
-    },
+    parseCompanyDirectory: (...args: unknown[]) => mockParseCompanyDirectory(...args),
+    parseCompanyArchive: (...args: unknown[]) => mockParseCompanyArchive(...args),
+    parseAgentManifest: (...args: unknown[]) => mockParseAgentManifest(...args),
+    convertAgentCompanies: (...args: unknown[]) => mockConvertAgentCompanies(...args),
+    CompaniesShParseError: MockCompaniesShParseError,
+    AgentCompaniesParseError: MockAgentCompaniesParseError,
   };
 });
 
@@ -33,11 +54,11 @@ vi.mock("@fusion/core", () => {
 
 class MockStore extends EventEmitter {
   getRootDir(): string {
-    return "/tmp/fn-976-test";
+    return "/tmp/fn-1189-test";
   }
 
   getFusionDir(): string {
-    return "/tmp/fn-976-test/.fusion";
+    return "/tmp/fn-1189-test/.fusion";
   }
 
   getDatabase() {
@@ -74,13 +95,16 @@ async function postImport(app: Parameters<typeof request>[0], body: unknown) {
 describe("POST /api/agents/import", () => {
   let store: MockStore;
   let app: ReturnType<typeof import("../server.js").createServer>;
+  let testDir: string;
 
   beforeEach(async () => {
-    // Reset mock implementations (don't reassign variables — class fields capture by reference)
     vi.clearAllMocks();
+    testDir = mkdtempSync(join(tmpdir(), "kb-agent-import-route-"));
+
     mockInit.mockResolvedValue(undefined);
     mockListAgents.mockResolvedValue([]);
     mockCreateAgent.mockReset();
+    mockCreateAgent.mockImplementation(async (input: any) => ({ id: `agent-${input.name}`, ...input }));
 
     mockParseCompaniesShManifest.mockReturnValue({
       companyName: "test-co",
@@ -96,6 +120,37 @@ describe("POST /api/agents/import", () => {
       },
     });
 
+    mockParseCompanyDirectory.mockReturnValue({
+      company: { name: "Directory Co" },
+      agents: [{ name: "Dir Agent", skills: ["executor"] }],
+      teams: [],
+      projects: [],
+      tasks: [],
+      skills: [],
+    });
+    mockParseCompanyArchive.mockResolvedValue({
+      company: { name: "Archive Co" },
+      agents: [{ name: "Archive Agent", skills: ["executor"] }],
+      teams: [],
+      projects: [],
+      tasks: [],
+      skills: [],
+    });
+    mockParseAgentManifest.mockReturnValue({
+      name: "YAML Agent",
+      title: "Chief Executive",
+      skills: ["review"],
+      instructionBody: "Instructions",
+    });
+    mockConvertAgentCompanies.mockReturnValue({
+      inputs: [{ name: "YAML Agent", role: "reviewer", title: "Chief Executive", metadata: { skills: ["review"] } }],
+      result: {
+        created: ["YAML Agent"],
+        skipped: [],
+        errors: [],
+      },
+    });
+
     store = new MockStore();
     const { createServer } = await import("../server.js");
     app = createServer(store as any);
@@ -103,152 +158,112 @@ describe("POST /api/agents/import", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    rmSync(testDir, { recursive: true, force: true });
   });
 
-  it("returns 400 when manifest is missing", async () => {
+  it("returns 400 when no supported input mode is provided", async () => {
     const response = await postImport(app, {});
 
     expect(response.status).toBe(400);
-    expect((response.body as any).error).toContain("manifest is required");
+    expect((response.body as any).error).toContain("Provide one of");
   });
 
-  it("returns 400 when manifest is not a string or valid object", async () => {
-    const response = await postImport(app, { manifest: 12345 });
-
-    expect(response.status).toBe(400);
-    expect((response.body as any).error).toContain("manifest must be");
-  });
-
-  it("returns 400 on invalid manifest content", async () => {
-    const { CompaniesShParseError } = await import("@fusion/core");
-    mockParseCompaniesShManifest.mockImplementation(() => {
-      throw new CompaniesShParseError("Missing COMPANY_NAME variable in manifest");
+  it("imports agents via Mode 1 (agents array)", async () => {
+    const response = await postImport(app, {
+      agents: [{ name: "Test Agent", skills: ["executor"] }],
     });
-
-    const response = await postImport(app, { manifest: "not a valid manifest" });
-
-    expect(response.status).toBe(400);
-    expect((response.body as any).error).toContain("Missing COMPANY_NAME");
-  });
-
-  it("returns 400 when manifest has no agents", async () => {
-    mockParseCompaniesShManifest.mockReturnValue({
-      companyName: "empty-co",
-      agents: [],
-      envVars: [],
-    });
-
-    const response = await postImport(app, { manifest: makeScript("empty-co", []) });
-
-    expect(response.status).toBe(400);
-    expect((response.body as any).error).toContain("No agents found");
-  });
-
-  it("imports agents successfully", async () => {
-    mockCreateAgent.mockResolvedValue({ id: "agent-1", name: "Test Agent" });
-
-    const response = await postImport(app, { manifest: makeScript("test-co", [{ name: "Test Agent", role: "executor" }]) });
 
     expect(response.status).toBe(200);
+    expect(mockConvertAgentCompanies).toHaveBeenCalledTimes(1);
     const body = response.body as any;
-    expect(body.companyName).toBe("test-co");
     expect(body.created).toHaveLength(1);
-    expect(body.created[0].name).toBe("Test Agent");
-    expect(body.errors).toHaveLength(0);
+    expect(body.created[0].name).toBe("YAML Agent");
   });
 
-  it("returns dry-run preview without creating agents", async () => {
-    mockConvertCompaniesShAgents.mockReturnValue({
-      inputs: [{ name: "Preview Agent", role: "executor" }],
-      result: {
-        created: ["Preview Agent"],
-        skipped: [],
-        errors: [],
-      },
+  it("imports agents via Mode 2 (source directory)", async () => {
+    const sourceDir = join(testDir, "company");
+    mkdirSync(join(sourceDir, "agents", "ceo"), { recursive: true });
+    writeFileSync(join(sourceDir, "agents", "ceo", "AGENTS.md"), "---\nname: CEO\n---\nLead");
+
+    const response = await postImport(app, { source: sourceDir });
+
+    expect(response.status).toBe(200);
+    expect(mockParseCompanyDirectory).toHaveBeenCalledWith(sourceDir);
+    const body = response.body as any;
+    expect(body.created).toHaveLength(1);
+  });
+
+  it("imports agents via Mode 3 manifest string (YAML frontmatter)", async () => {
+    const response = await postImport(app, {
+      manifest: "---\nname: YAML Agent\nskills:\n  - review\n---\nInstructions",
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockParseAgentManifest).toHaveBeenCalled();
+    expect(mockParseCompaniesShManifest).not.toHaveBeenCalled();
+  });
+
+  it("falls back to legacy .sh parsing when YAML parse fails", async () => {
+    mockParseAgentManifest.mockImplementation(() => {
+      throw new MockAgentCompaniesParseError("Missing YAML frontmatter delimiters (---)");
     });
 
     const response = await postImport(app, {
-      manifest: makeScript("preview-co", [{ name: "Preview Agent", role: "executor" }]),
+      manifest: makeScript("fallback-co", [{ name: "Legacy Agent", role: "executor" }]),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockParseCompaniesShManifest).toHaveBeenCalledTimes(1);
+    const body = response.body as any;
+    expect(body.created).toHaveLength(1);
+  });
+
+  it("returns dry-run previews with agents array and does not create agents", async () => {
+    const response = await postImport(app, {
+      manifest: "---\nname: YAML Agent\nskills:\n  - review\n---\nInstructions",
       dryRun: true,
     });
 
     expect(response.status).toBe(200);
     const body = response.body as any;
     expect(body.dryRun).toBe(true);
-    expect(body.companyName).toBe("test-co");
-    expect(body.created).toContain("Preview Agent");
-    // Should NOT call createAgent in dry-run mode
+    expect(body.agents).toEqual([
+      expect.objectContaining({ name: "YAML Agent", role: "reviewer", title: "Chief Executive" }),
+    ]);
     expect(mockCreateAgent).not.toHaveBeenCalled();
   });
 
-  it("skips existing agents when skipExisting is true", async () => {
-    mockListAgents.mockResolvedValue([{ id: "existing-1", name: "Existing Agent" }]);
-    mockConvertCompaniesShAgents.mockReturnValue({
-      inputs: [{ name: "New Agent", role: "reviewer" }],
+  it("returns 400 for unsupported source paths", async () => {
+    const unsupportedPath = join(testDir, "manifest.json");
+    writeFileSync(unsupportedPath, "{}");
+
+    const response = await postImport(app, {
+      source: unsupportedPath,
+    });
+
+    expect(response.status).toBe(400);
+    expect((response.body as any).error).toContain("Unsupported source format");
+  });
+
+  it("honors skipExisting and returns skipped agents", async () => {
+    mockListAgents.mockResolvedValue([{ id: "agent-existing", name: "YAML Agent" }]);
+    mockConvertAgentCompanies.mockReturnValue({
+      inputs: [],
       result: {
-        created: ["New Agent"],
-        skipped: ["Existing Agent"],
+        created: [],
+        skipped: ["YAML Agent"],
         errors: [],
       },
     });
-    mockCreateAgent.mockResolvedValue({ id: "agent-2", name: "New Agent" });
 
     const response = await postImport(app, {
-      manifest: makeScript("skip-co", [
-        { name: "Existing Agent", role: "executor" },
-        { name: "New Agent", role: "reviewer" },
-      ]),
+      manifest: "---\nname: YAML Agent\n---\nInstructions",
       skipExisting: true,
     });
 
     expect(response.status).toBe(200);
     const body = response.body as any;
-    expect(body.skipped).toContain("Existing Agent");
-    expect(mockCreateAgent).toHaveBeenCalledTimes(1);
-  });
-
-  it("reports per-agent creation errors", async () => {
-    mockConvertCompaniesShAgents.mockReturnValue({
-      inputs: [
-        { name: "Good Agent", role: "executor" },
-        { name: "Bad Agent", role: "reviewer" },
-      ],
-      result: {
-        created: ["Good Agent", "Bad Agent"],
-        skipped: [],
-        errors: [],
-      },
-    });
-    mockCreateAgent
-      .mockResolvedValueOnce({ id: "agent-1", name: "Good Agent" })
-      .mockRejectedValueOnce(new Error("Database error"));
-
-    const response = await postImport(app, {
-      manifest: makeScript("mixed-co", [
-        { name: "Good Agent", role: "executor" },
-        { name: "Bad Agent", role: "reviewer" },
-      ]),
-    });
-
-    expect(response.status).toBe(200);
-    const body = response.body as any;
-    expect(body.created).toHaveLength(1);
-    expect(body.errors).toHaveLength(1);
-    expect(body.errors[0].name).toBe("Bad Agent");
-    expect(body.errors[0].error).toContain("Database error");
-  });
-
-  it("accepts pre-parsed manifest object with agents array", async () => {
-    const response = await postImport(app, {
-      manifest: {
-        companyName: "parsed-co",
-        agents: [{ name: "Parsed Agent", role: "executor" }],
-        envVars: [],
-      },
-    });
-
-    expect(response.status).toBe(200);
-    const body = response.body as any;
-    expect(body.companyName).toBe("parsed-co");
+    expect(body.skipped).toEqual(["YAML Agent"]);
+    expect(mockCreateAgent).not.toHaveBeenCalled();
   });
 });

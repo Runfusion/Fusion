@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { Upload, FileText, CheckCircle, AlertTriangle, X, Loader2 } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertTriangle, X, Loader2, FolderOpen } from "lucide-react";
 
 export interface AgentImportModalProps {
   isOpen: boolean;
@@ -12,14 +12,13 @@ export interface AgentImportModalProps {
 interface AgentPreview {
   name: string;
   role: string;
-  icon?: string;
   title?: string;
-  model?: string;
+  skills?: string[];
 }
 
 /** Import result from the API */
 interface ImportResult {
-  companyName: string;
+  companyName?: string;
   created: Array<{ id: string; name: string }>;
   skipped: string[];
   errors: Array<{ name: string; error: string }>;
@@ -31,20 +30,23 @@ interface ApiErrorResponse {
 }
 
 type ModalStep = "input" | "preview" | "result";
+type InputMethod = "paste" | "file" | "directory";
 
 /**
- * Modal for importing agents from a companies.sh manifest.
+ * Modal for importing agents from Agent Companies manifests.
  *
- * Supports two input methods:
- * - File upload (.sh files)
+ * Supports three input methods:
+ * - File upload (.md/.txt/.sh files)
+ * - Directory upload (webkitdirectory)
  * - Paste raw manifest content
  *
  * Flow: Input → Preview parsed agents → Import → Show results
  */
 export function AgentImportModal({ isOpen, onClose, onImported, projectId }: AgentImportModalProps) {
   const [step, setStep] = useState<ModalStep>("input");
+  const [inputMethod, setInputMethod] = useState<InputMethod>("paste");
   const [manifestContent, setManifestContent] = useState("");
-  const [companyName, setCompanyName] = useState("");
+  const [companyName, setCompanyName] = useState("Unknown");
   const [agents, setAgents] = useState<AgentPreview[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -52,11 +54,13 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const directoryInputRef = useRef<HTMLInputElement>(null);
 
   const reset = useCallback(() => {
     setStep("input");
+    setInputMethod("paste");
     setManifestContent("");
-    setCompanyName("");
+    setCompanyName("Unknown");
     setAgents([]);
     setIsParsing(false);
     setIsImporting(false);
@@ -77,6 +81,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
     const reader = new FileReader();
     reader.onload = (ev) => {
       const content = ev.target?.result as string;
+      setInputMethod("file");
       setManifestContent(content);
       setParseError(null);
     };
@@ -87,6 +92,41 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
 
     // Reset file input so the same file can be re-selected
     e.target.value = "";
+  }, []);
+
+  const handleDirectoryChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+
+    try {
+      const textFiles = files
+        .filter((file) => /\.(md|txt|sh)$/i.test(file.name))
+        .sort((a, b) => {
+          const aPath = a.webkitRelativePath || a.name;
+          const bPath = b.webkitRelativePath || b.name;
+          return aPath.localeCompare(bPath);
+        });
+
+      if (textFiles.length === 0) {
+        setParseError("Selected directory has no .md, .txt, or .sh files");
+        return;
+      }
+
+      const chunks: string[] = [];
+      for (const file of textFiles) {
+        const relativePath = file.webkitRelativePath || file.name;
+        const content = await file.text();
+        chunks.push(`--- FILE: ${relativePath} ---\n${content}`);
+      }
+
+      setInputMethod("directory");
+      setManifestContent(chunks.join("\n\n"));
+      setParseError(null);
+    } catch {
+      setParseError("Failed to read selected directory");
+    } finally {
+      e.target.value = "";
+    }
   }, []);
 
   /** Build the API URL with optional projectId */
@@ -119,41 +159,18 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
       }
 
       const data = await res.json() as {
-        companyName: string;
+        companyName?: string;
+        agents?: AgentPreview[];
         created: string[];
         skipped: string[];
         errors: Array<{ name: string; error: string }>;
       };
 
-      // Build agent previews from the created names in the dry-run result
-      // We need to extract more info from the manifest for the preview
-      let previewAgents: AgentPreview[] = [];
-      try {
-        // Parse the base64 manifest directly to get agent details for preview
-        const manifestMatch = manifestContent.match(/AGENT_MANIFEST=["'](.*)["']/);
-        if (manifestMatch) {
-          const decoded = atob(manifestMatch[1]);
-          const parsed = JSON.parse(decoded) as Array<Record<string, unknown>>;
-          previewAgents = parsed.map((a) => ({
-            name: String(a.name ?? ""),
-            role: String(a.role ?? "custom"),
-            icon: a.metadata && typeof a.metadata === "object"
-              ? String((a.metadata as Record<string, unknown>).icon ?? "")
-              : undefined,
-            title: a.metadata && typeof a.metadata === "object"
-              ? String((a.metadata as Record<string, unknown>).title ?? "")
-              : undefined,
-            model: a.config && typeof a.config === "object"
-              ? String((a.config as Record<string, unknown>).model ?? "")
-              : undefined,
-          }));
-        }
-      } catch {
-        // Fallback: just show names from dry-run result
-        previewAgents = data.created.map((name) => ({ name, role: "custom" }));
-      }
+      const previewAgents = (data.agents && data.agents.length > 0)
+        ? data.agents
+        : data.created.map((name) => ({ name, role: "custom" }));
 
-      setCompanyName(data.companyName);
+      setCompanyName(data.companyName ?? "Unknown");
       setAgents(previewAgents);
       setStep("preview");
     } catch (err) {
@@ -210,7 +227,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
           {step === "input" && (
             <div className="agent-import-input">
               <p className="agent-import-description">
-                Import agents from a companies.sh manifest file. Upload a <code>.sh</code> file or paste the manifest content directly.
+                Import agents from an Agent Companies package. Upload an AGENTS.md file, select a directory, or paste manifest content.
               </p>
 
               {/* File upload */}
@@ -218,10 +235,20 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".sh,.txt"
+                  accept=".md,.txt,.sh"
                   onChange={handleFileChange}
                   className="agent-import-file-input"
-                  aria-label="Upload companies.sh file"
+                  aria-label="Upload agent manifest file"
+                />
+                <input
+                  ref={directoryInputRef}
+                  type="file"
+                  // @ts-expect-error webkitdirectory is non-standard but supported by Chromium browsers
+                  webkitdirectory=""
+                  multiple
+                  onChange={handleDirectoryChange}
+                  className="agent-import-file-input"
+                  aria-label="Select directory"
                 />
                 <button
                   type="button"
@@ -231,7 +258,15 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                   <Upload size={16} />
                   Choose File
                 </button>
-                <span className="agent-import-file-hint">.sh files supported</span>
+                <button
+                  type="button"
+                  className="btn agent-import-upload-btn"
+                  onClick={() => directoryInputRef.current?.click()}
+                >
+                  <FolderOpen size={16} />
+                  Select Directory
+                </button>
+                <span className="agent-import-file-hint">.md, .txt, and .sh files supported</span>
               </div>
 
               {/* Or divider */}
@@ -242,12 +277,18 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
               {/* Text area for paste */}
               <textarea
                 className="agent-import-textarea"
-                placeholder={"#!/bin/bash\n# Agent Company Manifest\nCOMPANY_NAME=\"my-company\"\nAGENT_MANIFEST=\"base64...\""}
+                placeholder={"---\nname: Agent Name\ntitle: Agent Title\nskills:\n  - review\n---\nAgent instructions go here..."}
                 value={manifestContent}
-                onChange={(e) => { setManifestContent(e.target.value); setParseError(null); }}
+                onChange={(e) => {
+                  setInputMethod("paste");
+                  setManifestContent(e.target.value);
+                  setParseError(null);
+                }}
                 rows={8}
                 aria-label="Manifest content"
               />
+
+              <p className="agent-import-file-hint">Current input: {inputMethod}</p>
 
               {parseError && (
                 <p className="agent-dialog-error">
@@ -275,15 +316,15 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                 <div className="agent-import-agent-list">
                   {agents.map((agent, idx) => (
                     <div key={idx} className="agent-import-agent-item">
-                      <span className="agent-import-agent-icon">
-                        {agent.icon || "🤖"}
-                      </span>
+                      <span className="agent-import-agent-icon">🤖</span>
                       <div className="agent-import-agent-details">
                         <span className="agent-import-agent-name">{agent.name}</span>
                         <span className="agent-import-agent-meta">
                           {agent.title && <span className="agent-import-agent-title">{agent.title} · </span>}
                           <span className="agent-import-agent-role">{agent.role}</span>
-                          {agent.model && <span className="agent-import-agent-model"> · {agent.model}</span>}
+                          {agent.skills && agent.skills.length > 0 && (
+                            <span className="agent-import-agent-model"> · {agent.skills.join(", ")}</span>
+                          )}
                         </span>
                       </div>
                     </div>
@@ -291,6 +332,13 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
                 </div>
               ) : (
                 <p className="agent-import-empty">No agents found in the manifest.</p>
+              )}
+
+              {importError && (
+                <p className="agent-dialog-error">
+                  <AlertTriangle size={14} />
+                  {importError}
+                </p>
               )}
             </div>
           )}
@@ -303,7 +351,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
               </div>
               <h3 className="agent-import-result-title">Import Complete</h3>
               <p className="agent-import-result-company">
-                From <strong>{importResult.companyName}</strong>
+                From <strong>{importResult.companyName ?? "Unknown"}</strong>
               </p>
 
               <div className="agent-import-result-stats">

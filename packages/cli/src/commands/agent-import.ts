@@ -1,5 +1,5 @@
 /**
- * CLI command for importing agents from companies.sh manifests.
+ * CLI command for importing agents from Agent Companies packages.
  *
  * Usage:
  *   fn agent import <source> [--dry-run] [--skip-existing] [--project <name>]
@@ -7,10 +7,24 @@
  * @module agent-import
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { AgentStore, parseCompaniesShManifest, convertCompaniesShAgents, CompaniesShParseError } from "@fusion/core";
+import {
+  AgentStore,
+  parseCompanyDirectory,
+  parseCompanyArchive,
+  parseAgentManifest,
+  convertAgentCompanies,
+  AgentCompaniesParseError,
+  parseCompaniesShManifest,
+  convertCompaniesShAgents,
+  CompaniesShParseError,
+} from "@fusion/core";
+import type { AgentCreateInput } from "@fusion/core";
 import { resolveProject } from "../project-context.js";
+
+const UNSUPPORTED_FORMAT_MESSAGE =
+  "Unsupported format. Provide a directory, .tar.gz/.zip archive, .md file, or .sh manifest.";
 
 /**
  * Get the project path for agent operations.
@@ -34,7 +48,7 @@ async function getProjectPath(projectName?: string): Promise<string> {
  * Print a summary of the import result.
  */
 function printSummary(
-  companyName: string,
+  companyName: string | undefined,
   created: string[],
   skipped: string[],
   errors: Array<{ name: string; error: string }>,
@@ -42,7 +56,7 @@ function printSummary(
 ): void {
   const prefix = dryRun ? "[DRY RUN] " : "";
   console.log();
-  console.log(`  ${prefix}Import from company: ${companyName}`);
+  console.log(`  ${prefix}Import from company: ${companyName ?? "Unknown"}`);
   console.log(`  ${prefix}Created: ${created.length}`);
   for (const name of created) {
     console.log(`    ✓ ${name}`);
@@ -62,10 +76,14 @@ function printSummary(
   console.log();
 }
 
+function isArchivePath(path: string): boolean {
+  return path.endsWith(".tar.gz") || path.endsWith(".tgz") || path.endsWith(".zip");
+}
+
 /**
  * Run the agent import command.
  *
- * @param source - File path to a companies.sh manifest
+ * @param source - Path to an Agent Companies directory/archive/manifest source
  * @param options - Command options
  */
 export async function runAgentImport(
@@ -79,32 +97,10 @@ export async function runAgentImport(
   const dryRun = options?.dryRun ?? false;
   const skipExisting = options?.skipExisting ?? false;
 
-  // Resolve file path
-  const filePath = resolve(source);
-  if (!existsSync(filePath)) {
-    console.error(`File not found: ${filePath}`);
+  const sourcePath = resolve(source);
+  if (!existsSync(sourcePath)) {
+    console.error(`File not found: ${sourcePath}`);
     process.exit(1);
-  }
-
-  // Read and parse manifest
-  let manifest;
-  try {
-    const content = readFileSync(filePath, "utf-8");
-    manifest = parseCompaniesShManifest(content);
-  } catch (err) {
-    if (err instanceof CompaniesShParseError) {
-      console.error(`Parse error: ${err.message}`);
-      process.exit(1);
-    }
-    console.error(`Error reading file: ${(err as Error).message}`);
-    process.exit(1);
-  }
-
-  if (manifest.agents.length === 0) {
-    console.log();
-    console.log("  No agents found in manifest");
-    console.log();
-    return;
   }
 
   // Get existing agent names for skip logic
@@ -115,15 +111,86 @@ export async function runAgentImport(
   const existingAgents = await agentStore.listAgents();
   const existingNames = new Set(existingAgents.map((a) => a.name));
 
-  // Convert agents
-  const { inputs, result } = convertCompaniesShAgents(
-    manifest.agents,
-    skipExisting ? { skipExisting: [...existingNames] } : undefined,
-  );
+  let companyName: string | undefined;
+  let inputs: AgentCreateInput[] = [];
+  let result: {
+    created: string[];
+    skipped: string[];
+    errors: Array<{ name: string; error: string }>;
+  } = {
+    created: [],
+    skipped: [],
+    errors: [],
+  };
+
+  try {
+    const sourceStats = statSync(sourcePath);
+
+    if (sourceStats.isDirectory()) {
+      const pkg = parseCompanyDirectory(sourcePath);
+      companyName = pkg.company?.name;
+      ({ inputs, result } = convertAgentCompanies(
+        pkg,
+        skipExisting ? { skipExisting: [...existingNames] } : undefined,
+      ));
+    } else if (isArchivePath(sourcePath)) {
+      const pkg = await parseCompanyArchive(sourcePath);
+      companyName = pkg.company?.name;
+      ({ inputs, result } = convertAgentCompanies(
+        pkg,
+        skipExisting ? { skipExisting: [...existingNames] } : undefined,
+      ));
+    } else if (sourcePath.endsWith(".md")) {
+      const content = readFileSync(sourcePath, "utf-8");
+      const manifest = parseAgentManifest(content);
+      const pkg = {
+        company: undefined,
+        agents: [manifest],
+        teams: [],
+        projects: [],
+        tasks: [],
+        skills: [],
+      };
+      ({ inputs, result } = convertAgentCompanies(
+        pkg,
+        skipExisting ? { skipExisting: [...existingNames] } : undefined,
+      ));
+    } else if (sourcePath.endsWith(".sh")) {
+      const content = readFileSync(sourcePath, "utf-8");
+      const manifest = parseCompaniesShManifest(content);
+      companyName = manifest.companyName;
+      ({ inputs, result } = convertCompaniesShAgents(
+        manifest.agents,
+        skipExisting ? { skipExisting: [...existingNames] } : undefined,
+      ));
+    } else {
+      throw new Error(UNSUPPORTED_FORMAT_MESSAGE);
+    }
+  } catch (err) {
+    if (err instanceof AgentCompaniesParseError || err instanceof CompaniesShParseError) {
+      console.error(`Parse error: ${err.message}`);
+      process.exit(1);
+    }
+
+    if (err instanceof Error && err.message === UNSUPPORTED_FORMAT_MESSAGE) {
+      console.error(err.message);
+      process.exit(1);
+    }
+
+    console.error(`Error reading source: ${(err as Error).message}`);
+    process.exit(1);
+  }
+
+  if (result.created.length === 0 && result.skipped.length === 0 && result.errors.length === 0) {
+    console.log();
+    console.log("  No agents found in manifest");
+    console.log();
+    return;
+  }
 
   // Dry run: just preview
   if (dryRun) {
-    printSummary(manifest.companyName, result.created, result.skipped, result.errors, true);
+    printSummary(companyName, result.created, result.skipped, result.errors, true);
     return;
   }
 
@@ -146,5 +213,5 @@ export async function runAgentImport(
     }
   }
 
-  printSummary(manifest.companyName, created, result.skipped, errors, false);
+  printSummary(companyName, created, result.skipped, errors, false);
 }

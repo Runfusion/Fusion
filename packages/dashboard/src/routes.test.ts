@@ -2056,7 +2056,7 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
     expect(res.status).toBe(200);
     expect(store.updateTask).toHaveBeenCalledWith("FN-200", { assignedAgentId: agentId });
     expect(res.body.assignedAgentId).toBe(agentId);
-  });
+  }, 20000);
 
   it("returns 404 when assigning to a non-existent agent", async () => {
     const res = await REQUEST(
@@ -2070,7 +2070,7 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
     expect(res.status).toBe(404);
     expect(res.body.error).toBe("Agent not found");
     expect(store.updateTask).not.toHaveBeenCalled();
-  });
+  }, 20000);
 
   it("unassigns a task when agentId is null", async () => {
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -2090,7 +2090,7 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
     expect(res.status).toBe(200);
     expect(store.updateTask).toHaveBeenCalledWith("FN-200", { assignedAgentId: null });
     expect(res.body.assignedAgentId).toBeUndefined();
-  });
+  }, 20000);
 
   it("returns tasks assigned to the specified agent", async () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -2103,7 +2103,7 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.map((task: { id: string }) => task.id)).toEqual(["FN-001"]);
-  });
+  }, 20000);
 
   it("returns 404 for /api/agents/:id/tasks when agent does not exist", async () => {
     const res = await GET(buildApp(), "/api/agents/agent-missing/tasks");

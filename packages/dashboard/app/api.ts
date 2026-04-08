@@ -2043,9 +2043,10 @@ export function fetchAgentTasks(agentId: string, projectId?: string): Promise<Ta
 
 // ── Agent Import API ────────────────────────────────────────────────────────
 
-/** Result of importing agents from a companies.sh manifest */
+/** Result of importing agents from an Agent Companies source */
 export interface AgentImportResult {
-  companyName: string;
+  companyName?: string;
+  agents?: Array<{ name: string; role: string; title?: string; skills?: string[] }>;
   /** In dry-run mode: agent name strings. In live mode: agent objects with id and name. */
   created: string[] | Array<{ id: string; name: string }>;
   skipped: string[];
@@ -2054,18 +2055,18 @@ export interface AgentImportResult {
 }
 
 /**
- * Import agents from a companies.sh manifest via the API.
+ * Import agents from an Agent Companies source via the API.
  * Uses dryRun for preview, then actual import.
  */
 export function importAgents(
-  manifest: string,
+  input: { manifest?: string; source?: string; agents?: unknown[] },
   options?: { dryRun?: boolean; skipExisting?: boolean },
   projectId?: string,
 ): Promise<AgentImportResult> {
   return api<AgentImportResult>(withProjectId("/agents/import", projectId), {
     method: "POST",
     body: JSON.stringify({
-      manifest,
+      ...input,
       dryRun: options?.dryRun ?? false,
       skipExisting: options?.skipExisting ?? true,
     }),
