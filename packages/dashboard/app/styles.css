@@ -22380,12 +22380,12 @@ html .column.drag-over * {
 }
 
 .mailbox-tab:hover {
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .mailbox-tab.active {
-  color: var(--text-primary);
-  border-bottom-color: var(--primary);
+  color: var(--text);
+  border-bottom-color: var(--todo);
   font-weight: 600;
 }
 
@@ -22445,11 +22445,11 @@ html .column.drag-over * {
 }
 
 .mailbox-item:hover {
-  background: var(--bg-hover);
+  background: var(--card-hover);
 }
 
 .mailbox-item.unread {
-  background: var(--bg-active);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
   font-weight: 500;
 }
 
@@ -22481,7 +22481,7 @@ html .column.drag-over * {
 .mailbox-item-from,
 .mailbox-item-to {
   font-size: 0.85rem;
-  color: var(--text-primary);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -22506,7 +22506,7 @@ html .column.drag-over * {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--todo);
   flex-shrink: 0;
   margin-top: 6px;
 }
@@ -22576,7 +22576,7 @@ html .column.drag-over * {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .mailbox-message-body {
@@ -22610,8 +22610,8 @@ html .column.drag-over * {
 }
 
 .mailbox-conversation-msg.current {
-  border-left-color: var(--primary);
-  background: var(--bg-active);
+  border-left-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
 }
 
 .mailbox-conversation-msg-header {
@@ -22664,7 +22664,7 @@ html .column.drag-over * {
   height: 44px;
   border-radius: 50%;
   border: none;
-  background: var(--primary);
+  background: var(--todo);
   color: white;
   cursor: pointer;
   display: flex;
@@ -22676,7 +22676,7 @@ html .column.drag-over * {
 }
 
 .mailbox-compose-fab:hover {
-  background: var(--primary-hover);
+  background: color-mix(in srgb, var(--todo) 80%, white);
   transform: scale(1.05);
 }
 
@@ -22845,7 +22845,7 @@ html .column.drag-over * {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-secondary);
-  color: var(--text-primary);
+  color: var(--text);
   font-size: 0.85rem;
 }
 
@@ -22857,7 +22857,7 @@ html .column.drag-over * {
   background: var(--bg-tertiary);
   border-radius: 6px;
   font-size: 0.85rem;
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .message-composer-textarea {
@@ -22866,7 +22866,7 @@ html .column.drag-over * {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-secondary);
-  color: var(--text-primary);
+  color: var(--text);
   font-size: 0.9rem;
   font-family: inherit;
   resize: vertical;
@@ -22876,7 +22876,7 @@ html .column.drag-over * {
 
 .message-composer-textarea:focus {
   outline: none;
-  border-color: var(--primary);
+  border-color: var(--todo);
 }
 
 .message-composer-charcount {
