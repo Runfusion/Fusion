@@ -692,76 +692,9 @@ describe("PlanningModeModal", () => {
     });
   });
 
-  describe("Dismiss warning", () => {
-    it("shows confirmation when clicking X button with progress", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-
-      render(
-        <PlanningModeModal
-          isOpen={true}
-          onClose={mockOnClose}
-          onTaskCreated={mockOnTaskCreated}
-          tasks={mockTasks}
-        />
-      );
-
-      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
-      fireEvent.change(textarea, { target: { value: "Build auth system" } });
-      fireEvent.click(screen.getByText("Start Planning"));
-
-      // Wait for question view (progress made)
-      await waitFor(() => {
-        expect(screen.getByText("What is the scope?")).toBeDefined();
-      });
-
-      // Click X button
-      const closeButton = screen.getByLabelText("Close");
-      fireEvent.click(closeButton);
-
-      // Should show confirmation dialog
-      expect(confirmSpy).toHaveBeenCalledWith("Are you sure you want to close? Your planning progress will be lost.");
-      // onClose should NOT be called since confirm returned false
-      expect(mockOnClose).not.toHaveBeenCalled();
-
-      confirmSpy.mockRestore();
-    });
-
-    it("shows confirmation when clicking overlay with progress", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-
-      const { container } = render(
-        <PlanningModeModal
-          isOpen={true}
-          onClose={mockOnClose}
-          onTaskCreated={mockOnTaskCreated}
-          tasks={mockTasks}
-        />
-      );
-
-      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
-      fireEvent.change(textarea, { target: { value: "Build auth system" } });
-      fireEvent.click(screen.getByText("Start Planning"));
-
-      // Wait for question view (progress made)
-      await waitFor(() => {
-        expect(screen.getByText("What is the scope?")).toBeDefined();
-      });
-
-      // Click overlay (modal-overlay)
-      const overlay = container.querySelector(".modal-overlay");
-      expect(overlay).not.toBeNull();
-      fireEvent.click(overlay!);
-
-      // Should show confirmation dialog
-      expect(confirmSpy).toHaveBeenCalledWith("Are you sure you want to close? Your planning progress will be lost.");
-      // onClose should NOT be called since confirm returned false
-      expect(mockOnClose).not.toHaveBeenCalled();
-
-      confirmSpy.mockRestore();
-    });
-
-    it("no confirmation shown when no progress made (initial state)", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+  describe("Modal close behavior", () => {
+    it("no confirmation shown when no progress made (initial state)", () => {
+      const confirmSpy = vi.spyOn(window, "confirm");
 
       render(
         <PlanningModeModal
@@ -776,16 +709,13 @@ describe("PlanningModeModal", () => {
       const closeButton = screen.getByLabelText("Close");
       fireEvent.click(closeButton);
 
-      // Should NOT show confirmation dialog
       expect(confirmSpy).not.toHaveBeenCalled();
-      // onClose should be called immediately
+      expect(mockCancelPlanning).not.toHaveBeenCalled();
       expect(mockOnClose).toHaveBeenCalled();
-
-      confirmSpy.mockRestore();
     });
 
-    it("closes without confirmation after confirming dismiss", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    it("closes active question session without canceling server session", async () => {
+      const confirmSpy = vi.spyOn(window, "confirm");
 
       render(
         <PlanningModeModal
@@ -796,44 +726,98 @@ describe("PlanningModeModal", () => {
         />
       );
 
-      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
-      fireEvent.change(textarea, { target: { value: "Build auth system" } });
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
       fireEvent.click(screen.getByText("Start Planning"));
 
-      // Wait for question view (progress made)
       await waitFor(() => {
         expect(screen.getByText("What is the scope?")).toBeDefined();
       });
 
-      // Click X button
-      const closeButton = screen.getByLabelText("Close");
-      fireEvent.click(closeButton);
+      fireEvent.click(screen.getByLabelText("Close"));
 
-      // Should show confirmation dialog
-      expect(confirmSpy).toHaveBeenCalledWith("Are you sure you want to close? Your planning progress will be lost.");
-      
-      // Wait for async handleCancel to complete
-      await waitFor(() => {
-        expect(mockOnClose).toHaveBeenCalled();
-      });
-
-      confirmSpy.mockRestore();
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(mockCancelPlanning).not.toHaveBeenCalled();
+      expect(mockOnClose).toHaveBeenCalled();
     });
 
-    it("shows confirmation in summary view", async () => {
-      // Override mock to return summary
+    it("closes summary view without canceling server session", async () => {
+      const confirmSpy = vi.spyOn(window, "confirm");
+
       mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         setTimeout(() => {
           handlers.onSummary?.(mockSummary);
         }, 10);
-        
+
         return {
           close: vi.fn(),
           isConnected: vi.fn().mockReturnValue(true),
         };
       });
 
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Planning Complete!")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByLabelText("Close"));
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(mockCancelPlanning).not.toHaveBeenCalled();
+      expect(mockOnClose).toHaveBeenCalled();
+    });
+
+    it("closes via overlay without canceling server session", async () => {
+      const confirmSpy = vi.spyOn(window, "confirm");
+
+      const { container } = render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByText("What is the scope?")).toBeDefined();
+      });
+
+      const overlay = container.querySelector(".modal-overlay");
+      expect(overlay).not.toBeNull();
+      fireEvent.click(overlay!);
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(mockCancelPlanning).not.toHaveBeenCalled();
+      expect(mockOnClose).toHaveBeenCalled();
+    });
+
+    it("closes during loading state without canceling server session", async () => {
+      const confirmSpy = vi.spyOn(window, "confirm");
+
+      mockConnectPlanningStream.mockImplementationOnce(() => ({
+        close: vi.fn(),
+        isConnected: vi.fn().mockReturnValue(true),
+      }));
 
       render(
         <PlanningModeModal
@@ -844,24 +828,53 @@ describe("PlanningModeModal", () => {
         />
       );
 
-      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
-      fireEvent.change(textarea, { target: { value: "Build auth system" } });
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
       fireEvent.click(screen.getByText("Start Planning"));
 
-      // Wait for summary view (progress made)
       await waitFor(() => {
-        expect(screen.getByText("Planning Complete!")).toBeDefined();
+        expect(screen.getByText("Generating next question...")).toBeDefined();
       });
 
-      // Click X button
-      const closeButton = screen.getByLabelText("Close");
-      fireEvent.click(closeButton);
+      fireEvent.click(screen.getByLabelText("Close"));
 
-      // Should show confirmation dialog
-      expect(confirmSpy).toHaveBeenCalledWith("Are you sure you want to close? Your planning progress will be lost.");
-      expect(mockOnClose).not.toHaveBeenCalled();
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(mockCancelPlanning).not.toHaveBeenCalled();
+      expect(mockOnClose).toHaveBeenCalled();
+    });
 
-      confirmSpy.mockRestore();
+    it("disconnects SSE stream on close", async () => {
+      const closeSpy = vi.fn();
+
+      mockConnectPlanningStream.mockImplementationOnce(() => ({
+        close: closeSpy,
+        isConnected: vi.fn().mockReturnValue(true),
+      }));
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          tasks={mockTasks}
+        />
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Generating next question...")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByLabelText("Close"));
+
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+      expect(mockCancelPlanning).not.toHaveBeenCalled();
+      expect(mockOnClose).toHaveBeenCalled();
     });
   });
 });

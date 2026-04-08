@@ -4,7 +4,6 @@ import {
   startPlanning,
   startPlanningStreaming,
   respondToPlanning,
-  cancelPlanning,
   createTaskFromPlanning,
   connectPlanningStream,
   fetchAiSession,
@@ -57,7 +56,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [error, setError] = useState<string | null>(null);
   const [responseHistory, setResponseHistory] = useState<QuestionResponse[]>([]);
   const [editedSummary, setEditedSummary] = useState<PlanningSummary | null>(null);
-  const [hasProgress, setHasProgress] = useState(false);
   // Use ref instead of state for hasAutoStarted to handle React StrictMode double-render.
   // In StrictMode, components render twice but state persists across renders,
   // which would skip auto-start on the second (committed) render. Refs are
@@ -94,7 +92,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             session: { sessionId, currentQuestion: question, summary: null },
           });
           setStreamingOutput("");
-          setHasProgress(true);
         },
         onSummary: (summary) => {
           clearPlanningDescription();
@@ -105,7 +102,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           });
           setEditedSummary(summary);
           setStreamingOutput("");
-          setHasProgress(true);
         },
         onError: (message) => {
           setError(message);
@@ -170,13 +166,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           const question = JSON.parse(session.currentQuestion);
           setView({ type: "question", session: { sessionId: resumeSessionId, currentQuestion: question, summary: null } });
           if (session.thinkingOutput) setStreamingOutput(session.thinkingOutput);
-          setHasProgress(true);
         } else if (session.status === "complete" && session.result) {
           clearPlanningDescription();
           const summary = JSON.parse(session.result);
           setView({ type: "summary", session: { sessionId: resumeSessionId, currentQuestion: null, summary }, summary });
           setEditedSummary(summary);
-          setHasProgress(true);
         } else if (session.status === "generating") {
           setView({ type: "loading" });
           if (session.thinkingOutput) setStreamingOutput(session.thinkingOutput);
@@ -187,14 +181,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               clearPlanningDescription();
               setView({ type: "question", session: { sessionId: resumeSessionId, currentQuestion: question, summary: null } });
               setStreamingOutput("");
-              setHasProgress(true);
             },
             onSummary: (summary) => {
               clearPlanningDescription();
               setView({ type: "summary", session: { sessionId: resumeSessionId, currentQuestion: null, summary }, summary });
               setEditedSummary(summary);
               setStreamingOutput("");
-              setHasProgress(true);
             },
             onError: (message) => { setError(message); setView({ type: "initial" }); },
             onComplete: () => { currentSessionIdRef.current = null; },
@@ -226,57 +218,39 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     };
   }, []);
 
-  // Handle browser unload during active session
+  // Handle browser unload while modal is open
   useEffect(() => {
     if (!isOpen) return;
 
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (view.type === "question" || view.type === "summary") {
-        e.preventDefault();
-        e.returnValue = "";
-      }
-      // Close stream connection
+    const handleBeforeUnload = () => {
+      // Session is preserved server-side; just disconnect the local stream.
       streamConnectionRef.current?.close();
+      streamConnectionRef.current = null;
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isOpen, view]);
+  }, [isOpen]);
 
-  const handleCancel = useCallback(async () => {
+  const handleCancel = useCallback(() => {
     // Save to localStorage BEFORE any cleanup (preserve for re-entry)
     if (initialPlan) {
       savePlanningDescription(initialPlan);
-    }
-
-    // Show confirmation if user has made progress
-    if (hasProgress) {
-      if (!confirm("Are you sure you want to close? Your planning progress will be lost.")) {
-        return;
-      }
     }
 
     // Always close the stream connection
     streamConnectionRef.current?.close();
     streamConnectionRef.current = null;
 
-    if (view.type === "question" || view.type === "summary") {
-      try {
-        await cancelPlanning(view.session.sessionId, projectId);
-      } catch {
-        // Ignore errors on cancel
-      }
-    }
     setInitialPlan("");
     setView({ type: "initial" });
     setError(null);
     setResponseHistory([]);
     setEditedSummary(null);
     setStreamingOutput("");
-    setHasProgress(false);
     currentSessionIdRef.current = null;
     onClose();
-  }, [initialPlan, hasProgress, view, onClose]);
+  }, [initialPlan, onClose]);
 
   // Handle escape key to close
   useEffect(() => {
@@ -284,19 +258,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (hasProgress) {
-          if (confirm("Are you sure you want to close? Your planning progress will be lost.")) {
-            handleCancel();
-          }
-        } else {
-          handleCancel();
-        }
+        handleCancel();
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, hasProgress, handleCancel]);
+  }, [isOpen, handleCancel]);
 
   const handleSubmitResponse = useCallback(
     async (responses: QuestionResponse) => {
@@ -319,7 +287,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         // Submit response - AI will broadcast events via the already-connected stream
         await respondToPlanning(sessionId, responses, projectId);
         setResponseHistory((prev) => [...prev, responses]);
-        setHasProgress(true);
         // Events (question/summary) will arrive via the existing SSE stream
       } catch (err: any) {
         setError(err.message || "Failed to submit response");
@@ -381,7 +348,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setResponseHistory([]);
       setEditedSummary(null);
       setStreamingOutput("");
-      setHasProgress(false);
       currentSessionIdRef.current = null;
       onClose();
     } catch (err: any) {
